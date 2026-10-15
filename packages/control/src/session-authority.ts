@@ -159,6 +159,11 @@ export class SessionAuthority {
   private readonly journal: OperationJournal | undefined;
   private readonly serviceGeneration = randomBytes(16).toString('base64url');
 
+  /** C4b (J-d): true only while an attached journal is open; never a configuration claim. */
+  journalOpen(): boolean {
+    return this.journal?.health === 'open';
+  }
+
   constructor(options: { now?: () => number; journal?: OperationJournal } = {}) {
     this.now = options.now ?? (() => performance.now());
     this.journal = options.journal;
@@ -308,8 +313,17 @@ export class SessionAuthority {
     if (selection !== undefined) {
       try {
         if (!this.journal) throw journalUnavailable();
-        const descriptor = journalObject(journalData(selection), ['version', 'application']);
+        const descriptor = journalObject(
+          journalData(selection),
+          ['version', 'application'],
+          ['durable']
+        );
         if (descriptor.version !== 1) throw journalUnavailable();
+        // J-d: the live fingerprint's domain is labeled, never caller-selected: a durable
+        // operation's fingerprint is computed in the v2-durable domain (J-b), and the label is
+        // part of the retained keyed digest, so durable and ephemeral identities never collide.
+        if (descriptor.durable !== undefined && descriptor.durable !== true)
+          throw journalUnavailable();
         intent = parseJournalIntent({
           key: {
             serviceGeneration: this.serviceGeneration,
@@ -320,7 +334,13 @@ export class SessionAuthority {
           },
           actor: admission.actor,
           application: descriptor.application,
-          liveFingerprint: { algorithm: 'application-operation:v1', digest: fingerprint },
+          liveFingerprint: {
+            algorithm:
+              descriptor.durable === true
+                ? 'application-operation:v2-durable'
+                : 'application-operation:v1',
+            digest: fingerprint,
+          },
         });
       } catch {
         throw journalUnavailable();

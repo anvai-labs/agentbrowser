@@ -23,7 +23,7 @@ declared files and budgets without contacting a service.
 | [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; production evidence still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | Delivered through #231, released in 1.9.1. Follow-on: a documented `test evaluate` CI entrypoint | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity, C3c public consent, trusted native-read composition (#259), binding UI (#261), receipt UX (#262) qualified; production gates remain (requires authorized live targets) | T2 |
-| [T5](t5-durable-recovery.md) | Active | FULL CI-gated adversarial matrix (32 distinct rows): process-loss, anchor, quota, privacy, read-only-FS, disk-full — all CI-blocking. Operator reconciliation procedure DELIVERED. C4b PARTIAL: the protocol field, capability check and discovery exist, but the requirement is not yet in the operation fingerprint or review intent, an explicit `ephemeral` is refused, and REST does not publish `writeExecution`; the journal is not wired into the service. Remaining: F3 deployment (launch durable store), historical recovery (J3/J4, proposed) | T2 |
+| [T5](t5-durable-recovery.md) | Active | FULL CI-gated adversarial matrix (32 distinct rows): process-loss, anchor, quota, privacy, read-only-FS, disk-full — all CI-blocking. Operator reconciliation procedure DELIVERED. C4b DELIVERED 2026-10-15: explicit `ephemeral` and REST discovery (J-a), the durable operation identity (J-b), and the opt-in journal wired into the service (J-d; `AGENTBROWSER_JOURNAL_*`). Remaining: per-host deployment of the durable store (operator), historical recovery (J3/J4, proposed) | T2 |
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses, C3c synthetic submission, E0a/E0b eligibility, N0 document read, first E0c listing-capture slice delivered; remaining gates owned by the consuming workflow (E0c/E1 private policy, live workflow qualification) | T2 |
 | [T7](t7-audit-security.md) | **Complete** | ALL slices delivered (the appsec/bounty parity condition on T4 stays open): 2a scope enforcement (primitive + surface, 12 real-Chromium gates plus 14 policy unit tests), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates; audit suite 53 tests after the 2026-10-15 labelling and role-access work | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor gated on aiserver1's gateway, not TLS (owner reconciliation 2026-10-15). Open: MCP cancellation, then the qualification re-runs on both CLIs | T0; profile/full-run slices also require T1/T3 |
@@ -75,13 +75,10 @@ Delivered this session (2026-10-02..05, 14 merged PRs #356–#372):
 
 ### User gates
 
-- **F3 authorization** — every technical precondition passed (the C4b
-  precondition audit confirmed all five delivery gates; the operator
-  reconciliation procedure is delivered). C4b execution-requirement selection
-  is partial: explicit `ephemeral`, discovery and the durable operation identity
-  (J-b) are in place, but `durable` execution is refused until a journal store
-  is wired into the service (J-d); the `durableJournalAvailable` flag alone does
-  not enable it.
+- **F3 deployment**: authorized, and C4b is delivered. The journal is wired into the service and
+  is opt-in through `AGENTBROWSER_JOURNAL_*`. Enabling it on a host (provisioning the private
+  directories and the key file) is an operator action; see the operations guide's "Durable
+  application writes".
 - **T4 live-target evidence** — requires named authorized targets and the
   consuming workflow to drive the gates.
 - **Victor TLS trust** — the Sandhi gateway CA must be trusted in Victor's
@@ -147,8 +144,8 @@ only with explicit authorization.
 
 F1 all-hop egress enforcement: DELIVERED 2026-09-30.
 F2 clock-movement conformance rows: DELIVERED 2026-09-30.
-F3 durable-journal runtime enablement: **user authorized**; C4b is partial
-(J-b identity, J-d runtime wiring and deployment of the durable store remain).
+F3 durable-journal runtime enablement: **user authorized**; C4b DELIVERED 2026-10-15 (J-a, J-b,
+J-d). Per-host deployment of the durable store is an operator action.
 N1 bounded network-error observation: DELIVERED (slice 1 in 1.15.0; G4
 events replay in 1.15.0).
 N2 OS-enforced egress pairing: prerequisite documented

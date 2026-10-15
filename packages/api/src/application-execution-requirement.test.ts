@@ -136,7 +136,7 @@ describe('service-level execution requirement (J-a review)', () => {
     return { service, sessionId, effects: () => effects };
   }
 
-  it('durable fails closed even when a durable store is configured: refused, no effect, no identity', async () => {
+  it('the deprecated availability flag alone never enables durable: refused, no effect, no identity', async () => {
     const s = await serviceWith(true);
     try {
       await expect(

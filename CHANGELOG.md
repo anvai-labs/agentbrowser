@@ -7,6 +7,24 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — durable application writes behind an opt-in journal (T5 C4b, J-d)
+
+- **Configuration.** Five trusted variables, `AGENTBROWSER_JOURNAL_DIR`, `_ANCHOR_DIR`,
+  `_KEY_FILE` (a `0600` file holding `keyId:hex`), `_RESTORE_GENERATION` and `_INITIALIZE`, open the
+  qualified SQLite journal at startup. A partial or refused configuration aborts startup;
+  unconfigured, nothing changes.
+- **Behaviour.** Application writes that request `executionRequirement: "durable"` are journaled:
+  the intent is committed before the effect, then a dispatch marker and a terminal record. The
+  fingerprint domain is labeled `application-operation:v2-durable`, so it never collides with an
+  ephemeral identity. Ephemeral writes never touch the journal.
+- **Availability.** Discovery advertises `durable`, and execute and reviews accept it, only while
+  the journal is open and accepting (7 days per process start). Otherwise `CONTROL_REQUIRED`, with
+  no fallback. The application authority now also refuses `durable` itself whenever the write
+  cannot be journaled; previously only the service-level refusal stood in the way.
+- **Deprecation.** `durableJournalAvailable` is deprecated and has no effect.
+- **Not yet.** Reading records back across a restart (J3) and recovery semantics (J4) remain
+  proposed.
+
 ### Added — the durable requirement is part of the operation identity (T5 C4b, part 2)
 
 - A `durable` application write now has its own operation identity: its fingerprint uses the

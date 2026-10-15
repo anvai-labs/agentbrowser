@@ -8,6 +8,7 @@ import {
   type OperatorCdpAdmissionOptions,
   requireCdpAttachAdmission,
 } from './floor.js';
+import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
@@ -552,65 +553,84 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   // Validated before the service exists: an invalid ceiling aborts startup.
   const artifactStore = artifactStoreFromEnvironment(process.env);
-  const service = new AgentBrowserService({
-    cdpAttachAdmission: attachAdmission,
-    extractMaxBytes,
-    engine,
-    ...(artifactStore !== undefined ? { artifactStore } : {}),
-    // TD-BROWSER-16 phase 6: the handoff reads through the login browser
-    // (constructed above; enabled encodes operator keys being configured).
-    loginBrowser: options.loginBrowserPort ?? loginBrowser,
-    ...(options.evidenceReviewProvider !== undefined
-      ? { evidenceReviewProvider: options.evidenceReviewProvider }
-      : {}),
-    ...(options.networkPolicy
-      ? { networkPolicy: options.networkPolicy }
-      : policyLimiter === undefined &&
-          (process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
-            process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
-            process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined)
+  // T5 J-d: a configured durable journal opens before the service exists; any refusal aborts
+  // startup (no ephemeral fallback for a configured journal). Unconfigured: nothing changes.
+  const journalConfig = await journalConfigFromEnvironment(process.env);
+  const serviceJournal =
+    journalConfig === undefined ? undefined : await openServiceJournal(journalConfig);
+  let service: AgentBrowserService;
+  try {
+    service = new AgentBrowserService({
+      ...(serviceJournal !== undefined ? { operationJournal: serviceJournal.journal } : {}),
+      cdpAttachAdmission: attachAdmission,
+      extractMaxBytes,
+      engine,
+      ...(artifactStore !== undefined ? { artifactStore } : {}),
+      // TD-BROWSER-16 phase 6: the handoff reads through the login browser
+      // (constructed above; enabled encodes operator keys being configured).
+      loginBrowser: options.loginBrowserPort ?? loginBrowser,
+      ...(options.evidenceReviewProvider !== undefined
+        ? { evidenceReviewProvider: options.evidenceReviewProvider }
+        : {}),
+      ...(options.networkPolicy
+        ? { networkPolicy: options.networkPolicy }
+        : policyLimiter === undefined &&
+            (process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
+              process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
+              process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined)
+          ? {
+              allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
+              allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
+              maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
+            }
+          : {}),
+      ...(policyLimiter !== undefined
         ? {
-            allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
-            allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
-            maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
+            authorizer: policyLimiter.authorizer,
+            policyVersion: policyLimiter.version,
+            ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
+            ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
           }
         : {}),
-    ...(policyLimiter !== undefined
-      ? {
-          authorizer: policyLimiter.authorizer,
-          policyVersion: policyLimiter.version,
-          ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
-          ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
-        }
-      : {}),
-    ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
-      ? {
-          approvalPolicy:
-            options.approvalPolicy ?? JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
-        }
-      : {}),
-    ...(options.engines ? { engines: options.engines } : {}),
-    metrics,
-    tracer,
-    ...(options.secretManager ? { secretManager: options.secretManager } : {}),
-    ...(options.logger ? { logger: options.logger } : {}),
-    ...(options.downloader ? { downloader: options.downloader } : {}),
-    ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
-    ...(options.defaultIdleTimeoutMs !== undefined
-      ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
-      : {}),
-    ...(options.verifierRegistry ? { verifierRegistry: options.verifierRegistry } : {}),
-    ...(options.evidenceSourceRegistry !== undefined
-      ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
-      : {}),
-    ...(options.evidenceSourceRegistryProvider !== undefined
-      ? { evidenceSourceRegistryProvider: options.evidenceSourceRegistryProvider }
-      : {}),
-    ...(options.applicationAdapters ? { applicationAdapters: options.applicationAdapters } : {}),
-  });
+      ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
+        ? {
+            approvalPolicy:
+              options.approvalPolicy ??
+              JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
+          }
+        : {}),
+      ...(options.engines ? { engines: options.engines } : {}),
+      metrics,
+      tracer,
+      ...(options.secretManager ? { secretManager: options.secretManager } : {}),
+      ...(options.logger ? { logger: options.logger } : {}),
+      ...(options.downloader ? { downloader: options.downloader } : {}),
+      ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
+      ...(options.defaultIdleTimeoutMs !== undefined
+        ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
+        : {}),
+      ...(options.verifierRegistry ? { verifierRegistry: options.verifierRegistry } : {}),
+      ...(options.evidenceSourceRegistry !== undefined
+        ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
+        : {}),
+      ...(options.evidenceSourceRegistryProvider !== undefined
+        ? { evidenceSourceRegistryProvider: options.evidenceSourceRegistryProvider }
+        : {}),
+      ...(options.applicationAdapters ? { applicationAdapters: options.applicationAdapters } : {}),
+    });
+  } catch (error) {
+    // A service that never existed cannot close the journal it was given.
+    await serviceJournal?.close();
+    throw error;
+  }
 
   fastify.addHook('onClose', async () => {
-    await service.shutdown();
+    try {
+      await service.shutdown();
+    } finally {
+      // The journal outlives every session's terminal write; closed last.
+      await serviceJournal?.close();
+    }
   });
 
   /**
