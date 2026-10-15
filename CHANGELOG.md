@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — the execution requirement as shipped (T5 C4b, part 1)
+
+- An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
+  invalid request; it is now the default made explicit and reaches the authority exactly as an
+  omitted requirement does, so both share one operation identity (the second is a replay, not a
+  conflict). `durable` is still refused while no durable journal store is qualified, before any
+  identity is reserved.
+- REST discovery (`GET …/application`) now publishes `writeExecution` (it was added only to the
+  service's return value, which REST does not send), and "nothing bound" stays `null` instead of
+  becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
+
 ### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
 
 - Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository

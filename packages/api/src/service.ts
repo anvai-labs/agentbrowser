@@ -2659,22 +2659,36 @@ export class AgentBrowserService {
     principal: SessionPrincipal,
     publication?: Parameters<ApplicationAuthority['discover']>[2]
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
-    const discovery = (await this.applicationAuthority.discover(
-      sessionId,
-      principal,
-      publication
-    )) as Record<string, unknown>;
-    // C4b: surface the execution-requirement capability so callers can
-    // discover what the runtime supports before dispatching.
-    return {
-      ...discovery,
-      writeExecution: {
-        defaultRequirement: 'ephemeral',
-        supportedRequirements: this.durableJournalAvailable
-          ? ['ephemeral', 'durable']
-          : ['ephemeral'],
-      },
-    } as unknown as Awaited<ReturnType<ApplicationAuthority['discover']>>;
+    // C4b: surface the execution-requirement capability so callers can discover what the
+    // runtime supports before dispatching. It is added on the PUBLISHED value too (REST
+    // publishes, it does not use the return value), and never to "nothing bound" (null).
+    type Discovery = Awaited<ReturnType<ApplicationAuthority['discover']>>;
+    const withWriteExecution = <T extends Discovery>(discovery: T): T =>
+      discovery === null || 'replay' in discovery
+        ? discovery
+        : ({
+            ...discovery,
+            writeExecution: {
+              defaultRequirement: 'ephemeral',
+              supportedRequirements: this.durableJournalAvailable
+                ? ['ephemeral', 'durable']
+                : ['ephemeral'],
+            },
+          } as unknown as T);
+    const published =
+      publication === undefined
+        ? undefined
+        : {
+            timeoutMs: publication.timeoutMs,
+            ...(publication.signal !== undefined ? { signal: publication.signal } : {}),
+            publish: (
+              value: Parameters<typeof publication.publish>[0],
+              context: Parameters<typeof publication.publish>[1]
+            ) => publication.publish(withWriteExecution(value), context),
+          };
+    return withWriteExecution(
+      await this.applicationAuthority.discover(sessionId, principal, published)
+    );
   }
 
   /** Allocate one pending review; no execution identity is reserved or dispatched. */
@@ -2791,10 +2805,18 @@ export class AgentBrowserService {
         false
       );
     }
+    // 'ephemeral' is the default made explicit: strip it so an explicit and an omitted
+    // requirement reach the authority as the same request (same canonical operation identity).
+    // 'durable' stays in the request until it is folded into the operation identity (J-b); the
+    // authority's request allowlist refuses it meanwhile, so it can never run as ephemeral.
+    const { executionRequirement: _requirement, ...request } = validated.value as Record<
+      string,
+      unknown
+    >;
     return this.applicationAuthority.execute(
       sessionId,
       principal,
-      validated.value,
+      (executionRequirement === 'durable' ? validated.value : request) as typeof validated.value,
       publication,
       replay
     );
