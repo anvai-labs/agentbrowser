@@ -18,6 +18,32 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Key loss and in-place key rotation are refused at startup as a configuration mismatch, without
   exposing key material.
 
+### Added — a repeatable real-ZAP recorded run (T7 depth)
+
+- `scripts/zap-depth-run.mjs` runs the ZAP adapter against a real OWASP ZAP daemon and its own
+  deliberately vulnerable fixture. It archives the result, sanitized raw alerts and the fixture
+  source, and fails unless the seeded reflected XSS is found and every finding stays
+  `suspected`.
+- The dispatch-only `zap-depth.yml` workflow runs it in CI with the digest-pinned ZAP image.
+- First run (2026-10-15, ZAP 2.17.0): the seeded XSS plus four header and DOM findings, archived
+  under `docs/spec/evidence/t7-zap-depth/`.
+
+### Docs — proposed: T5 recovery design (J3, J4, browser-operation durability)
+
+- `docs/spec/design/t5-recovery-design.md` (Proposed, awaiting the owner's sign-off) refines J3
+  and J4 on top of the wired journal. It has seven decision points:
+  - D1: operator-only historical lookup;
+  - D2: close or continue only never-dispatched records, closed as marked pre-dispatch failures;
+  - D3: an unknown outcome is resolved only by an opt-in, typed adapter `reconcile` bound to the
+    original operation, never by replay; the operator may also settle it as unknown;
+  - D4: events and cursors are not recovered;
+  - D5: recovery status for operators on the qualified matrix;
+  - D6: browser operations journaled for classification only, which narrows R08;
+  - D7: opt-in history namespaces after rotation, with full-descriptor entries and a stated
+    retention deadline.
+- It states what records do not hold (no times), what a new recovery write path needs, and that
+  the lookup is a bounded scan with no new DDL. Nothing is implemented.
+
 ### Added — durable application writes behind an opt-in journal (T5 C4b, J-d)
 
 - **Configuration.** Trusted variables open the qualified SQLite journal at startup:
