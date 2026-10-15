@@ -22,6 +22,7 @@ export type LauncherArgs =
   | { kind: 'help' }
   | { kind: 'version' }
   | { kind: 'install-browser' }
+  | { kind: 'policy-export' }
   | { kind: 'error'; message: string };
 
 export const LAUNCHER_HELP = SERVER_HELP.replace(

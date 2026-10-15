@@ -11,6 +11,7 @@ export * from './contracts.js';
 export * from './control.js';
 export * from './display.js';
 export * from './errors.js';
+export * from './event-replay.js';
 export * from './extraction.js';
 export * from './form-mapping.js';
 export * from './interaction-guidance.js';
@@ -19,6 +20,7 @@ export * from './navigation-failure.js';
 export * from './operator-approval.js';
 export * from './outcome.js';
 export * from './plan.js';
+export * from './policy-document.js';
 // Re-export all schemas and types
 export * from './schemas.js';
 export * from './session-diagnostics.js';

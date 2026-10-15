@@ -238,6 +238,32 @@ async validateMetadataAccess(hostname) {
 }
 ```
 
+**Implementation note (TD-BROWSER-15 phase 0, ADR-024 §1).** The implemented address set
+(`packages/policy/src/ip-address.ts`) is:
+- `169.254.0.0/16`, the whole IPv4 link-local range: IMDS, ECS task metadata `169.254.170.2`, EKS
+  Pod Identity `169.254.170.23`;
+- `100.100.100.200`, Alibaba Cloud (labelled "GCP V2" above, which is a mistake);
+- `168.63.129.16`, the Azure wire server;
+- `fd00:ec2::/64`, AWS IMDS and Pod Identity over IPv6;
+- `fd20:ce::254`, GCP, for IPv6-only instances;
+- `fd00:c1::a9fe:a9fe`, OCI over IPv6 (used by cloud-init; Oracle does not document it);
+- `fe80::/10`, IPv6 link-local.
+
+Names match `metadata.google.internal`, `metadata.goog` and their subdomains.
+
+IPv4 embedded in IPv6 is decoded and classified as a union with the address's own classes. That
+covers:
+- NAT64 `64:ff9b::/96`;
+- the local-use `64:ff9b:1::/48` under every RFC 6052 layout, and private as a whole. Because
+  every layout is read, almost any address here decodes to `0.0.0.0` and classifies as loopback,
+  so this prefix is effectively refused (fail-closed by design);
+- 6to4 `2002::/16`;
+- SIIT `::ffff:0:0:0/96`;
+- IPv4-compatible `::/96`, except `::` and `::1`.
+
+Operator CIDR exceptions must cover every source of privateness: the address as written, and each
+private IPv4 it embeds.
+
 ### Credential injection
 
 ```typescript

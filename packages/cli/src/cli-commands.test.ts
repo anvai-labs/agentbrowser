@@ -9,10 +9,11 @@
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { assertCookieRequestSize } from '@agentbrowser/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CliClient, CliDependencies } from './cli.js';
 import { buildCli } from './cli.js';
-import { assertCookieRequestSize, parseCookieText } from './cookie-file.js';
+import { parseCookieText } from './cookie-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
 
 describe('AgentBrowser CLI remaining command surface', () => {

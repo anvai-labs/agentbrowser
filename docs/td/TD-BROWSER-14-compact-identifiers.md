@@ -1,6 +1,6 @@
 # TD-BROWSER-14: Compact identifiers and explicit CLI context
 
-**Status:** Planned (target 1.18.0)
+**Status:** Planned (unscheduled; not in 1.18.0, which shipped TD-BROWSER-15/16)
 **Decision:** [ADR-022](../adr/022-compact-identifiers-and-cli-context.md)
 
 ## Problem
@@ -129,7 +129,8 @@ measurements show it matters.
 - Ids stay opaque strings, and the session schema pattern is unchanged.
 - Release notes call out the new formats, the public ids in `page.created`, the CLI context
   commands, and the `x-agentbrowser-generation` header.
-- Phases 1 to 3 ship in 1.18.0. Phase 1 alone has no visible change and could ship in a patch.
+- Phases 1 to 3 ship together in a minor release after 1.18.0. Phase 1 alone has no visible
+  change and could ship in a patch.
 
 ## Open questions
 

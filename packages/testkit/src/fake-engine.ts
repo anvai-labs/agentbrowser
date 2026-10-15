@@ -173,8 +173,23 @@ class FakeSession implements EngineSession {
     return Array.from(this._pages.values());
   }
 
+  /** TD-BROWSER-16 phase 6: the operator handoff's writes, recorded. */
+  private readonly _cookies: NormalizedCookie[] = [];
+  /** TD-BROWSER-16 phase 6: init scripts applied to the live session. */
+  readonly initScripts: string[] = [];
+
   async cookies(): Promise<NormalizedCookie[]> {
-    return [];
+    // Create-time seeds (previously dropped) and live handoff writes, so the
+    // cookie floor checks and the handoff tests observe real state.
+    return [...(this.options.cookies ?? []), ...this._cookies];
+  }
+
+  async addCookies(cookies: NormalizedCookie[]): Promise<void> {
+    this._cookies.push(...cookies.map((cookie) => ({ ...cookie })));
+  }
+
+  async addInitScript(script: string): Promise<void> {
+    this.initScripts.push(script);
   }
 
   async close(reason?: string): Promise<void> {

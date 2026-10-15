@@ -8,6 +8,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { assertCookieRequestSize } from '@agentbrowser/core';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -70,7 +71,7 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
-import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
+import { readCookieFile, writeCookieFile } from './cookie-file.js';
 import {
   createJsonArgumentReader,
   createTextArgumentReader,
@@ -152,7 +153,9 @@ function waitFromOptions(
 
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface CliClient
-  extends Partial<Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady'>> {
+  extends Partial<
+    Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady' | 'policy' | 'policyCheck'>
+  > {
   sessions: Pick<
     AgentBrowserClient['sessions'],
     | 'create'
@@ -180,6 +183,7 @@ export interface CliClient
     | 'pdf'
     | 'download'
     | 'collectDownload'
+    | 'cookieHandoff'
   > &
     Partial<
       Pick<
@@ -249,6 +253,74 @@ export function requireWireContract(
 
 const DEFAULT_BASE_URL = 'http://localhost:5709';
 
+/**
+ * TD-BROWSER-16 phase 1: operator-key input for the approval commands. The
+ * key comes from the key file or a no-echo prompt — an environment variable
+ * is agent-reachable, so it is never consulted.
+ */
+async function readFirstKey(
+  path: string,
+  err: (line: string) => void
+): Promise<string | undefined> {
+  const { readFile } = await import('node:fs/promises');
+  try {
+    const text = await readFile(path, 'utf8');
+    const first = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line !== '' && !line.startsWith('#'));
+    if (first === undefined) throw new Error('empty');
+    const at = first.lastIndexOf(':');
+    if (at <= 0) throw new Error('bad');
+    return first.slice(0, at);
+  } catch {
+    err(`agentbrowser: cannot read an operator key from ${path} (key:tenant lines)`);
+    return undefined;
+  }
+}
+
+async function resolveOperatorKey(
+  path: string | undefined,
+  deps: { err: (line: string) => void }
+): Promise<string | undefined> {
+  return path !== undefined ? readFirstKey(path, deps.err) : promptOperatorKey(deps);
+}
+
+async function promptOperatorKey(deps: {
+  err: (line: string) => void;
+}): Promise<string | undefined> {
+  // Without a TTY there is no safe prompt: refuse with the file suggestion
+  // instead of hanging or echoing (review findings 1 and 5).
+  if (!process.stdin.isTTY) {
+    deps.err(
+      'agentbrowser: an operator key is required — pass --operator-key-file (there is no prompt without a terminal)'
+    );
+    return undefined;
+  }
+  deps.err('Operator key (input hidden):');
+  const output = process.stdout;
+  const realWrite = output.write.bind(output);
+  let muted = false;
+  // Mute the echo: the typed key never reaches the terminal.
+  output.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+    if (muted) return true;
+    return realWrite(chunk, ...(rest as []));
+  }) as typeof output.write;
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, terminal: true, output });
+  // Mute BEFORE the question: readline echoes each keystroke through
+  // output while the user types, so muting only in the callback leaves the
+  // whole key on screen (review round 2).
+  muted = true;
+  const line: string | undefined = await new Promise<string | undefined>((resolve) => {
+    rl.question('', (answer: string) => resolve(answer.trim() === '' ? undefined : answer.trim()));
+  });
+  rl.close();
+  output.write = realWrite;
+  realWrite('\n');
+  return line;
+}
+
 export function buildCli(deps: CliDependencies): Cli {
   // The command tree is built per run(); the audit it produces is captured
   // here so jsonContractAudit() can serve the most recent run's snapshot.
@@ -315,6 +387,13 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
         .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
+        // TD-BROWSER-16 phase 1 (ADR-025): an operator key is NEVER taken
+        // from the environment — an env var is agent-reachable. Only the
+        // approval commands read it, from the key file or a no-echo prompt.
+        .option(
+          '--operator-key-file <path>',
+          'file holding a human-operator key (AGENTBROWSER_OPERATOR_KEYS_FILE format); approval commands only'
+        )
         .exitOverride();
 
       program.configureOutput({
@@ -328,6 +407,12 @@ export function buildCli(deps: CliDependencies): Cli {
         async (...args: A) => {
           const globals = program.opts();
           const apiKey = globals.apiKey ?? process.env.AGENTBROWSER_API_KEY;
+          // The operator key, when an approval command needs it: from the
+          // file, or a no-echo prompt — never an environment variable, and
+          // never for any other command.
+          // Only the approvals command resolves an operator key — never any
+          // other command whose argv merely contains the token.
+          const operatorKey: string | undefined = undefined;
           const ctx: CommandContext = {
             client: deps.createClient({
               baseUrl: globals.baseUrl,
@@ -341,6 +426,8 @@ export function buildCli(deps: CliDependencies): Cli {
             ...(act.opts().approvalToken
               ? { approvalToken: String(act.opts().approvalToken) }
               : {}),
+            ...(operatorKey !== undefined ? { operatorKey } : {}),
+            baseUrl: globals.baseUrl ?? 'http://localhost:5709',
             ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
             out: deps.out,
             emit: (value: unknown, render: () => string[]) => {
@@ -741,6 +828,72 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      // TD-BROWSER-16 phase 7 (ADR-025 s3): the agent-side handoff. The first
+      // call surfaces the approval request (token id + counts — never
+      // values); the operator decides with their key, then --approval-token
+      // retries.
+      withUsage(session.command('cookie-handoff'), COOKIE_USAGE)
+        .description(
+          'hand the operator login cookies into a session; first call returns the approval to relay'
+        )
+        .argument('<sessionId>')
+        .requiredOption('--domain <domain...>', 'exact host(s) to hand over')
+        .option('--approval-token <token>', 'retry with the operator-decided approval token')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: { domain: string[]; approvalToken?: string }
+            ) => {
+              const result = await ctx.client.sessions
+                .cookieHandoff(sessionId, {
+                  domains: options.domain,
+                  ...(options.approvalToken !== undefined
+                    ? { approvalToken: options.approvalToken }
+                    : {}),
+                })
+                .catch((error: { code?: string; details?: Record<string, unknown> }) => {
+                  if (error.code === 'APPROVAL_REQUIRED' && error.details?.tokenId) {
+                    const details = error.details;
+                    // Enumerated, like the MCP relay: any future
+                    // server-side detail flows nowhere silently (review F6).
+                    ctx.emit(
+                      {
+                        approvalRequired: true,
+                        tokenId: details.tokenId,
+                        kind: details.kind,
+                        sessionId,
+                        domains: details.domains,
+                        counts: details.counts,
+                      },
+                      () => [
+                        'Approval required — relay to the operator:',
+                        `  token: ${String(details.tokenId)}`,
+                        `  domains: ${(details.domains as string[] | undefined)?.join(', ') ?? options.domain.join(', ')}`,
+                        `  counts: ${JSON.stringify(details.counts ?? {})}`,
+                        'They decide with: agentbrowser operator approve ' +
+                          `${sessionId} ${String(details.tokenId)}`,
+                        'Then retry with --approval-token.',
+                      ]
+                    );
+                    return undefined;
+                  }
+                  throw error;
+                });
+              if (result !== undefined)
+                ctx.emit(result, () => [
+                  `Handed over ${result.domains.join(', ')} — ${result.counts.cookies ?? 0} cookie(s), session marked credentialSource:operator`,
+                  ...(result.lease !== undefined
+                    ? [
+                        `lease: ${result.lease.remainingActions}/${result.lease.maxActions} actions on ${result.lease.hosts.join(', ')}`,
+                      ]
+                    : []),
+                ]);
+            }
+          )
+        );
+
       // A3 evidence: export the session's completed spans as an artifact.
       session
         .command('trace')
@@ -782,7 +935,11 @@ export function buildCli(deps: CliDependencies): Cli {
                   throw new UsageError('--since/--limit require --type (cursors are per-ledger)');
               }
               const since =
-                options.since !== undefined ? captureInteger(options.since, '--since') : undefined;
+                options.since === undefined
+                  ? undefined
+                  : options.since === '-1'
+                    ? -1 // the from-the-start cursor an empty page returns
+                    : captureInteger(options.since, '--since');
               const limit =
                 options.limit !== undefined ? captureInteger(options.limit, '--limit') : undefined;
               // One call shape for every flag combination: the object selector
@@ -796,6 +953,9 @@ export function buildCli(deps: CliDependencies): Cli {
               });
               ctx.emit(envelope, () => [
                 `nextCursor: ${envelope.nextCursor}`,
+                ...(envelope.gap
+                  ? [`gap: true (entries evicted before oldest retained seq ${envelope.oldestSeq})`]
+                  : []),
                 ...envelope.events.map(describe),
               ]);
             }
@@ -1981,6 +2141,240 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
 
+      // TD-BROWSER-16 phase 7: the human operator's own commands. The key
+      // resolves from --operator-key-file or a no-echo prompt, never env —
+      // the phase-1 rule, applied to every command in this group.
+      const operator = program
+        .command('operator')
+        .description('human-operator commands (operator key from --operator-key-file or prompt)');
+      const loginBrowser = operator
+        .command('login-browser')
+        .description('the operator login browser (headed, your own persistent profile)');
+      for (const [verb, description] of [
+        ['open', 'open the login browser (headed, your own profile)'],
+        ['close', 'close the login browser; session cookies are dropped'],
+        ['reset', 'delete the login profile (close first)'],
+      ] as const) {
+        loginBrowser
+          .command(verb)
+          .description(description)
+          .action(
+            action(async (ctx) => {
+              const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+              if (!operatorKey)
+                throw new UsageError(
+                  'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
+                );
+              const res = await fetch(`${ctx.baseUrl}/v1/operator/login/${verb}`, {
+                method: 'POST',
+                headers: { authorization: `Bearer ${operatorKey}` },
+                signal: AbortSignal.timeout(60_000),
+              });
+              if (!res.ok) {
+                const body = (await res.json().catch(() => ({}))) as {
+                  error?: { code?: string; message?: string };
+                };
+                throw new UsageError(
+                  `operator login-browser ${verb} failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+                );
+              }
+              const body = (await res.json()) as unknown;
+              ctx.emit(body, () => [`login browser: ${JSON.stringify(body)}`]);
+            })
+          );
+      }
+      operator
+        .command('approve <sessionId> <tokenId>')
+        .description('approve a pending approval as the human operator; may attach a lease')
+        .option(
+          '--lease <spec...>',
+          'lease to attach: hosts=<host,...> minutes=<n> actions=<n> (cookie.handoff approvals)'
+        )
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string, options: { lease?: string[] }) => {
+            const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+            if (!operatorKey)
+              throw new UsageError(
+                'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
+              );
+            let lease: { hosts: string[]; expiresInMs: number; maxActions: number } | undefined;
+            if (options.lease !== undefined) {
+              // Total parse (review F3): a stray token (the shell splitting
+              // 'hosts=a, b') or a duplicated key refuses loudly — never a
+              // silent under-grant.
+              const leaseKeys = new Set<string>();
+              for (const part of options.lease) {
+                const key = part.includes('=') ? part.slice(0, part.indexOf('=')) : '';
+                if (key !== 'hosts' && key !== 'minutes' && key !== 'actions')
+                  throw new UsageError(
+                    `--lease has an unrecognized part '${part}'; expected hosts=<host,...> minutes=<n> actions=<n> (quote the list)`
+                  );
+                if (leaseKeys.has(key))
+                  throw new UsageError(`--lease repeats '${key}=' — give each key once`);
+                leaseKeys.add(key);
+              }
+              const hosts = options.lease.find((part) => part.startsWith('hosts='));
+              const minutes = options.lease.find((part) => part.startsWith('minutes='));
+              const actions = options.lease.find((part) => part.startsWith('actions='));
+              const hostList = hosts
+                ?.slice('hosts='.length)
+                .split(',')
+                .map((h) => h.trim())
+                .filter(Boolean);
+              const minutesValue =
+                minutes !== undefined ? Number(minutes.slice('minutes='.length)) : Number.NaN;
+              const actionsValue =
+                actions !== undefined ? Number(actions.slice('actions='.length)) : Number.NaN;
+              if (
+                !hostList?.length ||
+                !Number.isFinite(minutesValue) ||
+                minutesValue <= 0 ||
+                !Number.isFinite(actionsValue) ||
+                actionsValue <= 0
+              )
+                throw new UsageError(
+                  '--lease needs hosts=<host,...> minutes=<n> actions=<n> (all positive)'
+                );
+              lease = {
+                hosts: hostList,
+                expiresInMs: Math.round(minutesValue * 60_000),
+                maxActions: Math.round(actionsValue),
+              };
+            }
+            const res = await fetch(
+              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              {
+                method: 'POST',
+                headers: {
+                  authorization: `Bearer ${operatorKey}`,
+                  'content-type': 'application/json',
+                },
+                body: JSON.stringify({
+                  decision: 'approve',
+                  ...(lease !== undefined ? { lease } : {}),
+                }),
+                signal: AbortSignal.timeout(30_000),
+              }
+            );
+            if (!res.ok) {
+              const body = (await res.json().catch(() => ({}))) as {
+                error?: { code?: string; message?: string };
+              };
+              throw new UsageError(
+                `operator approve failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+              );
+            }
+            const body = (await res.json()) as unknown;
+            ctx.emit(body, () => [`decided: ${JSON.stringify(body)}`]);
+          })
+        );
+
+      program
+        .command('approvals')
+        .description(
+          'operator approval surface (TD-BROWSER-16): view or decide with a human-operator key'
+        )
+        .command('view <sessionId> <tokenId>')
+        .description('view one approval; the bound evidence for non-act kinds')
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string) => {
+            // The operator key resolves HERE — only this command, from the
+            // key file or a no-echo TTY prompt; never an environment
+            // variable, and never for any other command.
+            const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+            if (!operatorKey)
+              throw new UsageError(
+                'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
+              );
+            const res = await fetch(
+              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              {
+                headers: { authorization: `Bearer ${operatorKey}` },
+                signal: AbortSignal.timeout(30_000),
+              }
+            );
+            // A non-OK response is an error to STDERR with exit 1, like
+            // every other command (review finding 4).
+            if (!res.ok) {
+              const body = (await res.json().catch(() => ({}))) as {
+                error?: { code?: string; message?: string };
+              };
+              throw new UsageError(
+                `approvals view failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+              );
+            }
+            const body = (await res.json()) as unknown;
+            ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
+          })
+        );
+
+      program
+        .command('policy')
+        .description(
+          'show the loaded policy: version, limits and the capability summary for a default session of the caller tenant (TD-BROWSER-15)'
+        )
+        .action(
+          action(async (ctx) => {
+            if (!ctx.client.policy) throw new UsageError('Client does not support policy queries');
+            const result = await ctx.client.policy();
+            ctx.emit(result, () => {
+              const lines = [result.policyVersion];
+              lines.push(`summary for ${result.summaryFor}`);
+              for (const [name, decision] of Object.entries(result.capabilities)) {
+                lines.push(
+                  `${name}: ${decision.allowed ? 'allowed' : 'denied'} (${decision.ruleMatched ?? 'none'})`
+                );
+              }
+              return lines;
+            });
+          })
+        );
+
+      program
+        .command('policy-check')
+        .description(
+          'ask what the loaded policy would decide for one action and target; answers never resolve DNS (TD-BROWSER-15)'
+        )
+        .argument(
+          '<action>',
+          'request | request.loopback | request.private | act | act.unattended | a capability'
+        )
+        .argument('[target]', 'an IP literal or hostname')
+        .option('--effect <effect>', 'declared effect for act questions')
+        .option('--matched-rule <id>', 'declared matched rule id for act questions')
+        .action(
+          action(
+            async (
+              ctx,
+              action_: string,
+              target: string | undefined,
+              options: { effect?: string; matchedRule?: string }
+            ) => {
+              if (!ctx.client.policyCheck)
+                throw new UsageError('Client does not support policy queries');
+              const result = await ctx.client.policyCheck({
+                action: action_,
+                ...(target !== undefined ? { target } : {}),
+                context: {
+                  ...(options.effect !== undefined ? { effect: options.effect } : {}),
+                  ...(options.matchedRule !== undefined
+                    ? { matchedRule: options.matchedRule }
+                    : {}),
+                },
+              });
+              ctx.emit(result, () =>
+                result.answers.map((a) => {
+                  if (a.answer.kind === 'decision') {
+                    const d = a.answer.decision;
+                    return `${a.classSet}: ${d?.allowed ? 'allowed' : 'denied'} (${d?.ruleMatched ?? 'none'})`;
+                  }
+                  return `${a.classSet}: depends on the resolved address`;
+                })
+              );
+            }
+          )
+        );
+
       program
         .command('health')
         .description(
@@ -2386,6 +2780,9 @@ interface CommandContext {
   approvalToken?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
+  /** TD-BROWSER-16: the human-operator key for approval commands; never env. */
+  operatorKey?: string;
+  baseUrl: string;
   out(line: string): void;
   emit(value: unknown, render: () => string[]): void;
 }

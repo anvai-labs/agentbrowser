@@ -12,8 +12,8 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       '@vitest/coverage-v8':
         specifier: ^5.0.4
         version: 5.0.4(vitest@5.0.4)
@@ -22,7 +22,7 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^8
-        version: 8.3.4(@types/node@22.20.1)(esbuild@0.28.2)
+        version: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)
 
   packages/api:
     dependencies:
@@ -47,6 +47,9 @@ importers:
       '@agentbrowser/policy':
         specifier: workspace:^
         version: link:../policy
+      '@agentbrowser/policy-engine':
+        specifier: workspace:^
+        version: link:../policy-engine
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -67,8 +70,8 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -77,7 +80,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/audit:
     dependencies:
@@ -98,8 +101,8 @@ importers:
         specifier: ^30.0.0
         version: 30.0.0
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       '@types/pngjs':
         specifier: ^6.0.5
         version: 6.0.5
@@ -108,7 +111,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/benchmarks:
     dependencies:
@@ -130,6 +133,9 @@ importers:
       '@agentbrowser/policy':
         specifier: workspace:^
         version: link:../policy
+      '@agentbrowser/policy-engine':
+        specifier: workspace:^
+        version: link:../policy-engine
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -141,17 +147,20 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/cli:
     dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:^
+        version: link:../core
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript
@@ -163,14 +172,14 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/control:
     dependencies:
@@ -189,7 +198,7 @@ importers:
         version: link:../testkit
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/core:
     dependencies:
@@ -199,10 +208,13 @@ importers:
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
+      tldts:
+        specifier: 6.1.76
+        version: 6.1.76
     devDependencies:
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/engine:
     dependencies:
@@ -212,7 +224,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/engine-firefox:
     dependencies:
@@ -236,14 +248,14 @@ importers:
         specifier: 3.2.2
         version: 3.2.2
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/engine-obscura:
     dependencies:
@@ -261,14 +273,14 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/engine-playwright:
     dependencies:
@@ -292,14 +304,14 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
       ws:
         specifier: ^8.22.0
         version: 8.22.0
@@ -320,14 +332,14 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/extraction:
     dependencies:
@@ -348,14 +360,14 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/mcp-server:
     devDependencies:
@@ -369,8 +381,8 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -379,7 +391,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/policy:
     dependencies:
@@ -391,14 +403,45 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
+
+  packages/policy-engine:
+    dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbrowser/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@cedar-policy/cedar-wasm':
+        specifier: 4.13.0
+        version: 4.13.0
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.5.15
+        version: 2.5.15
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      fast-check:
+        specifier: ^4.10.2
+        version: 4.10.2
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.4
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/protocol:
     dependencies:
@@ -408,7 +451,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/sdk-typescript:
     dependencies:
@@ -420,14 +463,14 @@ importers:
         specifier: ^2.5.15
         version: 2.5.15
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.1
+        specifier: ^22.20.5
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   packages/testkit:
     dependencies:
@@ -440,7 +483,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^5.0.4
-        version: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
 packages:
 
@@ -529,6 +572,9 @@ packages:
   '@bramus/specificity@2.4.2':
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
+
+  '@cedar-policy/cedar-wasm@4.13.0':
+    resolution: {integrity: sha512-1omEd/J0c7RjcfSUWiXZc6zk6XUs1IuY7Yk9TVysoKV/LpFWIk45RpjvRFVioPUR3RQmgA/DaqKhK3pucbBx1A==}
 
   '@csstools/color-helpers@6.1.2':
     resolution: {integrity: sha512-grhRy3OKmniaAEKXMjua5z/EODX0MSqBGjunw8+j/3HQjOnahs2AGhvEOIYVUWcU6ScApbhLhVrQTX8XqrMrow==}
@@ -892,8 +938,8 @@ packages:
   '@types/jsdom@30.0.0':
     resolution: {integrity: sha512-uAHGxujGE0cDaKGdK28zgDotFtNA7MKq5DXl8LrfdxdCI8VHcg15oJz+amHTChPNI5JpgEPQWc2xFdrw3em/nQ==}
 
-  '@types/node@22.20.1':
-    resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
+  '@types/node@22.20.5':
+    resolution: {integrity: sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==}
 
   '@types/pngjs@6.0.5':
     resolution: {integrity: sha512-0k5eKfrA83JOZPppLtS2C7OUtyNAl2wKNxfyYl9Q5g9lPkgBl/9hNyAu6HuEH2J4XmIv2znEpkDd0SaZVxW6iQ==}
@@ -1102,6 +1148,10 @@ packages:
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
+
+  fast-check@4.10.2:
+    resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
+    engines: {node: '>=12.17.0'}
 
   fast-decode-uri-component@1.0.1:
     resolution: {integrity: sha512-WKgKWg5eUxvRZGwW8FvfbaH7AXSh2cL+3j5fMGzUMCxWBJ3dV3a7Wz8y2f/uQ0e3B6WmodD3oS54jTQ9HVTIIg==}
@@ -1372,6 +1422,9 @@ packages:
     resolution: {integrity: sha512-Ujym7JbxoAqanaxGcHgmTomfhC01HfDCSuGZ8Hs9boHrDjzbNVMnFRJo2KtbDT9LCRgeJoFnkn9JQZ41eEUrLw==}
     engines: {node: '>=22.12.0'}
 
+  pure-rand@8.4.2:
+    resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
+
   quick-format-unescaped@4.0.4:
     resolution: {integrity: sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==}
 
@@ -1484,8 +1537,15 @@ packages:
     resolution: {integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==}
     engines: {node: '>=14.0.0'}
 
+  tldts-core@6.1.86:
+    resolution: {integrity: sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==}
+
   tldts-core@7.4.16:
     resolution: {integrity: sha512-MDolfaSJtlSK5Y0A1xl3277ekubZwobpBjugknDizI9O5Rm60a1m8k4ICK+MRsCDzPygT81mp3BBf5RKDlFRfA==}
+
+  tldts@6.1.76:
+    resolution: {integrity: sha512-6U2ti64/nppsDxQs9hw8ephA3nO6nSQvVVfxwRw8wLQPFtLI1cFI1a1eP22g+LUP+1TA2pKKjUTwWB+K2coqmQ==}
+    hasBin: true
 
   tldts@7.4.16:
     resolution: {integrity: sha512-QwBER5KMR86IIjpIiO7H/Z3IMJPsZ1A6RKPAqzTTgOyUQUSt9FdnKcqhTaJmkY6HVrgouZHZR0ncK5QxvmnQeg==}
@@ -1759,6 +1819,8 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
+  '@cedar-policy/cedar-wasm@4.13.0': {}
+
   '@csstools/color-helpers@6.1.2': {}
 
   '@csstools/css-calc@3.4.3(@csstools/css-parser-algorithms@4.0.2(@csstools/css-tokenizer@4.0.2))(@csstools/css-tokenizer@4.0.2)':
@@ -1978,18 +2040,18 @@ snapshots:
 
   '@types/jsdom@30.0.0':
     dependencies:
-      '@types/node': 22.20.1
+      '@types/node': 22.20.5
       '@types/tough-cookie': 4.0.5
       parse5: 8.0.1
       undici-types: 8.11.2
 
-  '@types/node@22.20.1':
+  '@types/node@22.20.5':
     dependencies:
       undici-types: 6.21.0
 
   '@types/pngjs@6.0.5':
     dependencies:
-      '@types/node': 22.20.1
+      '@types/node': 22.20.5
 
   '@types/tough-cookie@4.0.5': {}
 
@@ -2003,7 +2065,7 @@ snapshots:
       obug: 3.0.0
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+      vitest: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
 
   '@vitest/istanbul-lib-coverage@1.0.2': {}
 
@@ -2011,14 +2073,14 @@ snapshots:
     dependencies:
       '@vitest/istanbul-lib-coverage': 1.0.2
 
-  '@vitest/mocker@5.0.4(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))':
+  '@vitest/mocker@5.0.4(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       '@vitest/spy': 5.0.4
       estree-walker: 3.0.3
       magic-string: 1.4.3
     optionalDependencies:
-      vite: 8.3.4(@types/node@22.20.1)(esbuild@0.28.2)
+      vite: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)
 
   '@vitest/spy@5.0.4': {}
 
@@ -2205,6 +2267,10 @@ snapshots:
       '@types/estree': 1.0.9
 
   expect-type@1.4.0: {}
+
+  fast-check@4.10.2:
+    dependencies:
+      pure-rand: 8.4.2
 
   fast-decode-uri-component@1.0.1: {}
 
@@ -2483,6 +2549,8 @@ snapshots:
       - utf-8-validate
       - yauzl
 
+  pure-rand@8.4.2: {}
+
   quick-format-unescaped@4.0.4: {}
 
   readable-stream@3.6.2:
@@ -2588,7 +2656,13 @@ snapshots:
 
   tinyrainbow@3.2.0: {}
 
+  tldts-core@6.1.86: {}
+
   tldts-core@7.4.16: {}
+
+  tldts@6.1.76:
+    dependencies:
+      tldts-core: 6.1.86
 
   tldts@7.4.16:
     dependencies:
@@ -2618,7 +2692,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2):
+  vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -2626,14 +2700,14 @@ snapshots:
       rolldown: 1.2.13
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 22.20.1
+      '@types/node': 22.20.5
       esbuild: 0.28.2
       fsevents: 2.3.3
 
-  vitest@5.0.4(@types/node@22.20.1)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2)):
+  vitest@5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/mocker': 5.0.4(vite@8.3.4(@types/node@22.20.1)(esbuild@0.28.2))
+      '@vitest/mocker': 5.0.4(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
       chai: 6.3.0
       es-module-lexer: 2.3.2
       expect-type: 1.4.0
@@ -2644,10 +2718,10 @@ snapshots:
       tinybench: 6.2.2
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
-      vite: 8.3.4(@types/node@22.20.1)(esbuild@0.28.2)
+      vite: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)
       why-is-node-running: 3.2.1
     optionalDependencies:
-      '@types/node': 22.20.1
+      '@types/node': 22.20.5
       '@vitest/coverage-v8': 5.0.4(vitest@5.0.4)
       jsdom: 30.1.2
     transitivePeerDependencies:

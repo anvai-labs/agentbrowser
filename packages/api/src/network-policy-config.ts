@@ -1,9 +1,10 @@
 import { NetworkPolicy } from '@agentbrowser/policy';
+import { type Authorizer, egressExceptionsOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
 
 const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 /** Startup-only, finite byte budget; malformed configuration must not disable the gate. */
-function responseBytesFromEnvironment(raw: string | undefined): number | undefined {
+export function responseBytesFromEnvironment(raw: string | undefined): number | undefined {
   const value = raw?.trim();
   if (!value) return undefined;
   const bytes = Number(value);
@@ -25,7 +26,40 @@ export function createDefaultNetworkPolicy(allowedPrivateCIDRs: string[] = []): 
     blockPrivateIPs: true,
     blockMetadata: true,
     allowedPrivateCIDRs,
+    // TD-BROWSER-15 phase 1: the exceptions are answered through the Authorizer seam.
+    exceptions: egressExceptionsOf(new LegacyAuthorizer({ allowedPrivateCIDRs })),
   });
+}
+
+/**
+ * TD-BROWSER-15 phase 4: the legacy authorizer for exactly the environment's
+ * decisions — the shadow's deciding side, so shadow mode observes and never
+ * changes behavior. Parsed identically to networkPolicyFromEnvironment.
+ */
+export function legacyAuthorizerFromEnvironment(
+  env: {
+    AGENTBROWSER_ALLOWED_CIDRS?: string | undefined;
+    AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
+  },
+  unknownRisk: 'allow' | 'required' = 'allow'
+): LegacyAuthorizer {
+  const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
+  return new LegacyAuthorizer({
+    allowLoopback: /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? ''),
+    allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
+    unknownRisk,
+  });
+}
+
+/**
+ * TD-BROWSER-15 phase 4: the approval policy's unknownRisk from the
+ * environment, for the shadow's deciding side — the same value the service's
+ * default authorizer would use. Invalid JSON throws exactly as startup does.
+ */
+export function unknownRiskFromEnvironment(raw: string | undefined): 'allow' | 'required' {
+  if (raw === undefined) return 'allow';
+  const parsed = JSON.parse(raw) as { unknownRisk?: unknown };
+  return parsed.unknownRisk === 'required' ? 'required' : 'allow';
 }
 
 /** Operator startup configuration only; never read from session/request input. */
@@ -35,7 +69,14 @@ export function networkPolicyFromEnvironment(
     AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
     AGENTBROWSER_MAX_RESPONSE_BYTES?: string | undefined;
   },
-  warn: (message: string) => void = console.warn
+  warn: (message: string) => void = console.warn,
+  /**
+   * TD-BROWSER-15 phase 4: the authorizer answering the exception hooks.
+   * Default: the legacy authorizer (today's decisions). Shadow mode passes
+   * its wrapper so the Cedar side observes egress questions too, while the
+   * legacy side still decides.
+   */
+  exceptionsAuthorizer?: Authorizer
 ): NetworkPolicy {
   const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
   // Empty/unset disables exceptions. Empty entries in a nonempty list are errors,
@@ -53,6 +94,10 @@ export function networkPolicyFromEnvironment(
     blockMetadata: true,
     allowedPrivateCIDRs: cidrs,
     ...(maxResponseSize !== undefined ? { maxResponseSize } : {}),
+    // TD-BROWSER-15 phase 1: the exceptions are answered through the Authorizer seam.
+    exceptions: egressExceptionsOf(
+      exceptionsAuthorizer ?? new LegacyAuthorizer({ allowLoopback, allowedPrivateCIDRs: cidrs })
+    ),
   });
   if (allowLoopback) {
     warn(

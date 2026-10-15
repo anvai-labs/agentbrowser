@@ -108,6 +108,89 @@ describe('ArtifactStore', () => {
     expect(artifacts.get(second.artifactId)).toBeDefined();
   });
 
+  describe('tenant-aware eviction and the aggregate byte cap', () => {
+    const bytes = (size: number) => new Uint8Array(size);
+
+    const owned = (artifacts: ArtifactStore, ids: string[]) =>
+      ids.filter((id) => artifacts.get(id) !== undefined).length;
+
+    it('lets a late tenant reach an equal share by evicting the largest holder', () => {
+      const artifacts = store({ maxArtifacts: 4 });
+      const b = [1, 2, 3, 4].map(
+        () => artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' }).artifactId
+      );
+      // Review regression: own-tenant-first eviction let a late tenant keep one artifact.
+      const a = [1, 2].map(
+        () => artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' }).artifactId
+      );
+      expect(owned(artifacts, a)).toBe(2);
+      expect(owned(artifacts, b)).toBe(2);
+      expect(artifacts.get(b[0] as string)).toBeUndefined(); // b's oldest went first
+      // At an equal share, a tie evicts the writer's own oldest.
+      artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      expect(owned(artifacts, a)).toBe(1);
+      expect(owned(artifacts, b)).toBe(2);
+    });
+
+    it('cannot flush another tenant below an equal byte share by alternating sizes', () => {
+      const artifacts = store({ maxBytes: 10, maxTotalBytes: 40 });
+      const b = [1, 2, 3, 4].map(
+        () => artifacts.put('pdf', 'application/pdf', bytes(10), { tenantId: 'b' }).artifactId
+      );
+      // Review regression: small/large alternation used to evict ~10 bytes of b per pair.
+      for (let round = 0; round < 20; round += 1) {
+        artifacts.put('pdf', 'application/pdf', bytes(1), { tenantId: 'a' });
+        artifacts.put('pdf', 'application/pdf', bytes(10), { tenantId: 'a' });
+      }
+      const bHeld = b.filter((id) => artifacts.get(id) !== undefined).length * 10;
+      expect(bHeld).toBeGreaterThanOrEqual(20 - 10); // equal share of 40, within one artifact
+      expect(artifacts.totalBytes()).toBeLessThanOrEqual(40);
+    });
+
+    it('evicts the heaviest writer from itself', () => {
+      const artifacts = store({ maxArtifacts: 3 });
+      const b = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
+      const a1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      expect(artifacts.get(b.artifactId)).toBeDefined();
+      expect(artifacts.get(a1.artifactId)).toBeUndefined();
+    });
+
+    it('evicts until the new payload fits under maxTotalBytes', () => {
+      const artifacts = store({ maxBytes: 10, maxTotalBytes: 20 });
+      const first = artifacts.put('pdf', 'application/pdf', bytes(8));
+      const second = artifacts.put('pdf', 'application/pdf', bytes(8));
+      expect(artifacts.totalBytes()).toBe(16);
+      const third = artifacts.put('pdf', 'application/pdf', bytes(10));
+
+      expect(artifacts.get(first.artifactId)).toBeUndefined();
+      expect(artifacts.get(second.artifactId)).toBeDefined();
+      expect(artifacts.get(third.artifactId)).toBeDefined();
+      expect(artifacts.totalBytes()).toBe(18);
+    });
+
+    it('keeps the byte total consistent through expiry, sweep and clear', () => {
+      const artifacts = store({ ttlMs: 1_000 });
+      const first = artifacts.put('pdf', 'application/pdf', bytes(5));
+      clock.now += 600;
+      artifacts.put('pdf', 'application/pdf', bytes(7));
+      clock.now += 500;
+      expect(artifacts.get(first.artifactId)).toBeUndefined();
+      expect(artifacts.totalBytes()).toBe(7);
+      clock.now += 1_000;
+      artifacts.sweep();
+      expect(artifacts.totalBytes()).toBe(0);
+      artifacts.put('pdf', 'application/pdf', bytes(3));
+      artifacts.clear();
+      expect(artifacts.totalBytes()).toBe(0);
+    });
+
+    it('rejects a per-artifact limit above the aggregate cap', () => {
+      expect(() => store({ maxBytes: 11, maxTotalBytes: 10 })).toThrow(ArtifactError);
+    });
+  });
+
   it('should clear with the store', () => {
     const artifacts = store();
     const { artifactId } = artifacts.put('download', 'text/plain', new Uint8Array([1]));

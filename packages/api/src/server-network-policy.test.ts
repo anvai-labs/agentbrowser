@@ -208,3 +208,35 @@ it('rejects an out-of-range snapshotTimeoutMs before it reaches the engine', asy
     await server.close();
   }
 });
+
+it('keeps the metadata floor over an embedded policy that turns metadata blocking off', async () => {
+  // TD-BROWSER-15 phase 0: `new NetworkPolicy({})` leaves blockMetadata off; the
+  // service still wraps every session chain in the metadata floor.
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  const server = await buildServer({ engine, networkPolicy: new NetworkPolicy({}) });
+  try {
+    for (const payload of [
+      { tenantId: 'test' },
+      { tenantId: 'test', policy: { allowedHosts: ['169.254.169.254', 'example.com'] } },
+    ]) {
+      const response = await server.inject({ method: 'POST', url: '/v1/sessions', payload });
+      expect(response.statusCode).toBe(201);
+      const policy = createSession.mock.calls.at(-1)?.[0].requestPolicy;
+      await expect(
+        policy?.checkRequest({ hostname: '169.254.169.254', url: 'http://169.254.169.254/' })
+      ).rejects.toMatchObject({ details: { rule: 'floor.metadata' } });
+      await expect(policy?.checkResolvedAddresses?.(['fd00:ec2::254'])).rejects.toMatchObject({
+        details: { rule: 'floor.metadata' },
+      });
+      await expect(
+        policy?.checkRedirectChain?.([{ url: 'http://metadata.google.internal/' }])
+      ).rejects.toMatchObject({ details: { rule: 'floor.metadata' } });
+      await expect(
+        policy?.checkRequest({ hostname: 'example.com', url: 'https://example.com/' })
+      ).resolves.toBeUndefined();
+    }
+  } finally {
+    await server.close();
+  }
+});

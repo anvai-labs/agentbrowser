@@ -15,7 +15,10 @@ jobs:
     name: Tag matches package version
     runs-on: ubuntu-latest
     steps:
+      # Full history: the ancestry check below compares the tag commit with main.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
@@ -24,6 +27,13 @@ jobs:
       # The root product version owns every manifest and generated runtime stamp.
       - name: Verify tag and first-party versions
         run: node scripts/sync-versions.mjs --tag "$GITHUB_REF_NAME"
+
+      # T9 S1a / R14: only tags cut from main publish. Every building and
+      # publishing job depends on this job, directly or through binaries.
+      - name: Verify the tag commit is on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          node scripts/check-tag-ancestry.mjs --commit "$GITHUB_SHA" --main-ref origin/main
 
   binaries:
     name: Build ${{ matrix.artifact }}

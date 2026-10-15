@@ -44,21 +44,39 @@ export class JsonLedger<T> {
     return [...this.entries.values()].map(({ json }) => JSON.parse(json) as T);
   }
 
-  /** Entries with sequence > since, oldest first, capped at limit. Cursors
-   * are the entry sequence numbers; eviction simply removes low sequences,
-   * so a cursor below the retained window re-reads from the oldest kept
-   * entry rather than failing.
+  /** Paging, oldest first. Up to `limit` (matching) entries with sequence >
+   * since. Cursors are entry sequence numbers; eviction removes low sequences,
+   * so a cursor below the retained window re-reads from the oldest kept entry.
+   * `lastScanned` is the sequence of the last entry examined, matched or not,
+   * so the next cursor moves past skipped entries; it is `since` when nothing
+   * lies after the cursor. `oldestSeq` is the lowest retained sequence (the
+   * next sequence to be written when empty); `gap` is true when entries
+   * between the cursor and the retained window were evicted.
    */
-  entriesAfter(since: number, limit: number): { seq: number; value: T }[] {
+  page(
+    since: number,
+    limit: number,
+    predicate?: (value: T) => boolean
+  ): {
+    rows: { seq: number; value: T }[];
+    lastScanned: number;
+    oldestSeq: number;
+    gap: boolean;
+  } {
     if (!Number.isSafeInteger(since) || !Number.isSafeInteger(limit) || limit < 1)
       throw new Error('Invalid ledger paging arguments');
-    const out: { seq: number; value: T }[] = [];
+    const oldestSeq = this.entries.keys().next().value ?? this.sequence;
+    const rows: { seq: number; value: T }[] = [];
+    let lastScanned = since;
     for (const [seq, entry] of this.entries) {
       if (seq <= since) continue;
-      out.push({ seq, value: JSON.parse(entry.json) as T });
-      if (out.length >= limit) break;
+      lastScanned = seq;
+      const value = JSON.parse(entry.json) as T;
+      if (predicate && !predicate(value)) continue;
+      rows.push({ seq, value });
+      if (rows.length >= limit) break;
     }
-    return out;
+    return { rows, lastScanned, oldestSeq, gap: since < oldestSeq - 1 };
   }
 
   get stats() {

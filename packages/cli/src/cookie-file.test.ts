@@ -104,7 +104,14 @@ describe('cookie-file credential handoff', () => {
     [JSON.stringify([{ ...cookie, partitionKey: 'PRIVATE-COOKIE' }]), []],
     [JSON.stringify([{ ...cookie, unknownSecurity: true }]), []],
     [JSON.stringify([cookie, cookie]), []],
-    [JSON.stringify([cookie, { ...cookie, domain: '.example.com' }]), []],
+    [
+      JSON.stringify([
+        cookie,
+        { ...cookie, domain: '.example.com', path: '/app' },
+        { ...cookie, domain: '.example.com', path: '/app' },
+      ]),
+      [],
+    ],
     [JSON.stringify([{ ...cookie, name: '__Host-sid', secure: true, domain: '.example.com' }]), []],
     [JSON.stringify([{ ...cookie, name: '__Secure-sid' }]), []],
     [JSON.stringify([{ ...cookie, sameSite: 'None' }]), []],
@@ -344,4 +351,25 @@ describe('cookie-file credential handoff', () => {
       expect(h.err.join()).not.toContain('PRIVATE-COOKIE');
     }
   );
+});
+
+describe('the dedup fix (TD-BROWSER-16 phase 3)', () => {
+  it('host-only and .domain cookies with the same name and path are distinct', async () => {
+    // Both forms load together: the leading dot is scope, not formatting.
+    const h = await importFile(JSON.stringify([cookie, { ...cookie, domain: '.example.com' }]));
+    expect(h.err).toEqual([]);
+    expect(h.create).toHaveBeenCalledTimes(1);
+    expect(h.create.mock.calls[0]?.[0].cookies).toHaveLength(2);
+  });
+
+  it('same-scope duplicates still refuse', async () => {
+    const h = await importFile(
+      JSON.stringify([
+        { ...cookie, domain: '.example.com' },
+        { ...cookie, domain: '.example.com' },
+      ])
+    );
+    expect(h.code).toBe(1);
+    expect(h.err.join()).toMatch(/duplicate name\/scope\/domain\/path/);
+  });
 });

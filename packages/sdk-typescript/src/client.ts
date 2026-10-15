@@ -15,6 +15,7 @@ import {
   SELF_ADMITTING_ROUTE_SEGMENTS,
   type SnapshotControl,
   validateApplicationReview,
+  validateCookieHandoffRequest,
   validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 /**
@@ -33,12 +34,15 @@ import type {
   AutofillReport,
   AutofillRequest,
   ControlView,
+  CookieHandoffRequest,
   DELIVERED_ACTION_TYPES,
   OperationRecord,
   RunCursor,
   SessionRequest,
 } from '@agentbrowser/protocol';
 
+/** Event replay envelope (protocol single source, ADR-015). `oldestSeq`/`gap`
+ * are present on paged responses from servers that report eviction gaps. */
 export type {
   ApplicationBinding,
   ApplicationDiscovery,
@@ -52,7 +56,9 @@ export type {
   OutcomeRunReport,
   OutcomeRunRequest,
   RunCursor,
+  SessionEventsPage,
 } from '@agentbrowser/protocol';
+
 export interface MutationOptions {
   operationId?: string;
 }
@@ -99,7 +105,11 @@ export interface NavigationResponse {
 
 export type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
 
-import type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
+import type {
+  ObservationRequest,
+  ScreenshotRequest,
+  SessionEventsPage,
+} from '@agentbrowser/protocol';
 import { validateObservationRequest, validateScreenshotRequest } from '@agentbrowser/protocol';
 
 /** Canonical observation response, shared with REST and MCP output schemas. */
@@ -392,6 +402,15 @@ function approvalViewParser(tokenId: string): (input: unknown) => OperatorApprov
 /**
  * Sessions API client
  */
+/** TD-BROWSER-16 (ADR-025 s3): the completed cookie handoff — counts only, never values. */
+export interface CookieHandoffResult {
+  sessionId: string;
+  credentialSource: 'operator';
+  domains: string[];
+  counts: Record<string, number>;
+  lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
+}
+
 export class SessionsClient {
   constructor(private readonly http: HttpClient) {}
 
@@ -625,13 +644,11 @@ export class SessionsClient {
   async events(
     sessionId: string,
     options: { type?: string; since?: number; limit?: number }
-  ): Promise<{ events: Array<Record<string, unknown>>; nextCursor: number }>;
+  ): Promise<SessionEventsPage>;
   async events(
     sessionId: string,
     selector?: string | { type?: string; since?: number; limit?: number }
-  ): Promise<
-    Array<Record<string, unknown>> | { events: Array<Record<string, unknown>>; nextCursor: number }
-  > {
+  ): Promise<Array<Record<string, unknown>> | SessionEventsPage> {
     let query = '';
     if (selector === undefined || typeof selector === 'string') {
       query =
@@ -646,12 +663,50 @@ export class SessionsClient {
     const body = await this.http.requestJson<{
       events: Array<Record<string, unknown>>;
       nextCursor?: number;
+      oldestSeq?: number;
+      gap?: boolean;
     }>(`/v1/sessions/${sessionId}/events/replay${query}`);
     // No default parameter: an explicitly-undefined argument must keep the
     // legacy array shape (a default `= {}` would silently turn it into the
     // paging envelope and break overload-1 callers at runtime).
     if (selector === undefined || typeof selector === 'string') return body.events;
-    return { events: body.events, nextCursor: body.nextCursor ?? -1 };
+    // oldestSeq/gap are paged-only and absent from older servers.
+    return {
+      events: body.events,
+      nextCursor: body.nextCursor ?? -1,
+      ...(typeof body.oldestSeq === 'number' ? { oldestSeq: body.oldestSeq } : {}),
+      ...(typeof body.gap === 'boolean' ? { gap: body.gap } : {}),
+    };
+  }
+
+  /**
+   * TD-BROWSER-16 (ADR-025 s3): hand the operator's login cookies for the
+   * given domains into this session. Without a decided approval token the
+   * server refuses with APPROVAL_REQUIRED whose details carry
+   * { tokenId, kind: 'cookie.handoff', sessionId, domains, counts } — relay
+   * those to the operator, then retry with the token. Counts are numbers
+   * only; values and cookie names never cross this boundary.
+   */
+  async cookieHandoff(
+    sessionId: string,
+    request: CookieHandoffRequest,
+    options: MutationOptions = {}
+  ): Promise<CookieHandoffResult> {
+    const checked = validateCookieHandoffRequest(request);
+    if (!checked.ok) {
+      throw new AgentBrowserError(
+        'INVALID_REQUEST',
+        `Invalid handoff request: ${checked.issues
+          .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+          .join('; ')}`,
+        false
+      );
+    }
+    return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/cookies/handoff`, {
+      method: 'POST',
+      body: checked.value,
+      ...options,
+    });
   }
 
   /** Structured native form filling; choose an operation ID before dispatch. */
@@ -850,6 +905,45 @@ export class AgentBrowserClient {
 
     this.http = new HttpClient(this.baseUrl, this.timeout, this.customHeaders);
     this.sessions = new SessionsClient(this.http);
+  }
+
+  /**
+   * TD-BROWSER-15 phase 5: the loaded policy summary (GET /v1/policy). The
+   * capability summary is decided for a default session of the caller's
+   * tenant; the response says so.
+   */
+  async policy(): Promise<{
+    policyVersion: string;
+    limits?: Record<string, number>;
+    summaryFor: string;
+    capabilities: Record<string, { allowed: boolean; reason?: string; ruleMatched?: string }>;
+    unconditional?: string;
+  }> {
+    return this.http.requestJson('/v1/policy');
+  }
+
+  /**
+   * TD-BROWSER-15 phase 5: ask what the loaded policy would decide
+   * (POST /v1/policy/check). Answers come by enumeration, never by DNS
+   * resolution; a hostname gets one answer per class set.
+   */
+  async policyCheck(request: {
+    action: string;
+    target?: string;
+    url?: string;
+    context?: { effect?: string; matchedRule?: string };
+  }): Promise<{
+    action: string;
+    target?: string;
+    answers: Array<{
+      classSet: string;
+      answer: {
+        kind: string;
+        decision?: { allowed: boolean; reason?: string; ruleMatched?: string };
+      };
+    }>;
+  }> {
+    return this.http.requestJson('/v1/policy/check', { method: 'POST', body: request });
   }
 
   /**

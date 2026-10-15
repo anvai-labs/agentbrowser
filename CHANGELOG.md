@@ -7,6 +7,586 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-10-15
+
+### Fixed — the login browser's no-disabling-flags test now actually checks (TD-BROWSER-16 phase 4)
+
+- The test "the live argv carries NONE of the disabling flags" passed vacuously: Chromium rewrites
+  its `/proc/<pid>/cmdline` into one space-joined string, and the test split it on NUL only, so no
+  flag could ever match. Re-adding `--disable-component-update` to the launch passed it. It also
+  located "the newest Chromium" on the machine, which under parallel suites could be another
+  test's Playwright browser (the CI failure seen on #475). The test now tokenizes on NUL and
+  spaces, finds the login browser by its exact `--user-data-dir`, and asserts that profile is in
+  the argv it inspects. The re-added flag now fails it. The login browser itself was correct:
+  verified to carry none of the three flags.
+
+### Added — release tags must be cut from main (T9 S1a, R14)
+
+- The release workflow's `tag-guard` job now fetches `main` and runs
+  `scripts/check-tag-ancestry.mjs`: a tag whose commit is not reachable from `main` fails before
+  anything builds or publishes, and every other release job depends on `tag-guard` (a test walks
+  the whole `needs` graph). An unknown commit, a missing `main` ref or a missing `git` fails
+  closed. Checked against real history: all 47 existing `v*` tags pass; a develop-only commit is
+  refused.
+- **Limit, stated plainly:** GitHub runs the `release.yml` *of the tagged commit*. A tag on an
+  older commit (whose workflow predates this gate), or on a branch that removed the step, skips the
+  check. The gate catches honest mistakes; the **guarantee** needs repository settings the owner
+  applies — a tag ruleset restricting who may create `v*` tags, and protection on the `npm`
+  environment (see the PR for the exact commands). Admins keep the ruleset bypass, so an admin
+  tagging an older commit by mistake still skips the gate; the environment reviewer is the last
+  manual check there.
+
+### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
+
+- **Protocol**: the `session.credential` capability joins the closed vocabulary and flows into
+  every browser profile (profiles derive by filtering it); the application mode stays fenced out.
+  Profile revision stays 1 — capabilities only grew.
+- **MCP**: a `cookie_handoff` tool (optional `approvalToken`) gated on `session.credential`,
+  dropped for bound sessions (a bound session is never a handoff target). Its handler catches
+  `APPROVAL_REQUIRED` itself and returns a structured relay result — token id, domains, counts —
+  so the agent can forward it to the operator without the error-details allowlist changing.
+  Catalog regenerated; release-smoke pins the tool in the unbound list only.
+- **SDK**: `client.sessions.cookieHandoff(sessionId, { domains, approvalToken? })` returning
+  `{ sessionId, credentialSource, domains, counts, lease? }`; the APPROVAL_REQUIRED details ride
+  `AgentBrowserError.details` unchanged.
+- **CLI**: `session cookie-handoff <id> --domain <d>… [--approval-token]` (prints the approval to
+  relay — token, domains, counts, never values); `operator login-browser open|close|reset`; and
+  `operator approve <session> <token> [--lease hosts=…,minutes=…,actions=…]` which parses the
+  lease and posts the decision (only a cookie.handoff approval may carry one, server-enforced).
+  The operator key resolves from `--operator-key-file` or a no-echo prompt — never env.
+- **Policy**: `GET /v1/policy` gains a `cookie.handoff` entry answering the DEFAULT decision
+  (the sentinel-domain ask); the per-domain answer is a conditional question — `POST
+  /v1/policy/check` with `action: cookie.handoff` and the domain as `target` (never resolved;
+  bare suffixes refuse exactly as the handoff floor does).
+- **Review round 1 (all fixed, test-pinned):** the `policy check` route's front door rejected
+  `cookie.handoff` — the engine branch existed but was unreachable from REST/CLI/MCP; the action
+  now passes the door (route test added), and the handoff POST joined `SELF_ADMITTING_ROUTE_SEGMENTS`
+  so the SDK mints no phantom operation id into the approval relay. The four login routes' OpenAPI
+  400/409 entries now attribute their codes correctly (closed-browser is a 409; binary pins are
+  open-only). The CLI `--lease` parse is total — stray tokens (an unquoted host list) and repeated
+  keys refuse loudly instead of silently under-granting; the CLI relay emits enumerated fields
+  like the MCP relay; and the schema-sync gate pins `cookie_handoff`'s hand-written schema.
+- **Docs**: the new guide **Use your login safely** (threat boundary first: the agent must not
+  share the operator's OS user; the profile is file-permissions-only and must stay out of synced
+  paths; session cookies drop at close — then the loop, leases, guarantees and residuals, one-time
+  copy); a threat-model row plus the accepted ADR-025 residuals; the three login-browser
+  variables documented in operations.md as trusted operator configuration. The four operator
+  login routes' OpenAPI now documents their typed 400/409 refusals (a phase-4 carried item).
+
+### Added — the cookie handoff (TD-BROWSER-16 phase 6, ADR-025 §3)
+
+- **`POST /v1/sessions/{sessionId}/cookies/handoff`** `{ domains, approvalToken? }`, under one
+  per-session lock, in the TD's exact order — floors → per-domain policy → approval → freshness
+  re-read → **mark** → lease → secrets → RTC-removal init script → write → audit:
+  - **Floors**, each with its own `floor.handoff.*` rule id: login browser enabled AND open;
+    isolated non-delegated locally-launched session; egress policy enforced; service workers off;
+    no committed navigation other than `about:blank`; no existing cookies for the requested
+    domains; every allowlist entry (`allowedHosts`, `scope.allowedHosts`) and every
+    `scope.pathRules[].hostSuffix` an exact host within the requested domains; each requested
+    domain a usable host (`.com` refuses).
+  - **Policy**: one `cookie.handoff` decision per domain through the authorizer seam (the Cedar
+    schema and the env-generated document gained the action; a policy file can deny per domain —
+    any deny fails the whole handoff).
+  - **Approval**: pre-approval read returns `APPROVAL_REQUIRED` with `{ kind, sessionId, domains,
+    counts }` (per-domain counts included); the token is single-use, human-operator-decided on the
+    existing non-act route, and bound to `(kind, sessionId, sorted domains, policy version)` — the
+    version rides the token and its fingerprint, so a policy change invalidates an outstanding
+    approval. Count changes between mint and retry are fine (the binding is not the counts); a
+    domain going **some-to-none** refuses with `floor.handoff.freshness` and never writes. The
+    decision may carry a **lease** (validated and applied after marking). The pre-approval mint
+    counts against the approval gate's capacity (`QUOTA_EXCEEDED` when full).
+  - **Completion**: marks `credentialSource: "operator"` BEFORE the write (a racing cookie export
+    is refused, never served unmarked cookies), applies the decided lease, registers every cookie
+    value as a session secret (phase 2's scopes; `clearSessionSecrets` at session close is now
+    wired), injects the all-frames init script removing `RTCPeerConnection`/`webkitRTCPeerConnection`
+    (verified against a real browser in main document, synchronous about:blank iframe, and
+    window.open popup), writes through the engine's new live `addCookies` (the `__Host-` conversion
+    is shared with create-time seeding), and audits session/domains/counts/token/lease/rule ids —
+    never values or cookie names.
+- **Engine contract**: `EngineSession.addCookies?` / `addInitScript?` (optional; callers refuse
+  typed when absent — never silently skip). Playwright implements both on the live context;
+  FakeEngine records writes and scripts (its `cookies()` now exposes seeds and handoff writes),
+  and the contract suite asserts the optional methods.
+- **Afterwards**: cookie export, HTML export and download collection refuse with
+  `HANDOFF_COOKIES_NOT_EXPORTABLE` in a marked session; while the login browser is enabled the
+  shared Chromium launches with `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
+  (engine option wired from `AGENTBROWSER_LOGIN_BROWSER`, asserted in the real-browser suite).
+- `openapi.json` regenerated; the write-path checklist declares the handoff route.
+- **Review round 1 (all fixed, each pinned by a new test):** the cookie-domain matching was
+  INVERTED vs ADR-025 §3 (`covers(cookieHost, domain)` instead of `covers(domain, cookieHost)`) —
+  a deep-host request pulled the parent's site-wide cookie without operator evidence, and an apex
+  request refused the subtree's host-only cookies; the arguments are swapped and the applies
+  relation now also drives the per-domain evidence and the freshness guard. Post-mark aborts
+  (a lease the allowlist refuses; an engine without the live cookie API) bricked the destination
+  session — engine capability, lease validation, the ADR §3 transfer bounds (≤1000 cookies,
+  ≤1 MiB — previously unenforced), the init script and the secret registration all now run BEFORE
+  the mark. Operator input is canonicalized (case, whitespace, trailing dot). The RTC-removal
+  script moved to a shared ENGINE-PACKAGE constant (@agentbrowser/engine — core is not a dependency of
+  engine-playwright) so the injector and the real-browser behavioral tests
+  assert the same text. ADR §4's "baseline grants it to no one" corrected to the shipped default
+  (capability grant covers it; the approval step is the unconditional part). floor.handoff.websocket
+  is a real guard on a recorded fact. A racing mid-write export test, a foreign-policy-version
+  token test, and both pre-mark abort tests pin the new behavior.
+
+### Fixed — event replay paging, artifact eviction, tenant ownership
+
+- **Event replay paging matches the type exactly.** With `since`/`limit`, `?type=` used to select
+  only the ledger, so `type=console.log` also returned `console.error`, dialog and lifecycle rows
+  (and `type=request.failed` returned every `request.*` row). Paged rows now match the type
+  exactly; `nextCursor` advances past skipped rows of other types.
+- **Paged replay reports eviction gaps.** Paged responses add `oldestSeq` (lowest retained ledger
+  sequence) and `gap` (`true` when the caller passed `since` and entries after it were evicted
+  before the read) instead of silently re-reading from the oldest kept entry. The envelope is one
+  protocol schema (`SessionEventsPageSchema`, ADR-015) used by the service, OpenAPI and the SDK;
+  MCP `events_replay` and the CLI (`gap: true …` line) carry it. Additive.
+- **`since=-1` is accepted.** An empty page hands back `nextCursor: -1`, which the route used to
+  reject with 400, breaking `since=nextCursor` polling loops until the first event arrived. `-1`
+  now means "from the start" on the route, OpenAPI, MCP and the CLI.
+- **Artifact store: aggregate byte cap and fair-share eviction.** New `maxTotalBytes` (default
+  256 MiB; `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES`, invalid values abort startup). When full, the
+  oldest artifact of the tenant holding the most (artifacts under count pressure, bytes under byte
+  pressure; ties evict the writer's own) is evicted, so no tenant can be pushed below an equal
+  share by another's writes, whatever their sizes or order. Previously worst-case retention was
+  100 × 10 MiB with global FIFO eviction, so any tenant could flush another's evidence.
+- **Tenant ownership fails closed on ownerless sessions.** An authenticated tenant is refused
+  (403) on a session without a tenant; previously such a session was reachable by any keyed
+  tenant. Not reachable through `POST /v1/sessions` (keys stamp the tenant) — defense in depth.
+- Docs: the `artifact-auth` comment and the `AGENTBROWSER_ARTIFACT_KEY` row now say what exists:
+  a token check over `artifactId|exp` that no route currently mints tokens for, so artifact
+  access is by session ownership.
+
+### Fixed — operation journal retention (not yet wired into the service)
+
+- **Settled, expired namespaces release capacity when it is needed.** Expired namespaces used to
+  count toward `maxNamespaces` forever, so a store that had ever held that many refused new ones
+  permanently. Now, when a new namespace would be refused at the ceiling, every namespace that is
+  released, past `retainUntil` (larger of the clock and its persisted high-water) and settled
+  (all records terminal) is retired: records deleted, reservation zeroed, high-water raised. The
+  row stays as a tombstone that never reopens — `expired` forward, `configuration` after a clock
+  rollback or for any other descriptor — so purged operation IDs are never admitted again
+  ([t5-journal-contract](docs/spec/design/t5-journal-contract.md)). Namespaces with an in-doubt
+  record or an active fence are never retired. No startup purge, no DDL change (`formatVersion` 1).
+
+### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
+
+- **Marked sessions** (`credentialSource: "operator"`): the marking is **server-side only** — a
+  `ServiceSessionRequest` field plus an internal mark method (phase 6's handoff calls it); the
+  wire create route refuses `credentialSource` **by name** (the request validator passes unknown
+  keys through, so a name check is required — review F1 caught the first cut forwarding an
+  agent-supplied marker), and the session view reports it read-only. In a marked session:
+  - **high-risk effects** (`transaction`, `external-message`, `account-security`, `destructive`)
+    always need an `act.reviewed` decision — a per-rule `decision: "allow"` is overridden; a policy
+    `deny` still denies, **above the lease** (pinned by test after review F3); **unknown effects**
+    need review too, unless the session's live lease covers the page's host; `read`/`write-local`
+    classification is honoured unchanged.
+  - Reviewed act approvals now carry `kind: "act.reviewed"` on the token and in the operator view
+    (the fingerprint covers the kind, so a token can never be replayed as another kind).
+    `getApprovalKind`/`findNonActToken` exclude `'act.reviewed'` as act-family — defense in depth:
+    `getToken` returns confirmation records only, so they cannot see an act.reviewed token today,
+    and counterfactually the non-act decide path would throw `INVALID_TOKEN` (its burn requires a
+    confirmation record) rather than mis-decide.
+- **The lease**: `POST /v1/sessions/{sessionId}/lease` — **human-operator key only** (an API-key
+  operator is refused; lease-shaped input on agent routes is inert). `{ hosts ≤ 16,
+  expiresInMs ≤ 4 h, maxActions ≤ 500 }`; every host must be a usable host lying within the
+  session's own allowlist (request + engagement scope) — a session without one has nothing for a
+  lease to lie within and the grant is refused. Within the lease, unknown-effect actions on its
+  hosts run one count per action; high-risk never; expiry and count exhaust to review (fail
+  closed). `lease.granted`/`lease.exhausted` audit events; the session view shows `actionLease`
+  (with the remaining count) and `actionLeaseRemainingMs` — distinct from the pre-existing idle
+  `lease` field.
+- **Write paths outside `act`**: `autofill` in a marked session is refused without a covering
+  lease (each field write then spends one leased unknown action through the normal act path);
+  `application.execute` is refused outright. A checklist test enumerates every mutating route from
+  the live router and fails any undeclared page-writing route, so a future write path must declare
+  its marked-session behaviour before it ships.
+- **Fixed (latent, exposed by the kind stamping)**: `ApprovalGate.allocate` spread the binding
+  AFTER the storage `kind`, so any kind-stamped reviewed approval threw `Invalid token kind` —
+  nothing stamped a kind on the reviewed path before, so it never fired. The binding now spreads
+  first; reviewed records keep storage kind `reviewed` while their token carries the approval kind.
+  (A second suspected latent bug — `getApprovalKind` mis-routing `'act.reviewed'` — was claimed in
+  the first cut of this entry and retracted after review: the path was unreachable, not latent;
+  see the marking bullet above for the corrected statement.)
+
+### Added — the login browser (TD-BROWSER-16 phase 4, ADR-025 §1)
+
+- **`LoginBrowser` (`engine-playwright`)**: a pipe-connected **persistent** Chromium context over a
+  dedicated profile directory. Playwright drives `--remote-debugging-pipe`, so **no TCP port is
+  ever opened** — asserted by test against the process's own listening sockets. The login walls
+  a human needs (Safe Browsing phishing detection, component and background updates) are
+  RE-ENABLED by REMOVING Playwright's disabling flags through `ignoreDefaultArgs`.
+- **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
+  with `LOGIN_PROFILE_MODE`); Windows grants the owner's SID `(OI)(CI)F` via `icacls` with
+  inheritance stripping intended (the runner's observed result is the ADR-tolerated owner +
+  SYSTEM + Administrators posture), and startup parses the `icacls` ACE lines — with the
+  pipe-glued filename header stripped — refusing any identity beyond the owner, where "the
+  owner" and the exempted SYSTEM/Administrators match every icacls spelling (SID,
+  `MACHINE\user`, translated well-known names). The Windows CI job runs this suite, where
+  the win32 branches execute. (icacls, not PowerShell's Get-Acl, after the runner could not load
+  PowerShell 5.1's Security module — caught by review executing the gate; the name-vs-SID
+  comparison likewise.)
+  The profile sits under `AGENTBROWSER_LOGIN_PROFILE_DIR` or, by default, the OS private
+  per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA` on Windows); whether
+  that root is synced or backed up is the operator's environment, not a property claimed here.
+- **Binary pinning:** the resolved executable, its file identity (size + mtime), and Chromium's own
+  version are recorded in the profile on first launch. A different path refuses
+  `LOGIN_BINARY_CHANGED`; the same path with a changed file identity (an in-place update) refuses
+  `LOGIN_BINARY_DOWNGRADED`; either way reset adopts. The compared field is file identity, not the
+  version string — `chrome.exe --version` prints nothing on Windows (GUI-subsystem exe,
+  runner-proven), which made a version-probe check silently fail open there; `fs.stat` has no such
+  platform gap. The recorded `chromiumVersion` stays as documentation, never compared.
+  Launch-time refusals leave the profile unlocked — the lock is acquired after every pre-launch
+  check, so a transient refusal never wedges the profile.
+- **Lifecycle:** `open`/`close`/`reset`/`readCookies` serialized on a profile lock — a live second
+  owner (or a hand-started Chrome, via its ProcessSingleton failure) refuses with
+  `LOGIN_PROFILE_IN_USE`, a stale lock (dead owner) is adopted, the operator closing the last
+  window reconciles the state, and reads refuse with `LOGIN_BROWSER_CLOSED`. Partitioned cookies
+  (`partitionKey` OR `partitionKeyOpaque`) and expired ones are skipped and counted; the expired
+  filter is asserted with a clock frozen ahead (Chromium culls expired cookies at write) and the
+  opaque one with a stubbed cookie set.
+- **Typed refusals at the client:** the seven `LOGIN_*` codes joined the protocol error enum
+  (409/403/400, never 500) — every engine refusal maps to its code at the routes, and a
+  non-typed launch failure (a hand-started Chrome) maps to `LOGIN_PROFILE_IN_USE`.
+- **Headless CI:** `AGENTBROWSER_LOGIN_HEADLESS=1` lets the whole suite run without a display;
+  CI runs the engine suites with it.
+- **`LoginBrowserService` + `AGENTBROWSER_LOGIN_BROWSER=1`**: enabled only with operator keys
+  present (boot refuses otherwise); `POST /v1/operator/login/{open,close,reset,read}` are
+  human-operator-only operator routes — agent credentials and API-key operators are refused; a
+  multi-tenant deployment refuses to open (single-tenant by design); server shutdown closes an
+  open browser. The login browser is not a session: no id, no refs, no pages on any agent surface.
+
+
+### Added — the cookie-domain matcher (TD-BROWSER-16 phase 3, ADR-025 §3)
+
+- **`packages/core/src/domain-matcher.ts`**, on pinned `tldts` with **the private section in
+  force** (`allowPrivateDomains`): `github.io` and `vercel.app` are suffixes — refused — while
+  `x.github.io` is registrable. `covers(matcher, host)` is the cookie-scope relation minus public
+  suffixes (exact match, or a registrable parent covers subdomains; a suffix entry never covers;
+  a child never covers its parent). `usableHost`/`cookieDomain` refuse IPs, suffixes, `localhost`
+  and unlisted TLDs (keys-only), and allow a registrable parent when the operator asks.
+  `registrableParents` lists the registrable parents (subdomains are not registrable).
+- **The dedup fix:** the CLI's cookie identity is now `cookieKey` — host-only and `.domain`
+  cookies with the same name and path are distinct, because the leading dot is scope, not
+  formatting (the duplicate error now names scope; otherwise unchanged). The cookie bounds moved
+  into `core` (`MAX_COOKIE_COUNT`, `assertCookieRequestSize`), imported by the CLI.
+- **Hardened after review:** `covers` refuses suffix/IP/`localhost` matchers outright (never even
+  self); a dotted entry matches subdomains only; a usable parent — registrable, or a host under
+  one — covers its subtree; ports and trailing dots are refused (they would fork the identity).
+  Known gap recorded for phase 6: no IDNA canonicalization.
+
+
+### Added — per-session secret registration (TD-BROWSER-16 phase 2, ADR-025)
+
+- **`SecretManager` gains session scopes**: a value registered in a session's scope redacts only
+  that session's observations, logs, traces and errors — never another session's, never the global
+  surface; the scoped redaction sees the global values too, longest-first.
+- **The entropy floor**: values under 8 characters, or with fewer than 3 distinct characters, are
+  ignored — redacting "1", "en" or "true" would corrupt unrelated output while protecting nothing.
+- **Registration invalidates that scope's memoized cache**; clearing a session drops its values,
+  patterns and caches. **Bounded per TD-BROWSER-9 (A9), in both directions:**
+  `sessionScopesMaxSessions` (default 512, `0` disables) keeps redaction memos for at most that
+  many scopes, least-recently-**used** (memo eviction costs speed, never protection), and makes
+  registration **fail closed** (`SCOPE_LIMIT`) once that many live scopes exist — a live session
+  is never silently un-protected. `redactionCacheMaxEntries` governs every memo as it does the
+  global one; unknown session ids allocate nothing. `redactUntrustedScoped` is the untrusted-key
+  variant for phase 6's wiring. Core-only: no surface calls these yet. 11 tests.
+
+
+### Added — the operator credential (TD-BROWSER-16 phase 1, ADR-025)
+
+- **`AGENTBROWSER_OPERATOR_KEYS_FILE`** holds `key:tenant` lines authenticating a **human
+  operator** (`human-operator` joins the principal actors). API keys must be configured and map to
+  exactly ONE tenant, which every operator entry must match; a key appearing in both credential
+  sets aborts startup (one credential, one identity); keys are SHA-256-hashed and never logged.
+- **Operator keys are valid only on operator-flagged routes** — today, the approval view and
+  decide routes — and refused with `403 FORBIDDEN` everywhere else: a leaked operator key cannot
+  create sessions, act, or read anything else.
+- **`ApprovalKind`, `NonActApprovalView` and `NonActApprovalDecision` live in the protocol**
+  (ADR-015), re-exported from core; the approval routes' published OpenAPI 200s are oneOf the
+  operator view and the non-act shapes. `ApprovalRequest` gains `kind` (`act` unchanged and
+  byte-stable; `act.reviewed`; the non-act `cookie.handoff` carrying `{domains, counts}` evidence
+  that phase 6 instantiates): non-act tokens carry their kind and evidence, with **domains**
+  inside the fingerprint — a token cannot be replayed against different domains; **counts are
+  informational** per ADR-025 (committed gate tests pin all of this).
+- **The separate resolve-and-decide path**: the approval view/decide routes branch on kind —
+  non-act tokens are decided by a **human operator only** (an API-key operator, which an agent may
+  hold, is refused for them), and the view returns the bound evidence verbatim. Single-use.
+- **CLI**: `agentbrowser approvals view <sessionId> <tokenId>` reads the operator key from
+  `--operator-key-file` or a no-echo prompt — **never an environment variable** (tested: env
+  operator keys are ignored).
+
+
+### Fixed — approval decisions are tenant-bound (TD-15 phase-7 review)
+
+With API keys configured, approval questions (`act`/`act.unattended`) now decide as the session's
+authenticated tenant, through a tenant-bound authorizer — matching egress, capabilities and the
+policy query routes, which already did. Before, every approval question decided as the implicit
+`Tenant::"local"`: a per-tenant act rule (deny transactions for tenant `ci`) never matched
+enforcement, and `POST /v1/policy/check` could disagree with the enforcement decision for the
+same action. Found by the phase-7 documentation review asserting the documented behavior.
+
+### Added — policy documentation (TD-BROWSER-15 phase 7)
+
+- **`docs/policy.md`**: the operator's guide — the policy file and its startup refusals,
+  `policy export` migration, the Cedar schema reference (the exception actions, set-valued
+  address classes, per-source private asks, the per-tenant keys-only pattern, `@rule`/
+  `@internal`, with `@reason` reserved), `policy check` semantics (enumeration, never DNS), shadow mode, and the floor's
+  fixed rules including the statement that browser traffic is not DNS-pinned.
+- **`docs/operations.md`**: the ADR-024 §4 classification of every variable (policy-bearing /
+  floor input / bootstrap / trusted), the policy-file and shadow variables, and
+  `AGENTBROWSER_CHROMIUM_ARGS` marked security-relevant.
+- **`docs/threat-model.md`**: the policy file is trusted operator configuration; only
+  authenticated tenants are policy principals; `check` is not a DNS oracle; `@internal` exists
+  for confidentiality.
+
+TD-BROWSER-15 is complete.
+
+### Added — policy query surface (TD-BROWSER-15 phase 5)
+
+- **`GET /v1/policy`** — the loaded policy: version (the document SHA-256, or `legacy`), limits,
+  and one `PolicyDecision` per capability for a default session of the caller's tenant (the
+  response says so). Without a policy file the answers come from the legacy environment
+  decisions and are marked unconditional.
+- **`POST /v1/policy/check`** — ask what the policy would decide for one action and target.
+  Answers come by enumeration, never by DNS resolution: an IP literal is classified by the real
+  classifier and answered exactly as enforcement would answer it; a hostname passes the
+  name-level rules (metadata names are floor-denied, loopback names answered by name) and then
+  gets one answer per class set — the non-public sets say `depends on the resolved address`
+  instead of guessing. A caller-supplied tenantId never overrides the authenticated tenant.
+- **Rate limiting:** a bounded per-tenant token bucket (30/minute, lazy refill, LRU eviction at
+  4096 tenants) gates both routes with `RATE_LIMITED`.
+- **`@internal`** policies decide but report as `operator.policy`, with no reason.
+- **Surfaces:** SDK `client.policy()` / `client.policyCheck()`; CLI `agentbrowser policy` and
+  `agentbrowser policy-check`; a read-only `policy` MCP tool. OpenAPI regenerated.
+- ADR-024's status moves to **Accepted**.
+- **Hardened after review:** check's literal asks mirror enforcement exactly (phase and the full
+  class set — committed regression tests against policies conditioning on them); invalid
+  IP-literal shapes and prefix-length targets answer `floor.invalid-ip` as enforcement refuses
+  them; `RATE_LIMITED` joined the protocol error enum so the 429 matches the published envelope;
+  keyed per-tenant answers and `@internal` redaction are tested through the real routes. Without
+  API keys the query surface shares one 30/minute bucket (keyed deployments are per tenant).
+
+### Added — the policy file, opt-in, shadow mode (TD-BROWSER-15 phase 4a)
+
+- **`AGENTBROWSER_POLICY_FILE`** loads a policy document and turns it into the server's every
+  operator decision. Every startup refusal from the TD: files combined with policy-bearing
+  variables or embedder options (all conflicts named), unparsable documents, tenant literals
+  other than `local` while no API keys exist (found in Cedar's parsed policies, conditions
+  included), a key tenant named `local`, and anything strict validation refuses. `limits`
+  (`extractMaxBytes`, `maxResponseBytes`) replace the embedder options; unknown limit keys
+  refuse.
+- **Per-session, per-tenant decisions:** each session's network policy is the floor blocks plus
+  the tenant-bound authorizer's exceptions, memoized in a bounded LRU and cleared at close. No
+  keys: the implicit `Tenant::"local"` decides whatever tenantId a caller claims. Sessions stamp
+  the policy version; `/health` exposes the authorizer's health as a boolean only.
+- **`AGENTBROWSER_POLICY_SHADOW=1`** evaluates, alongside the legacy decisions, the document this
+  environment would generate: legacy decides, divergences warn with both rule ids, and a trap in
+  the shadow never touches the legacy decisions.
+- The deprecated policy variables warn at startup when used without a file; the
+  loopback/private-permitting and no-public-egress startup warnings are in.
+- **Phase 4b — the performance gate** (`packages/benchmarks`): a worst-case 300-subresource page
+  (every request private, 30 hosts × 10) measured through the service's own chain. First run:
+  uncached p50 193 µs per decision (6.9% of the 1.0 s reference load), memoized 2.9 µs (0.96%),
+  shadow 153 µs (5.0%); shared CI runners measure 2–3× that. The gate is 25%, applied to the
+  production modes (memoized, shadow); uncached is the reported floor. Its job is catching
+  order-of-magnitude regressions, not constant factors.
+
+### Added — CedarAuthorizer, policy export, bundled engine (TD-BROWSER-15 phase 3b)
+
+- **`CedarAuthorizer`** decides through the real Cedar engine, gated by the phase-2 differential
+  oracle: it passes every generated configuration the oracle throws at it, `allowed` and
+  `ruleMatched` both. Loads are strict (zero validation errors, `@rule` annotations
+  cross-checked, reserved id namespaces refused), every decision runs against pre-parsed
+  artifacts with request validation, and any trap — a rejected request, a refused source, an
+  evaluation error — denies with `engine.error` and stays failed closed until restart. Strict
+  validation statically rejects policies that would error, so a bad document never runs at all.
+- **`agentbrowser-server policy export`** writes the policy document for today's environment
+  configuration (loopback, CIDRs, approval policy), parsed exactly as the service parses it —
+  operators migrate by generating, not hand-writing. Invalid configuration fails with the
+  startup messages.
+- **Hardened after review** (every claim held: the oracle at fresh seeds and 1000 runs, the
+  packaging gates, a real pruned deploy): `policy export` refuses approval values the server
+  refuses at startup instead of emitting a document for an unbootable configuration; every
+  deciding forbid id is reported (a filter could erase one from hand-written documents); and
+  `rulesMatched` lists each deciding id once.
+- **The engine ships bounded:** `@cedar-policy/cedar-wasm` 4.13 becomes a runtime dependency,
+  pruned to its Node build (~4.35 MB) in the server tarball, the Docker image and the Windows
+  bundle; the pruner enforces a version + SHA-256 pin (`scripts/cedar-wasm.json`), the
+  shipped-path gate accepts exactly that one pinned wasm and nothing else, the install-size
+  gates gain the measured delta, and the Windows bundle smoke loads a document and decides one
+  request through the bundled node.
+
+### Added — Cedar schema, policy document, generator (TD-BROWSER-15 phase 3a)
+
+- **The Cedar contract lives in the protocol** (`CEDAR_SCHEMA`, `agentbrowser-cedar/v1`): the
+  `Authorizer` actions as Cedar actions, one optional normalized `ip` on `request.private`, and
+  the act matchers (`effect`, `matchedRule`, `hostname`, `action`, `role`, `name`).
+- **A policy document type** (`agentbrowser-policy/v1`): the policy set plus the configuration it
+  was derived from, with structural parsing that rejects duplicate keys. This is what
+  `policy export` will write and phase 4 will load.
+- **A generator** turns today's environment configuration into a Cedar policy set that decides
+  exactly as `LegacyAuthorizer` does, deterministically in text:
+  - mapped-space operator CIDRs expand to their IPv4 equivalents, and a prefix up to 96 grants
+    either all of IPv4 or nothing — Node `BlockList`'s cross-family behaviour, which a property
+    test referees directly against `BlockList` (3000 single-rule runs, 1500 unions, the verified
+    matrix);
+  - every deny branch is an explicit `forbid` carrying its `env.*` id as a `@rule` annotation,
+    so a denial still reports which rule decided it; a `required` outcome is a permit/forbid pair;
+  - the generated set validates against the schema in strict mode with zero errors, and a fixed
+    decision matrix matches `LegacyAuthorizer` under the real wasm build.
+- `cedar-wasm` 4.13 is a dev-only dependency of `policy-engine`; it never enters the prod
+  deploy trees the tarball, image and Windows bundle are built from.
+- **Hardened after review** (every equivalence claim held under 100k+ referee checks): the
+  generator validates its rules with the validator `ActionRiskPolicy` uses — now one shared
+  exported validator in core — so an id the system would reject at startup can never reach the
+  Cedar text, and `unknownRisk` is validated the same way; and
+  `normalizeSourceForCedar` refuses family-mismatched (address, type) pairs, which `BlockList`
+  answers false for.
+- `PolicyDecision` gains `rulesMatched` (every deciding id; `ruleMatched` stays the first).
+### Fixed — engagement scope
+
+- **The redirect-hop set is bounded (#447).** `EngagementScopePolicy` remembered every distinct
+  redirect-hop URL for a session's lifetime so a re-validated chain would spend each hop once.
+  It now keeps the newest 4096 (`CHAIN_SPENT_BOUND`); a hop evicted from memory is charged again
+  if re-submitted — over-charging only, so a budget can end sooner, never later, and a session
+  reaching the bound takes 41+ redirect-saturated navigations at the transport's 100-hop cap (~410 at the 10-hop default). Hops are no longer tracked at all
+  when no request budget is set.
+he engagement scope's redirect-hop set (#447))
+
+### Added — differential oracle (TD-BROWSER-15 phase 2)
+
+- **A property-based harness checks any `Authorizer` against today's decisions.** It covers egress
+  (contexts from the real `NetworkPolicy` path), approvals (from `ActionRiskPolicy.classify()`) and
+  every capability, over generated configurations: loopback, CIDRs, `unknownRisk` and approval
+  rules.
+  - It holds for `LegacyAuthorizer` and runs a deterministic table of every approval combination.
+  - It probes the first, last and one-past addresses of every CIDR, and contexts with several
+    private sources.
+  - 27 plausible-but-wrong subjects from review must each be caught on every seed, and a correct
+    subject that resolves rules by id must pass.
+  - Phase 3 runs it against Cedar.
+  - It is test-only, with `fast-check` as a dev dependency, and it is not in the build.
+
+### Changed — policy engine seam (TD-BROWSER-15 phase 1)
+
+- **The floor refusals live in one module** (`packages/api/src/floor.ts`). That covers CDP-attach
+  admission, attach options, delegated sessions, operator-only routes and the metadata wrap. Codes,
+  messages and `floor.*` rule ids are unchanged.
+- **Capability grants go through the `Authorizer`.**
+  - When a session will get operator CDP attachment, downloads, service workers, cookie seeding or
+    a headed browser, the service asks its authorizer. An always-headed engine (Safari) counts as
+    headed unless headless is demanded. Cookie export asks for `cookie.export`.
+  - Existing refusals keep their precedence: shutdown, an unknown engine and an unknown session
+    still come first.
+  - The default `LegacyAuthorizer` grants all of them (`env.capability.default`), so behaviour is
+    unchanged.
+  - A denial would be `POLICY_DENIED` with `details.rule` and `details.policyDecision`.
+  - The service accepts an injectable `authorizer` (`ServiceDependencies.authorizer`), which is
+    where phase 4 plugs in Cedar.
+- **The loopback and private-network exceptions go through the `Authorizer` too.**
+  - `NetworkPolicy` asks an `EgressExceptions` hook at its four existing decision points (hostname
+    and resolved address, loopback and private). The default hook is today's rules.
+  - The server answers it through `LegacyAuthorizer`'s `request.loopback` and `request.private`,
+    built from `AGENTBROWSER_ALLOW_LOOPBACK` and `AGENTBROWSER_ALLOWED_CIDRS`.
+  - Behaviour is unchanged: a differential test compares both hooks across mapped, NAT64, 6to4,
+    SIIT and link-local addresses, hostnames and CIDR sets.
+  - Snapshots keep their own copy of the default rules, so they stay immutable.
+  - The hook fails closed: anything but `true` (a Promise, a string) counts as "not allowed".
+  - Once a hook owns the exceptions, `updateConfig` refuses changes to `blockLoopback`,
+    `blockPrivateIPs` and `allowedPrivateCIDRs`, so the reported flags and the enforced decisions
+    cannot drift apart. No production code calls `updateConfig`.
+- **Approval decisions go through an `Authorizer`.** A new internal package,
+  `@agentbrowser/policy-engine`, carries the `Authorizer` interface and `LegacyAuthorizer`, today's
+  rules unchanged. Each decision answers ADR-024 §5's two questions, `act` and `act.unattended`,
+  and names its rule (`env.approval.<rule id>`, `env.approval.unknown-risk`,
+  `env.approval.high-risk`, `env.approval.default`). Behaviour is unchanged, as the oracle tests
+  show.
+- **Approval rules accept an optional `id`** (`AGENTBROWSER_APPROVAL_POLICY` and
+  `ServerOptions.approvalPolicy`): lowercase letters, digits, `.`, `_` and `-`, up to 64
+  characters, unique, and not `none` or `rule-<n>`. A rule without one is identified as
+  `rule-<index>`. **Tightening:** an `id` key was previously ignored; an invalid one now stops
+  startup, with an error naming the rule and the reason.
+
+### Changed — egress safety floor (TD-BROWSER-15 phase 0)
+
+- **More cloud metadata endpoints are refused.** In addition to `169.254.169.254` and the GCP
+  metadata names, these are now blocked:
+  - the whole IPv4 link-local range `169.254.0.0/16`, which includes ECS task metadata and EKS Pod
+    Identity;
+  - `100.100.100.200` (Alibaba Cloud) and `168.63.129.16` (Azure wire server);
+  - `fd00:ec2::/64` (AWS over IPv6) and `fe80::/10` (IPv6 link-local);
+  - `fd20:ce::254` (GCP, IPv6-only instances) and `fd00:c1::a9fe:a9fe` (OCI over IPv6).
+
+  Like all metadata, they are refused even under an `AGENTBROWSER_ALLOWED_CIDRS` exception.
+  **Tightening:** link-local devices previously reached through a CIDR exception are now refused.
+- **IPv4 embedded in IPv6 is decoded.** These forms now carry the classes of the IPv4 they embed;
+  before, they classified as public:
+  - NAT64 `64:ff9b::/96`;
+  - the local-use `64:ff9b:1::/48`, under every RFC 6052 layout. It is also private as a whole,
+    since it is never globally routable. Decoding every layout reads almost any address in this
+    prefix as loopback (`0.0.0.0`), so local-use NAT64 is **effectively refused**, which fails
+    closed. Use the well-known `64:ff9b::/96` prefix with agentbrowser;
+  - 6to4 `2002::/16`;
+  - SIIT `::ffff:0:0:0/96`;
+  - IPv4-compatible `::/96`.
+
+  So `64:ff9b::7f00:1` is loopback and `64:ff9b::a9fe:a9fe` is metadata. Decoding only adds
+  classes, and `::1` stays loopback. Teredo and ISATAP are not decoded.
+- **`AGENTBROWSER_ALLOWED_CIDRS` matches the IPv4 inside these forms.** An IPv4 exception such as
+  `192.168.1.0/24` also admits that address behind NAT64, 6to4 or SIIT, as it already did for
+  IPv4-mapped. An IPv6 wrapper exception such as `64:ff9b::/96` never grants the private IPv4
+  inside it.
+- **The metadata floor holds over any injected policy.** Every session's request policy is now
+  wrapped in `MetadataFloorPolicy`, so cloud metadata endpoints stay refused (`rule:
+  "floor.metadata"`) even when an embedder passes `ServerOptions.networkPolicy` with metadata
+  blocking off (`new NetworkPolicy({})`). The refusal covers request hosts, DNS answers, redirect
+  hops and navigation preflight. Optional gates pass through only where the underlying policy has
+  them, so a weaker policy is never made to look strict to the download path.
+- **Metadata names are normalised.** Case and trailing dots are ignored
+  (`metadata.google.internal.`). This matters on the CDP-attach lane, which has no DNS answer to
+  check.
+- **Tightening: `metadata`, `instance-data` and `instance-data.ec2.internal` are now refused.**
+  These are the GCP and AWS search-domain names. An intranet host literally named one of them is
+  refused even under an `AGENTBROWSER_ALLOWED_CIDRS` exception.
+- **Floor refusals name their rule.** Each refusal that no policy can grant now carries
+  `details.rule`:
+  - CDP attachment: `floor.cdp.hosted`, `floor.cdp.multi_tenant`, `floor.cdp.local_only`,
+    `floor.cdp.egress`, `floor.cdp.disabled`, `floor.cdp.auth_required`, `floor.cdp.options`,
+    `floor.cdp.profile_options` and `floor.cdp.cookie_export`;
+  - `floor.delegated.operator` on controlled-session creation without operator credentials, and on
+    the operator-only control, approval and review checks. A caller without credentials on a
+    keyless local service sees this rule. Delegated agent credentials are always refused earlier on
+    these routes by their mode profile's capability gate, which is an operator choice and so carries
+    no floor rule.
+
+  Existing `details.reason` codes are unchanged.
+
+### Fixed
+
+- **`AGENTBROWSER_LOG_LEVEL` accepts `warn` and `error`**, the structured logger's other two
+  levels, as well as `debug` and `info`. Matching is case-insensitive. Before, any value other
+  than `debug` silently meant `info`; an unknown value now prints a warning and uses `info`.
+- **The TypeScript SDK's managed subprocess sets the variable the service reads.** It used to set
+  `AGENTBROWSER_LOG=error`, which nothing read. It now sets `AGENTBROWSER_LOG_LEVEL` explicitly:
+  the caller's own non-blank value when set, otherwise `error`. Custom `SubprocessLauncher`s receive
+  it too. At `error`, failed operations (including policy denials) are no longer logged; the
+  `errors_total` metric still counts them.
+
+### Docs — design records
+
+- **ADR-024 (Proposed): server policy engine.** An opt-in, versioned policy document evaluated by
+  embedded Cedar replaces policy that is spread across environment variables today. Policy becomes
+  per authenticated tenant, and agents can query it (`GET /v1/policy`, `POST /v1/policy/check`, an
+  MCP `policy` tool). A fixed safety floor stays outside policy: metadata endpoints (a wider set),
+  loopback and private addresses blocked by default, and the CDP-attach refusals. Engine errors
+  fail closed. Implementation plan: TD-BROWSER-15. Also adds ADR-022, which was missing, to the
+  docs index.
+- **ADR-025 (Proposed): operator login browser and cookie handoff.** AgentBrowser launches an
+  operator-only, headed login browser on a persistent profile over a private pipe, with no
+  debugging port that a local process could read. The operator signs in there once, then approves
+  one-time copies of selected domains' cookies into contained sessions, using a separate operator
+  credential the agent never holds. In those sessions, high-risk and unknown-effect actions need the
+  operator's review, or an operator-granted lease. Implementation plan: TD-BROWSER-16.
+
 ## [1.17.1] — 2026-10-13
 
 ### Changed — dependencies (#426)

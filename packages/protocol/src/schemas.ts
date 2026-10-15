@@ -30,6 +30,15 @@ export * from './types.js';
 // ============================================================================
 
 export const ErrorCodeEnum = Type.Union([
+  Type.Literal('LOGIN_BROWSER_CLOSED'),
+  Type.Literal('LOGIN_PROFILE_IN_USE'),
+  Type.Literal('LOGIN_PROFILE_MODE'),
+  Type.Literal('LOGIN_BROWSER_DISPLAY'),
+  Type.Literal('LOGIN_BINARY_CHANGED'),
+  Type.Literal('LOGIN_BINARY_DOWNGRADED'),
+  Type.Literal('LOGIN_HOSTED_OR_MULTI_TENANT'),
+  Type.Literal('HANDOFF_COOKIES_NOT_EXPORTABLE'),
+  Type.Literal('RATE_LIMITED'),
   Type.Literal('SESSION_BUSY'),
   Type.Literal('CONTROL_REVOKED'),
   Type.Literal('CONTROL_REQUIRED'),
@@ -178,6 +187,23 @@ export const SessionRequestSchema = Type.Object({
   snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
 });
 
+/**
+ * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request. Domains are
+ * exact registrable-or-below hosts (validated against the phase-3 matcher at
+ * the service, not here — pattern checks alone would mislead); the approval
+ * token comes from the human operator's decision on the cookie.handoff kind.
+ */
+export const CookieHandoffRequestSchema = Type.Object(
+  {
+    domains: Type.Array(Type.String({ minLength: 1, maxLength: 253 }), {
+      minItems: 1,
+      maxItems: 16,
+    }),
+    approvalToken: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  },
+  { additionalProperties: false }
+);
+
 // ============================================================================
 // Engine Capability Schemas
 // ============================================================================
@@ -246,6 +272,7 @@ export const EngineInfoSchema = Type.Object({
 // ============================================================================
 
 export const SessionResponseSchema = Type.Object({
+  policyVersion: Type.Optional(Type.String()),
   warnings: Type.Optional(Type.Array(Type.String())),
   sessionId: Type.String({ pattern: '^ses_[a-zA-Z0-9_]+$' }),
   engine: EngineInfoSchema,
@@ -786,10 +813,40 @@ export const ExtractOutcomeSchema = Type.Object(
   { $id: 'urn:agentbrowser:extract-outcome:v1' }
 );
 
+export const ApprovalKindSchema = Type.Union([
+  Type.Literal('act'),
+  Type.Literal('act.reviewed'),
+  Type.Literal('cookie.handoff'),
+]);
+
+/** TD-BROWSER-16 phase 1: the non-act approval view (ADR-025). */
+export const NonActApprovalViewSchema = Type.Object(
+  {
+    kind: ApprovalKindSchema,
+    sessionId: Type.String(),
+    domains: Type.Optional(Type.Array(Type.String())),
+    counts: Type.Optional(Type.Record(Type.String(), Type.Integer())),
+    status: Type.String(),
+    decidedOutcome: Type.Optional(Type.Union([Type.Literal('approve'), Type.Literal('deny')])),
+  },
+  { additionalProperties: false }
+);
+
+/** TD-BROWSER-16 phase 1: the non-act approval decide result. */
+export const NonActApprovalDecisionSchema = Type.Object(
+  {
+    kind: ApprovalKindSchema,
+    status: Type.Union([Type.Literal('approved'), Type.Literal('denied')]),
+  },
+  { additionalProperties: false }
+);
+
 export const PolicyDecisionSchema = Type.Object({
   allowed: Type.Boolean(),
   reason: Type.String(),
   ruleMatched: Type.Optional(Type.String()),
+  /** Every deciding rule id (ADR-024); `ruleMatched` stays the first. */
+  rulesMatched: Type.Optional(Type.Array(Type.String())),
 });
 
 export const ApprovalDecisionSchema = Type.Object({

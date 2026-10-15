@@ -1,5 +1,13 @@
 import { isNavigationFailureReason, sessionLeaseRemainingMs } from '@agentbrowser/protocol';
-import { type CdpAttachAdmission, requireCdpAttachAdmission } from './cdp-config.js';
+import {
+  attachRequestHasOptions,
+  type CdpAttachAdmission,
+  FLOOR_ATTACH_OPTIONS,
+  FLOOR_OPERATOR_REQUIRED,
+  handoffFloor,
+  requireCdpAttachAdmission,
+  withMetadataFloor,
+} from './floor.js';
 import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
@@ -60,33 +68,40 @@ import {
   ActionRiskPolicy,
   type ActionRiskPolicyOptions,
   ApprovalGate,
+  type ApprovalToken,
   ArtifactStore,
+  assertCookieRequestSize,
   budgetObservation,
   canonicalJson,
+  covers,
+  isHighRiskEffect,
   JsonLedger,
+  MAX_COOKIE_COUNT,
+  MAX_COOKIE_REQUEST_BYTES,
   ObservationNormalizer,
   projectionActive,
   projectObservation,
   SecretManager,
   SessionCoordinator,
   SessionState,
+  tightenApprovalMode,
+  usableHost,
 } from '@agentbrowser/core';
-import type {
-  EngineSession,
-  EngineSessionOptions,
-  NormalizedCookie,
-  RawPageState,
-  RequestPolicy,
-} from '@agentbrowser/engine';
 import {
   type BrowserEngine,
   type EngineEvent,
   type EnginePage,
+  type EngineSession,
+  type EngineSessionOptions,
+  HANDOFF_RTC_REMOVAL_INIT_SCRIPT,
   type NativeFormEvidence,
+  type NormalizedCookie,
   normalizeEngineError,
   normalizeNavigationFailure,
   type ProtocolErrorCode,
   parseNativeFormEvidence,
+  type RawPageState,
+  type RequestPolicy,
 } from '@agentbrowser/engine';
 import {
   extractForms,
@@ -100,6 +115,14 @@ import {
   SchemaExtractor,
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import {
+  type Authorizer,
+  approvalModeOf,
+  type CapabilityAction,
+  LegacyAuthorizer,
+  policyCheck,
+  TenantBindingAuthorizer,
+} from '@agentbrowser/policy-engine';
 import type {
   ObservationRequest,
   OperatorApprovalView,
@@ -109,7 +132,9 @@ import type {
   PageState,
   PdfRequest,
   PlanReport,
+  PolicyDecision,
   ScreenshotRequest,
+  SessionEventsPage,
 } from '@agentbrowser/protocol';
 import {
   createOutcomeRunReportParser,
@@ -198,6 +223,54 @@ export interface ServiceSessionRequest {
    * fallback. Raise it for a session known to navigate large/complex forms.
    */
   snapshotTimeoutMs?: number;
+  /**
+   * TD-BROWSER-16 (ADR-025 §5): mark this session as carrying operator
+   * credentials. Server-side only — the wire SessionRequestSchema does not
+   * accept it, and phase 6's handoff operation sets it on the session.
+   */
+  credentialSource?: 'operator';
+}
+
+/**
+ * The operator-granted action lease (ADR-025 §5): within it, unknown-effect
+ * actions on its hosts run without review — one count per action. High-risk
+ * effects are never admitted by a lease. Granted only on an operator route;
+ * an agent cannot request, extend or widen one.
+ */
+interface ActiveActionLease {
+  hosts: string[];
+  grantedAt: number;
+  expiresAt: number;
+  maxActions: number;
+  remainingActions: number;
+  /** The audit event fires once, at the exhaustion actually observed. */
+  exhaustedLogged: boolean;
+}
+
+/** Lease bounds from ADR-025 §5. */
+const ACTION_LEASE_MAX_HOSTS = 16;
+const ACTION_LEASE_MAX_DURATION_MS = 4 * 60 * 60 * 1000;
+const ACTION_LEASE_MAX_ACTIONS = 500;
+
+/** The count/time projection of a live lease (hosts stay with the lease). */
+function leaseProjection(
+  lease: ActiveActionLease
+): Omit<import('@agentbrowser/protocol').ActionLease, 'hosts'> {
+  return {
+    grantedAt: lease.grantedAt,
+    expiresAt: lease.expiresAt,
+    maxActions: lease.maxActions,
+    remainingActions: lease.remainingActions,
+  };
+}
+
+/** A page URL's hostname, or '' when unparseable (never covered — fail closed). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/\.$/, '');
+  } catch {
+    return '';
+  }
 }
 
 export type ServiceSessionView = import('@agentbrowser/protocol').SessionView;
@@ -330,9 +403,35 @@ export interface ServiceEvidenceReviewContext {
   readonly nativeForm: PreparedNativeFormRead;
 }
 
+/** Event replay envelope: the protocol's SessionEventsPage with engine events. */
+export type SessionEventPage = Omit<SessionEventsPage, 'events'> & { events: EngineEvent[] };
+
 export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
   cdpAttachAdmission?: CdpAttachAdmission;
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): the operator login browser, injected
+   * by the server (narrow structural type — no engine dependency here). The
+   * handoff floors on enabled+open and reads through it; absent means the
+   * login browser is disabled and every handoff refuses.
+   */
+  loginBrowser?: {
+    readonly isEnabled: boolean;
+    readonly isOpen: boolean;
+    read(): Promise<{
+      cookies: Array<{
+        name: string;
+        value: string;
+        domain: string;
+        path: string;
+        expires: number;
+        httpOnly: boolean;
+        secure: boolean;
+        sameSite: string;
+      }>;
+      skipped: { partitioned: number; expired: number };
+    }>;
+  };
   /**
    * C4b: whether a qualified durable journal store is deployed. Defaults
    * to false (ephemeral-only). Trusted deployment configuration — never
@@ -342,6 +441,35 @@ export interface ServiceDependencies {
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
+  /**
+   * TD-BROWSER-15: decides approvals and capability grants. Default: the
+   * legacy authorizer (today's rules). An injected authorizer replaces
+   * `approvalPolicy.unknownRisk` entirely (the rules still classify). Egress
+   * exceptions are answered by the network policy's own hook until phase 4
+   * wires one authorizer to both.
+   */
+  authorizer?: Authorizer;
+  /**
+   * TD-BROWSER-15 phase 4: the loaded policy's version, stamped on every
+   * session created under it. Absent for the legacy (environment) authorizer.
+   */
+  policyVersion?: string;
+  /**
+   * TD-BROWSER-15 phase 4: true when API keys configure tenants. Without
+   * keys, a caller's tenantId is a claim, not an identity, so capability
+   * questions carry no tenant: the implicit `Tenant::"local"` decides.
+   */
+  tenantsConfigured?: boolean;
+  /**
+   * TD-BROWSER-15 phase 4: when a policy file is loaded, each session's
+   * network policy is built per tenant — floor blocks plus the policy
+   * authorizer's exceptions, memoized per session. Returning a clear()
+   * disposer that closeSession calls.
+   */
+  sessionPolicyFactory?: (tenantId: string | undefined) => {
+    networkPolicy: NetworkPolicy;
+    clear: () => void;
+  };
   engine: BrowserEngine;
   /**
    * TD-BROWSER-7 Phase 1: named auxiliary engines. createSession routes by
@@ -513,6 +641,11 @@ export class AgentBrowserService {
   private readonly normalizer: ObservationNormalizer;
   private readonly executor: ActionExecutor;
   private readonly networkPolicy: NetworkPolicy;
+  private readonly sessionPolicyFactory:
+    | ((tenantId: string | undefined) => { networkPolicy: NetworkPolicy; clear: () => void })
+    | undefined;
+  private readonly policyVersion: string | undefined;
+  private readonly tenantsConfigured: boolean;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
@@ -536,11 +669,49 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  /** TD-15 phase 4: per-session memo disposers, cleared at close. */
+  private readonly sessionPolicyDisposers = new Map<string, () => void>();
   private readonly sessionApprovalPolicies = new Map<
     string,
     import('@agentbrowser/protocol').ApprovalPolicy
   >();
+  /**
+   * TD-BROWSER-16 phase 5 (ADR-025 §5): sessions carrying operator
+   * credentials. Set only server-side (the handoff marks it in phase 6;
+   * embedders may set it on ServiceSessionRequest) — no agent-facing schema
+   * accepts it. In a marked session high-risk and unknown effects need an
+   * act.reviewed decision, unless an active lease covers the host.
+   */
+  private readonly sessionCredentialSources = new Map<string, 'operator'>();
+  /** The session's own host allowlist (request + scope), for lease validation. */
+  private readonly sessionHostAllowlists = new Map<string, string[]>();
+  /** The operator-granted action lease per marked session; one at a time. */
+  private readonly actionLeases = new Map<string, ActiveActionLease>();
+  /** TD-BROWSER-16 phase 6: per-session floor inputs recorded at create. */
+  private readonly sessionHandoffFacts = new Map<
+    string,
+    {
+      allowedHosts: string[];
+      scopeAllowedHosts: string[];
+      pathRuleSuffixes: string[];
+      allowServiceWorkers: boolean;
+      cdpAttach: boolean;
+      controlMode?: 'delegated';
+    }
+  >();
+  /** TD-BROWSER-16 phase 6: serializes each session's handoff end to end. */
+  private readonly handoffLocks = new Map<string, Promise<unknown>>();
+  /** TD-BROWSER-16 phase 6: the operator login browser (server-injected). */
+  private readonly loginBrowser: NonNullable<ServiceDependencies['loginBrowser']> | undefined;
+  /**
+   * TD-BROWSER-16 phase 6: true while the api passes no engine
+   * webSocketPolicy, making deny-upgrade the deployment default. See the
+   * handoff's floor.handoff.websocket guard.
+   */
+  private readonly webSocketPolicyDefaultDeny = true;
   private readonly actionRiskPolicy: ActionRiskPolicy;
+  /** TD-BROWSER-15: operator decisions go through one seam; legacy until a policy file. */
+  private readonly authorizer: Authorizer;
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
@@ -556,6 +727,7 @@ export class AgentBrowserService {
 
   constructor(deps: ServiceDependencies) {
     this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
+    this.loginBrowser = deps.loginBrowser;
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
@@ -602,6 +774,9 @@ export class AgentBrowserService {
       this.evidenceSourceRegistry = evidenceSourceRegistry;
     }
     this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
+    this.authorizer =
+      deps.authorizer ??
+      new LegacyAuthorizer({ unknownRisk: this.actionRiskPolicy.unknownRiskMode });
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
       this.engines.set(name, engine);
@@ -619,6 +794,9 @@ export class AgentBrowserService {
         // console.error, invisible in a production log pipeline.
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       });
+    this.sessionPolicyFactory = deps.sessionPolicyFactory;
+    this.policyVersion = deps.policyVersion;
+    this.tenantsConfigured = deps.tenantsConfigured ?? false;
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
@@ -719,12 +897,22 @@ export class AgentBrowserService {
         this.churn.delete(this.churnKey(sessionId, pageId));
       }
     }
+    this.sessionPolicyDisposers.get(sessionId)?.();
+    this.sessionPolicyDisposers.delete(sessionId);
     this.eventListeners.delete(sessionId);
     this.eventHistory.delete(sessionId);
     this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
+    this.sessionCredentialSources.delete(sessionId);
+    this.sessionHostAllowlists.delete(sessionId);
+    this.actionLeases.delete(sessionId);
+    this.sessionHandoffFacts.delete(sessionId);
+    this.handoffLocks.delete(sessionId);
+    // TD-BROWSER-16 phase 2's release valve: handoff-registered values stop
+    // redacting once their session is gone.
+    this.secretManager.clearSessionSecrets(sessionId);
   }
 
   /**
@@ -887,12 +1075,38 @@ export class AgentBrowserService {
   getSessionEvents(
     sessionId: string,
     options: { type?: string; since?: number; limit?: number }
-  ): { events: EngineEvent[]; nextCursor: number };
+  ): SessionEventPage;
   getSessionEvents(
     sessionId: string,
     selector?: string | { type?: string; since?: number; limit?: number }
-  ): EngineEvent[] | { events: EngineEvent[]; nextCursor: number } {
+  ): EngineEvent[] | SessionEventPage {
     this.requireSession(sessionId);
+    // Paging (N1 G2) applies to one stream at a time — the cursors are
+    // per-stream ledger sequences. Served before materializing either ledger.
+    if (
+      selector !== undefined &&
+      typeof selector !== 'string' &&
+      (selector.since !== undefined || selector.limit !== undefined)
+    ) {
+      const typeFilter = selector.type;
+      if (typeFilter === undefined) throw new Error('since/limit require a type filter');
+      const limit = selector.limit ?? 200;
+      const since = selector.since ?? -1;
+      const ledger = typeFilter.startsWith('request.')
+        ? this.requestHistory.get(sessionId)
+        : this.eventHistory.get(sessionId);
+      // Filter by the exact type while scanning: the cursor advances past
+      // other types in the same ledger instead of returning them.
+      const page = ledger?.page(since, limit, (event) => event.type === typeFilter);
+      return {
+        events: (page?.rows ?? []).map(({ seq, value }) => ({ ...value, seq })),
+        nextCursor: page?.lastScanned ?? since,
+        oldestSeq: page?.oldestSeq ?? 0,
+        // A gap is relative to a cursor the caller held; a first read without
+        // since asked for whatever is retained.
+        gap: selector.since !== undefined && (page?.gap ?? false),
+      };
+    }
     const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
     const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
     // Legacy positional form: an array, exactly as callers have always seen.
@@ -906,24 +1120,9 @@ export class AgentBrowserService {
       }
       return others.filter((event) => event.type === selector);
     }
-    // Paging (N1 G2) applies to one stream at a time — the cursors are
-    // per-stream ledger sequences. The filtered-no-paging form returns an
-    // envelope with a sentinel cursor for existing shape-agnostic callers.
+    // The filtered-no-paging form returns an envelope with a sentinel cursor
+    // for existing shape-agnostic callers.
     const typeFilter = selector.type;
-    if (selector.since !== undefined || selector.limit !== undefined) {
-      if (typeFilter === undefined) throw new Error('since/limit require a type filter');
-      const limit = selector.limit ?? 200;
-      const since = selector.since ?? -1;
-      const ledger = typeFilter.startsWith('request.')
-        ? this.requestHistory.get(sessionId)
-        : this.eventHistory.get(sessionId);
-      const rows = (ledger?.entriesAfter(since, limit) ?? []).map(({ seq, value }) => ({
-        ...value,
-        seq,
-      }));
-      const last = rows.at(-1)?.seq ?? since;
-      return { events: rows, nextCursor: last };
-    }
     if (typeFilter === undefined) {
       // Over HTTP the route always builds an object selector, so `{}` is the
       // "no selector" merged view — not a filter for events with an undefined
@@ -1216,27 +1415,8 @@ export class AgentBrowserService {
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
     if (request.cdpAttach === true) {
-      if (
-        request.controlMode !== undefined ||
-        request.headless !== undefined ||
-        request.viewport !== undefined ||
-        request.locale !== undefined ||
-        request.timezoneId !== undefined ||
-        request.cookies !== undefined ||
-        request.allowDownloads === true ||
-        request.allowedHosts !== undefined ||
-        request.blockedHosts !== undefined ||
-        request.allowServiceWorkers !== undefined ||
-        request.maxDownloadBytes !== undefined ||
-        request.approval !== undefined ||
-        (request.engine !== undefined &&
-          request.engine !== 'auto' &&
-          request.engine !== this.engine.name)
-      )
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.'
-        );
+      if (attachRequestHasOptions(request, this.engine.name))
+        throw new ServiceError(...FLOOR_ATTACH_OPTIONS);
       try {
         requireCdpAttachAdmission(this.cdpAttachAdmission);
       } catch (error) {
@@ -1257,9 +1437,15 @@ export class AgentBrowserService {
       if (this.shuttingDown)
         throw new ServiceError('SESSION_NOT_FOUND', 'Service is shutting down');
       // Snapshot before awaiting engine creation; all session consumers share it.
-      const basePolicy = request.allowDownloads
-        ? this.networkPolicy.snapshot()
-        : this.networkPolicy;
+      // With a policy file loaded (TD-15 phase 4), each session's policy is
+      // the floor plus the tenant-bound authorizer's exceptions, memoized.
+      const policyBuild = this.sessionPolicyFactory?.(request.tenantId);
+      const sessionDisposer = policyBuild?.clear;
+      const basePolicy = policyBuild
+        ? policyBuild.networkPolicy
+        : request.allowDownloads
+          ? this.networkPolicy.snapshot()
+          : this.networkPolicy;
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
       if (request.cdpAttach === true) engineRequest.cdpAttach = true;
       engineRequest.downloadPolicy = {
@@ -1267,6 +1453,24 @@ export class AgentBrowserService {
         maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       };
       const engine = this.resolveEngine(request.engine);
+      // TD-BROWSER-15: every capability this session asks for must be granted.
+      // After the shutdown check and engine resolution, so those refusals keep
+      // their precedence, and inside the trace, so denials are recorded.
+      // Headed is what the session gets, not only what it asks: an always-
+      // headed engine (Safari, ADR-011) is headed unless headless is demanded.
+      const alwaysHeaded = (await engine.capabilities()).alwaysHeaded === true;
+      for (const [action, requested] of [
+        ['cdp.attach', request.cdpAttach === true],
+        ['downloads', request.allowDownloads === true],
+        ['serviceWorkers', request.allowServiceWorkers === true],
+        ['cookie.seed', (request.cookies?.length ?? 0) > 0],
+        [
+          'session.headed',
+          request.headless === false || (alwaysHeaded && request.headless !== true),
+        ],
+      ] as const) {
+        if (requested) this.requireCapability(action, request.tenantId);
+      }
       if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
       if (request.locale !== undefined) engineRequest.locale = request.locale;
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
@@ -1288,10 +1492,13 @@ export class AgentBrowserService {
       // T7 slice 2a: the engagement scope is the outermost restrict-only
       // layer — hosts/paths/methods/identities/time/budget over the whole
       // chain, per request and per redirect hop.
-      const sessionPolicy: SessionHostPolicy | NetworkPolicy | EngagementScopePolicy =
+      const scopedPolicy: SessionHostPolicy | NetworkPolicy | EngagementScopePolicy =
         request.scope !== undefined
           ? new EngagementScopePolicy(hostPolicy, request.scope)
           : hostPolicy;
+      // TD-BROWSER-15 phase 0: the metadata floor wraps the whole chain, so it
+      // holds whatever policy was injected (ADR-024 §1).
+      const sessionPolicy = withMetadataFloor(scopedPolicy);
 
       let allocation: Awaited<ReturnType<SessionCoordinator['createOwned']>>;
       try {
@@ -1359,7 +1566,29 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (sessionDisposer !== undefined)
+          this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
+        // TD-BROWSER-16 phase 5: the marking and the session's own allowlist
+        // (request + engagement scope), which bounds any lease the operator
+        // grants later.
+        if (request.credentialSource === 'operator')
+          this.sessionCredentialSources.set(session.sessionId, 'operator');
+        const allowlist = [...(request.allowedHosts ?? []), ...(request.scope?.allowedHosts ?? [])];
+        if (allowlist.length > 0) this.sessionHostAllowlists.set(session.sessionId, allowlist);
+        // TD-BROWSER-16 phase 6: the handoff's floor inputs, recorded at
+        // create — the exact allowlist entries, the scope's path-rule
+        // suffixes, and the service-worker/attachment/control facts.
+        this.sessionHandoffFacts.set(session.sessionId, {
+          allowedHosts: [...(request.allowedHosts ?? [])],
+          scopeAllowedHosts: [...(request.scope?.allowedHosts ?? [])],
+          pathRuleSuffixes: (request.scope?.pathRules ?? [])
+            .map((rule) => rule.hostSuffix)
+            .filter((suffix) => suffix !== undefined),
+          allowServiceWorkers: request.allowServiceWorkers === true,
+          cdpAttach: request.cdpAttach === true,
+          ...(request.controlMode !== undefined ? { controlMode: request.controlMode } : {}),
+        });
 
         const finalInspection = this.coordinator.inspect(session.sessionId);
         if (!finalInspection || finalInspection.context !== context || context.signal.aborted) {
@@ -1442,6 +1671,10 @@ export class AgentBrowserService {
           ? { leaseRemainingMs: 0 }
           : {}),
       ...(context.terminal ? { closeCause: context.terminal.closeCause } : {}),
+      ...(this.sessionCredentialSources.get(context.id) !== undefined
+        ? { credentialSource: 'operator' as const }
+        : {}),
+      ...(this.projectActionLease(context.id) ?? {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
       ...(context.engineSession.warnings?.length
@@ -1450,6 +1683,7 @@ export class AgentBrowserService {
       ...(includeTenant && context.metadata.tenantId !== undefined
         ? { tenantId: context.metadata.tenantId }
         : {}),
+      ...(this.policyVersion !== undefined ? { policyVersion: this.policyVersion } : {}),
     };
   }
 
@@ -1472,10 +1706,180 @@ export class AgentBrowserService {
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
 
+  /**
+   * TD-BROWSER-15 phase 5: answers a policy check by enumeration, never by
+   * resolution, against the service's own authorizer.
+   */
+  policyCheck(
+    request: import('@agentbrowser/policy-engine').PolicyCheckRequest
+  ): import('@agentbrowser/policy-engine').PolicyCheckAnswer {
+    return policyCheck(this.authorizer, request);
+  }
+
+  /**
+   * TD-BROWSER-16 phase 1 (ADR-025): the separate resolve-and-decide path for
+   * the non-act approval kinds. It deliberately does NOT reuse the delegated-
+   * review machinery (reviewContext, authority epochs): a human operator
+   * decides on their own credential. Returns undefined for act-kind tokens,
+   * which keep their existing path.
+   */
+  async getApprovalKind(
+    sessionId: string,
+    tokenId: string
+  ): Promise<{ kind: 'cookie.handoff'; status: string } | undefined> {
+    // Act-family kinds keep the delegated reviewed path: decideReviewedApproval
+    // sets approved without burning, and the act retry burns it. The simple
+    // decide-and-burn path is for the truly non-act kinds only — burning an
+    // act.reviewed token on decide would make it unconsumable. getToken
+    // (unlike the session list) still returns expired tokens, so an expired
+    // non-act token reports its kind instead of the act path's misleading error.
+    const token = await this.approvalGate.getToken(tokenId);
+    if (
+      token === undefined ||
+      token.sessionId !== sessionId ||
+      token.kind === undefined ||
+      token.kind === 'act' ||
+      token.kind === 'act.reviewed'
+    )
+      return undefined;
+    return { kind: token.kind, status: token.status };
+  }
+
+  /** The view for a non-act approval: the kind and the bound evidence, verbatim. */
+  async viewNonActApproval(
+    sessionId: string,
+    tokenId: string
+  ): Promise<{
+    kind: string;
+    sessionId: string;
+    domains?: string[];
+    counts?: Record<string, number>;
+    status: string;
+  }> {
+    const token = await this.findNonActToken(sessionId, tokenId);
+    return {
+      kind: token.kind as string,
+      sessionId,
+      ...(token.domains !== undefined ? { domains: [...token.domains] } : {}),
+      ...(token.counts !== undefined ? { counts: { ...token.counts } } : {}),
+      ...(token.decidedOutcome !== undefined ? { decidedOutcome: token.decidedOutcome } : {}),
+      status: token.status,
+    };
+  }
+
+  /**
+   * The decide for a non-act approval: single-use, human-operator decided.
+   * A cookie.handoff approval may carry an action lease (ADR-025 section 5),
+   * recorded with the decision and applied by the handoff itself once the
+   * session is marked — the session's allowlist bounds it then.
+   */
+  async decideNonActApproval(
+    sessionId: string,
+    tokenId: string,
+    decision: 'approve' | 'deny',
+    lease?: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): Promise<{ kind: string; status: string }> {
+    const token = await this.findNonActToken(sessionId, tokenId);
+    if (token.status !== 'pending')
+      throw new ServiceError('INVALID_REQUEST', 'Approval token is not pending');
+    if (lease !== undefined && (token.kind !== 'cookie.handoff' || decision !== 'approve'))
+      throw new ServiceError('INVALID_REQUEST', 'Only a cookie.handoff approval carries a lease');
+    await this.approvalGate.useApprovalTokenWithOutcome(tokenId, decision, lease);
+    return { kind: token.kind as string, status: decision === 'approve' ? 'approved' : 'denied' };
+  }
+
+  private async findNonActToken(sessionId: string, tokenId: string): Promise<ApprovalToken> {
+    // getToken (unlike the session list) still returns expired tokens, so an
+    // expired non-act token reports its kind instead of falling through to
+    // the act path's misleading error. act.reviewed is act-family (decided
+    // on the delegated path) and is refused here too.
+    const token = await this.approvalGate.getToken(tokenId);
+    if (
+      token === undefined ||
+      token.sessionId !== sessionId ||
+      token.kind === undefined ||
+      token.kind === 'act' ||
+      token.kind === 'act.reviewed'
+    )
+      throw new ServiceError('NOT_FOUND', 'Approval does not exist');
+    return token;
+  }
+
+  /**
+   * TD-BROWSER-15 phase 5: the capability decisions for a default session of
+   * one tenant — the GET /v1/policy summary.
+   */
+  policyCapabilitySummary(tenantId: string | undefined): Record<string, PolicyDecision> {
+    const summary: Record<string, PolicyDecision> = {};
+    for (const action of [
+      'cdp.attach',
+      'downloads',
+      'serviceWorkers',
+      'cookie.seed',
+      'cookie.export',
+      'session.headed',
+    ] as const) {
+      summary[action] = this.authorizer.decide({
+        action,
+        context: tenantId === undefined ? {} : { tenantId },
+      });
+    }
+    // TD-BROWSER-16 phase 7: the handoff entry answers the DEFAULT decision
+    // (no per-domain rule engaged — the ask uses the sentinel domain '*').
+    // Per-domain answers are conditional questions: policy check carries the
+    // real domain, and the handoff itself decides per domain at transfer
+    // time. A policy file's per-domain rules are raw Cedar text; enumerating
+    // grants from arbitrary text is not sound, so the default + check pair
+    // IS the per-domain surface.
+    summary['cookie.handoff'] = this.authorizer.decide({
+      action: 'cookie.handoff',
+      context: { domain: '*', ...(tenantId !== undefined ? { tenantId } : {}) },
+    });
+    return summary;
+  }
+
+  /**
+   * The authorizer for one session's approval questions, tenant-bound when
+   * keys configure tenants (TD-15 review of the phase-7 docs): per-tenant act
+   * rules must match, and enforcement must agree with `policy check`, which
+   * already answers as the authenticated tenant. Without keys nothing binds —
+   * the implicit local tenant decides, whatever a caller claims.
+   */
+  private approvalAuthorizerFor(sessionId: string): Authorizer {
+    if (!this.tenantsConfigured) return this.authorizer;
+    const tenantId = this.coordinator.inspect(sessionId)?.context.metadata.tenantId;
+    if (tenantId === undefined) return this.authorizer;
+    return new TenantBindingAuthorizer(this.authorizer, tenantId);
+  }
+
+  /** Refuse, naming the deciding rule, unless the authorizer grants the capability. */
+  private requireCapability(action: CapabilityAction, tenantId: string | undefined): void {
+    // Without API keys a tenantId is a claim, not an identity (TD-15 phase 4
+    // review): no tenant reaches the policy, and the implicit local tenant
+    // decides.
+    const context = this.tenantsConfigured && tenantId !== undefined ? { tenantId } : {};
+    const decision = this.authorizer.decide({ action, context });
+    if (decision.allowed === true) return;
+    throw new ServiceError(
+      'POLICY_DENIED',
+      `Capability ${action} is not granted: ${decision.reason}`,
+      false,
+      {
+        ...(decision.ruleMatched !== undefined ? { rule: decision.ruleMatched } : {}),
+        policyDecision: decision,
+      }
+    );
+  }
+
   /** TD-BROWSER-6: scoped cookie export (ADR-005) for the credential handoff loop. */
   async getSessionCookies(
     sessionId: string
   ): Promise<import('@agentbrowser/engine').NormalizedCookie[]> {
+    // An unknown session keeps its existing refusal (from the export below,
+    // unchanged); only a session that exists is asked about.
+    const view = this.getSession(sessionId);
+    if (view) this.requireCapability('cookie.export', view.tenantId);
+    this.refuseExportIfMarked(sessionId);
     try {
       return await this.coordinator.cookies(sessionId);
     } catch (error) {
@@ -1547,6 +1951,7 @@ export class AgentBrowserService {
    */
   async exportHtml(sessionId: string, pageId: string): Promise<ArtifactMetadata> {
     return this.traced('html.export', { sessionId, pageId }, async () => {
+      this.refuseExportIfMarked(sessionId);
       const raw = await this.readPageSource(sessionId, pageId, 'exportHtml');
       const html = raw.content ?? '';
       const metadata = this.putArtifact(
@@ -1600,6 +2005,22 @@ export class AgentBrowserService {
   /** Structured, scoped native form filling under the caller’s existing admission. */
   async autofill(sessionId: string, pageId: string, input: unknown) {
     this.requirePage(sessionId, pageId);
+    // ADR-025 §5: autofill in a marked session runs only within an active
+    // lease covering the page's host — refused up front, before any field
+    // write; each write then spends one leased unknown action in the act path.
+    if (this.sessionCredentialSources.get(sessionId) === 'operator') {
+      const page = this.requirePage(sessionId, pageId);
+      const currentUrl = page.enginePage.getUrl
+        ? await page.enginePage.getUrl()
+        : (await page.enginePage.observe({})).url;
+      if (!this.leaseCoversHost(sessionId, hostOf(currentUrl)))
+        throw new ServiceError(
+          'POLICY_DENIED',
+          'autofill in a session holding operator credentials requires an active lease covering the page host',
+          false,
+          { credentialSource: 'operator' }
+        );
+    }
     try {
       const report = await runAutofill(input, {
         resolveValue: async (value) => {
@@ -2255,8 +2676,7 @@ export class AgentBrowserService {
     const publication =
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     let disclosure: PreparedReviewDisclosure | undefined;
-    if (principal.actor !== 'operator')
-      throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+    if (principal.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
@@ -2338,6 +2758,15 @@ export class AgentBrowserService {
           .join('; ')}`
       );
     }
+    // ADR-025 §5: application.execute is refused outright in a marked
+    // session — operator credentials never reach an application operation.
+    if (this.sessionCredentialSources.get(sessionId) === 'operator')
+      throw new ServiceError(
+        'POLICY_DENIED',
+        'application.execute is not available in a session holding operator credentials',
+        false,
+        { credentialSource: 'operator' }
+      );
     // C4b: normalize the execution requirement (missing → ephemeral) and
     // refuse 'durable' when the runtime has no qualified durable journal
     // store. The refusal is typed and must not reserve an identity or
@@ -3179,7 +3608,7 @@ export class AgentBrowserService {
     // Reviewed consent and dispatch must share one detached request across all
     // awaits, including nested target/values/paths. Legacy input semantics stay intact.
     let request = input;
-    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+    if (this.usesOperatorReview(sessionId)) {
       try {
         request = JSON.parse(canonicalJson(input)) as ServiceActRequest;
       } catch {
@@ -3863,6 +4292,7 @@ export class AgentBrowserService {
     filename: string
   ): Promise<ArtifactMetadata> {
     return this.traced('download.collect', { sessionId, pageId, filename }, async () => {
+      this.refuseExportIfMarked(sessionId);
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
 
@@ -4344,7 +4774,7 @@ export class AgentBrowserService {
 
   /** Gate high-risk elements behind single-use approval tokens (ADR-007). */
   private reviewContext(sessionId: string) {
-    if (this.sessionApprovalPolicies.get(sessionId)?.review !== 'operator')
+    if (!this.usesOperatorReview(sessionId))
       throw new ServiceError('INVALID_REQUEST', 'Session does not use operator-reviewed approval');
     return this.authority.reviewBindingInScope(sessionId);
   }
@@ -4584,6 +5014,508 @@ export class AgentBrowserService {
     return disclosure;
   }
 
+  // --- TD-BROWSER-16 phase 5: reviewed actions and the lease (ADR-025 §5) ---
+
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): cookie export, HTML export and
+   * download collection are refused in a marked session — the operator's
+   * credentials never leave through an artifact.
+   */
+  private refuseExportIfMarked(sessionId: string): void {
+    if (this.sessionCredentialSources.get(sessionId) === 'operator')
+      throw new ServiceError(
+        'HANDOFF_COOKIES_NOT_EXPORTABLE',
+        'this session holds operator credentials; cookies, HTML and downloads are not exportable',
+        false,
+        { credentialSource: 'operator' }
+      );
+  }
+
+  /** True in a session where operator review semantics apply to acts. */
+  private usesOperatorReview(sessionId: string): boolean {
+    return (
+      this.sessionCredentialSources.get(sessionId) === 'operator' ||
+      this.sessionApprovalPolicies.get(sessionId)?.review === 'operator'
+    );
+  }
+
+  /**
+   * TD-BROWSER-16: mark an existing session as carrying operator credentials.
+   * Called by the handoff operation (phase 6); server-internal only — no
+   * route exposes it, and an agent cannot mark a session.
+   */
+  markOperatorCredentialSource(sessionId: string): void {
+    if (this.coordinator.inspect(sessionId) === undefined)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    this.sessionCredentialSources.set(sessionId, 'operator');
+  }
+
+  /**
+   * Grant the session's action lease. Operator-route only (the server layer
+   * authenticates the human operator); every host must be a usable host lying
+   * within the session's exact allowlist — a session without one has nothing
+   * for a lease to lie within, so the grant is refused (fail closed).
+   */
+  /**
+   * Shape, bounds and allowlist validation for a lease grant — shared by the
+   * grant (which stores) and the handoff's pre-mark check (review F2: a
+   * lease the session's allowlist refuses must abort BEFORE the marking,
+   * not after it).
+   */
+  private validateActionLeaseInput(
+    sessionId: string,
+    input: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): void {
+    const { hosts, expiresInMs, maxActions } = input;
+    if (
+      !Array.isArray(hosts) ||
+      hosts.length === 0 ||
+      hosts.length > ACTION_LEASE_MAX_HOSTS ||
+      hosts.some((host) => typeof host !== 'string')
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A lease needs 1-${ACTION_LEASE_MAX_HOSTS} host entries`
+      );
+    if (
+      !Number.isSafeInteger(expiresInMs) ||
+      expiresInMs <= 0 ||
+      expiresInMs > ACTION_LEASE_MAX_DURATION_MS
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A lease lasts at most ${ACTION_LEASE_MAX_DURATION_MS} ms`
+      );
+    if (
+      !Number.isSafeInteger(maxActions) ||
+      maxActions <= 0 ||
+      maxActions > ACTION_LEASE_MAX_ACTIONS
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A lease covers at most ${ACTION_LEASE_MAX_ACTIONS} actions`
+      );
+    const allowlist = this.sessionHostAllowlists.get(sessionId) ?? [];
+    if (allowlist.length === 0)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'The session has no host allowlist for a lease to lie within'
+      );
+    for (const host of hosts) {
+      const usable = usableHost(host);
+      if (!usable.ok)
+        throw new ServiceError('INVALID_REQUEST', `Lease host is not usable: ${usable.reason}`);
+      if (!allowlist.some((entry) => covers(entry, host).ok))
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Lease host '${host}' does not lie within the session's host allowlist`
+        );
+    }
+  }
+
+  async grantActionLease(
+    sessionId: string,
+    input: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): Promise<import('@agentbrowser/protocol').ActionLease> {
+    if (this.coordinator.inspect(sessionId) === undefined)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    if (this.sessionCredentialSources.get(sessionId) !== 'operator')
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'An action lease applies only to a session holding operator credentials'
+      );
+    this.validateActionLeaseInput(sessionId, input);
+    const now = Date.now();
+    const lease: ActiveActionLease = {
+      hosts: [...input.hosts],
+      grantedAt: now,
+      expiresAt: now + input.expiresInMs,
+      maxActions: input.maxActions,
+      remainingActions: input.maxActions,
+      exhaustedLogged: false,
+    };
+    this.actionLeases.set(sessionId, lease);
+    this.logger?.info('lease.granted', {
+      sessionId,
+      hosts: [...input.hosts],
+      expiresAt: lease.expiresAt,
+      maxActions: input.maxActions,
+    });
+    return { hosts: [...lease.hosts], ...leaseProjection(lease) };
+  }
+
+  /** The lease if it is still live; expiry exhaustion is audited once, here. */
+  private activeLeaseFor(sessionId: string): ActiveActionLease | undefined {
+    const lease = this.actionLeases.get(sessionId);
+    if (lease === undefined) return undefined;
+    if (Date.now() >= lease.expiresAt) {
+      this.auditLeaseExhausted(sessionId, lease, 'expiry');
+      return undefined;
+    }
+    if (lease.remainingActions === 0) {
+      this.auditLeaseExhausted(sessionId, lease, 'count');
+      return undefined;
+    }
+    return lease;
+  }
+
+  private auditLeaseExhausted(
+    sessionId: string,
+    lease: ActiveActionLease,
+    reason: 'count' | 'expiry'
+  ): void {
+    if (lease.exhaustedLogged) return;
+    lease.exhaustedLogged = true;
+    this.logger?.info('lease.exhausted', { sessionId, reason, maxActions: lease.maxActions });
+  }
+
+  /** Whether the session's live lease covers this host. */
+  private leaseCoversHost(sessionId: string, host: string): boolean {
+    const lease = this.activeLeaseFor(sessionId);
+    return lease?.hosts.some((entry) => covers(entry, host).ok) === true;
+  }
+
+  /**
+   * Spend one leased action for an unknown-effect act on a covered host.
+   * Returns false when there is no live lease, the host is not covered, or
+   * the count is spent — the caller then falls back to review (fail closed,
+   * never to allow).
+   */
+  private consumeLeasedAction(sessionId: string, host: string): boolean {
+    const lease = this.activeLeaseFor(sessionId);
+    if (lease === undefined) return false;
+    if (!lease.hosts.some((entry) => covers(entry, host).ok)) return false;
+    lease.remainingActions -= 1;
+    if (lease.remainingActions === 0) this.auditLeaseExhausted(sessionId, lease, 'count');
+    return true;
+  }
+
+  /** The view projection of the session's live lease, with its derived remainder. */
+  // --- TD-BROWSER-16 phase 6: the cookie handoff (ADR-025 section 3) -------
+
+  private serializeHandoff<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const run = (this.handoffLocks.get(sessionId) ?? Promise.resolve()).then(operation, operation);
+    this.handoffLocks.set(
+      sessionId,
+      run.catch(() => undefined)
+    );
+    return run;
+  }
+
+  /** The cookie's host with the scope dot stripped ('.example.com' -> 'example.com'). */
+  private static cookieHostOf(domain: string): string {
+    return domain.startsWith('.') ? domain.slice(1) : domain;
+  }
+
+  /**
+   * Whether a login cookie applies to one of the requested (exact-host)
+   * domains, per ADR-025 section 3's relation: the DOMAIN is the matcher — a
+   * cookie transfers iff its host IS the domain or lies WITHIN the domain's
+   * subtree. Requesting a deep host never pulls the parent's site-wide
+   * cookie; requesting an apex (or registrable parent) takes the subtree's
+   * host-only cookies too.
+   */
+  private static cookieAppliesTo(cookieDomain: string, domains: string[]): boolean {
+    const host = AgentBrowserService.cookieHostOf(cookieDomain);
+    return domains.some((domain) => host === domain || covers(domain, host).ok);
+  }
+
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 section 3): hand the operator's login
+   * cookies for the requested domains into this session, under one
+   * per-session lock. The full order is the TD's: floors -> per-domain policy
+   * -> approval (human operator, single use, bound to kind+session+domains+
+   * policy version) -> re-read freshness -> MARK -> lease -> secrets ->
+   * RTC-removal init script -> write -> audit. The mark precedes the write,
+   * so a racing cookie export is refused, never served unmarked cookies.
+   */
+  async handoffCookies(
+    sessionId: string,
+    request: import('@agentbrowser/protocol').CookieHandoffRequest
+  ): Promise<{
+    sessionId: string;
+    credentialSource: 'operator';
+    domains: string[];
+    counts: Record<string, number>;
+    lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
+  }> {
+    return this.serializeHandoff(sessionId, async () => {
+      const inspection = this.coordinator.inspect(sessionId);
+      if (inspection === undefined)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+      const floor = (rule: string, message: string): ServiceError =>
+        new ServiceError(...handoffFloor(rule, message));
+
+      // --- step 1: floors ------------------------------------------------
+      const login = this.loginBrowser;
+      if (login?.isEnabled !== true || login.isOpen !== true)
+        throw floor('login-browser', 'the login browser must be enabled and open for a handoff');
+      const facts = this.sessionHandoffFacts.get(sessionId);
+      if (facts === undefined) throw floor('session', 'session floor facts are unavailable');
+      if (facts.cdpAttach || facts.controlMode === 'delegated')
+        throw floor(
+          'session',
+          'the handoff requires an isolated, non-delegated, locally-launched session'
+        );
+      // The service installs a metadata-floor policy chain on every session
+      // it creates; its absence would mean egress is NOT enforced.
+      if (!this.sessionPolicies.has(sessionId))
+        throw floor('egress', 'the session has no enforced egress policy');
+      if (facts.allowServiceWorkers)
+        throw floor('service-workers', 'the session must not allow service workers');
+      // WebSocket policy (floor.handoff.websocket): the api never configures
+      // engineSessionOptions.webSocketPolicy, so every session's upgrades are
+      // denied (close code 1014) by construction. The fact field below is the
+      // guard: whoever adds a webSocketPolicy option must set it honestly,
+      // and the floor refuses the handoff the day it turns false.
+      if (!this.webSocketPolicyDefaultDeny)
+        throw floor('websocket', 'the deployment must deny WebSocket upgrades for a handoff');
+      for (const page of this.pages.values()) {
+        if (page.sessionId !== sessionId) continue;
+        const url = page.enginePage.getUrl
+          ? await page.enginePage.getUrl()
+          : (await page.enginePage.observe({})).url;
+        if (url !== '' && url !== 'about:blank')
+          throw floor(
+            'navigation',
+            'the session must hold no committed navigation other than about:blank'
+          );
+      }
+      // TD phase 3: canonicalize operator input first — case and a trailing
+      // dot must not fork identities or defeat the per-domain evidence.
+      const domains = [
+        ...new Set(request.domains.map((domain) => domain.toLowerCase().trim().replace(/\.$/, ''))),
+      ].sort();
+      for (const domain of domains) {
+        const usable = usableHost(domain);
+        if (!usable.ok) throw floor('domains', `domain '${domain}' is not a usable host`);
+      }
+      const existing = await this.coordinator.cookies(sessionId);
+      for (const cookie of existing) {
+        if (AgentBrowserService.cookieAppliesTo(cookie.domain, domains))
+          throw floor(
+            'existing-cookies',
+            'the session already holds cookies for one of the requested domains'
+          );
+      }
+      const allowlistEntries = [...facts.allowedHosts, ...facts.scopeAllowedHosts];
+      for (const entry of allowlistEntries) {
+        const usable = usableHost(entry);
+        if (!usable.ok || !domains.some((domain) => entry === domain || covers(domain, entry).ok))
+          throw floor(
+            'allowlist',
+            `allowed-host entry '${entry}' does not lie within the requested domains`
+          );
+      }
+      for (const suffix of facts.pathRuleSuffixes) {
+        const usable = usableHost(suffix);
+        if (!usable.ok || !domains.some((domain) => suffix === domain || covers(domain, suffix).ok))
+          throw floor(
+            'allowlist',
+            `scope path-rule host suffix '${suffix}' does not lie within the requested domains`
+          );
+      }
+
+      // --- step 2: policy, one decision per domain ------------------------
+      const tenantId = inspection.context.metadata.tenantId;
+      const rulesMatched: string[] = [];
+      for (const domain of domains) {
+        const decision = this.authorizer.decide({
+          action: 'cookie.handoff',
+          context: { domain, ...(tenantId !== undefined ? { tenantId } : {}) },
+        });
+        if (!decision.allowed)
+          throw new ServiceError(
+            'POLICY_DENIED',
+            `Operator/session approval policy denies a cookie handoff for '${domain}'.`,
+            false,
+            { domain, policyDecision: decision }
+          );
+        if (decision.rulesMatched) rulesMatched.push(...decision.rulesMatched);
+      }
+
+      // --- steps 3-4: approval, then the fresh re-read ---------------------
+      const filterToDomains = (
+        cookies: Awaited<
+          ReturnType<NonNullable<ServiceDependencies['loginBrowser']>['read']>
+        >['cookies']
+      ) => cookies.filter((cookie) => AgentBrowserService.cookieAppliesTo(cookie.domain, domains));
+      const mint = async (
+        read: Awaited<ReturnType<NonNullable<ServiceDependencies['loginBrowser']>['read']>>
+      ) => {
+        // Per-domain counts are the operator's evidence AND the freshness
+        // baseline the retry compares against (ADR-025 s3 step 4: fail only
+        // when a domain that HAD cookies goes to none).
+        const counts: Record<string, number> = {
+          cookies: filterToDomains(read.cookies).length,
+          partitioned: read.skipped.partitioned,
+          expired: read.skipped.expired,
+        };
+        for (const domain of domains) {
+          const perDomain = read.cookies.filter((cookie) =>
+            AgentBrowserService.cookieAppliesTo(cookie.domain, [domain])
+          ).length;
+          if (perDomain > 0) counts[domain] = perDomain;
+        }
+        const token = await this.approvalGate.generateApprovalToken({
+          sessionId,
+          kind: 'cookie.handoff',
+          action: { type: 'cookie.handoff' },
+          domains: [...domains],
+          counts,
+          policyVersion: this.policyVersion ?? 'legacy',
+        });
+        return { tokenId: token.tokenId, counts };
+      };
+
+      let decided: ApprovalToken | undefined;
+      if (request.approvalToken !== undefined) {
+        const token = await this.approvalGate.getToken(request.approvalToken);
+        if (
+          token !== undefined &&
+          token.sessionId === sessionId &&
+          token.kind === 'cookie.handoff' &&
+          token.status === 'used' &&
+          token.decidedOutcome === 'approve' &&
+          JSON.stringify(token.domains ?? []) === JSON.stringify(domains) &&
+          token.policyVersion === (this.policyVersion ?? 'legacy')
+        ) {
+          decided = token;
+        }
+        // An invalid/expired/mismatched token falls through to a fresh
+        // approval, exactly like the act path.
+      }
+
+      const loginRead = await login.read();
+      const loginCookies = filterToDomains(loginRead.cookies);
+      if (decided === undefined) {
+        if (loginCookies.length === 0)
+          throw floor('empty', 'the login browser holds no cookies for the requested domains');
+        const { tokenId, counts } = await mint(loginRead);
+        throw new ServiceError(
+          'APPROVAL_REQUIRED',
+          'The cookie handoff needs an explicit operator decision.',
+          false,
+          { tokenId, kind: 'cookie.handoff', sessionId, domains: [...domains], counts }
+        );
+      }
+
+      // Freshness (ADR-025 s3 step 4): the baseline is the MINT-TIME
+      // per-domain count on the operator's token — fail only when a domain
+      // that had cookies then has none now; count changes are fine.
+      const reRead = await login.read();
+      const reCookies = filterToDomains(reRead.cookies);
+      for (const [key, hadCount] of Object.entries(decided.counts ?? {})) {
+        if (!domains.includes(key) || typeof hadCount !== 'number' || hadCount <= 0) continue;
+        const still = reCookies.some((cookie) =>
+          AgentBrowserService.cookieAppliesTo(cookie.domain, [key])
+        );
+        if (!still)
+          throw floor(
+            'freshness',
+            `cookies for '${key}' disappeared since the operator decision; start again`
+          );
+      }
+
+      // --- preparation BEFORE the mark (review F2): nothing that can refuse
+      // may run after it, or the session is marked with nothing written and
+      // its exports are refused forever. Engine capability, lease validation,
+      // the ADR section-3 transfer bounds, the init script (no data) and the
+      // secret registration all happen first; only apply-and-write follows
+      // the mark.
+      const engineSession = this.coordinator.get(sessionId)?.engineSession;
+      if (engineSession === undefined)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+      if (engineSession.addInitScript === undefined || engineSession.addCookies === undefined)
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'this engine cannot accept a live cookie handoff (no live-context cookie API)'
+        );
+      if (decided.lease !== undefined) this.validateActionLeaseInput(sessionId, decided.lease);
+      if (reCookies.length > MAX_COOKIE_COUNT)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `the transfer holds more than ${MAX_COOKIE_COUNT} cookies for the requested domains`
+        );
+      try {
+        assertCookieRequestSize(reCookies);
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `the transfer exceeds ${MAX_COOKIE_REQUEST_BYTES} bytes of cookie data`
+        );
+      }
+      await engineSession.addInitScript(HANDOFF_RTC_REMOVAL_INIT_SCRIPT);
+      for (const cookie of reCookies) {
+        this.secretManager.registerSessionSecret(sessionId, cookie.value);
+      }
+
+      // --- the mark; then apply-and-write ------------------------------------
+      this.markOperatorCredentialSource(sessionId);
+      if (decided.lease !== undefined) await this.grantActionLease(sessionId, decided.lease);
+      await engineSession.addCookies(
+        reCookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          ...(cookie.expires !== -1 ? { expires: cookie.expires } : {}),
+          httpOnly: cookie.httpOnly,
+          secure: cookie.secure,
+          sameSite:
+            cookie.sameSite === 'Strict' || cookie.sameSite === 'None' ? cookie.sameSite : 'Lax',
+        }))
+      );
+      const counts = {
+        cookies: reCookies.length,
+        partitioned: reRead.skipped.partitioned,
+        expired: reRead.skipped.expired,
+      };
+      // Audit: session, domains, counts, token id, lease and rule ids — never
+      // values, never cookie names.
+      this.logger?.info('handoff.completed', {
+        sessionId,
+        domains: [...domains],
+        counts,
+        tokenId: decided.tokenId,
+        ...(decided.lease !== undefined
+          ? { lease: { hosts: [...decided.lease.hosts], maxActions: decided.lease.maxActions } }
+          : {}),
+        rulesMatched: [...new Set(rulesMatched)],
+      });
+      const leaseView = this.projectActionLease(sessionId);
+      return {
+        sessionId,
+        credentialSource: 'operator',
+        domains: [...domains],
+        counts,
+        ...(leaseView !== undefined
+          ? {
+              lease: {
+                hosts: leaseView.actionLease.hosts,
+                expiresAt: leaseView.actionLease.expiresAt,
+                maxActions: leaseView.actionLease.maxActions,
+                remainingActions: leaseView.actionLease.remainingActions,
+              },
+            }
+          : {}),
+      };
+    });
+  }
+
+  private projectActionLease(
+    sessionId: string
+  ):
+    | { actionLease: import('@agentbrowser/protocol').ActionLease; actionLeaseRemainingMs: number }
+    | undefined {
+    const lease = this.activeLeaseFor(sessionId);
+    if (lease === undefined) return undefined;
+    return {
+      actionLease: { hosts: [...lease.hosts], ...leaseProjection(lease) },
+      actionLeaseRemainingMs: Math.max(0, lease.expiresAt - Date.now()),
+    };
+  }
+
   private async checkApproval(
     sessionId: string,
     pageId: string,
@@ -4599,15 +5531,20 @@ export class AgentBrowserService {
     const currentUrl = page.enginePage.getUrl
       ? await page.enginePage.getUrl()
       : (await page.enginePage.observe({})).url;
-    const { effect: risk, decision } = this.actionRiskPolicy.evaluate(
-      {
-        action: request.action,
-        url: currentUrl,
-        ...(element ? { element } : {}),
-      },
+    // Classify (first-match operator rule), decide through the Authorizer seam,
+    // then let the session's own approval policy tighten (never relax) it.
+    const classification = this.actionRiskPolicy.classify({
+      action: request.action,
+      url: currentUrl,
+      ...(element ? { element } : {}),
+    });
+    const risk = classification.effect;
+    const decision = tightenApprovalMode(
+      risk,
+      approvalModeOf(this.approvalAuthorizerFor(sessionId), classification),
       this.sessionApprovalPolicies.get(sessionId)
     );
-    if (decision === 'allow') return;
+    // A policy deny stands above everything, leases included.
     if (decision === 'deny')
       throw new ServiceError(
         'POLICY_DENIED',
@@ -4615,6 +5552,29 @@ export class AgentBrowserService {
         false,
         { effect: risk }
       );
+    // ADR-025 §5: in a session holding operator credentials, high-risk
+    // effects always need an act.reviewed decision (a per-rule allow is
+    // overridden) and unknown effects do too, unless the session's live
+    // lease covers the page's host — one leased action per act, never
+    // enough for high-risk. read/write-local classification is untouched:
+    // an allowed routine control still runs; one a rule holds for decision
+    // takes the reviewed path, as in any operator-review session.
+    const marked = this.sessionCredentialSources.get(sessionId) === 'operator';
+    if (marked) {
+      const host = hostOf(currentUrl);
+      if (risk === 'unknown' && this.consumeLeasedAction(sessionId, host)) {
+        if (span)
+          this.tracer?.addEvent(span, 'lease.action', {
+            effect: risk,
+            ref,
+            remaining: this.actionLeases.get(sessionId)?.remainingActions,
+          });
+        return;
+      }
+      if (!(isHighRiskEffect(risk) || risk === 'unknown') && decision === 'allow') return;
+    } else if (decision === 'allow') {
+      return;
+    }
     const decoded = decodeWireAction(request);
     if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
 
@@ -4633,7 +5593,7 @@ export class AgentBrowserService {
       },
     };
 
-    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+    if (this.usesOperatorReview(sessionId)) {
       const context = this.reviewContext(sessionId);
       // A mutable vault reference is not a value witness, and review must not expose
       // vault plaintext. Qualify this separately before supporting reviewed secrets.
@@ -4642,7 +5602,13 @@ export class AgentBrowserService {
           'POLICY_DENIED',
           'Operator-reviewed vault references are not supported'
         );
-      const reviewedRequest = JSON.parse(canonicalJson(approvalRequest)) as typeof approvalRequest;
+      // TD-BROWSER-16 phase 5: reviewed act approvals carry their kind, so
+      // the operator surface tells an act.reviewed decision from a plain act
+      // token, and the token fingerprint covers the kind — one can never be
+      // replayed as the other.
+      const reviewedRequest = JSON.parse(
+        canonicalJson({ ...approvalRequest, kind: 'act.reviewed' })
+      ) as typeof approvalRequest & { kind: 'act.reviewed' };
       this.assertReviewDisclosureSafe(reviewedRequest);
       if (
         request.approvalToken !== undefined &&

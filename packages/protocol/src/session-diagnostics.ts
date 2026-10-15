@@ -179,6 +179,21 @@ export function formatSessionTerminalFailure(error: unknown): string | undefined
   return `Session ended: close-cause=${terminal.closeCause}; ended-at=${terminal.endedAt}; lease-remaining=${terminal.leaseRemainingMs}ms; ttl-expires=${terminal.lease.expiresAt}; idle-expires=${terminal.lease.idleExpiresAt} (Unix ms)`;
 }
 
+/**
+ * TD-BROWSER-16 phase 5 (ADR-025 §5): the operator-granted action lease in a
+ * `credentialSource: "operator"` session. Within it, unknown-effect actions on
+ * its hosts run without review; high-risk effects never do. The agent cannot
+ * request, extend or widen one — this is a projection, never an input.
+ */
+export const ActionLeaseSchema = Type.Object({
+  hosts: Type.Array(Type.String(), { minItems: 1, maxItems: 16 }),
+  grantedAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  expiresAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  maxActions: Type.Integer({ minimum: 1, maximum: 500 }),
+  remainingActions: Type.Integer({ minimum: 0, maximum: 500 }),
+});
+export type ActionLease = Static<typeof ActionLeaseSchema>;
+
 /** The HTTP session view; distinct from the coordinator's capability-bearing result. */
 export const SessionViewSchema = Type.Object({
   sessionId: Type.String(),
@@ -196,5 +211,17 @@ export const SessionViewSchema = Type.Object({
   closeCause: Type.Optional(SessionCloseCauseSchema),
   /** Derived from the sampled lease at projection time; never stored as a countdown. */
   leaseRemainingMs: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  /**
+   * TD-BROWSER-16: set by the operator-side handoff (phase 6), never by an
+   * agent-facing request. "operator" marks a session carrying operator
+   * credentials, where high-risk and unknown actions are operator-reviewed.
+   */
+  credentialSource: Type.Optional(Type.Literal('operator')),
+  /** The operator-granted action lease, projected with its remaining count. */
+  actionLease: Type.Optional(ActionLeaseSchema),
+  /** Derived from the action lease at projection time; never stored as a countdown. */
+  actionLeaseRemainingMs: Type.Optional(
+    Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })
+  ),
 });
 export type SessionView = Static<typeof SessionViewSchema>;

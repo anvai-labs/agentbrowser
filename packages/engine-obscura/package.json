@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engine-obscura",
-  "version": "1.17.1",
+  "version": "1.18.0",
   "private": true,
   "type": "module",
   "description": "Obscura engine adapter: binary acquisition, process lifecycle, and a BrowserEngine composing the CDP path",
@@ -23,7 +23,7 @@
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
     "@biomejs/biome": "^2.5.15",
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.20.5",
     "typescript": "^5.7.2",
     "vitest": "^5.0.4"
   }

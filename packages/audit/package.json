@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/audit",
-  "version": "1.17.1",
+  "version": "1.18.0",
   "description": "T7 slice 1: visual audit adapter with baseline/versioned measurements (wraps pixelmatch; absent from default dependency closures)",
   "type": "module",
   "main": "dist/index.js",
@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.20.5",
     "@types/pngjs": "^6.0.5",
     "typescript": "^5.7.2",
     "vitest": "^5.0.4"

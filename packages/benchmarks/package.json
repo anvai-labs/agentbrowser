@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/benchmarks",
-  "version": "1.17.1",
+  "version": "1.18.0",
   "private": true,
   "type": "module",
   "description": "Benchmark harness, deterministic agent task suite, and soak tests",
@@ -27,12 +27,13 @@
     "@agentbrowser/engine-obscura": "workspace:^",
     "@agentbrowser/engine-playwright": "workspace:^",
     "@agentbrowser/policy": "workspace:^",
+    "@agentbrowser/policy-engine": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
     "@agentbrowser/testkit": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.20.5",
     "typescript": "^5.7.2",
     "vitest": "^5.0.4"
   }

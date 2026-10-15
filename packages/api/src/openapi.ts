@@ -27,8 +27,11 @@ import {
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
+  EVENT_REPLAY_MIN_SINCE,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
+  NonActApprovalDecisionSchema,
+  NonActApprovalViewSchema,
   ObservationRequestSchema,
   OperationRecordSchema,
   OperationReplaySchema,
@@ -43,6 +46,7 @@ import {
   PlanStepSchema,
   ScreenshotRequestSchema,
   SessionDiagnosticsSchema,
+  SessionEventsPageSchema,
   SessionRequestSchema,
   SessionResponseSchema,
   SessionViewSchema,
@@ -108,8 +112,11 @@ const approvalPaths = {
       ],
       responses: {
         '200': {
-          description: 'Private approval state.',
-          content: json(ref('OperatorApprovalView')),
+          description:
+            'Private approval state; a non-act kind (TD-BROWSER-16) returns the NonActApprovalView.',
+          content: json({
+            oneOf: [ref('OperatorApprovalView'), ref('NonActApprovalView')],
+          }),
         },
         '401': errorResponse('Authentication required.'),
         '403': errorResponse('Owning operator required.'),
@@ -136,8 +143,15 @@ const approvalPaths = {
       requestBody: { required: true, content: json(ref('OperatorApprovalDecision')) },
       responses: {
         '200': {
-          description: 'Private approval state, or recorded operation replay.',
-          content: json({ oneOf: [ref('OperatorApprovalView'), ref('OperationReplay')] }),
+          description:
+            'Private approval state, a recorded operation replay, or the non-act decision (TD-BROWSER-16).',
+          content: json({
+            oneOf: [
+              ref('OperatorApprovalView'),
+              ref('OperationReplay'),
+              ref('NonActApprovalDecision'),
+            ],
+          }),
         },
         '400': INVALID_REQUEST,
         '401': errorResponse('Authentication required.'),
@@ -386,6 +400,56 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       ...controlPaths,
       ...approvalPaths,
       ...applicationPaths,
+      '/v1/sessions/{sessionId}/lease': {
+        post: {
+          operationId: 'grantActionLease',
+          summary: 'Grant the session action lease (human operator only)',
+          description:
+            'TD-BROWSER-16 (ADR-025 s5): grants the operator action lease for a session ' +
+            'holding operator credentials. Human-operator key only - an agent (or an ' +
+            'API-key operator) can never request, extend or widen one, and no agent-facing ' +
+            'schema accepts lease fields. Every host must lie within the session host ' +
+            'allowlist; at most 4h and 500 actions.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              additionalProperties: false,
+              required: ['hosts', 'expiresInMs', 'maxActions'],
+              properties: {
+                hosts: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 16 },
+                expiresInMs: { type: 'integer', minimum: 1 },
+                maxActions: { type: 'integer', minimum: 1 },
+              },
+            }),
+          },
+          responses: {
+            '201': {
+              description: 'The granted lease with its remaining count.',
+              content: json({
+                type: 'object',
+                additionalProperties: false,
+                required: ['hosts', 'grantedAt', 'expiresAt', 'maxActions', 'remainingActions'],
+                properties: {
+                  hosts: { type: 'array', items: { type: 'string' } },
+                  grantedAt: { type: 'integer' },
+                  expiresAt: { type: 'integer' },
+                  maxActions: { type: 'integer' },
+                  remainingActions: { type: 'integer' },
+                },
+              }),
+            },
+            '400': errorResponse(
+              'Invalid grant: shape, bounds, or hosts outside the session allowlist.'
+            ),
+            '401': errorResponse('Authentication required.'),
+            '403': errorResponse('Human operator required.'),
+            '404': NOT_FOUND,
+          },
+        },
+      },
       '/openapi.json': {
         get: {
           operationId: 'getOpenApiDocument',
@@ -665,10 +729,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'filter with ?type=request.finished etc. Unfiltered returns both ' +
             'ledgers (console first; cross-ledger ordering not preserved). ' +
             'Paging: since/limit require a type filter (cursors are per-ledger ' +
-            'entry sequences; the cursor is returned as nextCursor). A cursor ' +
-            'older than the retained window re-reads from the oldest kept ' +
-            'entry - entries evicted before it are silently skipped. limit ' +
-            'defaults to 200 and is capped at 1000.',
+            'entry sequences; the cursor is returned as nextCursor and advances ' +
+            'past entries of other types). Paged rows match the type exactly. A ' +
+            'cursor older than the retained window re-reads from the oldest kept ' +
+            'entry; a paged response with since then reports gap: true and oldestSeq, the ' +
+            'lowest retained sequence, so evicted entries are never silently ' +
+            'skipped. limit defaults to 200 and is capped at 1000.',
           tags: ['sessions'],
           parameters: [
             sessionIdParam,
@@ -681,8 +747,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             {
               name: 'since',
               in: 'query',
-              schema: { type: 'integer', minimum: 0 },
-              description: 'Paging cursor: return ledger entries with a sequence above this.',
+              schema: { type: 'integer', minimum: EVENT_REPLAY_MIN_SINCE },
+              description:
+                'Paging cursor: return ledger entries with a sequence above this ' +
+                '(-1 = from the start).',
             },
             {
               name: 'limit',
@@ -696,14 +764,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description:
                 'The retained events. Paged responses carry per-entry sequence ' +
                 'numbers and nextCursor (the cursor for the next page).',
-              content: json({
-                type: 'object',
-                required: ['events', 'nextCursor'],
-                properties: {
-                  events: { type: 'array', items: { type: 'object' } },
-                  nextCursor: { type: 'integer' },
-                },
-              }),
+              content: json(SessionEventsPageSchema),
             },
             '400': INVALID_REQUEST,
             '404': NOT_FOUND,
@@ -900,6 +961,71 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               }),
             },
             '400': INVALID_REQUEST,
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/cookies/handoff': {
+        post: {
+          operationId: 'handoffCookies',
+          summary: 'Hand the operator login cookies into this session',
+          description:
+            'TD-BROWSER-16 phase 6 (ADR-025 s3): floors (login browser open, isolated ' +
+            'non-delegated session, egress enforced, no service workers, about:blank only, ' +
+            'no existing cookies, the whole allowlist inside the requested domains), one ' +
+            'cookie.handoff policy decision per domain, then a human-operator approval ' +
+            'bound to (kind, session, sorted domains, policy version). The approved retry ' +
+            're-reads for freshness, MARKS the session credentialSource:operator, applies ' +
+            'any lease the decision carried, registers the values as session secrets, ' +
+            'removes WebRTC peer connections on every frame, and writes the cookies. ' +
+            'Cookie/HTML/download export are refused in the marked session afterwards.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              additionalProperties: false,
+              required: ['domains'],
+              properties: {
+                domains: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  minItems: 1,
+                  maxItems: 16,
+                },
+                approvalToken: { type: 'string' },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description:
+                'The completed handoff: the marked session, the domains, and the counts (never values).',
+              content: json({
+                type: 'object',
+                required: ['sessionId', 'credentialSource', 'domains', 'counts'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  credentialSource: { type: 'string', enum: ['operator'] },
+                  domains: { type: 'array', items: { type: 'string' } },
+                  counts: { type: 'object', additionalProperties: { type: 'integer' } },
+                  lease: {
+                    type: 'object',
+                    properties: {
+                      hosts: { type: 'array', items: { type: 'string' } },
+                      expiresAt: { type: 'integer' },
+                      maxActions: { type: 'integer' },
+                      remainingActions: { type: 'integer' },
+                    },
+                  },
+                },
+              }),
+            },
+            '403': errorResponse(
+              'A floor refusal (floor.handoff.*), a policy denial, or APPROVAL_REQUIRED with the token to relay to the operator.'
+            ),
             '404': NOT_FOUND,
           },
         },
@@ -1384,6 +1510,207 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           },
         },
       },
+
+      '/v1/operator/login/open': {
+        post: {
+          operationId: 'operatorLoginOpen',
+          summary: 'Open the operator login browser (human operators only)',
+          description:
+            'TD-BROWSER-16 phase 4. Requires a human-operator key (operator routes only); agent credentials and API-key operators are refused. Headed, single-tenant, local deployments.',
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The login browser opened.',
+              content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
+            },
+            '400': errorResponse(
+              'INVALID_REQUEST: the login browser is disabled (LOGIN_BROWSER_DISPLAY maps here only when a display is required and absent).'
+            ),
+            '403': errorResponse(
+              'A human-operator key is required, or LOGIN_PROFILE_MODE (the profile directory is not owner-only).'
+            ),
+            '409': errorResponse(
+              'LOGIN_PROFILE_IN_USE (another process owns the profile) or the binary pin (LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
+            ),
+          },
+        },
+      },
+      '/v1/operator/login/close': {
+        post: {
+          operationId: 'operatorLoginClose',
+          summary: 'Close the operator login browser',
+          description: 'TD-BROWSER-16 phase 4. Human operators only.',
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The login browser closed.',
+              content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
+            },
+            '400': errorResponse('INVALID_REQUEST: the login browser is disabled.'),
+            '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'LOGIN_BROWSER_CLOSED (nothing to close) or LOGIN_PROFILE_IN_USE.'
+            ),
+          },
+        },
+      },
+      '/v1/operator/login/reset': {
+        post: {
+          operationId: 'operatorLoginReset',
+          summary: 'Delete the login browser profile',
+          description:
+            'TD-BROWSER-16 phase 4. Deletes the profile directory (close first). Human operators only.',
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The login profile deleted.',
+              content: json({ type: 'object', properties: { reset: { type: 'boolean' } } }),
+            },
+            '400': errorResponse('INVALID_REQUEST: the login browser is disabled.'),
+            '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'LOGIN_BROWSER_CLOSED (the browser is open — close it before resetting).'
+            ),
+          },
+        },
+      },
+      '/v1/operator/login/read': {
+        post: {
+          operationId: 'operatorLoginRead',
+          summary: "Read the open login browser's cookies",
+          description:
+            "TD-BROWSER-16 phase 4. The OPEN browser only; no headless read. Partitioned and expired cookies are skipped and counted. Human operators only; the values are the operator's own.",
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The cookies and the skip counts.',
+              content: json({
+                type: 'object',
+                properties: {
+                  cookies: { type: 'array', items: { type: 'object' } },
+                  skipped: {
+                    type: 'object',
+                    properties: {
+                      partitioned: { type: 'integer' },
+                      expired: { type: 'integer' },
+                    },
+                  },
+                },
+              }),
+            },
+            '400': errorResponse(
+              'INVALID_REQUEST: the login browser is disabled, or the read exceeds the cookie-count bound.'
+            ),
+            '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse('LOGIN_BROWSER_CLOSED (the read needs the open browser).'),
+          },
+        },
+      },
+      '/v1/policy': {
+        get: {
+          operationId: 'getPolicy',
+          summary: 'The loaded policy: version, limits, capability summary',
+          description:
+            "TD-BROWSER-15 phase 5. The capability summary is decided for a default session of the caller's tenant (the response says so). Without a policy file the answers come from the legacy environment decisions and are unconditional for a default session. Rate limited per tenant.",
+          tags: ['policy'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The loaded policy summary.',
+              content: json({
+                type: 'object',
+                properties: {
+                  policyVersion: {
+                    type: 'string',
+                    description: 'The document SHA-256, or "legacy".',
+                  },
+                  limits: {
+                    type: 'object',
+                    description: 'The loaded limits (extractMaxBytes, maxResponseBytes).',
+                  },
+                  summaryFor: {
+                    type: 'string',
+                    description: "a default session of the caller's tenant",
+                  },
+                  capabilities: {
+                    type: 'object',
+                    description: 'One PolicyDecision per capability action, for a default session.',
+                  },
+                  unconditional: {
+                    type: 'string',
+                    description: 'Present only when no policy file is loaded.',
+                  },
+                },
+              }),
+            },
+            '429': errorResponse('Policy query rate limit exceeded.'),
+          },
+        },
+      },
+
+      '/v1/policy/check': {
+        post: {
+          operationId: 'checkPolicy',
+          summary: 'Ask what the loaded policy would decide',
+          description:
+            'Answers by enumeration, never by DNS resolution: an IP literal is classified directly; a hostname passes the name-level rules and then gets one answer per class set the classifier can produce (the non-public sets depend on the resolved address and say so). A caller cannot smuggle a tenant: the authenticated tenant decides. Rate limited per tenant.',
+          tags: ['policy'],
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['action'],
+              properties: {
+                action: {
+                  type: 'string',
+                  description:
+                    'One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed, cookie.handoff (whose context carries the domain).',
+                },
+                target: {
+                  type: 'string',
+                  description: 'An IP literal or a hostname; never resolved.',
+                },
+                url: {
+                  type: 'string',
+                  description: 'Alternative to target; its hostname is classified.',
+                },
+                context: {
+                  type: 'object',
+                  description: 'Declared act context.',
+                  properties: {
+                    effect: { type: 'string' },
+                    matchedRule: { type: 'string' },
+                  },
+                },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'One answer per class set the classifier can produce.',
+              content: json({
+                type: 'object',
+                properties: {
+                  action: { type: 'string' },
+                  target: { type: 'string' },
+                  answers: {
+                    type: 'array',
+                    description: 'Each entry is a decision or depends-on-resolution.',
+                    items: { type: 'object' },
+                  },
+                },
+              }),
+            },
+            '400': INVALID_REQUEST,
+            '429': errorResponse('Policy query rate limit exceeded.'),
+          },
+        },
+      },
     },
 
     components: {
@@ -1403,6 +1730,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ControlGrant: ControlGrantSchema,
         OperatorApprovalDecision: OperatorApprovalDecisionSchema,
         OperatorApprovalView: OperatorApprovalViewSchema,
+        NonActApprovalView: NonActApprovalViewSchema,
+        NonActApprovalDecision: NonActApprovalDecisionSchema,
         OperationRecord: OperationRecordSchema,
         OperationReplay: OperationReplaySchema,
         ApplicationBinding: ApplicationBindingSchema,

@@ -126,6 +126,13 @@ Adopt one shared bounded-collection discipline rather than five bespoke fixes.
       `closePage`, `recoverFromCrash`, `sweepExpiredSessions`), with a test proving
       no entry survives past its session's/page's lifetime.
 - [x] Every cap is a named option with a documented default; none is a bare literal.
+- [x] A9 (TD-BROWSER-16 phase 2) `SecretManager` session scopes are bounded in both directions:
+      per-session redaction memos for at most `sessionScopesMaxSessions` scopes (default 512,
+      least-recently-**used** — access re-inserts; eviction only costs speed), and registration
+      **fails closed** (`SCOPE_LIMIT`) once that many live scopes exist — a live session's values
+      are never silently un-protected. `redactionCacheMaxEntries` governs every memo like the
+      global one; `clearSessionSecrets` is the teardown valve (TD-16 phase 6 calls it at session
+      close); unknown session ids allocate nothing.
 
 ## Implementation Notes
 

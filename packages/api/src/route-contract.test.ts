@@ -50,6 +50,8 @@ const EXPECTED: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string, AgentCapabilit
   ['GET', '/v1/sessions/:sessionId/pages/:pageId', 'page.observe'],
   ['GET', '/v1/sessions/:sessionId/pages', 'page.observe'],
   ['POST', '/v1/sessions/:sessionId/pages', 'session.manage'],
+  ['POST', '/v1/sessions/:sessionId/lease', null],
+  ['POST', '/v1/sessions/:sessionId/cookies/handoff', null],
   ['POST', '/v1/sessions/:sessionId/trace', null],
   ['DELETE', '/v1/sessions/:sessionId', null],
   ['GET', '/v1/sessions/:sessionId', 'session.control'],
@@ -108,6 +110,16 @@ describe('route contract metadata', () => {
       ['PUT /v1/sessions/:sessionId/application', 'lifecycle'],
       ['DELETE /v1/sessions/:sessionId/application', 'lifecycle'],
       ['GET /v1/sessions/:sessionId/events', 'stream'],
+      // TD-15 phase 5: server-level query routes, not session-scoped; the
+      // sessions-collection kind (lifecycle) is the closest transport class.
+      ['GET /v1/policy', 'lifecycle'],
+      ['POST /v1/policy/check', 'lifecycle'],
+      // TD-16 phase 4: the login browser's operator routes — server-level,
+      // human-operator-only, not session-scoped.
+      ['POST /v1/operator/login/open', 'lifecycle'],
+      ['POST /v1/operator/login/close', 'lifecycle'],
+      ['POST /v1/operator/login/reset', 'lifecycle'],
+      ['POST /v1/operator/login/read', 'lifecycle'],
     ]);
     for (const route of server.registeredRoutes.filter((r) => r.url.startsWith('/v1/'))) {
       const key = `${route.method} ${route.url}`;
@@ -136,6 +148,11 @@ describe('route contract metadata', () => {
     // behavior is covered by the HTTP suites (application-http, control
     // flows); this pins the declared shape against silent widening.
     const SELF_ADMITTED = new Set([
+      // TD-BROWSER-16 phase 7: the handoff is safe-registered server-side and
+      // self-admitting (the SDK mints no operation id for it — a phantom id
+      // in the approval relay would look reconcilable when it is recorded
+      // nowhere).
+      'POST /v1/sessions/:sessionId/cookies/handoff',
       'GET /v1/sessions/:sessionId/control',
       'POST /v1/sessions/:sessionId/control/takeover',
       'POST /v1/sessions/:sessionId/control/prepare-resume',

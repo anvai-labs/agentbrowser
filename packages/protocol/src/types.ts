@@ -36,6 +36,16 @@ export interface Viewport {
 }
 
 /**
+ * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request body. Domains
+ * are exact hosts (registrable or below); the approval token comes from the
+ * human operator's decision on the cookie.handoff kind.
+ */
+export interface CookieHandoffRequest {
+  domains: string[];
+  approvalToken?: string;
+}
+
+/**
  * Session creation request
  */
 export interface SessionRequest {
@@ -178,6 +188,8 @@ export interface ApprovalPolicy {
 export interface SessionResponse {
   /** Diagnostics reported by the browser host. */
   warnings?: string[];
+  /** TD-BROWSER-15 phase 4: the policy version the session decides under. */
+  policyVersion?: string;
   sessionId: string;
   engine: EngineInfo;
   createdAt: string;
@@ -932,6 +944,8 @@ export interface PolicyDecision {
   allowed: boolean;
   reason: string;
   ruleMatched?: string;
+  /** Every deciding rule id (ADR-024); `ruleMatched` stays the first. */
+  rulesMatched?: string[];
 }
 
 /**
@@ -959,4 +973,30 @@ export interface ArtifactRef {
   sessionId?: string;
   tenantId?: string;
   warnings?: string[];
+}
+
+/**
+ * TD-BROWSER-16 phase 1 (ADR-025): what an approval is FOR. `act` is the
+ * original kind; `act.reviewed` binds the same act evidence but is decided by
+ * a human operator; `cookie.handoff` is the non-act kind phase 6 instantiates,
+ * carrying `{domains, counts}` evidence (domains are fingerprinted; counts
+ * are informational).
+ */
+export type ApprovalKind = 'act' | 'act.reviewed' | 'cookie.handoff';
+
+/** The non-act approval view: the kind and the bound evidence, verbatim. */
+export interface NonActApprovalView {
+  kind: ApprovalKind;
+  sessionId: string;
+  domains?: string[];
+  counts?: Record<string, number>;
+  status: string;
+  /** Set once decided: which way the human operator decided. */
+  decidedOutcome?: 'approve' | 'deny';
+}
+
+/** The non-act approval decide result. */
+export interface NonActApprovalDecision {
+  kind: ApprovalKind;
+  status: 'approved' | 'denied';
 }

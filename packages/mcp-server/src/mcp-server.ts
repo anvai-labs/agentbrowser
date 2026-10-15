@@ -56,6 +56,8 @@ export type { ClientOptions, ExportedCookie };
 
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface McpClient {
+  policy?: AgentBrowserClient['policy'];
+  policyCheck?: AgentBrowserClient['policyCheck'];
   sessions: Pick<
     AgentBrowserClient['sessions'],
     | 'create'
@@ -77,7 +79,7 @@ export interface McpClient {
     Partial<
       Pick<
         AgentBrowserClient['sessions'],
-        'autofill' | 'control' | 'get' | 'listPages' | 'operation'
+        'autofill' | 'control' | 'cookieHandoff' | 'get' | 'listPages' | 'operation'
       >
     >;
 }
@@ -359,6 +361,41 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     },
 
     {
+      name: 'policy',
+      // page.observe fences this out of the application plane, which keeps
+      // its deliberately minimal contract (TD-15 phase 5 records the scope:
+      // every browser mode).
+      requiredCapabilities: ['session.control', 'page.observe'],
+      description:
+        'Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description:
+              'Optional: request, request.loopback, request.private, act, act.unattended, or a capability name. Absent returns the summary.',
+          },
+          target: { type: 'string', description: 'An IP literal or hostname; never resolved.' },
+        },
+      },
+      handler: async (args) => {
+        const action = args.action;
+        if (typeof action !== 'string') {
+          if (!client.policy) throw new UsageError('Client does not support policy queries');
+          return await client.policy();
+        }
+        if (!client.policyCheck) throw new UsageError('Client does not support policy queries');
+        if (args.target !== undefined && typeof args.target !== 'string')
+          throw new UsageError('target must be a string');
+        return await client.policyCheck({
+          action,
+          ...(typeof args.target === 'string' ? { target: args.target } : {}),
+        });
+      },
+    },
+
+    {
       name: 'pages',
       requiredCapabilities: ['page.observe'],
       description:
@@ -390,6 +427,73 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         const sessionId = requireSessionId(args);
         const cookies = await client.sessions.cookies(sessionId);
         return { sessionId, cookies };
+      },
+    },
+
+    {
+      name: 'cookie_handoff',
+      requiredCapabilities: ['session.credential'],
+      description: `Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). The first call returns an approval request: relay its token id and cookie counts to the human operator, who decides with their operator key (the decision may carry a lease), then retry with approvalToken. Domains are exact hosts; the session must be isolated with its whole host allowlist inside them. Never logs or returns cookie values or names.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          domains: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 1,
+            maxItems: 16,
+          },
+          approvalToken: { type: 'string' },
+        },
+        required: ['sessionId', 'domains'],
+      },
+      handler: async (args) => {
+        const sessionId = requireSessionId(args);
+        if (
+          !Array.isArray(args.domains) ||
+          args.domains.length < 1 ||
+          args.domains.length > 16 ||
+          !args.domains.every((domain) => typeof domain === 'string' && domain.length > 0)
+        )
+          throw new UsageError('domains must be 1-16 non-empty host strings.');
+        const domains = args.domains as string[];
+        const approvalToken =
+          typeof args.approvalToken === 'string' ? args.approvalToken : undefined;
+        try {
+          const result = await client.sessions.cookieHandoff?.(sessionId, {
+            domains,
+            ...(approvalToken !== undefined ? { approvalToken } : {}),
+          });
+          if (result === undefined)
+            return errorResult('cookie_handoff requires a server with the handoff surface');
+          return result;
+        } catch (error) {
+          const details = (error as { details?: unknown }).details as
+            | {
+                tokenId?: string;
+                kind?: string;
+                domains?: string[];
+                counts?: Record<string, number>;
+              }
+            | undefined;
+          if (
+            (error as { code?: string }).code === 'APPROVAL_REQUIRED' &&
+            details?.tokenId !== undefined
+          ) {
+            return {
+              approvalRequired: true,
+              kind: details.kind ?? 'cookie.handoff',
+              sessionId,
+              domains: details.domains ?? domains,
+              counts: details.counts ?? {},
+              tokenId: details.tokenId,
+              guidance:
+                'Relay the token id and counts to the operator; retry this tool with approvalToken once they approve.',
+            };
+          }
+          throw error;
+        }
       },
     },
 
@@ -866,7 +970,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'events_replay',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
-        "Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). Cursor paging via since/limit requires a type filter — cursors are per-ledger entry sequences, and a cursor older than the retained window re-reads from the oldest kept entry.",
+        "Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). Cursor paging via since/limit requires a type filter — cursors are per-ledger entry sequences, paged rows match the type exactly, and a cursor older than the retained window re-reads from the oldest kept entry with gap: true in the result; pass nextCursor back as since.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -877,8 +981,9 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           },
           since: {
             type: 'integer',
-            minimum: 0,
-            description: 'Paging cursor: return entries with a sequence above this.',
+            minimum: -1,
+            description:
+              'Paging cursor: return entries with a sequence above this (-1 = from the start).',
           },
           limit: {
             type: 'integer',
@@ -921,7 +1026,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   const tools = buildTools(client, deps.sessionId || undefined).filter(
     (tool) =>
       toolAvailable(mode, tool) &&
-      (!deps.sessionId || !['create', 'close', 'cookies'].includes(tool.name))
+      // cookie_handoff is dropped when bound for the same reason as
+      // cookies: a bound delegated session can never be a handoff target
+      // (the handoff floor refuses delegated sessions).
+      (!deps.sessionId || !['create', 'close', 'cookies', 'cookie_handoff'].includes(tool.name))
   );
   for (const tool of tools) {
     if (deps.sessionId && Array.isArray(tool.inputSchema.required))

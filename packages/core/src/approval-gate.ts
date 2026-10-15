@@ -36,15 +36,52 @@ export interface ApprovalActionRequest {
   parameters?: Record<string, unknown>;
 }
 
+/**
+ * TD-BROWSER-16 phase 1 (ADR-025): what an approval is FOR. `act` is the
+ * existing kind, unchanged. `act.reviewed` binds the same act evidence but
+ * is decided by a human operator. `cookie.handoff` is the non-act kind
+ * phase 6 instantiates; its evidence is `{ domains, counts }`, not an act.
+ */
+import type { ApprovalKind } from '@agentbrowser/protocol';
+
+export type { ApprovalKind };
+
 export interface ApprovalRequest {
   sessionId: string;
+  /** Defaults to `act`; the non-act kinds carry their own evidence. */
+  kind?: ApprovalKind;
   action: ApprovalActionRequest;
+  /** cookie.handoff evidence: the granted domains and their cookie counts. */
+  domains?: string[];
+  counts?: Record<string, number>;
+  /**
+   * TD-BROWSER-16 phase 6: the operator policy version at mint time. Part of
+   * the non-act fingerprint (a policy change invalidates the approval) and
+   * carried on the token for the consuming handoff to compare.
+   */
+  policyVersion?: string;
 }
 
 export interface ApprovalToken {
   tokenId: string;
   sessionId: string;
   actionFingerprint: string;
+  /** TD-BROWSER-16 phase 1: undefined means `act` (the original kind). */
+  kind?: ApprovalKind;
+  /** Non-act evidence, returned verbatim to the deciding human operator. */
+  domains?: string[];
+  counts?: Record<string, number>;
+  /** TD-BROWSER-16 phase 6: the operator policy version the mint bound. */
+  policyVersion?: string;
+  /** Set by the non-act decide path: which way the human operator decided. */
+  decidedOutcome?: 'approve' | 'deny';
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §5): a cookie.handoff approval may carry
+   * an action lease, recorded with the decision and applied by the handoff
+   * when it marks the session (validated then — the session's allowlist
+   * bounds it).
+   */
+  lease?: { hosts: string[]; expiresInMs: number; maxActions: number };
   status: 'pending' | 'used' | 'expired';
   createdAt: number;
   expiresAt: number;
@@ -165,13 +202,16 @@ export class ApprovalGate {
    * Generate an approval token
    */
   async generateApprovalToken(request: ApprovalRequest): Promise<ApprovalToken> {
-    const record = await this.allocate(this.snapshotBinding(request));
+    const binding = this.snapshotBinding(request);
+    const record = await this.allocate(binding);
     if (record.kind !== 'confirmation') throw new Error('Invalid token kind');
-    return { ...record.token };
+    // Non-act evidence rides on the token: the deciding human operator sees
+    // exactly what was bound (TD-BROWSER-16 phase 1).
+    return { ...record.token, ...binding };
   }
 
   private async allocate(
-    binding: Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'>,
+    binding: Pick<ApprovalToken, 'sessionId' | 'actionFingerprint' | 'kind'>,
     review?: { action: Record<string, unknown>; contextFingerprint: string }
   ): Promise<StoredApproval> {
     this.assertOpen();
@@ -199,10 +239,19 @@ export class ApprovalGate {
     };
     const record: StoredApproval = review
       ? {
-          kind: 'reviewed',
+          // Spread binding FIRST: its `kind` is the approval kind (e.g.
+          // act.reviewed) and must not overwrite the storage kind, or every
+          // kind-stamped reviewed approval throws 'Invalid token kind'.
           ...binding,
+          kind: 'reviewed',
           contextFingerprint: review.contextFingerprint,
-          token: { ...lifecycle, action: review.action },
+          token: {
+            ...lifecycle,
+            action: review.action,
+            // The view's kind is the non-act union; 'act' means unstamped and
+            // stays absent (snapshotBinding omits it in that case anyway).
+            ...(binding.kind !== undefined && binding.kind !== 'act' ? { kind: binding.kind } : {}),
+          },
         }
       : { kind: 'confirmation', token: { ...lifecycle, ...binding } };
     this.tokens.set(tokenId, record);
@@ -346,6 +395,23 @@ export class ApprovalGate {
   }
 
   /**
+   * TD-BROWSER-16 phase 1: burn with the outcome recorded, so the view after
+   * a decide tells the human operator which way it went.
+   */
+  async useApprovalTokenWithOutcome(
+    tokenId: string,
+    outcome: 'approve' | 'deny',
+    lease?: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): Promise<void> {
+    await this.useApprovalToken(tokenId);
+    const record = this.tokens.get(tokenId);
+    if (record?.kind === 'confirmation') {
+      record.token.decidedOutcome = outcome;
+      if (lease !== undefined) record.token.lease = structuredClone(lease);
+    }
+  }
+
+  /**
    * Legacy trusted-owner burn. Authorization paths must use consumeApprovalToken.
    */
   async useApprovalToken(tokenId: string): Promise<void> {
@@ -471,7 +537,7 @@ export class ApprovalGate {
    */
   private snapshotBinding(
     request: ApprovalRequest
-  ): Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'> {
+  ): Pick<ApprovalToken, 'sessionId' | 'actionFingerprint' | 'kind' | 'domains' | 'counts'> {
     try {
       const detached = JSON.parse(canonicalJson(request)) as ApprovalRequest;
       if (
@@ -485,9 +551,36 @@ export class ApprovalGate {
         detached.action.type.length > 128
       )
         throw new Error('Invalid binding');
+      // Act fingerprints stay byte-stable. Non-act kinds bind their own
+      // evidence: the fingerprint covers kind and (for cookie.handoff) the
+      // domains, so a token cannot be replayed against different evidence.
+      const kind = detached.kind ?? 'act';
+      const fingerprintInput =
+        kind === 'act'
+          ? canonicalJson(detached.action)
+          : canonicalJson({
+              kind,
+              action: detached.action,
+              ...(Array.isArray(detached.domains) ? { domains: detached.domains } : {}),
+              ...(typeof detached.policyVersion === 'string'
+                ? { policyVersion: detached.policyVersion }
+                : {}),
+            });
       return {
         sessionId: detached.sessionId,
-        actionFingerprint: `${detached.action.type}:${createHmac('sha256', this.fingerprintKey).update(canonicalJson(detached.action)).digest('hex')}`,
+        actionFingerprint: `${detached.action.type}:${createHmac('sha256', this.fingerprintKey).update(fingerprintInput).digest('hex')}`,
+        ...(kind !== 'act'
+          ? {
+              kind,
+              ...(Array.isArray(detached.domains) ? { domains: [...detached.domains] } : {}),
+              ...(typeof detached.policyVersion === 'string'
+                ? { policyVersion: detached.policyVersion }
+                : {}),
+              ...(detached.counts !== undefined && typeof detached.counts === 'object'
+                ? { counts: { ...detached.counts } }
+                : {}),
+            }
+          : {}),
       };
     } catch {
       throw new ApprovalError(

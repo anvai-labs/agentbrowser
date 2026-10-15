@@ -21,6 +21,7 @@ COPY packages/engine-firefox/package.json packages/engine-firefox/
 COPY packages/engine-obscura/package.json packages/engine-obscura/
 COPY packages/engine-safari/package.json packages/engine-safari/
 COPY packages/policy/package.json packages/policy/
+COPY packages/policy-engine/package.json packages/policy-engine/
 COPY packages/api/package.json packages/api/
 COPY packages/sdk-typescript/package.json packages/sdk-typescript/
 COPY packages/cli/package.json packages/cli/
@@ -39,6 +40,7 @@ RUN pnpm -r build
 # Self-contained production deployment: the API package with its workspace
 # dependencies inlined (real files, no workspace symlinks).
 RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
+  && find /deploy -type d -name cedar-wasm -path '*@cedar-policy*' -exec rm -rf '{}/esm' '{}/web' \; \
   && find /deploy -name "*.test.ts" -delete \
   && find /deploy -name "*.tsbuildinfo" -delete
 

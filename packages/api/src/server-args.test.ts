@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRODUCT_VERSION } from './product-version.js';
-import { parseServerArgs, SERVER_HELP } from './server-args.js';
+import { parseLogLevel, parseServerArgs, SERVER_HELP } from './server-args.js';
 
 describe('parseServerArgs', () => {
   it('runs the server when no arguments are given (Docker, brew services, SDK)', () => {
@@ -46,6 +46,36 @@ describe('SERVER_HELP', () => {
     ]) {
       expect(SERVER_HELP).toContain(name);
     }
+    expect(SERVER_HELP).toMatch(/AGENTBROWSER_LOG_LEVEL\s+debug, info \(default\), warn or error/);
     expect(SERVER_HELP).toContain(PRODUCT_VERSION);
+  });
+});
+
+describe('parseLogLevel', () => {
+  it('defaults to info when unset or blank', () => {
+    expect(parseLogLevel(undefined)).toEqual({ level: 'info' });
+    expect(parseLogLevel('  ')).toEqual({ level: 'info' });
+  });
+
+  it('accepts every level the structured logger supports, case-insensitively', () => {
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      expect(parseLogLevel(level)).toEqual({ level });
+      expect(parseLogLevel(` ${level.toUpperCase()} `)).toEqual({ level });
+    }
+  });
+
+  it('falls back to info loudly on an unknown value instead of guessing', () => {
+    const parsed = parseLogLevel('verbose');
+    expect(parsed.level).toBe('info');
+    expect(parsed.warning).toContain('AGENTBROWSER_LOG_LEVEL="verbose"');
+    expect(parsed.warning).toContain('debug, info, warn, error');
+  });
+
+  it('parses the policy export subcommand', () => {
+    expect(parseServerArgs(['policy', 'export'])).toEqual({ kind: 'policy-export' });
+    expect(parseServerArgs(['policy'])).toMatchObject({ kind: 'error' });
+    expect(parseServerArgs(['policy', 'export', 'extra'])).toMatchObject({ kind: 'error' });
+    expect(parseServerArgs(['policy', 'import'])).toMatchObject({ kind: 'error' });
+    expect(SERVER_HELP).toMatch(/policy export/);
   });
 });

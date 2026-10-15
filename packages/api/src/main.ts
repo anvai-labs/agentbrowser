@@ -9,18 +9,127 @@
 import { MetricsRegistry, StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
+import {
+  CedarAuthorizer,
+  loadPolicyFile,
+  policyDocumentFromEnvironment,
+  ShadowAuthorizer,
+} from '@agentbrowser/policy-engine';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import { operatorCdpFromEnvironment } from './cdp-startup.js';
 import { extractMaxBytesFromEnvironment } from './extraction-config.js';
-import { networkPolicyFromEnvironment } from './network-policy-config.js';
-import { startServer } from './server.js';
+import {
+  legacyAuthorizerFromEnvironment,
+  networkPolicyFromEnvironment,
+  unknownRiskFromEnvironment,
+} from './network-policy-config.js';
+import { apiKeysFromEnv, startServer } from './server.js';
+import { parseLogLevel } from './server-args.js';
+
+// TD-BROWSER-15 phase 4: a policy file replaces the environment-derived
+// operator decisions entirely; AGENTBROWSER_POLICY_SHADOW evaluates the
+// document this environment would generate alongside the legacy decisions
+// (legacy decides; divergences warn). Invalid policy aborts startup.
+const policyFilePath = process.env.AGENTBROWSER_POLICY_FILE?.trim() || undefined;
+const policyShadow = /^(1|true|yes)$/i.test(process.env.AGENTBROWSER_POLICY_SHADOW?.trim() ?? '');
+// TD-BROWSER-16 phase 4: the login browser is enabled only with operator
+// keys present; main wires the flag and the server enforces the rest
+// (hosted and multi-tenant deployments refuse to open it).
+const loginBrowserEnabled = /^1$/i.test(process.env.AGENTBROWSER_LOGIN_BROWSER?.trim() ?? '');
+const policyBearing = [
+  'AGENTBROWSER_ALLOW_LOOPBACK',
+  'AGENTBROWSER_ALLOWED_CIDRS',
+  'AGENTBROWSER_APPROVAL_POLICY',
+  'AGENTBROWSER_MAX_RESPONSE_BYTES',
+];
+let policy:
+  | ({ kind: 'file' } & Awaited<ReturnType<typeof loadPolicyFile>>)
+  | {
+      kind: 'shadow';
+      authorizer: ShadowAuthorizer;
+      version: string;
+      limits: Record<string, never>;
+    }
+  | undefined;
+if (policyFilePath !== undefined) {
+  const keys = apiKeysFromEnv();
+  policy = {
+    kind: 'file',
+    ...(await loadPolicyFile(policyFilePath, {
+      apiKeysConfigured: keys !== undefined,
+      ...(keys !== undefined ? { keyTenants: [...new Set(keys.values())] } : {}),
+    })),
+  };
+  // Conservative by design: warn when any loaded permit can grant the
+  // loopback or private exception actions at all.
+  for (const action of ['request.loopback', 'request.private']) {
+    if (
+      policy.document.policies.some(
+        (p) => p.cedar.includes('permit(') && p.cedar.includes(`"${action}"`)
+      )
+    ) {
+      console.warn(
+        `[agentbrowser] The policy file permits ${action} for at least some requests; the floor's other blocks remain.`
+      );
+    }
+  }
+  if (
+    policy.document.baseline === 'none' &&
+    !policy.document.policies.some(
+      (p) => p.cedar.includes('permit(') && p.cedar.includes('"request"')
+    )
+  ) {
+    console.warn(
+      '[agentbrowser] The policy baseline is "none" and no loaded policy permits the public egress request action; sessions may not be able to browse at all.'
+    );
+  }
+} else {
+  for (const name of policyBearing) {
+    if (process.env[name] !== undefined) {
+      console.warn(
+        `[agentbrowser] ${name} is deprecated: write a policy file (agentbrowser-server policy export migrates today's configuration) and set AGENTBROWSER_POLICY_FILE.`
+      );
+    }
+  }
+  if (policyShadow) {
+    // Legacy decides — with exactly the decisions the environment would make
+    // without a shadow, so shadow mode observes, never changes, behavior.
+    const document = policyDocumentFromEnvironment(process.env);
+    const legacy = legacyAuthorizerFromEnvironment(
+      process.env,
+      unknownRiskFromEnvironment(process.env.AGENTBROWSER_APPROVAL_POLICY)
+    );
+    policy = {
+      kind: 'shadow',
+      authorizer: new ShadowAuthorizer(
+        legacy,
+        new CedarAuthorizer({ document, defaultTenant: 'local' })
+      ),
+      version: 'shadow',
+      limits: {},
+    };
+  }
+}
 
 // Validate before engine/server startup; invalid operator policy aborts startup.
-const networkPolicy = networkPolicyFromEnvironment(process.env);
-const extractMaxBytes = extractMaxBytesFromEnvironment(process.env);
+const networkPolicy =
+  policyFilePath === undefined
+    ? networkPolicyFromEnvironment(
+        process.env,
+        console.warn,
+        policy?.kind === 'shadow' ? policy.authorizer : undefined
+      )
+    : undefined;
+const extractMaxBytes =
+  policyFilePath === undefined ? extractMaxBytesFromEnvironment(process.env) : undefined;
 const operatorCdp = operatorCdpFromEnvironment(process.env);
 const deploymentMode = deploymentModeFromEnvironment(process.env);
-const engine = new PlaywrightChromiumEngine(operatorCdp ? { operatorCdp } : {});
+const engine = new PlaywrightChromiumEngine({
+  ...(operatorCdp ? { operatorCdp } : {}),
+  // ADR-025 §3: while the login browser is enabled, the shared pool
+  // launches with the WebRTC IP-handling policy pinned (phase 6).
+  ...(loginBrowserEnabled ? { forceWebrtcIpHandlingPolicy: true } : {}),
+});
 if (operatorCdp)
   console.warn(
     '[agentbrowser] Operator CDP attachment configured (local authenticated admission required): dedicated profile required. Only initial explicit navigation URLs are checked; redirects, subresources, workers, clicks, forms, downloads and operator activity are outside network containment.'
@@ -36,9 +145,9 @@ if (process.platform === 'darwin') {
   engines.safari = new SafaridriverEngine();
 }
 const metrics = new MetricsRegistry();
-const logger = new StructuredLogger({
-  level: process.env.AGENTBROWSER_LOG_LEVEL === 'debug' ? 'debug' : 'info',
-});
+const logLevel = parseLogLevel(process.env.AGENTBROWSER_LOG_LEVEL);
+if (logLevel.warning !== undefined) console.warn(logLevel.warning);
+const logger = new StructuredLogger({ level: logLevel.level });
 
 /** Parse a positive-int env var; undefined when unset or garbage (loud default). */
 const envMs = (name: string): number | undefined => {
@@ -62,8 +171,19 @@ const defaultIdleTimeoutMs = envMs('AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS');
 const server = await startServer({
   ...(operatorCdp ? { operatorCdp } : {}),
   deploymentMode,
-  extractMaxBytes,
-  networkPolicy,
+  ...(extractMaxBytes !== undefined ? { extractMaxBytes } : {}),
+  ...(networkPolicy !== undefined ? { networkPolicy } : {}),
+  ...(loginBrowserEnabled ? { loginBrowser: true } : {}),
+  ...(policy !== undefined
+    ? {
+        policy: {
+          kind: policy.kind,
+          authorizer: policy.authorizer,
+          version: policy.authorizer.version,
+          limits: policy.limits,
+        },
+      }
+    : {}),
   engine,
   engines,
   metrics,

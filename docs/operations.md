@@ -18,6 +18,11 @@ instructions accepted from the page or from an agent request. For example:
 {"unknownRisk":"required","rules":[{"hostname":"shop.example","action":"click","name":"Pay","effect":"transaction"}]}
 ```
 
+A rule may carry an optional `id`, which names it as the deciding rule
+(`env.approval.<id>`). An id is 1-64 lowercase letters, digits, `.`, `_` or `-`, is
+unique, and is not `none` or `rule-<n>`, which name unmatched and unnamed rules. An
+invalid id stops the service at startup, naming the rule.
+
 Unknown-risk actions default to `allow` for local automation; select `required`
 for conservative operation. Recognized high-risk effects require confirmation
 unless an operator rule explicitly allows or denies them. Session
@@ -249,25 +254,44 @@ node packages/mcp-server/dist/bin.js  # the MCP server (stdio)
 ## Configuration
 
 The service and MCP process use environment variables; there is no config file.
+ADR-024 §4 classifies the **service** settings (the table there stops at the service; MCP, CLI
+and launcher variables below are out of its scope) into four classes:
+**policy-bearing** — they decide operator policy: the four deprecated ones (`ALLOW_LOOPBACK`,
+`ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`), which cannot be combined with
+`AGENTBROWSER_POLICY_FILE`, and the budgets (`EXTRACT_MAX_BYTES`, `INLINE_ARTIFACT_MAX_BYTES`,
+`DEFAULT_TTL_MS`, `DEFAULT_IDLE_TIMEOUT_MS`). Note that `AGENTBROWSER_POLICY_SHADOW`
+deliberately combines with the deprecated four, since it evaluates the document they generate,
+and a shadow flag alongside a policy file is simply ignored. **Floor inputs** — they change what
+the floor itself enforces: `HOSTED` and the CDP attachment pair. **Bootstrap** — where things
+are: keys, paths, ports, hosts, timeouts, log level. **Trusted operator configuration** —
+`AGENTBROWSER_CHROMIUM_ARGS` alone, security-relevant input that changes what the browser may
+do. Entries below name their class where it matters; the two policy-file rows are marked
+policy-bearing by role (the ADR's table predates them and files them under bootstrap).
 The CLI also has explicit flags. SDK embedders provide `ClientOptions.baseUrl`
 and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 
 | Variable | Who reads it | Meaning |
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. An explicitly empty, malformed or conflicting key list aborts startup; unset the variable for intentional trusted-local mode. |
+| `AGENTBROWSER_POLICY_FILE` | service entrypoint | **Policy-bearing**: load a Cedar policy document and make it every operator decision (approvals, egress exceptions, capabilities, limits). Combining it with any policy-bearing variable (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`) or embedder option is a startup refusal naming every conflict. See [policy](policy.md). |
+| `AGENTBROWSER_POLICY_SHADOW` | service entrypoint | **Policy-bearing**: `1` evaluates the document this environment would generate alongside the legacy decisions — legacy decides, divergences warn with both rule ids. Preview a migration without changing behavior. See [policy — shadow mode](policy.md#shadow-mode). |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
-| `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
+| `AGENTBROWSER_LOG_LEVEL` | service | `debug`, `info` (default), `warn` or `error`, case-insensitive. Unknown values print a warning and use `info`. `warn` drops successful-operation lines; `error` also drops failed operations, including policy and approval denials, so alert on the `errors_total` metric rather than on logs at that level. Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF` | service entrypoint | `1` = shut down cleanly (closing all sessions and browsers) when stdin closes. Opt-in lifeline for a supervising launcher: if the launcher is killed, the OS closes the pipe and the server still exits instead of orphaning Chromium. Leave unset under service managers that give the server an empty stdin (it would stop immediately). |
 | `AGENTBROWSER_ALLOW_LOOPBACK` | service entrypoint | Set `1`/`true` to disable the loopback/unspecified-address block (127/8, `0.0.0.0`, `::1`, `::`, `localhost` hostnames) for **all** sessions on this server — local-machine testing against `127.0.0.1` dev servers. Startup-only; session/request input can never set it. **With this set, visited pages can reach every loopback service, including this server's own API: in no-keys local mode that is full unauthenticated control of all sessions; in keyed mode the service is auth-gated but other loopback services are exposed.** Cloud-metadata blocking and session host restrictions still apply. Loud warning at startup. |
-| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. See [LAN CIDR policy](HANDOFF-LAN-CIDR-ALLOWLIST.md). |
+| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. Metadata includes the whole link-local ranges (`169.254.0.0/16`, `fe80::/10`), so a CIDR exception cannot reach link-local devices. See [LAN CIDR policy](HANDOFF-LAN-CIDR-ALLOWLIST.md). |
 | `AGENTBROWSER_CORS_ORIGINS` | service entrypoint | Comma-separated exact browser origins (`scheme://host[:port]`) allowed to call the API and to receive CORS headers, e.g. `https://console.example`. Unset/blank: none — cross-origin browser requests are refused with `403 FORBIDDEN` and no CORS headers are sent; the same-origin [operator panel](#browser-request-guard) still works. Malformed origins or empty list entries abort startup. `*` disables the origin check (loud warning). Merged with `ServerOptions.corsOrigin`. |
 | `AGENTBROWSER_ALLOWED_HOSTS` | service entrypoint | Comma-separated hostnames (no port) accepted in the `Host` header in addition to loopback names, e.g. `agentbrowser.internal`. Without API keys only loopback names are accepted on **any** bind (DNS-rebinding defense), so Compose/LAN clients that use a container or host name must be listed here; setting the list also enables the Host check on keyed wide binds. See [browser request guard](#browser-request-guard). |
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | service entrypoint | Per-response network byte cap, default 10485760 (10 MiB). Startup-only decimal integer from 1 to 67108864 (64 MiB); unset/blank keeps the default, invalid input aborts startup. Example: 33554432 for large LinkedIn JavaScript bundles. Applies to all sessions on that server; session input cannot raise it. Host/SSRF rules remain intact. Distinct from extraction and download budgets. Playwright buffers before its actual-byte check, so this does not bound peak transport memory. |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
 | `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
-| `AGENTBROWSER_CHROMIUM_ARGS` | service (Playwright engine) | Extra Chromium launch flags, space-separated, appended to **headed chromium launches only** — an engine-level escape hatch for Chromium policies the page stack cannot override (e.g. Local Network Access enforcement against a LAN-hosted console). The headless pool keeps stock launch defaults by design, firefox/webkit launches never receive the flags, and CDP attachment (operator attach or `cdpEndpoint`) cannot apply launch flags at all — the service logs a warning at engine construction if the variable is set in those cases. |
-| `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
+| `AGENTBROWSER_CHROMIUM_ARGS` | service (Playwright engine) | **Security-relevant** (ADR-024 §4: trusted operator input that changes what the browser may do). Extra Chromium launch flags, space-separated, appended to **headed chromium launches only** — an engine-level escape hatch for Chromium policies the page stack cannot override (e.g. Local Network Access enforcement against a LAN-hosted console). The headless pool keeps stock launch defaults by design, firefox/webkit launches never receive the flags, and CDP attachment (operator attach or `cdpEndpoint`) cannot apply launch flags at all — the service logs a warning at engine construction if the variable is set in those cases. |
+| `AGENTBROWSER_LOGIN_BROWSER` | service entrypoint | **Trusted operator configuration** (ADR-025): `1` enables the operator login browser and adds the WebRTC IP-handling flag to the shared headless pool's launches. Requires `AGENTBROWSER_OPERATOR_KEYS_FILE` (startup refuses otherwise); hosted deployments refuse the open route. See [use your login safely](use-your-login-safely.md). |
+| `AGENTBROWSER_OPERATOR_KEYS_FILE` | service | **Trusted operator configuration** (ADR-025): a file of `key:tenant` lines authenticating the human operator on operator routes only (login browser, non-act approvals, leases). Exactly one tenant, no overlap with API keys, and API keys must be configured — violations abort startup. The key is never an environment variable value; only its file path is. |
+| `AGENTBROWSER_LOGIN_PROFILE_DIR` | service (login browser) | **Trusted operator configuration** (ADR-025): the login browser's persistent profile directory. Default: the OS private per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA`), outside synced and backed-up paths — keep any override equally private; the directory is enforced owner-only (POSIX `0700`, Windows owner DACL) at every launch. |
+| `AGENTBROWSER_ARTIFACT_KEY` | service | HMAC key for the artifact download-token check (`?token=`); unset, a random per-process key is used. No route currently issues tokens, so artifact access is by session ownership and this key has no practical effect today. |
+| `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES` | service | Aggregate in-memory artifact ceiling, in bytes. Default 268435456 (256 MiB); must be at least the 10 MiB per-artifact ceiling, and invalid values abort startup. When full, the oldest artifact of the tenant holding the most is evicted (fair share: no tenant is pushed below an equal share by others). |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 4.375-hour default. |
 | `AGENTBROWSER_EXTRACT_MAX_BYTES` | service | Hard ceiling for complete compact JSON extraction responses, including evidence, in UTF-8 bytes. Default 1048576 (1 MiB). A positive decimal safe integer; invalid/empty values abort startup. Per-request `maxBytes` may only lower this ceiling. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
@@ -292,8 +316,8 @@ harness), `AGENTBROWSER_FIREFOX_EXECUTABLE` (engine-firefox tests),
 and `AGENTBROWSER_PRIVATE_PATH` (the CLI's owner-only file writer on Windows passes the path to
 its PowerShell helper this way). `AGENTBROWSER_TEST_HEADLESS` is set by Windows CI but read by
 nothing. The TypeScript SDK's
-subprocess helper sets `AGENTBROWSER_LOG=error`, but the service does not read that variable.
-`AGENTBROWSER_LOG_LEVEL` accepts only `info` and `debug`; there is no error-only level today.
+subprocess helper starts the service with `AGENTBROWSER_LOG_LEVEL=error`, or with the caller's own
+non-blank `AGENTBROWSER_LOG_LEVEL` when one is set.
 
 Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
 default because it reads local files on the operator's behalf
@@ -375,7 +399,7 @@ stay exact over all time — alert on `count`/`sum` rates; treat
 quantiles as recent-window signals, not all-time promises.
 
 Logs are JSON lines on stdout (`AGENTBROWSER_LOG_LEVEL=debug` for the
-remap/engine-detail level). Under `brew services`, they land in
+remap/engine-detail level; `warn` or `error` to quiet them). Under `brew services`, they land in
 `$(brew --prefix)/var/log/agentbrowser-server.log` (errors in the
 sibling `.err.log`); `brew services list` shows run state.
 

@@ -62,7 +62,10 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-019](adr/019-explicit-service-worker-opt-in.md) | Explicit Per-Session Service-Worker Opt-In | Accepted | Request policies block service workers by default (Playwright can't route their requests — a choke-point bypass hole); `allowServiceWorkers` is an explicit, off-by-default per-session opt-in for destinations whose anti-fraud tooling keys off service-worker presence |
 | [ADR-020](adr/020-inline-html-verification.md) | Inline HTML Verification via MCP | Accepted | `html` returns page HTML inline (maxBytes-bounded, untrusted-framed, not secret-redacted — a disclosed trade-off) because a11y output cannot show custom-widget state and MCP clients cannot resolve REST artifact URLs; CLI `page html` prints inline and `page observe --continue-from` resumes truncation |
 | [ADR-021](adr/021-form-controls-enrichment.md) | Form-Controls Enrichment for ARIA-Invisible Widgets | Accepted | `include:["formControls"]` mints refs for interactive controls the ARIA snapshot misses (div-based widget triggers); document-evidence gating; 200-control cap; remap reuses the last observation's include tokens |
+| [ADR-022](adr/022-compact-identifiers-and-cli-context.md) | Compact Identifiers and Explicit CLI Context | Proposed | Session ids `ses_` + 8 Crockford base32 characters, session-scoped page ordinals `p1`…, and an explicit instance-bound CLI context (`use`, `-c`); refs unchanged |
 | [ADR-023](adr/023-windows-server-bundled-node.md) | Windows Server Ships as a Bundled-Node Zip | Accepted | The Windows service ships inside `agentbrowser-windows-x64.zip` (launcher, CLI/MCP exes, pinned Node, lockfile-faithful server tree), restoring TD-BROWSER-5's rejection of a single-file server binary; shipped-path and clean-room gates |
+| [ADR-024](adr/024-server-policy-engine-cedar.md) | Server Policy Engine — Embedded Cedar, Queryable by Agents | Accepted | A fixed TypeScript floor (metadata, loopback and private by default, CDP-attach refusals) plus opt-in embedded Cedar for per-tenant grants and approval decisions; one versioned policy document with a built-in baseline; agents query `GET /v1/policy` and dry-run `check`; fail-closed engine errors |
+| [ADR-025](adr/025-operator-cookie-handoff.md) | Operator Login Browser and Policy-Gated Cookie Handoff | Accepted | An operator-only headed login browser on a persistent profile, driven over `--remote-debugging-pipe` (no readable port); operator-approved, one-time cookie copy into a fresh contained session whose exact-host allowlist lies within the handed-off domains; separate operator credential (key file or no-echo prompt, never env); high-risk and unknown actions operator-reviewed, with operator-granted leases |
 
 ## Technical Design
 
@@ -180,6 +183,16 @@ complete and remains in [technical-design.md](technical-design.md).
   [password observation handoff](AGENTBROWSER_PASSWORD_OBSERVATION_HANDOFF_2026-10-06.md)
   and the
   [WebAuthn TLS investigation](AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md)).
+- [TD-BROWSER-14](td/TD-BROWSER-14-compact-identifiers.md) - Compact identifiers
+  and explicit CLI context ([ADR-022](adr/022-compact-identifiers-and-cli-context.md)).
+  **Planned**, unscheduled.
+- [TD-BROWSER-15](td/TD-BROWSER-15-server-policy-engine.md) - Server policy engine:
+  a fixed floor plus opt-in embedded Cedar, per-tenant, queryable by agents
+  ([ADR-024](adr/024-server-policy-engine-cedar.md)). **Delivered** (#444–#458, #460).
+- [TD-BROWSER-16](td/TD-BROWSER-16-operator-cookie-handoff.md) - Operator login
+  browser and operator-approved cookie handoff
+  ([ADR-025](adr/025-operator-cookie-handoff.md)). **Delivered** (#461–#464, #466,
+  #470, #472).
 
 ## Audits
 
@@ -197,6 +210,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-10-13 (v1.17.1: Windows service as a bundled-Node zip)
+**Last Updated**: 2026-10-15 (v1.18.0: server policy engine, operator login browser and cookie handoff)
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.

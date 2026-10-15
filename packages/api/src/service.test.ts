@@ -2708,6 +2708,94 @@ describe('session event ledger paging and redaction (N1)', () => {
     expect((merged as { type: string }[]).some((event) => event.type === 'console.log')).toBe(true);
   });
 
+  it('pages only the exact filtered type and moves the cursor past other types', async () => {
+    const engine = new FakeEngine();
+    const paged = new AgentBrowserService({ engine });
+    const session = await paged.createSession({ tenantId: 't1' });
+    const pageId = (await paged.createPage(session.sessionId)).pageId;
+    const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+    const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+    for (let index = 0; index < 6; index += 1) {
+      fakePage?.emitEvent(index % 3 === 0 ? 'console.error' : 'console.log', {
+        text: `line-${index}`,
+      });
+    }
+    await until(
+      () =>
+        paged.getSessionEvents(session.sessionId, { type: 'console.log', since: -1, limit: 10 })
+          .events.length === 4
+    );
+    const errors = paged.getSessionEvents(session.sessionId, {
+      type: 'console.error',
+      since: -1,
+      limit: 1,
+    });
+    expect(errors.events.map((event) => (event.data as { text: string }).text)).toEqual(['line-0']);
+    const next = paged.getSessionEvents(session.sessionId, {
+      type: 'console.error',
+      since: errors.nextCursor,
+      limit: 10,
+    });
+    expect(next.events.map((event) => event.type)).toEqual(['console.error']);
+    expect(next.events.map((event) => (event.data as { text: string }).text)).toEqual(['line-3']);
+    // Nothing after: the cursor still reaches the end of the scanned ledger.
+    const tail = paged.getSessionEvents(session.sessionId, {
+      type: 'console.error',
+      since: next.nextCursor,
+      limit: 10,
+    });
+    expect(tail.events).toEqual([]);
+    expect(tail.nextCursor).toBeGreaterThanOrEqual(next.nextCursor);
+    expect(tail).toMatchObject({ gap: false });
+  });
+
+  it('reports a gap when entries behind the cursor were evicted', async () => {
+    const engine = new FakeEngine();
+    const paged = new AgentBrowserService({ engine });
+    const session = await paged.createSession({ tenantId: 't1' });
+    const pageId = (await paged.createPage(session.sessionId)).pageId;
+    const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+    const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+    fakePage?.emitEvent('console.log', { text: 'first' });
+    await until(
+      () =>
+        paged.getSessionEvents(session.sessionId, { type: 'console.log', since: -1, limit: 1 })
+          .events.length === 1
+    );
+    const first = paged.getSessionEvents(session.sessionId, {
+      type: 'console.log',
+      since: -1,
+      limit: 1,
+    });
+    expect(first).toMatchObject({ gap: false, oldestSeq: first.nextCursor });
+    // Overflow the 500-entry ledger so entries after the cursor are evicted.
+    for (let index = 0; index < 600; index += 1)
+      fakePage?.emitEvent('console.log', { text: `flood-${index}` });
+    await until(
+      () =>
+        paged.getSessionEvents(session.sessionId, {
+          type: 'console.log',
+          since: first.nextCursor,
+          limit: 1,
+        }).gap === true
+    );
+    const after = paged.getSessionEvents(session.sessionId, {
+      type: 'console.log',
+      since: first.nextCursor,
+      limit: 1,
+    });
+    expect(after.gap).toBe(true);
+    expect(after.oldestSeq).toBeGreaterThan(first.nextCursor + 1);
+    // Review regression: a first read without since held no cursor, so no gap;
+    // an explicit since=-1 (from the start) did lose the evicted entries.
+    expect(paged.getSessionEvents(session.sessionId, { type: 'console.log', limit: 1 }).gap).toBe(
+      false
+    );
+    expect(
+      paged.getSessionEvents(session.sessionId, { type: 'console.log', since: -1, limit: 1 }).gap
+    ).toBe(true);
+  });
+
   it('stores page-derived text redacted (pump-level redaction pin)', async () => {
     const engine = new FakeEngine();
     const secreted = new AgentBrowserService({

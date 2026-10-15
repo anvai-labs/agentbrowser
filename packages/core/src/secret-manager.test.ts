@@ -245,3 +245,131 @@ describe('SecretManager', () => {
     });
   });
 });
+
+describe('per-session secret registration (TD-BROWSER-16 phase 2)', () => {
+  it('a session-scoped value redacts only that session', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_a', 'session-a-secret-value-xyz');
+    expect(manager.redactScoped('token session-a-secret-value-xyz end', 'ses_a')).toBe(
+      'token *** end'
+    );
+    // Another session sees the value verbatim.
+    expect(manager.redactScoped('token session-a-secret-value-xyz end', 'ses_b')).toBe(
+      'token session-a-secret-value-xyz end'
+    );
+    // And so does the global surface.
+    expect(manager.redact('token session-a-secret-value-xyz end')).toBe(
+      'token session-a-secret-value-xyz end'
+    );
+  });
+
+  it('the floor: short and low-entropy values are never registered', () => {
+    const manager = new SecretManager();
+    for (const weak of ['1', 'en', 'true', '1234567', 'aaaaaaaa', 'abababab']) {
+      manager.registerSessionSecret('ses_a', weak);
+    }
+    expect(manager.redactScoped('value: true; other: 1234567; repeat: abababab', 'ses_a')).toBe(
+      'value: true; other: 1234567; repeat: abababab'
+    );
+  });
+
+  it('registration invalidates that scope cache: later text redacts', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_a', 'first-secret-value-aaa');
+    // Warm the cache.
+    expect(manager.redactScoped('x first-secret-value-aaa', 'ses_a')).toBe('x ***');
+    manager.registerSessionSecret('ses_a', 'second-secret-value-bbb');
+    expect(manager.redactScoped('y second-secret-value-bbb', 'ses_a')).toBe('y ***');
+    // The first value still redacts too (longest-first overlap is intact).
+    expect(manager.redactScoped('x first-secret-value-aaa', 'ses_a')).toBe('x ***');
+  });
+
+  it('the global redaction is unchanged by session values', () => {
+    const manager = new SecretManager({ 'vault://k': 'global-secret-value-zzz' });
+    manager.registerSessionSecret('ses_a', 'session-a-secret-value-xyz');
+    expect(manager.redact('a global-secret-value-zzz')).toBe('a ***');
+    expect(manager.redact('a session-a-secret-value-xyz')).toBe('a session-a-secret-value-xyz');
+    // The scoped redaction sees BOTH.
+    expect(
+      manager.redactScoped('g global-secret-value-zzz s session-a-secret-value-xyz', 'ses_a')
+    ).toBe('g *** s ***');
+  });
+
+  it('clearing a session drops its values and caches', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_a', 'session-a-secret-value-xyz');
+    manager.clearSessionSecrets('ses_a');
+    expect(manager.redactScoped('token session-a-secret-value-xyz', 'ses_a')).toBe(
+      'token session-a-secret-value-xyz'
+    );
+  });
+});
+
+describe('session scope bounds (review of phase 2)', () => {
+  it('a live session is never silently un-protected: registration fails closed at the bound', () => {
+    const manager = new SecretManager({}, { sessionScopesMaxSessions: 2 });
+    manager.registerSessionSecret('ses_1', 'first-scoped-value-aaaa');
+    manager.registerSessionSecret('ses_2', 'second-scoped-value-bbb');
+    expect(() => manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc')).toThrow(
+      /scope limit reached/
+    );
+    // Every live scope still redacts — including the oldest.
+    expect(manager.redactScoped('x first-scoped-value-aaaa', 'ses_1')).toBe('x ***');
+    expect(manager.redactScoped('y second-scoped-value-bbb', 'ses_2')).toBe('y ***');
+    // Closing a scope frees the slot.
+    manager.clearSessionSecrets('ses_1');
+    manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc');
+    expect(manager.redactScoped('z third-scoped-value-cccc', 'ses_3')).toBe('z ***');
+  });
+
+  it('a hot scope keeps its memo; memo eviction never un-protects', () => {
+    const manager = new SecretManager({}, { sessionScopesMaxSessions: 2 });
+    manager.registerSessionSecret('ses_1', 'first-scoped-value-aaaa');
+    manager.registerSessionSecret('ses_2', 'second-scoped-value-bbb');
+    // Heat ses_1: its memo becomes most-recently-used.
+    for (let i = 0; i < 5; i += 1) {
+      expect(manager.redactScoped(`t${i} first-scoped-value-aaaa`, 'ses_1')).toBe(`t${i} ***`);
+    }
+    // Turnover below the value ceiling: clearing ses_2 frees a slot for ses_3,
+    // whose registration re-binds ses_1's memo out only if truly least-used.
+    manager.clearSessionSecrets('ses_2');
+    manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc');
+    // ses_1 (hot) kept its memo; every scope still redacts.
+    expect(manager.redactScoped('t0 first-scoped-value-aaaa', 'ses_1')).toBe('t0 ***');
+    expect(manager.redactScoped('z third-scoped-value-cccc', 'ses_3')).toBe('z ***');
+  });
+
+  it('sessionScopesMaxSessions: 0 disables session scopes entirely', () => {
+    const manager = new SecretManager({}, { sessionScopesMaxSessions: 0 });
+    manager.registerSessionSecret('ses_1', 'scoped-value-long-aaaaaa');
+    expect(manager.redactScoped('x scoped-value-long-aaaaaa', 'ses_1')).toBe(
+      'x scoped-value-long-aaaaaa'
+    );
+  });
+
+  it('redactionCacheMaxEntries governs the session memo (0 disables it)', () => {
+    const manager = new SecretManager({}, { redactionCacheMaxEntries: 0 });
+    manager.registerSessionSecret('ses_1', 'scoped-value-long-aaaaaa');
+    // Redaction still works uncached, repeatedly.
+    for (let i = 0; i < 3; i += 1) {
+      expect(manager.redactScoped('x scoped-value-long-aaaaaa', 'ses_1')).toBe('x ***');
+    }
+  });
+
+  it('an unknown session id allocates nothing', () => {
+    const manager = new SecretManager();
+    expect(manager.redactScoped('x whatever', 'ses_never_registered')).toBe('x whatever');
+    expect(manager.redactUntrustedScoped({ k: 'v' }, 'ses_never_registered')).toEqual({ k: 'v' });
+  });
+
+  it('redactUntrustedScoped redacts keys and values in scope', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_1', 'scoped-value-long-aaaaaa');
+    const out = manager.redactUntrustedScoped(
+      { 'scoped-value-long-aaaaaa': 'x scoped-value-long-aaaaaa' },
+      'ses_1'
+    );
+    expect(JSON.stringify(out)).not.toContain('scoped-value');
+    expect(out).toEqual({ '***': 'x ***' });
+  });
+});

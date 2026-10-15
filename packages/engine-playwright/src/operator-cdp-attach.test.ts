@@ -131,7 +131,9 @@ describe('operator CDP ownership', () => {
     ).rejects.toMatchObject({ details: { reason: 'EGRESS_UNSUPPORTED' } });
     await expect(
       configured().createSession({ cdpAttach: true, locale: 'en-US' })
-    ).rejects.toMatchObject({ details: { reason: 'PROFILE_OPTIONS_UNSUPPORTED' } });
+    ).rejects.toMatchObject({
+      details: { reason: 'PROFILE_OPTIONS_UNSUPPORTED', rule: 'floor.cdp.profile_options' },
+    });
     const noPolicy = new PlaywrightChromiumEngine({
       operatorCdp: {
         endpoint: 'http://127.0.0.1:9222',
@@ -212,7 +214,7 @@ describe('operator CDP ownership', () => {
     ctx.emitPage(ownedPopup);
     await vi.waitFor(async () => expect(await session.pages()).toHaveLength(2));
     await expect(session.cookies()).rejects.toMatchObject({
-      details: { reason: 'PROFILE_COOKIE_EXPORT_UNSUPPORTED' },
+      details: { reason: 'PROFILE_COOKIE_EXPORT_UNSUPPORTED', rule: 'floor.cdp.cookie_export' },
     });
     await session.close();
     expect(owned.close).toHaveBeenCalledTimes(1);

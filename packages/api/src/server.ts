@@ -1,11 +1,13 @@
-import { ControlError } from '@agentbrowser/core';
+import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
+import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
   cdpAttachAdmission,
-  deploymentModeFromEnvironment,
+  FLOOR_DELEGATED_REQUIRES_OPERATOR,
+  FLOOR_OPERATOR_REQUIRED,
   isOperatorLoopback,
   type OperatorCdpAdmissionOptions,
   requireCdpAttachAdmission,
-} from './cdp-config.js';
+} from './floor.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
@@ -22,6 +24,8 @@ import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@ag
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
+import { LoginBrowserError } from '@agentbrowser/engine-playwright';
+import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
@@ -29,9 +33,11 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
+  EVENT_REPLAY_MIN_SINCE,
   isAgentMode,
   parseExtractMaxBytes,
   parsePlanSteps,
+  validateCookieHandoffRequest,
   validateOperatorApprovalDecision,
   validateSessionRequest,
   validateWireAction,
@@ -42,12 +48,17 @@ import websocket from '@fastify/websocket';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
+import { artifactStoreFromEnvironment } from './artifact-config.js';
 import {
   createHttpPublication,
   type HttpResponseDraft,
   responseDraft,
 } from './http-publication.js';
+import { LoginBrowserService } from './login-browser-service.js';
 import { buildOpenApiDocument } from './openapi.js';
+import { operatorKeysFromEnvironment, operatorKeysFromFile } from './operator-keys.js';
+import { TokenBucketLimiter } from './policy-query-limiter.js';
+import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
@@ -72,6 +83,8 @@ declare module 'fastify' {
     /** Delegated-grant capability this route requires (see the `on` helper). */
     capability?: AgentCapability;
     publication?: 'guarded' | 'when-controlled' | 'lifecycle' | 'stream';
+    /** TD-BROWSER-16 phase 1: human-operator keys are valid here and only here. */
+    operatorRoute?: boolean;
   }
   interface FastifyInstance {
     /**
@@ -85,6 +98,42 @@ declare module 'fastify' {
 export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /** Maximum compact JSON extraction response bytes; defaults to 1 MiB. */
   extractMaxBytes?: number;
+  /**
+   * TD-BROWSER-16 phase 4: enable the operator login browser
+   * (AGENTBROWSER_LOGIN_BROWSER=1). Requires operator keys; hosted and
+   * multi-tenant deployments refuse to open it.
+   */
+  loginBrowser?: boolean;
+  /**
+   * TD-BROWSER-16 phase 6: override the login-browser port the service reads
+   * through (tests and embedders inject a fake; the operator routes still use
+   * the real service above).
+   */
+  loginBrowserPort?: import('./service.js').ServiceDependencies['loginBrowser'];
+  /**
+   * TD-BROWSER-15 phase 4: a loaded policy file. Its authorizer decides every
+   * operator-chosen question, its limits replace the embedder options, and
+   * combining it with any of them is a startup refusal that names every
+   * conflict.
+   */
+  policy?: {
+    /**
+     * `'file'` (default): AGENTBROWSER_POLICY_FILE — limits replace the
+     * embedder options, and combining them is a refusal. `'shadow'`:
+     * AGENTBROWSER_POLICY_SHADOW — the environment configuration still
+     * applies, the wrapper only observes alongside the deciding authorizer.
+     */
+    kind?: 'file' | 'shadow';
+    /** The loaded authorizer (CedarAuthorizer, or a shadow wrapper). */
+    authorizer: import('@agentbrowser/policy-engine').Authorizer & {
+      healthy?: boolean;
+      shadowHealthy?: boolean;
+    };
+    /** The document's SHA-256; sessions stamp it. */
+    version: string;
+    /** Limits replacing extractMaxBytes / maxResponseBytes (files only). */
+    limits: import('@agentbrowser/protocol').PolicyLimits;
+  };
   /** Trusted embedding source selection for private evidence-backed approval records. */
   evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
@@ -150,7 +199,7 @@ function sha256Hex(value: string): string {
  * Parse AGENTBROWSER_API_KEYS ("key:tenant,key:tenant,...") into a
  * hash-keyed map; undefined when the variable is unset.
  */
-function apiKeysFromEnv(): Map<string, string> | undefined {
+export function apiKeysFromEnv(): Map<string, string> | undefined {
   const raw = process.env.AGENTBROWSER_API_KEYS;
   if (raw === undefined) {
     return undefined;
@@ -222,6 +271,16 @@ const STATUS_FOR = {
   // Server-side failures.
   [ErrorCode.ENGINE_CRASHED]: 500,
   [ErrorCode.INTERNAL]: 500,
+  // Login browser refusals (TD-BROWSER-16): operator mistakes, not server
+  // faults — every one is a 4xx so clients can distinguish them from 500s.
+  [ErrorCode.LOGIN_BROWSER_CLOSED]: 409,
+  [ErrorCode.LOGIN_PROFILE_IN_USE]: 409,
+  [ErrorCode.LOGIN_PROFILE_MODE]: 403,
+  [ErrorCode.LOGIN_BROWSER_DISPLAY]: 400,
+  [ErrorCode.LOGIN_BINARY_CHANGED]: 409,
+  [ErrorCode.LOGIN_BINARY_DOWNGRADED]: 409,
+  [ErrorCode.LOGIN_HOSTED_OR_MULTI_TENANT]: 403,
+  [ErrorCode.HANDOFF_COOKIES_NOT_EXPORTABLE]: 403,
 } satisfies Record<ErrorCode, number>;
 
 /** Map protocol error codes onto HTTP statuses. */
@@ -230,13 +289,19 @@ function statusFor(code: string): number {
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
-  const extractMaxBytes = parseExtractMaxBytes(
-    options.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES
-  );
+  let extractMaxBytes = parseExtractMaxBytes(options.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
   // Validate before allocating service resources. Own the credential map so a
   // caller clearing it later cannot switch a running service into local mode.
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
   const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
+  // TD-BROWSER-16 phase 1: operator keys from a file, never a variable. They
+  // authenticate a human operator for the one configured tenant and are
+  // refused everywhere except operator-flagged routes.
+  // The parser enforces the whole contract (overlap, single tenant, and
+  // that API keys are configured at all) against the hashed map.
+  const operatorKeys = await operatorKeysFromEnvironment(process.env, {
+    ...(apiKeys !== undefined ? { apiKeys } : {}),
+  });
   const bindHost = options.host ?? process.env.HOST ?? '127.0.0.1';
   const originGuard = requestOriginGuardFromEnvironment(
     process.env,
@@ -245,15 +310,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     console.warn,
     (apiKeys?.size ?? 0) > 0
   );
+  const deploymentMode =
+    deploymentModeFromEnvironment(process.env) === 'hosted'
+      ? 'hosted'
+      : (options.deploymentMode ?? 'local');
   const attachAdmission = cdpAttachAdmission(
-    {
-      ...options,
-      host: bindHost,
-      deploymentMode:
-        deploymentModeFromEnvironment(process.env) === 'hosted'
-          ? 'hosted'
-          : (options.deploymentMode ?? 'local'),
-    },
+    { ...options, host: bindHost, deploymentMode },
     apiKeys?.values() ?? []
   );
   const fastify = Fastify({
@@ -393,7 +455,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       }
       try {
         done(null, JSON.parse(body));
-      } catch (error) {
+      } catch {
         const parseError: Error & { statusCode?: number } = new Error('Invalid JSON body');
         parseError.statusCode = 400;
         done(parseError, undefined);
@@ -451,24 +513,76 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     new InMemoryTracer({
       ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     });
+  const policyLimiter = options.policy;
+  const policyIsFile = policyLimiter !== undefined && (policyLimiter.kind ?? 'file') === 'file';
+  if (policyIsFile) {
+    const conflicts = [
+      ...(options.networkPolicy !== undefined ? ['networkPolicy'] : []),
+      ...(options.approvalPolicy !== undefined ? ['approvalPolicy'] : []),
+      ...(options.extractMaxBytes !== undefined ? ['extractMaxBytes'] : []),
+    ];
+    const envConflicts = POLICY_BEARING_ENV.filter((name) => process.env[name] !== undefined);
+    if (conflicts.length > 0 || envConflicts.length > 0) {
+      throw new Error(
+        `AGENTBROWSER_POLICY_FILE cannot be combined with ${[...conflicts, ...envConflicts].join(
+          ', '
+        )}`
+      );
+    }
+  }
+  if (policyIsFile) extractMaxBytes = policyLimiter.limits.extractMaxBytes ?? extractMaxBytes;
+  // TD-BROWSER-16 phase 4: the login browser. Not a session: no id, no refs,
+  // no pages on any agent surface — only the operator routes below touch it.
+  const loginBrowser = new LoginBrowserService({
+    enabled: options.loginBrowser === true && operatorKeys !== undefined,
+  });
+  if (options.loginBrowser === true && operatorKeys === undefined) {
+    throw new Error(
+      'AGENTBROWSER_LOGIN_BROWSER=1 requires AGENTBROWSER_OPERATOR_KEYS_FILE; the login browser is operator-only'
+    );
+  }
+
+  // TD-15 phase 4: with a policy file, every session's network policy is the
+  // floor plus the tenant-bound, per-session-memoized authorizer exceptions.
+  // No keys: nothing is bound and the authorizer's implicit Tenant::"local"
+  // decides, whatever tenantId a caller claims.
+  const sessionPolicyFactory =
+    policyLimiter === undefined
+      ? undefined
+      : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
+  // Validated before the service exists: an invalid ceiling aborts startup.
+  const artifactStore = artifactStoreFromEnvironment(process.env);
   const service = new AgentBrowserService({
     cdpAttachAdmission: attachAdmission,
     extractMaxBytes,
     engine,
+    ...(artifactStore !== undefined ? { artifactStore } : {}),
+    // TD-BROWSER-16 phase 6: the handoff reads through the login browser
+    // (constructed above; enabled encodes operator keys being configured).
+    loginBrowser: options.loginBrowserPort ?? loginBrowser,
     ...(options.evidenceReviewProvider !== undefined
       ? { evidenceReviewProvider: options.evidenceReviewProvider }
       : {}),
     ...(options.networkPolicy
       ? { networkPolicy: options.networkPolicy }
-      : process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
-          process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
-          process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined
+      : policyLimiter === undefined &&
+          (process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
+            process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
+            process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined)
         ? {
             allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
             allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
             maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
           }
         : {}),
+    ...(policyLimiter !== undefined
+      ? {
+          authorizer: policyLimiter.authorizer,
+          policyVersion: policyLimiter.version,
+          ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
+          ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
+        }
+      : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
       ? {
           approvalPolicy:
@@ -722,6 +836,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       version: PRODUCT_VERSION,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
+      // TD-15 phase 4: the authorizer's health as a boolean only — no ids,
+      // no reasons, no policy content.
+      ...(policyLimiter !== undefined
+        ? {
+            authorizerHealthy:
+              policyLimiter.authorizer.shadowHealthy ?? policyLimiter.authorizer.healthy ?? true,
+          }
+        : {}),
     };
   });
 
@@ -748,6 +870,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (tenant !== undefined) {
           principals.set(request, { actor: 'operator', tenant });
           (request as FastifyRequest & { tenant?: string }).tenant = tenant;
+          return;
+        }
+        // TD-BROWSER-16 phase 1: an operator key authenticates a human
+        // operator — and only on operator-flagged routes; anywhere else it is
+        // refused, so a leaked operator key cannot drive sessions.
+        const operatorTenant = token ? operatorKeys?.byHash.get(sha256Hex(token)) : undefined;
+        if (operatorTenant !== undefined) {
+          if (request.routeOptions.config?.operatorRoute !== true) {
+            return reply.code(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'Operator keys are not valid on this route',
+                retryable: false,
+              },
+            });
+          }
+          principals.set(request, { actor: 'human-operator', tenant: operatorTenant });
+          (request as FastifyRequest & { tenant?: string }).tenant = operatorTenant;
           return;
         }
         const agent = token ? service.authority.authenticate(token) : undefined;
@@ -785,6 +925,226 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       const tenantOf = (request: FastifyRequest | RequestData): string | undefined =>
         (request as FastifyRequest & { tenant?: string }).tenant;
 
+      // ------------------------------------------------------------------
+      // TD-BROWSER-15 phase 5: the policy query surface. Answers by
+      // enumeration, never by resolution; bounded per tenant.
+      // ------------------------------------------------------------------
+      const CHECK_ACTIONS = new Set([
+        'request',
+        'request.loopback',
+        'request.private',
+        'act',
+        'act.unattended',
+        'cdp.attach',
+        'downloads',
+        'serviceWorkers',
+        'cookie.seed',
+        'cookie.export',
+        'session.headed',
+        // TD-BROWSER-16 phase 7: the per-domain handoff question — the
+        // domain rides `target` (never resolved; the engine branch refuses
+        // bare suffixes exactly as the handoff floor does).
+        'cookie.handoff',
+      ]);
+      const queryLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
+      const rateLimited = (request: FastifyRequest, reply: FastifyReply): boolean => {
+        if (queryLimiter.take(tenantOf(request))) return false;
+        reply.status(429).send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Policy query rate limit exceeded',
+            retryable: true,
+          },
+        });
+        return true;
+      };
+
+      v1.get('/policy', { config: { publication: 'lifecycle' } }, async (request, reply) => {
+        if (rateLimited(request, reply)) return reply;
+        return {
+          policyVersion: policyLimiter?.version ?? 'legacy',
+          limits: policyLimiter?.limits ?? {},
+          summaryFor: "a default session of the caller's tenant",
+          capabilities: service.policyCapabilitySummary(tenantOf(request)),
+          ...(policyIsFile
+            ? {}
+            : {
+                unconditional:
+                  'no policy file is loaded; these answers are unconditional for a default session',
+              }),
+        };
+      });
+
+      // TD-BROWSER-16 phase 4: the login browser's operator routes. Human
+      // operators only (operatorRoute); agent credentials and API-key
+      // operators are refused by the checks inside each handler.
+      const requireHumanOperator = (request: FastifyRequest): void => {
+        if (principals.get(request)?.actor !== 'human-operator')
+          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+      };
+      const requireLoginBrowser = (): LoginBrowserService => {
+        if (!loginBrowser.isEnabled)
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'the login browser is disabled; set AGENTBROWSER_LOGIN_BROWSER=1 with operator keys configured',
+            false
+          );
+        return loginBrowser;
+      };
+      /**
+       * Engine refusals must stay typed at the client, not become 500s. A
+       * non-LoginBrowserError (e.g. Playwright's ProcessSingleton failure on
+       * a hand-started Chrome) is the in-use refusal the ADR names.
+       */
+      const loginBrowserServiceError = (error: unknown): ServiceError =>
+        error instanceof LoginBrowserError
+          ? new ServiceError(error.code, error.message, false, {
+              loginBrowser: error.code,
+            })
+          : new ServiceError(
+              'LOGIN_PROFILE_IN_USE',
+              'the login profile is in use or the browser did not start',
+              false
+            );
+
+      v1.post(
+        '/operator/login/open',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          // ADR-025 §1: headed, single-tenant, non-hosted deployments only.
+          // (True multi-tenant deployments never boot with operator keys.)
+          if (deploymentMode === 'hosted')
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'the login browser is not available on hosted deployments',
+              false
+            );
+          try {
+            return await loginBrowser.open();
+          } catch (error) {
+            throw error instanceof ServiceError ? error : loginBrowserServiceError(error);
+          }
+        }
+      );
+
+      v1.post(
+        '/operator/login/close',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          try {
+            return await loginBrowser.close();
+          } catch (error) {
+            throw loginBrowserServiceError(error);
+          }
+        }
+      );
+
+      v1.post(
+        '/operator/login/reset',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          try {
+            return await loginBrowser.reset();
+          } catch (error) {
+            throw loginBrowserServiceError(error);
+          }
+        }
+      );
+
+      v1.post(
+        '/operator/login/read',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          try {
+            const result = await loginBrowser.read();
+            // The bounds are checked first (TD phase 4): an over-count read
+            // refuses rather than truncating silently.
+            if (result.cookies.length > MAX_COOKIE_COUNT)
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                `the login browser holds more than ${MAX_COOKIE_COUNT} cookies; reset the profile`,
+                false
+              );
+            return result;
+          } catch (error) {
+            throw error instanceof ServiceError ? error : loginBrowserServiceError(error);
+          }
+        }
+      );
+
+      v1.post('/policy/check', { config: { publication: 'lifecycle' } }, async (request, reply) => {
+        if (rateLimited(request, reply)) return reply;
+        const body = request.body as
+          | {
+              action?: unknown;
+              target?: unknown;
+              url?: unknown;
+              context?: unknown;
+              tenantId?: unknown;
+            }
+          | undefined;
+        const action = typeof body?.action === 'string' ? body.action : undefined;
+        if (action === undefined || !CHECK_ACTIONS.has(action)) {
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_REQUEST',
+              message: 'action must be a known action name',
+              retryable: false,
+            },
+          });
+        }
+        let target = typeof body?.target === 'string' ? body.target : undefined;
+        if (target === undefined && typeof body?.url === 'string') {
+          try {
+            target = new URL(body.url).hostname;
+          } catch {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'url must be a valid URL',
+                retryable: false,
+              },
+            });
+          }
+        }
+        // A caller cannot smuggle a tenant: the authenticated tenant decides.
+        const context =
+          body?.context !== null && typeof body?.context === 'object'
+            ? (body.context as { effect?: unknown; matchedRule?: unknown })
+            : {};
+        return {
+          action,
+          ...(target !== undefined ? { target } : {}),
+          answers: service.policyCheck({
+            action: action as never,
+            ...(target !== undefined ? { target } : {}),
+            context: {
+              ...(typeof context.effect === 'string' ? { effect: context.effect } : {}),
+              ...(typeof context.matchedRule === 'string'
+                ? { matchedRule: context.matchedRule }
+                : {}),
+            },
+            ...(() => {
+              const tenant = tenantOf(request);
+              return tenant !== undefined ? { tenantId: tenant } : {};
+            })(),
+          }),
+        };
+      });
+
       /** 403 unless the session belongs to the caller's tenant. */
       const requireOwnership = (sessionId: string, tenant: string | undefined): void => {
         if (tenant === undefined) return;
@@ -794,7 +1154,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (terminal?.ownerTenant === tenant) return;
           throw new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
         }
-        if (session.tenantId !== undefined && session.tenantId !== tenant)
+        // Fail closed: an authenticated tenant never reaches an ownerless
+        // session. (Agent credentials need operator authority, i.e. keys, so
+        // every delegated session is tenant-stamped.)
+        if (session.tenantId !== tenant)
           throw new ServiceError('FORBIDDEN', `Session ${sessionId} belongs to another tenant.`);
       };
 
@@ -830,6 +1193,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         capability?: AgentCapability;
         safe?: boolean;
         terminal?: 'retained-resource';
+        /** TD-BROWSER-16 phase 1: human-operator keys are valid here and only here. */
+        operatorRoute?: boolean;
       };
       const onTransport = (
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -842,6 +1207,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           url,
           config: {
             ...(meta.capability ? { capability: meta.capability } : {}),
+            ...(meta.operatorRoute ? { operatorRoute: true } : {}),
             publication: meta.publication ?? 'lifecycle',
           },
           ...(meta.publication
@@ -915,10 +1281,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         requireBody(body);
 
         if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
-          throw new ServiceError(
-            'FORBIDDEN',
-            'Controlled sessions require authenticated operator credentials'
-          );
+          throw new ServiceError(...FLOOR_DELEGATED_REQUIRES_OPERATOR);
         const authenticatedTenant = tenantOf(request);
         if (authenticatedTenant !== undefined) {
           // With keys configured, the key's tenant wins; a mismatching body
@@ -962,6 +1325,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           throw new ServiceError(
             'INVALID_REQUEST',
             'CDP endpoints are trusted startup configuration, never session input.'
+          );
+        // TD-BROWSER-16 (ADR-025 §5): the credential-source marking is set by
+        // the operator side (the handoff) or an embedder — an agent marking
+        // its own session would forge the trust indicator phase 6 builds on.
+        // The wire passes unknown keys through, so refuse it BY NAME here.
+        if ('credentialSource' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'credentialSource is server-assigned (the cookie handoff), never session input.'
           );
         if (validated.value.cdpAttach === true) {
           const address = fastify.server.address();
@@ -1028,8 +1400,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           async (request, reply) => {
             const { sessionId } = params(request, 'sessionId');
             const principal = principals.get(request);
-            if (principal?.actor !== 'operator')
-              throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+            if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
             requireOwnership(sessionId, tenantOf(request));
             const control = service.authority.get(sessionId);
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
@@ -1101,29 +1472,117 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control', publication: 'guarded' }
       );
 
-      on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
-        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-        if (request.principal?.actor !== 'operator')
-          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
-        requireOwnership(sessionId, tenantOf(request));
-        const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
-        return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
-      });
-      on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
-        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-        if (request.principal?.actor !== 'operator')
-          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
-        requireOwnership(sessionId, tenantOf(request));
-        const checked = validateOperatorApprovalDecision(request.body);
-        if (!checked.ok)
-          throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
-        const disclosure = await service.prepareApprovalDisclosureInScope(
-          sessionId,
-          tokenId,
-          checked.value.decision
-        );
-        return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
-      });
+      on(
+        'GET',
+        '/sessions/:sessionId/approvals/:tokenId',
+        async (request) => {
+          const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+          if (
+            request.principal?.actor !== 'operator' &&
+            request.principal?.actor !== 'human-operator'
+          )
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          // TD-BROWSER-16 phase 1: the non-act kinds take the separate path
+          // and are decided by a human operator only — an API-key operator
+          // (which an agent may hold) is refused for them.
+          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          if (nonAct !== undefined) {
+            if (request.principal?.actor !== 'human-operator')
+              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+            return responseDraft(await service.viewNonActApproval(sessionId, tokenId), 200);
+          }
+          const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
+          return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
+        },
+        { operatorRoute: true }
+      );
+      on(
+        'POST',
+        '/sessions/:sessionId/approvals/:tokenId',
+        async (request) => {
+          const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+          if (
+            request.principal?.actor !== 'operator' &&
+            request.principal?.actor !== 'human-operator'
+          )
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          if (nonAct !== undefined) {
+            if (request.principal?.actor !== 'human-operator')
+              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+            const nonActChecked = validateOperatorApprovalDecision(request.body);
+            if (!nonActChecked.ok)
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                'Approval decision must be approve or deny'
+              );
+            return responseDraft(
+              await service.decideNonActApproval(
+                sessionId,
+                tokenId,
+                nonActChecked.value.decision,
+                nonActChecked.value.lease
+              ),
+              200
+            );
+          }
+          const checked = validateOperatorApprovalDecision(request.body);
+          if (!checked.ok)
+            throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
+          const disclosure = await service.prepareApprovalDisclosureInScope(
+            sessionId,
+            tokenId,
+            checked.value.decision
+          );
+          return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
+        },
+        { operatorRoute: true }
+      );
+
+      // TD-BROWSER-16 phase 5 (ADR-025 §5): the operator-granted action
+      // lease. Human operator only — an agent (or an API-key operator, which
+      // an agent may hold) can never request, extend or widen one; no
+      // agent-facing schema accepts lease fields.
+      on(
+        'POST',
+        '/sessions/:sessionId/lease',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          // The human operator only (inline form: the `on` wrapper passes a
+          // reduced request, like the approval routes above).
+          if (request.principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          const body = (request.body ?? {}) as {
+            hosts?: unknown;
+            expiresInMs?: unknown;
+            maxActions?: unknown;
+          };
+          if (
+            !Array.isArray(body.hosts) ||
+            body.hosts.length === 0 ||
+            body.hosts.length > 16 ||
+            !body.hosts.every((host) => typeof host === 'string') ||
+            typeof body.expiresInMs !== 'number' ||
+            typeof body.maxActions !== 'number'
+          )
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'A lease grant is { hosts: string[], expiresInMs, maxActions }'
+            );
+          return responseDraft(
+            await service.grantActionLease(sessionId, {
+              hosts: body.hosts as string[],
+              expiresInMs: body.expiresInMs,
+              maxActions: body.maxActions,
+            }),
+            201
+          );
+        },
+        { operatorRoute: true }
+      );
 
       // Application surface (shared-infra slice 2). Binding is operator-only
       // while the human owns the session; discovery/execution/receipts are
@@ -1136,8 +1595,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
-          if (principal?.actor !== 'operator')
-            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
           requireOwnership(sessionId, tenantOf(request));
           requireBody(request.body);
           return reply.send(service.applicationBind(sessionId, principal, request.body));
@@ -1150,8 +1608,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
-          if (principal?.actor !== 'operator')
-            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
           requireOwnership(sessionId, tenantOf(request));
           return reply.send(service.applicationUnbind(sessionId, principal));
         },
@@ -1176,8 +1633,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
-          if (principal?.actor !== 'operator')
-            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
           requireOwnership(sessionId, tenantOf(request));
           if (request.headers['x-agentbrowser-operation-id'] !== undefined)
             throw new ServiceError(
@@ -1289,6 +1745,32 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control' }
       );
 
+      // TD-BROWSER-16 phase 6 (ADR-025 section 3): the cookie handoff. Agent-
+      // invoked (the agent relays APPROVAL_REQUIRED to the operator and
+      // retries with the token); the DECISION it consumes is human-operator
+      // only, on the approvals route above. Runs under one per-session lock;
+      // the mark precedes the write, so racing exports are refused.
+      on(
+        'POST',
+        '/sessions/:sessionId/cookies/handoff',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          const body = request.body;
+          requireBody(body);
+          const validated = validateCookieHandoffRequest(body);
+          if (!validated.ok) {
+            const details = validated.issues
+              .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+              .join('; ');
+            throw new ServiceError('INVALID_REQUEST', `Invalid handoff request: ${details}`);
+          }
+          const result = await service.handoffCookies(sessionId, validated.value);
+          return responseDraft(result, 200);
+        },
+        { safe: true }
+      );
+
       on('GET', '/sessions/:sessionId/cookies', async (request) => {
         const { sessionId } = params(request, 'sessionId');
         requireOwnership(sessionId, tenantOf(request));
@@ -1310,8 +1792,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (options.type === undefined)
             return responseDraft({ error: 'since requires a type filter' }, 400);
           const since = Number(query.since);
-          if (!Number.isSafeInteger(since) || since < 0)
-            return responseDraft({ error: 'since must be a non-negative integer' }, 400);
+          // -1 (from the start) is the cursor an empty page hands back.
+          if (!Number.isSafeInteger(since) || since < EVENT_REPLAY_MIN_SINCE)
+            return responseDraft({ error: 'since must be an integer >= -1' }, 400);
           options.since = since;
         }
         if (query.limit !== undefined) {
@@ -1755,6 +2238,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     { prefix: '/v1' }
   );
 
+  // Read-only handle for operator-surface tests; not part of the public API.
+  fastify.decorate('service', service);
+  fastify.addHook('onClose', async () => {
+    await loginBrowser.closeForShutdown();
+  });
   return fastify;
 }
 
