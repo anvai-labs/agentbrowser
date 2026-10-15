@@ -154,7 +154,16 @@ function waitFromOptions(
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface CliClient
   extends Partial<
-    Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady' | 'policy' | 'policyCheck'>
+    Pick<
+      AgentBrowserClient,
+      | 'health'
+      | 'healthLive'
+      | 'healthReady'
+      | 'policy'
+      | 'policyCheck'
+      | 'journalStatus'
+      | 'journalOperations'
+    >
   > {
   sessions: Pick<
     AgentBrowserClient['sessions'],
@@ -2321,6 +2330,59 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
+          })
+        );
+
+      const journal = program
+        .command('journal')
+        .description(
+          'read-only durable-journal surfaces: history and status (T5 J3b; writes are operator-only and not in the CLI)'
+        );
+      journal
+        .command('status')
+        .description(
+          'the durable journal: configuration, namespace, health, horizons and qualified runtime'
+        )
+        .action(
+          action(async (ctx) => {
+            if (!ctx.client.journalStatus)
+              throw new UsageError('Client does not support journal queries');
+            const result = await ctx.client.journalStatus();
+            ctx.emit(result, () => {
+              const lines = [
+                result.configured
+                  ? `namespace ${result.namespace ?? '?'} health ${result.health ?? 'not open'}`
+                  : 'no journal configured',
+                `accepts until ${result.acceptUntil ?? '-'}, retains until ${result.retainUntil ?? '-'}`,
+                `runtime ${result.runtime.platform}/Node ${result.runtime.node} (qualified: ${result.runtime.qualified})`,
+                `recoveryQualified ${result.recoveryQualified} (advisory; never an exactly-once promise)`,
+              ];
+              return lines;
+            });
+          })
+        );
+      journal
+        .command('operations <operationId>')
+        .description(
+          'every historical record of one durable operation in the configured namespace, tenant-scoped; absence is never proof of non-execution'
+        )
+        .action(
+          action(async (ctx, operationId: string) => {
+            if (!ctx.client.journalOperations)
+              throw new UsageError('Client does not support journal queries');
+            const result = await ctx.client.journalOperations(operationId);
+            ctx.emit(result, () => {
+              const lines = [
+                `${result.operationId}: ${result.records.length} record(s)${result.truncated ? ' (truncated)' : ''}`,
+              ];
+              for (const record of result.records)
+                lines.push(
+                  `  ${record.classification}${record.actionable ? ' (actionable)' : ''} ${record.application.adapter}/${record.application.resource} epoch ${record.session.epoch}`
+                );
+              if (result.absent)
+                lines.push('  absent in the searched namespace (not proof of non-execution)');
+              return lines;
+            });
           })
         );
 

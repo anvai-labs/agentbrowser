@@ -194,3 +194,37 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
   - Each guard was mutated away and fails a test.
   - Suites: control 834, api 1,562 (CI reports the same on the PR head); journal qualification 32/32.
 
+## J3b: the lookup route (2026-10-15)
+
+`GET /v1/journal/operations/{operationId}` and `GET /v1/journal`, both read-only, both accepting
+the ADR-025 operator key (`actor: 'human-operator'`) **or** a tenant API key, scoped to the
+credential's tenant. Delegated agent grants are refused by the /v1 hook (the routes name no
+session). Keyless deployments get 401: no credential names a tenant. Rate limited per tenant
+(30/min), like the policy surface. OpenAPI is regenerated; the SDK gains `journalStatus()` and
+`journalOperations(id)`; the CLI gains `agentbrowser journal status` and
+`agentbrowser journal operations <id>`.
+
+- **Projection.** Each record carries only `namespace`, the `classification` vocabulary, the
+  `actionable` flag, application identity and the departed session's opaque
+  `sessionIncarnation`/`epoch`. Fingerprints, digests, actors, inputs and evidence content never
+  cross the wire; `classifyJournalRecord` (protocol) maps the legal record states and refuses
+  illegal ones.
+- **Absence honesty.** `absent: true` means scoped absence in the searched (configured)
+  namespace — recorded in the route description, the SDK doc and the CLI output as never proof of
+  non-execution.
+- **Status (D5).** `GET /v1/journal` reports configuration, namespace, health, both horizons and
+  `recoveryQualified` = configured-and-open on the qualified matrix
+  (`journalRuntimeQualified`: Node 24 on Linux or macOS), stated as advisory with no exactly-once
+  promise.
+- **Refusals.** No journal configured → 404 `JOURNAL_NOT_CONFIGURED`; a journal refusal or error
+  → 503 `JOURNAL_UNAVAILABLE` with "treat the history as unread, not absent"; invalid operation
+  ID → 400; over the rate limit → 429.
+- **Tests.** `journal-lookup-http.test.ts` seeds each legal record state through the journal
+  facade on a store the REST server then reopens (the departed-process situation): one assertion
+  per classification plus the actionable flag, another tenant's operation as scoped absence, the
+  operator key reading the same surface, delegated-grant/keyless/bearer/invalid-ID refusals, 404
+  without a journal, and the status fields against `journalRuntimeQualified()` itself. Protocol
+  tests cover `classifyJournalRecord` (six legal states, four illegal) and strict schema
+  validation, including that a `fingerprint` key is rejected. SDK tests cover both methods and
+  operation-ID encoding.
+

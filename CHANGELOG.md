@@ -7,6 +7,21 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — read-only journal lookup and status (T5 J3b)
+
+- `GET /v1/journal/operations/{operationId}` returns every historical record of one durable
+  operation in the configured namespace, projected to a classification (`undispatched`,
+  `in_doubt`, `failed_before_dispatch`, `completed`, `failed`, `settled_unknown`), an
+  `actionable` flag, application identity and the departed session's opaque identity. Per the
+  accepted design (D1 as amended), it accepts the operator key or a tenant API key, read-only and
+  tenant-scoped; delegated grants are refused and keyless deployments get no surface. Absence is
+  scoped absence, never proof of non-execution.
+- `GET /v1/journal` reports the journal's configuration, namespace, health, horizons and an
+  advisory `recoveryQualified` (Node 24 on Linux/macOS only; no exactly-once promise).
+- Both routes are rate limited per tenant, in the regenerated OpenAPI, and exposed by the SDK
+  (`journalStatus`, `journalOperations`) and the CLI (`agentbrowser journal status`,
+  `agentbrowser journal operations <id>`).
+
 ### Added — journal `findByOperation` (T5 J3a)
 
 - The operation journal port can now find every record of one tenant's operation ID in a

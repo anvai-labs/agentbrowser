@@ -1610,6 +1610,157 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           },
         },
       },
+      '/v1/journal': {
+        get: {
+          operationId: 'getJournalStatus',
+          summary: 'The durable journal: configuration, health and qualified runtime',
+          description:
+            'T5 J3b (accepted J-design, D5). Read-only; a tenant API key or the operator key may call it. recoveryQualified is advisory (no exactly-once promise): true only when the journal is configured and open on the qualified matrix (Node 24 on Linux or macOS). Keyless deployments authenticate nobody and get 401. Rate limited per tenant.',
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The journal status.',
+              content: json({
+                type: 'object',
+                required: ['schemaVersion', 'configured', 'runtime', 'recoveryQualified'],
+                properties: {
+                  schemaVersion: { type: 'integer', const: 1 },
+                  configured: {
+                    type: 'boolean',
+                    description: 'Whether AGENTBROWSER_JOURNAL_* configured a journal.',
+                  },
+                  namespace: { type: 'string', description: 'The configured namespace id.' },
+                  health: {
+                    type: 'string',
+                    enum: ['open', 'quarantined', 'poisoned', 'closed'],
+                    description: 'The opened journal handle health, when it is open.',
+                  },
+                  acceptUntil: {
+                    type: 'string',
+                    description: 'ISO-8601: new durable intents are accepted until this instant.',
+                  },
+                  retainUntil: {
+                    type: 'string',
+                    description: 'ISO-8601: records are retained until this instant.',
+                  },
+                  runtime: {
+                    type: 'object',
+                    required: ['platform', 'node', 'qualified'],
+                    properties: {
+                      platform: { type: 'string' },
+                      node: { type: 'string' },
+                      qualified: {
+                        type: 'boolean',
+                        description: 'This runtime is in the qualified matrix.',
+                      },
+                    },
+                  },
+                  recoveryQualified: { type: 'boolean' },
+                },
+              }),
+            },
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '429': errorResponse('Journal lookup rate limit exceeded.'),
+          },
+        },
+      },
+
+      '/v1/journal/operations/{operationId}': {
+        get: {
+          operationId: 'lookupJournalOperation',
+          summary: 'Historical records of one durable operation, tenant-scoped and read-only',
+          description:
+            "T5 J3b (accepted J-design, D1 amended). Every stored record of the operation ID in the configured namespace, projected to classification, application identity and the departed session's opaque identity; fingerprints, digests, actors, inputs and evidence content never cross the wire. Readable by a tenant API key or the operator key, scoped to the credential's tenant; delegated grants are refused; writes do not exist here (J3c). An absent result is scoped absence in this namespace, never proof of non-execution. Rate limited per tenant.",
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The bounded record list (at most 16).',
+              content: json({
+                type: 'object',
+                required: ['schemaVersion', 'operationId', 'absent', 'truncated', 'records'],
+                properties: {
+                  schemaVersion: { type: 'integer', const: 1 },
+                  operationId: { type: 'string' },
+                  absent: {
+                    type: 'boolean',
+                    description:
+                      'No record matched in the searched namespace; not proof of non-execution.',
+                  },
+                  truncated: { type: 'boolean' },
+                  records: {
+                    type: 'array',
+                    maxItems: 16,
+                    items: {
+                      type: 'object',
+                      required: [
+                        'namespace',
+                        'classification',
+                        'actionable',
+                        'application',
+                        'session',
+                      ],
+                      properties: {
+                        namespace: { type: 'string' },
+                        classification: {
+                          type: 'string',
+                          enum: [
+                            'undispatched',
+                            'in_doubt',
+                            'failed_before_dispatch',
+                            'completed',
+                            'failed',
+                            'settled_unknown',
+                          ],
+                        },
+                        actionable: {
+                          type: 'boolean',
+                          description: 'True only for states J3c can still change.',
+                        },
+                        application: {
+                          type: 'object',
+                          required: ['adapter', 'resource', 'bindingGeneration'],
+                          properties: {
+                            adapter: { type: 'string' },
+                            resource: { type: 'string' },
+                            bindingGeneration: { type: 'string' },
+                          },
+                        },
+                        session: {
+                          type: 'object',
+                          required: ['sessionIncarnation', 'epoch'],
+                          description: 'Opaque identity of the departed session.',
+                          properties: {
+                            sessionIncarnation: { type: 'string' },
+                            epoch: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '404': errorResponse('No durable journal is configured on this deployment.'),
+            '429': errorResponse('Journal lookup rate limit exceeded.'),
+            '503': errorResponse(
+              'The journal refused this lookup; treat the history as unread, not absent.'
+            ),
+          },
+        },
+      },
+
       '/v1/policy': {
         get: {
           operationId: 'getPolicy',

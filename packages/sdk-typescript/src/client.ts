@@ -954,6 +954,51 @@ export class AgentBrowserClient {
   }
 
   /**
+   * T5 J3b: the durable journal status (GET /v1/journal). Read-only;
+   * recoveryQualified is advisory and never an exactly-once promise.
+   */
+  async journalStatus(): Promise<{
+    schemaVersion: 1;
+    configured: boolean;
+    namespace?: string;
+    health?: 'open' | 'quarantined' | 'poisoned' | 'closed';
+    acceptUntil?: string;
+    retainUntil?: string;
+    runtime: { platform: string; node: string; qualified: boolean };
+    recoveryQualified: boolean;
+  }> {
+    return this.http.requestJson('/v1/journal');
+  }
+
+  /**
+   * T5 J3b: the historical records of one durable operation
+   * (GET /v1/journal/operations/{operationId}), scoped to the credential's
+   * tenant. An absent result is scoped absence in the searched namespace,
+   * never proof of non-execution.
+   */
+  async journalOperations(operationId: string): Promise<{
+    schemaVersion: 1;
+    operationId: string;
+    absent: boolean;
+    truncated: boolean;
+    records: Array<{
+      namespace: string;
+      classification:
+        | 'undispatched'
+        | 'in_doubt'
+        | 'failed_before_dispatch'
+        | 'completed'
+        | 'failed'
+        | 'settled_unknown';
+      actionable: boolean;
+      application: { adapter: string; resource: string; bindingGeneration: string };
+      session: { sessionIncarnation: string; epoch: number };
+    }>;
+  }> {
+    return this.http.requestJson(`/v1/journal/operations/${encodeURIComponent(operationId)}`);
+  }
+
+  /**
    * TD-BROWSER-15 phase 5: ask what the loaded policy would decide
    * (POST /v1/policy/check). Answers come by enumeration, never by DNS
    * resolution; a hostname gets one answer per class set.
