@@ -6477,6 +6477,37 @@
                 }
               }
             }
+          },
+          "writeExecution": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "defaultRequirement",
+              "supportedRequirements"
+            ],
+            "properties": {
+              "defaultRequirement": {
+                "const": "ephemeral",
+                "type": "string"
+              },
+              "supportedRequirements": {
+                "minItems": 1,
+                "maxItems": 2,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "ephemeral",
+                      "type": "string"
+                    },
+                    {
+                      "const": "durable",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       },
@@ -7416,8 +7447,7 @@
             "type": "object",
             "required": [
               "name",
-              "version",
-              "capabilities"
+              "version"
             ],
             "properties": {
               "name": {
@@ -7617,8 +7647,7 @@
         "type": "object",
         "required": [
           "name",
-          "version",
-          "capabilities"
+          "version"
         ],
         "properties": {
           "name": {

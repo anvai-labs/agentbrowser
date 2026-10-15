@@ -20,6 +20,69 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
   uses one shared line reader with a pending-request map.
 
+### Fixed — the execution requirement as shipped (T5 C4b, part 1)
+
+- An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
+  invalid request; the authority's request normalizer now accepts it as the default made
+  explicit and drops it behind its existing caller-data checks, so explicit and omitted requests
+  share one operation identity (the second is a replay, not a conflict). `durable` is refused
+  before any identity is reserved, and stays refused even with a durable store configured until
+  it is part of the operation identity; discovery advertises only `ephemeral` until then.
+- REST discovery (`GET …/application`) now publishes `writeExecution` (it was added only to the
+  service's return value, which REST does not send), and "nothing bound" stays `null` instead of
+  becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
+
+### Added — declared adapter output (T4)
+
+- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not
+  match is never reported as success, and neither the adapter output nor the parser's message
+  is echoed; a matching value is replaced by the parsed one.
+  - A mismatched **read** is refused like any invalid read result (`400 INVALID_REQUEST`,
+    `Invalid application output`).
+  - A mismatched **write** has already run: it is an internal adapter fault (`500 INTERNAL`), its
+    operation stays dispatched with `outcome_unknown`, and the same operation ID never executes
+    again.
+  - Rejected results skip the parser; operations without `parseOutput` are unchanged.
+
+### Added — MCP request cancellation (T0/T8)
+
+- The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is
+  aborted down to its HTTP request, and no response is sent for it (MCP 2025-06-18). A cancel for
+  a finished or unknown request is ignored and re-runs nothing; `initialize` is never cancelled;
+  concurrent calls are independent. A cancelled `create` still frees the session it created: its
+  cleanup runs outside the cancelled call's scope.
+- SDK: `ClientOptions.requestSignal` (a hook read per request) lets a caller cancel. A cancelled
+  request fails with `CANCELLED` — not retryable, `operationId` attached, "outcome may be
+  unknown" — so a cancelled write is reconciled, never treated as success or replayed blindly.
+
+### Added — output schemas for six more MCP tools (T0 M2, part 1)
+
+- `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` advertise an
+  `outputSchema` on the `2025-06-18` protocol, so structured-capable clients receive
+  `structuredContent` for them. New protocol schemas: `PageResponseSchema`,
+  `SessionCreatedResultSchema`, `PageListResultSchema`, `SessionClosedResultSchema` and
+  `SessionEventsPageResultSchema`; `pdf` shares `screenshot`'s `ArtifactRefSchema`. The schemas
+  stay open to additive fields. A full-stack test validates every tool's real result against its
+  schema.
+
+### Fixed — structured tool errors no longer break MCP clients that validate output
+
+- MCP clients (the official TypeScript SDK among them) validate `structuredContent` against a
+  tool's `outputSchema` even on `isError` results. Ours advertised the success shape only, so a
+  structured error (`{error: {code, message, operationId?}}`, shipped in 1.17) from `act`,
+  `navigate`, `extract`, `observe`, `autofill`, `plan`, `screenshot` and the tools above became a
+  client-side `-32602` and the agent never saw the error. Every advertised `outputSchema` is now
+  `{type: "object", anyOf: [<result schema>, <error envelope>]}`, keeping the result schema's
+  `$id` at the root. Protocol schemas, OpenAPI and discovery are unchanged. A client-view test
+  reads `tools/list` and validates every `structuredContent`, errors included, with a draft-07
+  validator.
+
+### Fixed — the documented session response no longer requires `engine.capabilities`
+
+- OpenAPI's `EngineInfo` (in every session response) marked `capabilities` required, but no
+  session response has ever carried it. It is now optional; capabilities come from
+  `GET /v1/engine`.
+
 ### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
 
 - Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository

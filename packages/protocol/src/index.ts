@@ -25,6 +25,7 @@ export * from './policy-document.js';
 export * from './schemas.js';
 export * from './session-diagnostics.js';
 export * from './test-run.js';
+export * from './tool-results.js';
 export * from './types.js';
 export * from './upload.js';
 export * from './validators.js';
