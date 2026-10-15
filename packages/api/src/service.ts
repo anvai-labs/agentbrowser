@@ -2789,10 +2789,17 @@ export class AgentBrowserService {
     if (found.kind !== 'found')
       throw new ServiceError(
         'JOURNAL_UNAVAILABLE',
-        'The journal could not answer; re-read before acting'
+        `The journal refused this write (${
+          found.kind === 'definitely_not_read' || found.kind === 'uncertain'
+            ? found.reason
+            : 'unavailable'
+        }); history is unread, not absent`
       );
     if (found.records.length === 0)
-      throw new ServiceError('NOT_FOUND', 'No record of this operation in the searched namespace');
+      throw new ServiceError(
+        'NOT_FOUND',
+        'No actionable record of this operation in the searched namespace'
+      );
     return { records: found.records, truncated: found.truncated };
   }
 

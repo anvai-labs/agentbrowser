@@ -67,10 +67,17 @@ export async function seedAndBuild(state: 'undispatched' | 'in_doubt', operation
     AGENTBROWSER_OPERATOR_KEYS_FILE: join(base, 'operator.keys'),
   };
   Object.assign(process.env, values);
-  const server = await buildServer({
-    engine: new FakeEngine(),
-    apiKeys: new Map([[createHash('sha256').update(API_KEY).digest('hex'), 'owner']]),
-  });
+  let server: Awaited<ReturnType<typeof buildServer>>;
+  try {
+    server = await buildServer({
+      engine: new FakeEngine(),
+      apiKeys: new Map([[createHash('sha256').update(API_KEY).digest('hex'), 'owner']]),
+    });
+  } catch (error) {
+    for (const name of Object.keys(values)) delete process.env[name];
+    rmSync(base, { recursive: true, force: true });
+    throw error;
+  }
   return {
     server,
     cleanup: async () => {
