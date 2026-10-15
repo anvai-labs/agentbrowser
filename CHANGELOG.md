@@ -63,6 +63,46 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   token test, and both pre-mark abort tests pin the new behavior.
 
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
+
+### Fixed — event replay paging, artifact eviction, tenant ownership
+
+- **Event replay paging matches the type exactly.** With `since`/`limit`, `?type=` used to select
+  only the ledger, so `type=console.log` also returned `console.error`, dialog and lifecycle rows
+  (and `type=request.failed` returned every `request.*` row). Paged rows now match the type
+  exactly; `nextCursor` advances past skipped rows of other types.
+- **Paged replay reports eviction gaps.** Paged responses add `oldestSeq` (lowest retained ledger
+  sequence) and `gap` (`true` when the caller passed `since` and entries after it were evicted
+  before the read) instead of silently re-reading from the oldest kept entry. The envelope is one
+  protocol schema (`SessionEventsPageSchema`, ADR-015) used by the service, OpenAPI and the SDK;
+  MCP `events_replay` and the CLI (`gap: true …` line) carry it. Additive.
+- **`since=-1` is accepted.** An empty page hands back `nextCursor: -1`, which the route used to
+  reject with 400, breaking `since=nextCursor` polling loops until the first event arrived. `-1`
+  now means "from the start" on the route, OpenAPI, MCP and the CLI.
+- **Artifact store: aggregate byte cap and fair-share eviction.** New `maxTotalBytes` (default
+  256 MiB; `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES`, invalid values abort startup). When full, the
+  oldest artifact of the tenant holding the most (artifacts under count pressure, bytes under byte
+  pressure; ties evict the writer's own) is evicted, so no tenant can be pushed below an equal
+  share by another's writes, whatever their sizes or order. Previously worst-case retention was
+  100 × 10 MiB with global FIFO eviction, so any tenant could flush another's evidence.
+- **Tenant ownership fails closed on ownerless sessions.** An authenticated tenant is refused
+  (403) on a session without a tenant; previously such a session was reachable by any keyed
+  tenant. Not reachable through `POST /v1/sessions` (keys stamp the tenant) — defense in depth.
+- Docs: the `artifact-auth` comment and the `AGENTBROWSER_ARTIFACT_KEY` row now say what exists:
+  a token check over `artifactId|exp` that no route currently mints tokens for, so artifact
+  access is by session ownership.
+
+### Fixed — operation journal retention (not yet wired into the service)
+
+- **Settled, expired namespaces release capacity when it is needed.** Expired namespaces used to
+  count toward `maxNamespaces` forever, so a store that had ever held that many refused new ones
+  permanently. Now, when a new namespace would be refused at the ceiling, every namespace that is
+  released, past `retainUntil` (larger of the clock and its persisted high-water) and settled
+  (all records terminal) is retired: records deleted, reservation zeroed, high-water raised. The
+  row stays as a tombstone that never reopens — `expired` forward, `configuration` after a clock
+  rollback or for any other descriptor — so purged operation IDs are never admitted again
+  ([t5-journal-contract](docs/spec/design/t5-journal-contract.md)). Namespaces with an in-doubt
+  record or an active fence are never retired. No startup purge, no DDL change (`formatVersion` 1).
+
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 
 - **Marked sessions** (`credentialSource: "operator"`): the marking is **server-side only** — a

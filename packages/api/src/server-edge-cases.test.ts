@@ -11,7 +11,7 @@ import type { BrowserEngine } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildServer, startServer } from './server.js';
-import { ServiceError } from './service.js';
+import { type AgentBrowserService, ServiceError } from './service.js';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -318,6 +318,23 @@ describe('server edge branches', () => {
       );
     };
 
+    it('fails closed on a session that carries no tenant when the caller has one', async () => {
+      // Unreachable through POST /v1/sessions with keys configured (the key's
+      // tenant is stamped), so the ownerless session is created directly.
+      const service = (server as unknown as { service: AgentBrowserService }).service;
+      const ownerless = await service.createSession({});
+      try {
+        const response = await server.inject({
+          method: 'GET',
+          url: `/v1/sessions/${ownerless.sessionId}/events/replay`,
+          headers: operatorA,
+        });
+        expect(response.statusCode).toBe(403);
+      } finally {
+        await service.closeSession(ownerless.sessionId);
+      }
+    });
+
     it('rejects cross-tenant reads of session-scoped resources', async () => {
       await expectForbidden('GET', `/v1/sessions/${sessionId}/cookies`);
       await expectForbidden('GET', `/v1/sessions/${sessionId}/events/replay`);
@@ -389,6 +406,23 @@ describe('server edge branches', () => {
       const limitOnly = await inject('GET', `/v1/sessions/${sessionId}/events/replay?limit=50`);
       expect(limitOnly.statusCode).toBe(400);
       expect(limitOnly.json().error).toContain('type filter');
+
+      // Review regression: an empty ledger hands back nextCursor -1, and that
+      // cursor must be accepted as since on the next poll.
+      const empty = await inject(
+        'GET',
+        `/v1/sessions/${sessionId}/events/replay?type=no.such.type&limit=5`
+      );
+      expect(empty.statusCode).toBe(200);
+      const cursor = empty.json().nextCursor as number;
+      const next = await inject(
+        'GET',
+        `/v1/sessions/${sessionId}/events/replay?type=no.such.type&since=${cursor}&limit=5`
+      );
+      expect(next.statusCode).toBe(200);
+      expect(
+        (await inject('GET', `/v1/sessions/${sessionId}/events/replay?type=x&since=-2`)).statusCode
+      ).toBe(400);
 
       const snapshot = await inject('GET', `/v1/sessions/${sessionId}/pages/${pageId}/snapshot`);
       expect(snapshot.statusCode).toBe(200);
