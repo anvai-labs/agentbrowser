@@ -61,7 +61,8 @@ most 16) of matching records across the **searched namespaces** (see D7). Each i
 | Field | Source |
 | --- | --- |
 | `namespace` | the namespace holding the record |
-| `classification` | `undispatched` (rev 1) / `outcome_unknown` (rev 2, dispatched) / `failed_before_dispatch` (rev 2, failed) / `completed`, `failed`, `outcome_unknown` (rev 3) |
+| `classification` | `undispatched` (rev 1) / `in_doubt` (rev 2, dispatched, no terminal) / `failed_before_dispatch` (rev 2, failed) / `completed`, `failed`, `settled_unknown` (rev 3) |
+| `actionable` | true for `undispatched` and `in_doubt`, the only states D2/D3/settlement can still change |
 | `application` | adapter, resource, binding generation |
 | `session` | opaque `sessionIncarnation` and epoch (random, never a bearer) |
 
@@ -89,14 +90,31 @@ most 16) of matching records across the **searched namespaces** (see D7). Each i
 Recommended: opt-in history.
 
 - **Configuration.** Each namespace an operator rotates away from can be listed in
-  `AGENTBROWSER_JOURNAL_HISTORY`, a file of `name, ACCEPT_UNTIL, key file` entries. The service
-  opens each listed namespace with its exact original descriptor and original key. The key
-  check requires the original key, so **old key files are retained through retention**.
+  `AGENTBROWSER_JOURNAL_HISTORY`. Each entry records **every** descriptor input that is
+  configurable or release-bound:
+  - name, `ACCEPT_UNTIL`, key file, restore generation and `MAX_RECORDS`;
+  - the release's descriptor constants (bounds, retention, finalization), which the entry records
+    rather than reads from the running release.
+
+  The service rebuilds the exact original descriptor from the entry and opens the namespace with
+  the original key, because the key check requires it. **Old key files are retained through
+  retention**, under the same rules as `AGENTBROWSER_JOURNAL_KEY_FILE` (owner-only `0600`, a file
+  never a variable).
 - **Access.** History namespaces are searched by lookup and writable only by D2/D3. They never
   accept a new intent: they are past their horizon.
-- **Retirement.** Once a history namespace is settled and past retention, it retires and its
-  entry can be removed. A namespace still holding in-doubt records cannot retire; D2/D3, or the
-  operator settlement below, is what frees it.
+- **Retirement.** The store retires a namespace only when all of these hold:
+  - a new namespace is being created at the 64-slot ceiling;
+  - the namespace is released (no live fence);
+  - it is past `retainUntil`;
+  - every record has a terminal.
+
+  The entry can then be removed.
+- **Deadline.** After `retainUntil`, every data write to the namespace is refused (`expired`).
+  So D2, D3 and settlement must happen **within the 30 days after `ACCEPT_UNTIL`**. An `in_doubt`
+  or `undispatched` record still open at `retainUntil` can never be closed, and its namespace
+  never retires: it keeps one slot permanently. That is a **recorded residual**. The service
+  warns about actionable records in history namespaces approaching `retainUntil`, and no forced
+  tombstone is proposed.
 - **Without this,** a rotation makes the old namespace's in-doubt records unreachable while they
   still occupy a store slot. That is today's J-d behaviour, recorded as a residual.
 
@@ -106,9 +124,12 @@ D2 and D3 need a trusted, non-session write path. It calls the facade's `commitT
 the **full stored identity** returned by `findByOperation`, under the operator's authorization
 and the namespace fence. Nothing else gains access to another process's records.
 
-### Explicit continuation (D2)
+### Closing and continuing undispatched records (D2)
 
-**D2: only `undispatched` records, only by operator action.** Recommended.
+**D2: only `undispatched` records, only by operator action.** Recommended. Two operator actions:
+- **close**: step 2 below on its own, for intents the operator does not want to continue, so the
+  namespace can retire;
+- **continue**: steps 2 and 3.
 
 1. The operator asks to continue a rev 1 record.
 2. The recovery path commits a terminal `failed` on it: a known pre-dispatch failure, which is a
@@ -117,8 +138,10 @@ and the namespace fence. Nothing else gains access to another process's records.
      store lock with fence clearing guarantees a single writer. The expected-revision check is a
      second guard.
    - **Marking it:** terminals carry only a status and evidence refs. The terminal therefore
-     carries a supersession evidence ref, subject to the evidence-reference format, so that a
-     superseded intent is distinguishable from an ordinary pre-dispatch failure.
+     carries a supersession marker in the evidence-ref list, subject to the evidence-reference
+     format, so that a superseded or closed intent is distinguishable from an ordinary
+     pre-dispatch failure. It is a **marker only**: there is no durable evidence store, so it
+     resolves to nothing (see D3).
 3. Only then may the operator submit a **new** operation, under a **new** operation ID, with an
    optional request field `supersedes: {namespace, operationId}`.
    - The field is a protocol addition, so non-reviewed writes can carry the link too; it is not
@@ -153,9 +176,13 @@ reconcile(identity: {
   or `failed`). `unknown` changes nothing.
 - **No evidence refs.** None are recorded, because no durable evidence store exists to resolve
   them. Durable evidence is a separate design.
-- **Operator settlement.** The operator may instead **settle** an unknown record as terminal
-  `outcome_unknown` (rev 3, legal). This claims nothing about the effect, and it lets the
-  namespace retire.
+- **Operator settlement.** The operator may instead **settle** an `in_doubt` record as terminal
+  `outcome_unknown` (rev 3). The store accepts that only for a dispatched rev 2 record, and it
+  claims nothing about the effect. It lets the namespace retire.
+  - **It is irreversible:** terminals are immutable, so a settled record can never be
+    reconciled. Try `reconcile` first.
+  - **Likewise,** a record the live path itself ended as terminal `outcome_unknown` is
+    `settled_unknown` and cannot be reconciled either.
 
 ## J4: process-loss and publication gates
 
@@ -204,9 +231,12 @@ bus is built.
   - whether the journal is configured, the namespace, its health and accept horizon;
   - the searched history namespaces;
   - `recoveryQualified`, true only on the qualified matrix.
-- **Qualified matrix:** application writes; the SQLite store; Linux on Node 24 (the CI runtime)
-  and Node 22.13+ (the journal's minimum); and the macOS leg (nightly, and on journal pull
-  requests). Windows has no journal leg and stays unqualified.
+- **Qualified matrix:** application writes; the SQLite store; Node 24 (the only runtime the
+  journal gates run on) on Linux, plus the macOS leg (nightly, and on journal pull requests).
+- **Not qualified:**
+  - Node 22.13+ is only the minimum at which the journal can start, since `node:sqlite` is
+    unflagged there. It stays unqualified until a Node 22 journal leg exists.
+  - Windows has no journal leg.
 - There is no exactly-once promise.
 
 ## Browser-operation durability (D6)
@@ -239,9 +269,10 @@ order: D6 **after** J3, reusing J3's read path.
    retention.
 2. **J3a:** the `findByOperation` port (bounded scan), conformance, both fixtures.
 3. **J3b:** the operator lookup route (D1) with REST, SDK and CLI parity; `GET /v1/journal` (D5).
-4. **J3c:** the recovery write path; continuation (D2) with `supersedes`; operator settlement;
-   the opt-in adapter `reconcile` (D3).
-5. **J3d:** history namespaces (D7).
+4. **J3c:** the recovery write path; close and continue (D2) with `supersedes`; operator
+   settlement; the opt-in adapter `reconcile` (D3).
+5. **J3d:** history namespaces (D7) with full-descriptor entries and the retention-deadline
+   warning.
 6. **J4:** the classification table in the docs, the cursor-after-restart test (D4), and
    `recoveryQualified` (D5). Closes R08 for application writes and the durable part of R10.
 7. **B-dur:** revalidation hooks first, then journaled browser operations (D6).
