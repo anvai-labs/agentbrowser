@@ -7,6 +7,24 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — confirmed vs suspected findings, and a role-access fixture (T7)
+
+- **Scanner alerts are labelled.** Every `ScannerFinding` now carries `status: 'suspected'`;
+  ZAP's own confidence is kept as `scannerConfidence` (information only — ZAP's "Confirmed" maps
+  to `confirmed-by-scanner-user`, still suspected here).
+- **`confirmFinding(finding, evidence)`** is the only way to reach `confirmed`. It requires an
+  independent reproduction (method, time, bounded observation) and a cleanup record; a required
+  but unperformed cleanup refuses with `CLEANUP_INCOMPLETE`, and a scanner opinion is refused as
+  evidence.
+- **Role/business-logic fixture.** `checkRoleAccess` reads each fixture resource as every
+  non-owner identity, read-only and scope-checked before any request. A non-owner that receives
+  the owner's private marker is a confirmed `broken-access-control` finding. The marker itself
+  never appears in a finding, and a failing owner control invalidates the fixture rather than
+  passing. The tests drive a vulnerable/fixed invoice pair.
+- **SARIF.** Results carry `kind: review` (suspected) or `kind: fail` (confirmed) and a
+  `properties.status`; confirmed results add their evidence description. Role-access findings get
+  their own run.
+
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
 
 - **Protocol**: the `session.credential` capability joins the closed vocabulary and flows into

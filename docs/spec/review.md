@@ -22,7 +22,7 @@ smaller prompts with actual dependency independence.
 | --- | --- | --- |
 | R01 P0 | README/MCP discovery under-reports newer tools and recommends outdated form selection | Canonical catalog + explicit runtime acceptance; T0 |
 | R02 P0 | Current MCP action prose recommends retry after timeout; writes can be uncertain | One retry policy and reconciliation guidance; after-commit disconnect tests; T0/T2 |
-| R03 P0 | Root security claims exceed [engine qualifications](../engines.md) | Honest deployment capability matrix; no hosted scope claim without probes; T0/T7 |
+| R03 P0 | Root security claims exceed [engine qualifications](../engines.md) | Honest deployment capability matrix; no hosted scope claim without probes; T0/T7. **T7 qualified (2026-10-15):** engagement-scope enforcement on every hop (24 real-Chromium gates); scanner alerts are labelled `suspected` until an independent reproduction with cleanup confirms them; a role/IDOR vulnerable/fixed fixture pair. **Not claimed:** hosted or OS-enforced containment (N2 is gated), or scanner coverage as browser containment |
 | R04 P0 | A completed browser command is not an application commit | T2 foundation and T3 controlled QA seam qualified with independent outcomes; production/G6 evidence remains T4 |
 | R05 P0 | Inspected Victor client reads per request and warns on response-ID mismatch | One bounded correlation owner; late/canceled/out-of-order tests; T8 prerequisite |
 | R06 P1 | Mode fragmentation can duplicate policies, stores, schemas and helpers | Descriptor-only modes and one-owner reuse review; T1/T2 |
@@ -32,7 +32,7 @@ smaller prompts with actual dependency independence.
 | R10 P1 | Public application tools and durable application receipt qualification are pending | Reuse typed port; no arbitrary endpoints; UI/API oracle parity; T4/T5 |
 | R11 P1 | Package installation and runtime imports have different dependency costs | Isolated application-only and bridge audits plus startup/RSS measurements; T1/T8 |
 | R12 P1 | CLI/MCP/server can each accumulate retry, schema and result translations | Canonical schema/result helpers and exactly one transport retry classifier; T0/T2/T8 |
-| R13 P1 | Raw artifacts can contain private values and attacker-controlled HTML | Scoped reads, safe viewer, default summary/reference policy and retention tests; T2/T7 |
+| R13 P1 | Raw artifacts can contain private values and attacker-controlled HTML | Scoped reads, safe viewer, default summary/reference policy and retention tests; T2/T7. **T7 part qualified (2026-10-15):** audit and SARIF outputs carry a bounded description of the evidence, never the private payload (pinned: role-access findings never contain the owner's marker). The safe viewer and retention remain T2-owned |
 | R14 P1 | Main protection does not constrain release tags or prove release ancestry | Re-read settings; protected-main ancestry and artifact provenance gates; T9 |
 | R15 P2 | Full PR suites and packaging can duplicate work; unsafe filtering can skip requirements | T3 delivered the scoped focused/full baseline in #231 and retains fail-to-full for uncertain impact; no speedup inferred. Any automatic CI selector or gate change needs separate T9 evidence |
 | R16 P2 | Hidden navigation/decision UI excludes users with unavailable arrow keys | Inline accessible decision component, mouse/Tab/Enter/plain text tests; T1/T8 |

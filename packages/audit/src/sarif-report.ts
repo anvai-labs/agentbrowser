@@ -7,6 +7,9 @@
 export interface SarifResult {
   ruleId: string;
   level: 'error' | 'warning' | 'note';
+  /** SARIF 2.1.0 result kind. T7: a suspected finding is `review` (needs a human), a confirmed
+   * one is `fail`. Absent for adapters without a confirmation concept (accessibility). */
+  kind?: 'fail' | 'review';
   message: { text: string };
   locations?: Array<{
     physicalLocation?: {
@@ -14,6 +17,7 @@ export interface SarifResult {
     };
   }>;
   partialFingerprints?: Record<string, string>;
+  properties?: Record<string, unknown>;
 }
 
 export interface SarifRule {
@@ -40,7 +44,35 @@ export interface SarifReport {
 }
 
 import type { AccessibilityAuditResult } from './accessibility-audit.js';
-import type { ScannerScanResult } from './scanner-regression.js';
+import type { ConfirmationEvidence } from './finding-confirmation.js';
+import type { RoleAccessResult } from './role-access-check.js';
+import type { ScannerFinding, ScannerScanResult } from './scanner-regression.js';
+
+/** The confirmation labelling every security result carries (T7). Evidence appears only on a
+ * confirmed result; the private payload never does (the evidence holds a description). */
+function confirmationProperties(
+  status: 'suspected' | 'confirmed',
+  evidence: ConfirmationEvidence | undefined,
+  extra: Record<string, unknown> = {}
+): Pick<SarifResult, 'kind' | 'properties'> {
+  return {
+    kind: status === 'confirmed' ? 'fail' : 'review',
+    properties: {
+      status,
+      ...extra,
+      ...(status === 'confirmed' && evidence !== undefined
+        ? {
+            evidence: {
+              method: evidence.method,
+              reproducedAt: evidence.reproducedAt,
+              observation: evidence.observation,
+              cleanup: { ...evidence.cleanup },
+            },
+          }
+        : {}),
+    },
+  };
+}
 
 /** RFC 3986 percent-encode a URI reference so SARIF consumers and strict
  * validators accept it (raw < > " etc. are not valid URI characters). */
@@ -143,9 +175,42 @@ function scannerSarif(
       partialFingerprints: {
         pluginIdUrl: `${finding.pluginId}::${finding.url}::${finding.parameter ?? ''}`,
       },
+      ...confirmationProperties(
+        finding.status,
+        (finding as ScannerFinding & { evidence?: ConfirmationEvidence }).evidence,
+        finding.scannerConfidence !== undefined
+          ? { scannerConfidence: finding.scannerConfidence }
+          : {}
+      ),
     };
   });
   return { rules: [...seen.values()], results: sarifResults };
+}
+
+function roleAccessSarif(result: RoleAccessResult): { rules: SarifRule[]; results: SarifResult[] } {
+  const rules: SarifRule[] =
+    result.findings.length === 0
+      ? []
+      : [
+          {
+            id: 'broken-access-control',
+            name: 'Broken access control between identities',
+            shortDescription: { text: 'An identity read a resource owned by another identity' },
+            defaultConfiguration: { level: 'error' },
+          },
+        ];
+  const results: SarifResult[] = result.findings.map((finding) => ({
+    ruleId: finding.kind,
+    level: 'error',
+    message: { text: `identity ${finding.actor} read a resource owned by ${finding.owner}` },
+    locations: [{ physicalLocation: { artifactLocation: { uri: encodeUri(finding.url) } } }],
+    partialFingerprints: { ownerActorUrl: `${finding.owner}::${finding.actor}::${finding.url}` },
+    ...confirmationProperties(finding.status, finding.evidence, {
+      owner: finding.owner,
+      actor: finding.actor,
+    }),
+  }));
+  return { rules, results };
 }
 
 /** Build a SARIF 2.1.0 report from audit findings. Accepts any subset of
@@ -153,6 +218,7 @@ function scannerSarif(
 export function buildSarifReport(inputs: {
   accessibility?: AccessibilityAuditResult;
   scanner?: ScannerScanResult;
+  roleAccess?: RoleAccessResult;
   accessibilitySourceUrl?: string;
   toolName?: string;
   toolVersion?: string;
@@ -183,6 +249,20 @@ export function buildSarifReport(inputs: {
       tool: {
         driver: {
           name: `${toolName}-scanner`,
+          ...(inputs.toolVersion !== undefined ? { version: inputs.toolVersion } : {}),
+          rules,
+        },
+      },
+      results,
+    });
+  }
+
+  if (inputs.roleAccess !== undefined) {
+    const { rules, results } = roleAccessSarif(inputs.roleAccess);
+    runs.push({
+      tool: {
+        driver: {
+          name: `${toolName}-role-access`,
           ...(inputs.toolVersion !== undefined ? { version: inputs.toolVersion } : {}),
           rules,
         },

@@ -65,6 +65,8 @@ async function startZapFixture(mode: 'vulnerable' | 'fixed' | 'never-completes')
             param: 'id',
             // Real ZAP serializes risk as the capitalized NAME, not a number.
             risk: 'High',
+            // ...and confidence the same way.
+            confidence: 'Medium',
             name: 'SQL Injection',
           },
           {
@@ -119,12 +121,28 @@ describe('scanner-regression adapter (T7 slice 3)', () => {
       parameter: 'id',
       risk: 'high',
       name: 'SQL Injection',
+      // T7: a scanner alert is a CLAIM. It stays suspected until independent evidence confirms
+      // it; ZAP's own confidence is carried as information only.
+      status: 'suspected',
+      scannerConfidence: 'medium',
     });
     // The scan-start request carried the target (a dropped url parameter
     // would 400 on a real ZAP).
     expect(fixture.scanStartUrls()).toEqual([TARGET]);
     // The out-of-scope alert was dropped and counted, not surfaced.
     expect(result.droppedOutOfScope).toBe(1);
+  });
+
+  it('gate 1b: even ZAP-"Confirmed" alerts stay suspected; confidence maps across, absent stays absent', async () => {
+    const { normalizeScannerConfidence } = await import('./scanner-regression.js');
+    expect(normalizeScannerConfidence('Confirmed')).toBe('confirmed-by-scanner-user');
+    expect(normalizeScannerConfidence('4')).toBe('confirmed-by-scanner-user');
+    expect(normalizeScannerConfidence('False Positive')).toBe('false-positive');
+    expect(normalizeScannerConfidence('0')).toBe('false-positive');
+    expect(normalizeScannerConfidence('High')).toBe('high');
+    expect(normalizeScannerConfidence('1')).toBe('low');
+    expect(normalizeScannerConfidence(undefined)).toBeUndefined();
+    expect(normalizeScannerConfidence('nonsense')).toBeUndefined();
   });
 
   it('gate 2: the fixed fixture differs — same scan, zero findings', async () => {

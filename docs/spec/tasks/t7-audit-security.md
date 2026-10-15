@@ -12,8 +12,14 @@ surface for scope (policy.scope / MCP scope / CLI --scope-file) is
 delivered with it; slice 3 (the OWASP ZAP client adapter) DELIVERED 2026-10-03 with the
 real-ZAP recorded run EXECUTED (ZAP 2.17.0, six normalized findings
 including the seeded reflected-XSS confirmed high — see the evidence
-record); slice 4 (SARIF 2.1.0 report adapter) DELIVERED 2026-10-03; the
-packet's delivery scope is now COMPLETE. Repository: agentbrowser.
+record); slice 4 (SARIF 2.1.0 report adapter) DELIVERED 2026-10-03. The
+2026-10-15 reconciliation found two acceptance items still open, now DELIVERED:
+the slice-3 role/business-logic fixture (a vulnerable/fixed IDOR pair driven by
+the read-only `checkRoleAccess` probe) and the confirmed/suspected rule (every
+scanner alert is `suspected`; `confirmFinding` requires an independent
+reproduction plus a cleanup record; SARIF maps suspected to `kind: review` and
+confirmed to `kind: fail`). R03/R13 carry their qualified scope in the review
+table. The packet's delivery scope is COMPLETE. Repository: agentbrowser.
 Depends on: T3; security parity also T4.
 Inputs: core, selected audit/appsec/bounty mode, security, contracts, quality-ci.
 
