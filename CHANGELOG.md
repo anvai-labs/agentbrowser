@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — release records and task-status reconciliation
+
+- Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).
+- The task table and manifest match the 2026-10-15 reconciliation: T1 is active, T7 complete, the
+  Victor gate is aiserver1's gateway (not TLS), and C4b is partial. Stale "candidate" status lines
+  on three delivered evidence records are corrected, C3b cites #254, the T9 checkpoint names the
+  current protections, and the release guide no longer claims the upload permits clobbering.
+
 ### Added — confirmed vs suspected findings, and a role-access fixture (T7)
 
 - **Scanner alerts are labelled.** Every `ScannerFinding` now carries `status: 'suspected'`;
