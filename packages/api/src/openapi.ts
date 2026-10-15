@@ -1610,6 +1610,82 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           },
         },
       },
+      '/v1/journal/operations/{operationId}/close': {
+        post: {
+          operationId: 'closeJournalOperation',
+          summary:
+            'Close every undispatched record of an operation as a marked pre-dispatch failure',
+          description:
+            'T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Legal only on records still at revision 1 (never dispatched); dispatched work is settled or reconciled, never closed. The terminal carries a supersession marker (superseded.<operationId>) in the evidence-ref id format; it resolves to nothing. Rate limited per tenant.',
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'How many records were closed.',
+              content: json({
+                type: 'object',
+                required: ['closed'],
+                properties: { closed: { type: 'integer', minimum: 0 } },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '403': errorResponse('Journal recovery writes require the operator key.'),
+            '404': errorResponse('No record of this operation in the searched namespace.'),
+            '409': errorResponse('The operation already has a terminal record or is dispatched.'),
+            '429': errorResponse('Journal recovery rate limit exceeded.'),
+            '503': errorResponse('No open durable journal, or the journal refused the write.'),
+          },
+        },
+      },
+
+      '/v1/journal/operations/{operationId}/settle': {
+        post: {
+          operationId: 'settleJournalOperation',
+          summary:
+            'Settle every in-doubt record of an operation as terminal unknown (irreversible)',
+          description:
+            'T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Legal only on dispatched revision-2 records without a terminal. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.',
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'How many records were settled.',
+              content: json({
+                type: 'object',
+                required: ['settled'],
+                properties: { settled: { type: 'integer', minimum: 0 } },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '403': errorResponse('Journal recovery writes require the operator key.'),
+            '404': errorResponse('No record of this operation in the searched namespace.'),
+            '409': errorResponse(
+              'The operation already has a terminal record or was never dispatched.'
+            ),
+            '429': errorResponse('Journal recovery rate limit exceeded.'),
+            '503': errorResponse('No open durable journal, or the journal refused the write.'),
+          },
+        },
+      },
+
       '/v1/policy': {
         get: {
           operationId: 'getPolicy',

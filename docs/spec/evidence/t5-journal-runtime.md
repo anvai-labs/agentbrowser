@@ -194,3 +194,28 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
   - Each guard was mutated away and fails a test.
   - Suites: control 834, api 1,562 (CI reports the same on the PR head); journal qualification 32/32.
 
+## J3c part 1: close and settle (2026-10-15)
+
+The operator-only recovery writes, on a real store, through the service and over HTTP:
+
+- **Close (D2, first half).** Every actionable UNDISPATCHED (rev-1) record of an operation ID
+  commits a failed pre-dispatch terminal carrying the supersession marker `superseded.<operationId>`
+  (evidence-ref id format; it resolves to nothing). Dispatched work refuses close — it is settled
+  or reconciled, never closed. A terminal record present refuses every write.
+- **Settle (D3, operator fallback).** Every in-doubt (rev-2, dispatched) record commits terminal
+  `outcome_unknown` with no evidence refs, claiming nothing about the effect. IRREVERSIBLE —
+  settling again (or closing) refuses.
+- **Operator-only, as amended (D1).** Both writes check the principal is the ADR-025
+  `human-operator`; a tenant API key principal (`actor: 'operator'`) is refused with 403 — the
+  design's named implementation hazard, pinned at both the service and HTTP layers. Delegated
+  grants never reach the routes.
+- **Tenant-honest.** The operator's tenant scopes the query; another tenant's operation is
+  NOT_FOUND, never writable.
+- **Routes.** POST `/v1/journal/operations/{operationId}/close|settle` (`operatorRoute`,
+  lifecycle publication, rate-limited 30/min per tenant); OpenAPI regenerated; route-contract
+  classification pinned. Service errors map to 400/401/403/404/409/429/503.
+- **Tests.** `journal-recovery.test.ts`: five service-level cases plus the HTTP case (operator
+  closes, API key 403, re-close 409), seeding through the journal facade on a store the keyed
+  server reopens. **Not in this part:** continue with `supersedes` and the adapter `reconcile`
+  (J3c part 2).
+

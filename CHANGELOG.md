@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — operator-only journal recovery writes: close and settle (T5 J3c part 1)
+
+- `POST /v1/journal/operations/{operationId}/close` closes every never-dispatched record of the
+  operation as a failed pre-dispatch terminal carrying a supersession marker. Dispatched work
+  refuses: it is settled or reconciled, never closed.
+- `POST /v1/journal/operations/{operationId}/settle` settles every in-doubt record as terminal
+  `outcome_unknown`, claiming nothing about the effect. Irreversible.
+- Both are OPERATOR KEY ONLY per the accepted design (D1 as amended): a tenant API key may read
+  history and is refused here with 403 — pinned at the service and HTTP layers. Tenant-scoped;
+  another tenant's operation is not found, never writable. Rate-limited per tenant.
+
 ### Added — journal `findByOperation` (T5 J3a)
 
 - The operation journal port can now find every record of one tenant's operation ID in a

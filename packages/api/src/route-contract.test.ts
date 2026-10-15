@@ -113,6 +113,9 @@ describe('route contract metadata', () => {
       // TD-15 phase 5: server-level query routes, not session-scoped; the
       // sessions-collection kind (lifecycle) is the closest transport class.
       ['GET /v1/policy', 'lifecycle'],
+      // T5 J3c part 1: operator-only recovery writes, server-level, not session-scoped.
+      ['POST /v1/journal/operations/:operationId/close', 'lifecycle'],
+      ['POST /v1/journal/operations/:operationId/settle', 'lifecycle'],
       ['POST /v1/policy/check', 'lifecycle'],
       // TD-16 phase 4: the login browser's operator routes — server-level,
       // human-operator-only, not session-scoped.

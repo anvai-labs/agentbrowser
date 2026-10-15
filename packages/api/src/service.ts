@@ -2681,6 +2681,101 @@ export class AgentBrowserService {
   }
 
   /**
+   * T5 J3c (D2, first half): close every actionable UNDISPATCHED record of one operation ID as a
+   * marked pre-dispatch failure. Operator-only (ADR-025 human-operator principal): a tenant API
+   * key authenticates as `operator` and is refused — writes change recorded outcomes. Legal only
+   * on rev-1 records; dispatched work is settled or reconciled, never closed. The terminal
+   * carries a supersession marker in the evidence-ref id format; it resolves to nothing.
+   */
+  async journalCloseOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ closed: number }> {
+    const records = await this.recoveryTargets(operationId, principal);
+    let closed = 0;
+    for (const record of records) {
+      if (record.revision !== 1 || record.dispatched)
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          'Only an undispatched record can be closed; dispatched work is settled or reconciled'
+        );
+      const commit = await this.operationJournal?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 1,
+        dispatched: false,
+        terminal: { status: 'failed', evidenceRefIds: [`superseded.${operationId}`] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          'The record changed; re-read it before acting'
+        );
+      closed += 1;
+    }
+    return { closed };
+  }
+
+  /**
+   * T5 J3c (D3, operator fallback): settle every in-doubt (dispatched, rev-2) record of one
+   * operation ID as terminal `outcome_unknown`. Operator-only. IRREVERSIBLE: a settled record
+   * can never be reconciled; try reconcile first. Claims nothing about the effect.
+   */
+  async journalSettleOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ settled: number }> {
+    const records = await this.recoveryTargets(operationId, principal);
+    let settled = 0;
+    for (const record of records) {
+      if (record.revision !== 2 || !record.dispatched || record.terminal !== undefined)
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          'Only an in-doubt record can be settled; undispatched work is closed, settled work is final'
+        );
+      const commit = await this.operationJournal?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 2,
+        dispatched: true,
+        terminal: { status: 'outcome_unknown', evidenceRefIds: [] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          'The record changed; re-read it before acting'
+        );
+      settled += 1;
+    }
+    return { settled };
+  }
+
+  /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
+  private async recoveryTargets(operationId: string, principal: { actor: string; tenant: string }) {
+    if (principal.actor !== 'human-operator')
+      throw new ServiceError(
+        'FORBIDDEN',
+        'Journal recovery writes require the operator key; a tenant API key may only read'
+      );
+    if (!this.durableAvailable() || !this.operationJournal)
+      throw new ServiceError('JOURNAL_UNAVAILABLE', 'No open durable journal');
+    const found = await this.operationJournal.findByOperation({
+      tenantId: principal.tenant,
+      operationId,
+      limit: 16,
+    });
+    if (found.kind !== 'found')
+      throw new ServiceError(
+        'JOURNAL_UNAVAILABLE',
+        'The journal could not answer; re-read before acting'
+      );
+    if (found.records.length === 0)
+      throw new ServiceError('NOT_FOUND', 'No record of this operation in the searched namespace');
+    // A terminal record present means the operation is already final: every write on it refuses.
+    if (found.records.some((record) => record.terminal !== undefined))
+      throw new ServiceError('OPERATION_CONFLICT', 'The operation already has a terminal record');
+    return found.records;
+  }
+
+  /**
    * C4b (J-d): durable application writes are available only while an attached journal is open
    * and its namespace still accepts new intents. Never a configuration claim.
    */

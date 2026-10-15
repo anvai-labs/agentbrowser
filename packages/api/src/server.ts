@@ -30,6 +30,7 @@ import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
+  CONTROL_OPERATION_ID,
   DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
@@ -255,6 +256,7 @@ const STATUS_FOR = {
   // Gone.
   [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.SESSION_NOT_FOUND]: 404,
+  [ErrorCode.JOURNAL_UNAVAILABLE]: 503,
   [ErrorCode.PAGE_NOT_FOUND]: 404,
   [ErrorCode.SESSION_EXPIRED]: 410,
   // The service could not satisfy the request shape (engine can't do it).
@@ -994,6 +996,102 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         });
         return true;
       };
+
+      // ------------------------------------------------------------------
+      // T5 J3c part 1: the operator-only recovery WRITES (D2 close, D3 settle).
+      // Self-contained until J3b's read routes land: own refusal helper and limiter.
+      // ------------------------------------------------------------------
+      const recoveryLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
+      const recoveryRefusal = (
+        reply: FastifyReply,
+        code: string,
+        message: string,
+        status: number,
+        retryable = false
+      ) => reply.code(status).send({ error: { code, message, retryable } });
+      const recoveryWrite = (request: FastifyRequest, reply: FastifyReply) => {
+        const principal = principals.get(request);
+        if (!principal)
+          return recoveryRefusal(
+            reply,
+            'UNAUTHORIZED',
+            'A valid bearer credential is required',
+            401
+          );
+        // D1 as amended: writes are the ADR-025 operator principal only. A tenant API key
+        // authenticates as actor 'operator' and the /v1 hook admits it on any route; the
+        // service refuses it — the accepted design's named implementation hazard.
+        if (principal.actor !== 'human-operator')
+          return recoveryRefusal(
+            reply,
+            'FORBIDDEN',
+            'Journal recovery writes require the operator key; a tenant API key may only read',
+            403
+          );
+        if (!recoveryLimiter.take(principal.tenant))
+          return recoveryRefusal(
+            reply,
+            'RATE_LIMITED',
+            'Journal recovery rate limit exceeded',
+            429,
+            true
+          );
+        return undefined;
+      };
+      const recoveryOperation = async (
+        request: FastifyRequest,
+        reply: FastifyReply,
+        run: () => Promise<{ closed?: number; settled?: number }>
+      ) => {
+        if (recoveryWrite(request, reply)) return reply;
+        const { operationId } = request.params as { operationId: string };
+        if (!CONTROL_OPERATION_ID.test(operationId))
+          return recoveryRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
+        try {
+          return await run();
+        } catch (error) {
+          const code = (error as { code?: string }).code;
+          const status = code === 'NOT_FOUND' ? 404 : code === 'OPERATION_CONFLICT' ? 409 : 503;
+          if (status !== 503 || code === 'JOURNAL_UNAVAILABLE')
+            return recoveryRefusal(
+              reply,
+              code ?? 'INTERNAL',
+              (error as Error).message,
+              status,
+              status === 503
+            );
+          throw error;
+        }
+      };
+
+      v1.post(
+        '/journal/operations/:operationId/close',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) =>
+          recoveryOperation(request, reply, () =>
+            service.journalCloseOperation(
+              (request.params as { operationId: string }).operationId,
+              principals.get(request) as { actor: string; tenant: string }
+            )
+          )
+      );
+
+      v1.post(
+        '/journal/operations/:operationId/settle',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) =>
+          recoveryOperation(request, reply, () =>
+            service.journalSettleOperation(
+              (request.params as { operationId: string }).operationId,
+              principals.get(request) as { actor: string; tenant: string }
+            )
+          )
+      );
 
       v1.get('/policy', { config: { publication: 'lifecycle' } }, async (request, reply) => {
         if (rateLimited(request, reply)) return reply;
