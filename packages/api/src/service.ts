@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   isNavigationFailureReason,
   MAX_PLAN_STEPS,
@@ -2678,6 +2679,128 @@ export class AgentBrowserService {
   applicationUnbind(sessionId: string, principal: SessionPrincipal): { unbound: true } {
     this.applicationAuthority.unbind(sessionId, principal);
     return { unbound: true };
+  }
+
+  /**
+   * The supersession marker (evidence-ref id format, <=128 chars): the operation ID when it
+   * fits, else its SHA-256 prefix — deterministic, so the marker is stable per operation.
+   */
+  private supersessionMarker(operationId: string): string {
+    const literal = `superseded.${operationId}`;
+    if (literal.length <= 128) return literal;
+    return `superseded.${createHash('sha256').update(operationId).digest('hex').slice(0, 32)}`;
+  }
+
+  /**
+   * T5 J3c (D2, first half): close every actionable UNDISPATCHED record of one operation ID as a
+   * marked pre-dispatch failure. Operator-only (ADR-025 human-operator principal): a tenant API
+   * key authenticates as `operator` and is refused — writes change recorded outcomes. Legal only
+   * on rev-1 records; dispatched work is settled or reconciled, never closed. The terminal
+   * carries a supersession marker in the evidence-ref id format; it resolves to nothing.
+   */
+  async journalCloseOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ closed: number; truncated: boolean }> {
+    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+    // Actionability is PER RECORD (accepted design): close touches only the never-dispatched
+    // records of the ID; dispatched or terminal siblings are other actions' business, never a
+    // refusal here — a blanket refusal would deadlock mixed-state operations forever. Zero
+    // eligible records is the conflict.
+    const eligible = records.filter((record) => record.revision === 1 && !record.dispatched);
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No undispatched record to close; dispatched work is settled or reconciled, terminal work is final'
+      );
+    let closed = 0;
+    for (const record of eligible) {
+      const commit = await this.operationJournal?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 1,
+        dispatched: false,
+        terminal: { status: 'failed', evidenceRefIds: [this.supersessionMarker(operationId)] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          `The record changed after ${closed} record(s) were closed; re-read before acting again`
+        );
+      closed += 1;
+    }
+    return { closed, truncated };
+  }
+
+  /**
+   * T5 J3c (D3, operator fallback): settle every in-doubt (dispatched, rev-2) record of one
+   * operation ID as terminal `outcome_unknown`. Operator-only. IRREVERSIBLE: a settled record
+   * can never be reconciled; try reconcile first. Claims nothing about the effect.
+   */
+  async journalSettleOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ settled: number; truncated: boolean }> {
+    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+    const eligible = records.filter(
+      (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
+    );
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No in-doubt record to settle; undispatched work is closed, terminal work is final'
+      );
+    let settled = 0;
+    for (const record of eligible) {
+      const commit = await this.operationJournal?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 2,
+        dispatched: true,
+        terminal: { status: 'outcome_unknown', evidenceRefIds: [] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          `The record changed after ${settled} record(s) were settled; re-read before acting again`
+        );
+      settled += 1;
+    }
+    return { settled, truncated };
+  }
+
+  /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
+  private async recoveryTargets(operationId: string, principal: { actor: string; tenant: string }) {
+    if (principal.actor !== 'human-operator')
+      throw new ServiceError(
+        'FORBIDDEN',
+        'Journal recovery writes require the operator key; a tenant API key may only read'
+      );
+    // The recovery gate is the OPEN journal, not the accept horizon: the design's deadline for
+    // these writes is retainUntil (30 days past ACCEPT_UNTIL), which the store enforces itself.
+    // Reusing durableAvailable() would kill the fallback exactly when its deadline begins.
+    const recoveryJournal = this.operationJournal;
+    if (recoveryJournal?.health !== 'open')
+      throw new ServiceError('JOURNAL_UNAVAILABLE', 'No open durable journal');
+    const found = await recoveryJournal.findByOperation({
+      tenantId: principal.tenant,
+      operationId,
+      limit: 16,
+      actionableOnly: true,
+    });
+    if (found.kind !== 'found')
+      throw new ServiceError(
+        'JOURNAL_UNAVAILABLE',
+        `The journal refused this write (${
+          found.kind === 'definitely_not_read' || found.kind === 'uncertain'
+            ? found.reason
+            : 'unavailable'
+        }); history is unread, not absent`
+      );
+    if (found.records.length === 0)
+      throw new ServiceError(
+        'NOT_FOUND',
+        'No actionable record of this operation in the searched namespace'
+      );
+    return { records: found.records, truncated: found.truncated };
   }
 
   /**

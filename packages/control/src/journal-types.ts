@@ -94,6 +94,12 @@ export interface JournalOperationQuery {
   readonly operationId: string;
   /** 1–16; `truncated` reports that more matched. */
   readonly limit: number;
+  /**
+   * J3c: return only records a recovery write could still act on (no terminal fact). Recovery
+   * pages then ADVANCE as records terminalize; without it the first-16 window is fixed and
+   * records beyond it become unreachable ("act again for the rest" would be a lie).
+   */
+  readonly actionableOnly?: boolean;
 }
 export type JournalFindOutcome =
   | {

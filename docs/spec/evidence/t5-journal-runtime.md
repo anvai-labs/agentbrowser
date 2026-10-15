@@ -251,3 +251,45 @@ store's committed rows (read-only) and per-instance effect counters.
   service generation, so there is no cross-process deduplication. The test pins that the two
   records carry two distinct service generations — two operations, not a replay. Idempotency
   across restarts is the application adapter's own responsibility; the journal never claims it.
+
+## J3c part 1: close and settle (2026-10-15)
+
+The operator-only recovery writes, on a real store, through the service and over HTTP:
+
+- **Close (D2, first half).** The never-dispatched (rev-1) records of an operation ID commit a
+  failed pre-dispatch terminal carrying the supersession marker (evidence-ref id format, always
+  within its 128-character bound: the operation ID when it fits, else its SHA-256 prefix —
+  deterministic per operation). **Actionability is per record:** dispatched or terminal siblings
+  are left to settle/reconcile, so a mixed-state operation composes (close then settle) instead
+  of deadlocking; zero eligible records is the conflict.
+- **Settle (D3, operator fallback).** The in-doubt (rev-2, dispatched) records commit terminal
+  `outcome_unknown` with no evidence refs, claiming nothing about the effect. IRREVERSIBLE —
+  acting again on an exhausted operation refuses.
+- **Operator-only, as amended (D1).** Both writes check the principal is the ADR-025
+  `human-operator`; a tenant API key principal (`actor: 'operator'`) is refused with 403 — the
+  design's named implementation hazard, pinned at both the service and HTTP layers. Delegated
+  grants never reach the routes.
+- **Tenant-honest.** The operator's tenant scopes the query; another tenant's operation is
+  NOT_FOUND, never writable.
+- **Routes.** POST `/v1/journal/operations/{operationId}/close|settle` (`operatorRoute`,
+  lifecycle publication, rate-limited 30/min per tenant); OpenAPI regenerated (the documented
+  operationId pattern matches the route's exactly); route-contract classification pinned. Service
+  errors map to 400/401/403/404/409/429/503.
+- **Review round 1 fixes (all pinned by new tests):** per-record actionability (mixed-state
+  composition: one rev-1 + one rev-2 record closes then settles, both exhausting, no deadlock);
+  the marker hashes for operation IDs longer than the evidence-ref bound (a 128-character ID
+  closes, marker deterministic); the recovery gate is the OPEN journal, not the accept horizon
+  (settle works after ACCEPT_UNTIL passes — the design's deadline is retainUntil, which the store
+  enforces); `truncated` is surfaced in both responses AND the recovery window advances: the
+  recovery query asks for actionable records only (`actionableOnly` on the J3a port — terminal
+  records leave the SQL window), so 17 undispatched records close in two acts of 16+1 with none
+  stranded, and an exhausted operation then reads as absent (404), never re-acted. Recovery
+  writes keep their own per-tenant rate bucket with their own message (an API key's reads cannot
+  starve the operator's writes), the store's refusal reason is surfaced on 503s, and the HTTP
+  seeding harness cleans its environment, store handle and temp directory on failure paths
+  (finally-verified).
+- **Tests.** `journal-recovery.test.ts`: the service-level cases plus the HTTP case (operator
+  closes, API key 403, an exhausted operation re-reads as 404), seeding through the journal
+  facade on a store the keyed server reopens; round 2 adds mixed-state composition, the
+  128-character-ID marker, settle-after-horizon, and the two-act 17-record close.
+  **Not in this part:** continue with `supersedes` and the adapter `reconcile` (J3c part 2).

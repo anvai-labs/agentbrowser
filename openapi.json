@@ -5623,6 +5623,250 @@
         }
       }
     },
+    "/v1/journal/operations/{operationId}/close": {
+      "post": {
+        "operationId": "closeJournalOperation",
+        "summary": "Close the never-dispatched records of an operation as marked pre-dispatch failures",
+        "description": "T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.",
+        "tags": [
+          "journal"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many records were closed (of the first 16 that matched).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "closed",
+                    "truncated"
+                  ],
+                  "properties": {
+                    "closed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "More than 16 records matched; act again for the rest."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid operation ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid bearer credential named a tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Journal recovery writes require the operator key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No record of this operation in the searched namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No eligible record, or a record changed mid-write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Journal recovery rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No open durable journal, or the journal refused the write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/journal/operations/{operationId}/settle": {
+      "post": {
+        "operationId": "settleJournalOperation",
+        "summary": "Settle the in-doubt records of an operation as terminal unknown (irreversible)",
+        "description": "T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Settles ONLY the in-doubt (dispatched, terminal-less) records; undispatched siblings are closed, terminal ones are final. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.",
+        "tags": [
+          "journal"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many records were settled (of the first 16 that matched).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "settled",
+                    "truncated"
+                  ],
+                  "properties": {
+                    "settled": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "More than 16 records matched; act again for the rest."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid operation ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid bearer credential named a tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Journal recovery writes require the operator key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No record of this operation in the searched namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No eligible record, or a record changed mid-write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Journal recovery rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No open durable journal, or the journal refused the write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/policy": {
       "get": {
         "operationId": "getPolicy",

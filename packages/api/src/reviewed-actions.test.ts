@@ -528,6 +528,9 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
       };
       // Mutating routes that do not write page content.
       const notPageWrites = new Set([
+        // T5 J3c: journal recovery writes touch recorded outcomes, never page content.
+        'POST /v1/journal/operations/:operationId/close',
+        'POST /v1/journal/operations/:operationId/settle',
         'POST /v1/sessions',
         'POST /v1/sessions/:sessionId/pages',
         'POST /v1/sessions/:sessionId/pages/:pageId/observe',
