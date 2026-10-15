@@ -54,6 +54,12 @@ export interface ApprovalRequest {
   /** cookie.handoff evidence: the granted domains and their cookie counts. */
   domains?: string[];
   counts?: Record<string, number>;
+  /**
+   * TD-BROWSER-16 phase 6: the operator policy version at mint time. Part of
+   * the non-act fingerprint (a policy change invalidates the approval) and
+   * carried on the token for the consuming handoff to compare.
+   */
+  policyVersion?: string;
 }
 
 export interface ApprovalToken {
@@ -65,8 +71,17 @@ export interface ApprovalToken {
   /** Non-act evidence, returned verbatim to the deciding human operator. */
   domains?: string[];
   counts?: Record<string, number>;
+  /** TD-BROWSER-16 phase 6: the operator policy version the mint bound. */
+  policyVersion?: string;
   /** Set by the non-act decide path: which way the human operator decided. */
   decidedOutcome?: 'approve' | 'deny';
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §5): a cookie.handoff approval may carry
+   * an action lease, recorded with the decision and applied by the handoff
+   * when it marks the session (validated then — the session's allowlist
+   * bounds it).
+   */
+  lease?: { hosts: string[]; expiresInMs: number; maxActions: number };
   status: 'pending' | 'used' | 'expired';
   createdAt: number;
   expiresAt: number;
@@ -383,10 +398,17 @@ export class ApprovalGate {
    * TD-BROWSER-16 phase 1: burn with the outcome recorded, so the view after
    * a decide tells the human operator which way it went.
    */
-  async useApprovalTokenWithOutcome(tokenId: string, outcome: 'approve' | 'deny'): Promise<void> {
+  async useApprovalTokenWithOutcome(
+    tokenId: string,
+    outcome: 'approve' | 'deny',
+    lease?: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): Promise<void> {
     await this.useApprovalToken(tokenId);
     const record = this.tokens.get(tokenId);
-    if (record?.kind === 'confirmation') record.token.decidedOutcome = outcome;
+    if (record?.kind === 'confirmation') {
+      record.token.decidedOutcome = outcome;
+      if (lease !== undefined) record.token.lease = structuredClone(lease);
+    }
   }
 
   /**
@@ -540,6 +562,9 @@ export class ApprovalGate {
               kind,
               action: detached.action,
               ...(Array.isArray(detached.domains) ? { domains: detached.domains } : {}),
+              ...(typeof detached.policyVersion === 'string'
+                ? { policyVersion: detached.policyVersion }
+                : {}),
             });
       return {
         sessionId: detached.sessionId,
@@ -548,6 +573,9 @@ export class ApprovalGate {
           ? {
               kind,
               ...(Array.isArray(detached.domains) ? { domains: [...detached.domains] } : {}),
+              ...(typeof detached.policyVersion === 'string'
+                ? { policyVersion: detached.policyVersion }
+                : {}),
               ...(detached.counts !== undefined && typeof detached.counts === 'object'
                 ? { counts: { ...detached.counts } }
                 : {}),

@@ -457,6 +457,21 @@ export interface EngineSession {
   cookies(): Promise<NormalizedCookie[]>;
 
   /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): write cookies into the LIVE context
+   * (the operator cookie handoff). Optional so engines without a live
+   * context cookie API can omit it; callers must refuse (never silently
+   * skip) when absent.
+   */
+  addCookies?(cookies: NormalizedCookie[]): Promise<void>;
+
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): an all-frames init script on the live
+   * context — applies to every future document and every child frame/popup
+   * in this session. Optional for the same reason as addCookies.
+   */
+  addInitScript?(script: string): Promise<void>;
+
+  /**
    * Create snapshot for resume (optional)
    */
   snapshot?(): Promise<Uint8Array>;

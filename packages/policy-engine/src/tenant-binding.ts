@@ -32,6 +32,10 @@ function bindTenant(request: AuthorizationRequest, tenantId: string): Authorizat
     case 'request.loopback':
     case 'request.private':
       return { action: request.action, context: { ...request.context, tenantId } };
+    case 'cookie.handoff':
+      // TD-BROWSER-16 phase 6: the domain context rides along; the tenant is
+      // bound by the service, never the caller.
+      return { action: request.action, context: { ...request.context, tenantId } };
     default:
       return { action: request.action, context: { ...request.context, tenantId } };
   }

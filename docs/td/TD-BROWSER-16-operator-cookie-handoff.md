@@ -312,6 +312,49 @@ under **one per-session lock**:
   approved with a lease, the agent completes a leased flow, and no agent-facing output contains a
   value.
 
+**Delivered (phase 6, #470):**
+*(Review round 1 corrected four things, all test-pinned: the cookie applies relation had
+`covers()` inverted — deep-host requests pulled parent cookies, apex requests refused subtree
+cookies — the per-domain evidence and freshness guard now use the fixed relation; every
+pre-mark-abortable check (engine capability, lease validation, the previously-unenforced ADR §3
+transfer bounds, init script, secret registration) moved BEFORE the mark so no refusal can brick
+a marked-but-empty session; operator domain input is canonicalized (case/whitespace/trailing
+dot); and the RTC-removal script became a shared engine-package constant (`HANDOFF_RTC_REMOVAL_INIT_SCRIPT` in @agentbrowser/engine)
+so the real-browser behavioral tests exercise the exact shipped text. ADR §4's baseline sentence
+now states the shipped Cedar default; floor.handoff.websocket guards a compile-time
+canary on the construction default (a field whoever adds a webSocketPolicy option must set honestly).)*
+ `POST /v1/sessions/{sessionId}/cookies/handoff` under a
+per-session promise-chain lock, in the spec's order. Floors each carry their own `floor.handoff.*`
+rule id (login browser enabled+open via the new `LoginBrowserService.isOpen`; isolated
+non-delegated local launch recorded as per-session create facts; egress chain presence; service
+workers off; every page at about:blank by live `getUrl`, never the cache; no existing cookies via
+the engine's `cookies()` with leading-dot domain matching; the whole allowlist — request, scope,
+and every `pathRules[].hostSuffix` — an exact host within the requested domains; each domain a
+usable host). Policy: one `cookie.handoff` decision per domain through the authorizer seam — the
+Cedar schema gained the action with a `domain` context, the env-generated document grants it
+(env.capability.default, mirroring the legacy authorizer), and a policy file can deny per domain.
+Approval: the mint carries per-domain counts as the operator's evidence AND the freshness baseline
+— the binding is `(kind, sessionId, sorted domains, policy version)`, with the version on the
+token and in its fingerprint (a policy change invalidates outstanding approvals); count changes
+survive, some-to-none refuses with `floor.handoff.freshness`; the human operator decides on the
+existing non-act route, may attach a lease to the approval (validated and applied only after
+marking), and the mint counts against the gate's capacity (QUOTA_EXCEEDED, pinned by test with a
+tight gate). Completion: **mark before write** (a racing export is refused, never served unmarked
+cookies), lease applied, every value registered as a session secret (phase 2's release valve —
+`clearSessionSecrets` — is wired at session close), the RTC-removal init script injected
+(all-frames; proven against a real browser in main document, synchronous about:blank iframe, and
+window.open popup — plus a discriminator test proving the probe sees the constructor without the
+script), the write through the engine's new optional `addCookies` (the `__Host-` conversion is
+factored out and shared with create-time seeding; absent methods refuse ENGINE_UNSUPPORTED, never
+silently skip), and an info audit with session/domains/counts/token/lease/rule ids only. FakeEngine
+records writes, scripts, and now exposes seeds+writes through `cookies()`; the contract suite
+asserts the optional methods. Afterwards: cookie/HTML/download export refuse
+`HANDOFF_COOKIES_NOT_EXPORTABLE`; the shared Chromium launches with the WebRTC IP-handling policy
+while the login browser is enabled (engine option from main.ts; argv asserted where the platform
+exposes it — the login-suite pid-not-found skip precedent covers argv-hiding local setups). 12
+api tests + 3 engine tests; workspace green. Deferred to phase 7: the SDK/CLI/MCP surfaces, the
+guide, and the threat-model entry.
+
 ### Phase 7: surfaces and docs
 
 - **SDK:** `client.sessions.cookieHandoff()`.

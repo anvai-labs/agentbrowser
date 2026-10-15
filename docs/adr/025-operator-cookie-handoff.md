@@ -1,6 +1,6 @@
 # ADR-025: Operator Login Browser and Policy-Gated Cookie Handoff
 
-**Status:** Proposed (2026-10-13)
+**Status:** Accepted (2026-10-15) — phases 1-6 shipped as designed; the phase-7 surfaces (SDK/CLI/MCP, guide, threat-model entry) follow as documented follow-ups.
 **Related:** [ADR-005](005-ephemeral-sessions-explicit-persistence.md) (explicit persistence),
 [ADR-006](006-network-egress-policy-ssrf.md) (egress policy),
 [ADR-007](007-approval-tokens-side-effects.md) (approval tokens),
@@ -233,7 +233,10 @@ are `kind: "act"`, unchanged.
   reviewed-approval context (`reviewContext`), which requires a delegated session. The view shows
   the kind, domains and counts, or the act description, and never cookie names.
 - **Cedar:** action `cookie.handoff`, resource `Host`, one decision per domain. The ADR-024
-  baseline grants it to no one. No policy can remove the approval step.
+  baseline grants it by default (the generated env document's capability grant covers it, mirroring
+  the other capabilities; `policy check` reports it, and a policy file may deny per domain — any
+  deny fails the whole handoff). What the baseline never does is grant the APPROVAL: the
+  human-operator decision is unconditional, and no policy can remove that step.
 
 ### 5. Actions in a marked session: fail closed, with the operator's lease
 

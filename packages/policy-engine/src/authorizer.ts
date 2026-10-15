@@ -35,10 +35,20 @@ export type CapabilityAuthorizationRequest = {
   context: { tenantId?: string };
 };
 
+/**
+ * TD-BROWSER-16 phase 6 (ADR-025 section 3): one decision per requested
+ * handoff domain. Deny fails the whole handoff; rule ids surface in audit.
+ */
+export type CookieHandoffAuthorizationRequest = {
+  action: 'cookie.handoff';
+  context: { domain: string; tenantId?: string };
+};
+
 export type AuthorizationRequest =
   | ActAuthorizationRequest
   | EgressAuthorizationRequest
-  | CapabilityAuthorizationRequest;
+  | CapabilityAuthorizationRequest
+  | CookieHandoffAuthorizationRequest;
 
 /**
  * The one seam every operator-chosen decision goes through (TD-BROWSER-15).

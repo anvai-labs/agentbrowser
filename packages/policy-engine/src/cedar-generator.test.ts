@@ -223,7 +223,7 @@ describe('cedarPolicySetFromLegacyConfig', () => {
     );
   });
 
-  it('capabilities: one policy granting all six', () => {
+  it('capabilities: one policy granting all seven (incl. cookie.handoff)', () => {
     const [policy] = text({}, 'env.capability.default');
     expect(policy).toBe(
       '@rule("env.capability.default") permit(principal, action in [' +
@@ -234,6 +234,7 @@ describe('cedarPolicySetFromLegacyConfig', () => {
           'cookie.seed',
           'cookie.export',
           'session.headed',
+          'cookie.handoff',
         ]
           .map((a) => `AgentBrowser::Action::"${a}"`)
           .join(', ') +

@@ -802,6 +802,14 @@ const BLOCKED_RESPONSE = {
 export interface PlaywrightEngineOptions {
   /** Held-dialog auto-settle grace in ms (default 5000). */
   dialogGraceMs?: number;
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): launch the SHARED (headless-pool)
+   * Chromium with `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
+   * — set while the login browser is enabled, so WebRTC cannot leak the
+   * local network from a session carrying operator cookies. The flag is
+   * fixed at the shared browser's first launch (the pool is memoized).
+   */
+  forceWebrtcIpHandlingPolicy?: boolean;
   /** Browser family: chromium (default), firefox, or webkit. */
   browser?: 'chromium' | 'firefox' | 'webkit';
   /**
@@ -1016,11 +1024,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly preferBundled: boolean;
   private readonly brandedChromeCandidates: string[];
   readonly snapshotTimeoutMs: number;
+  private readonly forceWebrtcIpHandlingPolicy: boolean;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
     this.rootEgress = options.egress;
     this.webSocketPolicy = options.webSocketPolicy;
+    this.forceWebrtcIpHandlingPolicy = options.forceWebrtcIpHandlingPolicy === true;
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
     this.operatorCdp =
@@ -1228,21 +1238,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // Secure or Chromium silently rejects them; Playwright expresses host-only
       // cookies via `url` (not `domain`/`path`), so convert those here.
       if (options.cookies !== undefined && options.cookies.length > 0) {
-        const toAdd = options.cookies.map((c) => {
-          if (c.name.startsWith('__Host-')) {
-            return {
-              name: c.name,
-              value: c.value,
-              url: `https://${c.domain}/`,
-              secure: true,
-              ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
-              ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
-              ...(c.expires !== undefined ? { expires: c.expires } : {}),
-            };
-          }
-          return c;
-        });
-        await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
+        await context.addCookies(playwrightCookieWrite(options.cookies));
       }
 
       this.requireOpen();
@@ -1450,6 +1446,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         ...(headed.executablePath !== undefined ? { executablePath: headed.executablePath } : {}),
       };
       executableSelection = headed.executableSelection;
+    } else if (this.forceWebrtcIpHandlingPolicy && this.browserFamily === 'chromium') {
+      // The headless pool passes no args by default (detection there is
+      // honest); the login-browser flag is the one exception (ADR-025 §3).
+      options = { args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] };
     }
     const browser = await launcher.launch({
       headless,
@@ -1942,6 +1942,32 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 /**
  * PlaywrightSession implements EngineSession
  */
+/**
+ * TD-BROWSER-16 phase 6: the one cookie conversion for writes into a live
+ * Playwright context (create-time seeding and the operator handoff share it).
+ * `__Host-`/`__Secure-`-prefixed cookies MUST be host-only and Secure or
+ * Chromium silently rejects them; Playwright expresses host-only cookies via
+ * `url` (not `domain`/`path`), so convert those here.
+ */
+function playwrightCookieWrite(
+  cookies: NormalizedCookie[]
+): Parameters<BrowserContext['addCookies']>[0] {
+  return cookies.map((c) => {
+    if (c.name.startsWith('__Host-')) {
+      return {
+        name: c.name,
+        value: c.value,
+        url: `https://${c.domain}/`,
+        secure: true,
+        ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
+        ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
+        ...(c.expires !== undefined ? { expires: c.expires } : {}),
+      };
+    }
+    return c;
+  });
+}
+
 class PlaywrightSession implements EngineSession {
   readonly id: string;
   readonly diagnostics?: SessionDiagnostics;
@@ -2168,6 +2194,17 @@ class PlaywrightSession implements EngineSession {
 
   async pages(): Promise<EnginePage[]> {
     return Array.from(this.pageMap.values());
+  }
+
+  /** TD-BROWSER-16 phase 6 (ADR-025 §3): the operator cookie handoff write. */
+  async addCookies(cookies: NormalizedCookie[]): Promise<void> {
+    if (cookies.length === 0) return;
+    await this.context.addCookies(playwrightCookieWrite(cookies));
+  }
+
+  /** TD-BROWSER-16 phase 6 (ADR-025 §3): all-frames init script on the live context. */
+  async addInitScript(script: string): Promise<void> {
+    await this.context.addInitScript(script);
   }
 
   async cookies(): Promise<NormalizedCookie[]> {

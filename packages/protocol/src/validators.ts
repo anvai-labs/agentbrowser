@@ -15,6 +15,7 @@ import { UsageError } from './errors.js';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import {
   ActionSchema,
+  CookieHandoffRequestSchema,
   DeliveredWaitConditionSchema,
   ObservationRequestSchema,
   PlanStepSchema,
@@ -22,6 +23,7 @@ import {
   SessionRequestSchema,
 } from './schemas.js';
 import type {
+  CookieHandoffRequest,
   DeliveredWaitCondition,
   ObservationRequest,
   ScreenshotRequest,
@@ -41,6 +43,20 @@ export type Validated<T> =
   | { ok: false; issues: ValidationIssue[] };
 
 const sessionRequest = TypeCompiler.Compile(SessionRequestSchema);
+
+const cookieHandoffRequest = TypeCompiler.Compile(CookieHandoffRequestSchema);
+
+/** TD-BROWSER-16 phase 6: validate a cookie-handoff body (strict — no pass-through). */
+export function validateCookieHandoffRequest(body: unknown): Validated<CookieHandoffRequest> {
+  if (cookieHandoffRequest.Check(body)) {
+    return { ok: true, value: body as CookieHandoffRequest };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of cookieHandoffRequest.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
 
 /**
  * Validate a session-create body against SessionRequestSchema. Note that

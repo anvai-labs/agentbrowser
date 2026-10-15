@@ -115,6 +115,40 @@ export async function runEngineContractSuite(
   const pagesAfterClose = await session.pages();
   assert.strictEqual(pagesAfterClose.length, pages.length, 'close removes exactly the closed page');
 
+  // --- TD-BROWSER-16 phase 6: live cookie write + init script (optional) -----
+  // Optional contract: an engine without a live-context cookie API may omit
+  // both methods, but when present they must write/apply verbatim.
+  if (session.addCookies !== undefined && session.cookies !== undefined) {
+    await session.addCookies([
+      {
+        name: 'contract-seed',
+        value: 'handoff',
+        domain: 'example.com',
+        path: '/',
+        httpOnly: false,
+        secure: false,
+        sameSite: 'Lax',
+      },
+    ]);
+    const stored = await session.cookies();
+    assert.ok(
+      stored.some((cookie) => cookie.name === 'contract-seed'),
+      'addCookies must persist for cookies() to observe'
+    );
+  }
+  if (session.addInitScript !== undefined) {
+    // Contract-smoke only: the method accepts a script and a subsequent
+    // page lifecycle stays healthy. BEHAVIORAL coverage (the script running
+    // in every frame) lives in the engine suites (handoff-init.test.ts
+    // drives the exact shipped script through a real browser) — an
+    // observation cannot see window properties, and fake engines execute
+    // nothing, so asserting more here would be theater.
+    await session.addInitScript('window.__contractInit = true;');
+    const initPage = await session.newPage();
+    await initPage.observe({ mode: 'interactive' });
+    await initPage.close();
+  }
+
   // --- session close ---------------------------------------------------------
   await session.close('contract-complete');
 

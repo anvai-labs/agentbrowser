@@ -66,6 +66,12 @@ export const CEDAR_SCHEMA = `namespace AgentBrowser {
     resource: [Host],
     context: { tenantId?: String },
   };
+
+  action "cookie.handoff" appliesTo {
+    principal: [Session],
+    resource: [Host],
+    context: { domain: String, tenantId?: String },
+  };
 }`;
 
 /** One approval rule as exported into a document: an `ActionRiskRule` copy. */

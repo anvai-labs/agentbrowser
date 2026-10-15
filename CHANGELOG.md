@@ -7,6 +7,63 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the cookie handoff (TD-BROWSER-16 phase 6, ADR-025 §3)
+
+- **`POST /v1/sessions/{sessionId}/cookies/handoff`** `{ domains, approvalToken? }`, under one
+  per-session lock, in the TD's exact order — floors → per-domain policy → approval → freshness
+  re-read → **mark** → lease → secrets → RTC-removal init script → write → audit:
+  - **Floors**, each with its own `floor.handoff.*` rule id: login browser enabled AND open;
+    isolated non-delegated locally-launched session; egress policy enforced; service workers off;
+    no committed navigation other than `about:blank`; no existing cookies for the requested
+    domains; every allowlist entry (`allowedHosts`, `scope.allowedHosts`) and every
+    `scope.pathRules[].hostSuffix` an exact host within the requested domains; each requested
+    domain a usable host (`.com` refuses).
+  - **Policy**: one `cookie.handoff` decision per domain through the authorizer seam (the Cedar
+    schema and the env-generated document gained the action; a policy file can deny per domain —
+    any deny fails the whole handoff).
+  - **Approval**: pre-approval read returns `APPROVAL_REQUIRED` with `{ kind, sessionId, domains,
+    counts }` (per-domain counts included); the token is single-use, human-operator-decided on the
+    existing non-act route, and bound to `(kind, sessionId, sorted domains, policy version)` — the
+    version rides the token and its fingerprint, so a policy change invalidates an outstanding
+    approval. Count changes between mint and retry are fine (the binding is not the counts); a
+    domain going **some-to-none** refuses with `floor.handoff.freshness` and never writes. The
+    decision may carry a **lease** (validated and applied after marking). The pre-approval mint
+    counts against the approval gate's capacity (`QUOTA_EXCEEDED` when full).
+  - **Completion**: marks `credentialSource: "operator"` BEFORE the write (a racing cookie export
+    is refused, never served unmarked cookies), applies the decided lease, registers every cookie
+    value as a session secret (phase 2's scopes; `clearSessionSecrets` at session close is now
+    wired), injects the all-frames init script removing `RTCPeerConnection`/`webkitRTCPeerConnection`
+    (verified against a real browser in main document, synchronous about:blank iframe, and
+    window.open popup), writes through the engine's new live `addCookies` (the `__Host-` conversion
+    is shared with create-time seeding), and audits session/domains/counts/token/lease/rule ids —
+    never values or cookie names.
+- **Engine contract**: `EngineSession.addCookies?` / `addInitScript?` (optional; callers refuse
+  typed when absent — never silently skip). Playwright implements both on the live context;
+  FakeEngine records writes and scripts (its `cookies()` now exposes seeds and handoff writes),
+  and the contract suite asserts the optional methods.
+- **Afterwards**: cookie export, HTML export and download collection refuse with
+  `HANDOFF_COOKIES_NOT_EXPORTABLE` in a marked session; while the login browser is enabled the
+  shared Chromium launches with `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
+  (engine option wired from `AGENTBROWSER_LOGIN_BROWSER`, asserted in the real-browser suite).
+- `openapi.json` regenerated; the write-path checklist declares the handoff route.
+- **Review round 1 (all fixed, each pinned by a new test):** the cookie-domain matching was
+  INVERTED vs ADR-025 §3 (`covers(cookieHost, domain)` instead of `covers(domain, cookieHost)`) —
+  a deep-host request pulled the parent's site-wide cookie without operator evidence, and an apex
+  request refused the subtree's host-only cookies; the arguments are swapped and the applies
+  relation now also drives the per-domain evidence and the freshness guard. Post-mark aborts
+  (a lease the allowlist refuses; an engine without the live cookie API) bricked the destination
+  session — engine capability, lease validation, the ADR §3 transfer bounds (≤1000 cookies,
+  ≤1 MiB — previously unenforced), the init script and the secret registration all now run BEFORE
+  the mark. Operator input is canonicalized (case, whitespace, trailing dot). The RTC-removal
+  script moved to a shared ENGINE-PACKAGE constant (@agentbrowser/engine — core is not a dependency of
+  engine-playwright) so the injector and the real-browser behavioral tests
+  assert the same text. ADR §4's "baseline grants it to no one" corrected to the shipped default
+  (capability grant covers it; the approval step is the unconditional part). floor.handoff.websocket
+  is a real guard on a recorded fact. A racing mid-write export test, a foreign-policy-version
+  token test, and both pre-mark abort tests pin the new behavior.
+
+### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
+
 ### Fixed — event replay paging, artifact eviction, tenant ownership
 
 - **Event replay paging matches the type exactly.** With `since`/`limit`, `?type=` used to select

@@ -37,6 +37,7 @@ import {
   isAgentMode,
   parseExtractMaxBytes,
   parsePlanSteps,
+  validateCookieHandoffRequest,
   validateOperatorApprovalDecision,
   validateSessionRequest,
   validateWireAction,
@@ -103,6 +104,12 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
    * multi-tenant deployments refuse to open it.
    */
   loginBrowser?: boolean;
+  /**
+   * TD-BROWSER-16 phase 6: override the login-browser port the service reads
+   * through (tests and embedders inject a fake; the operator routes still use
+   * the real service above).
+   */
+  loginBrowserPort?: import('./service.js').ServiceDependencies['loginBrowser'];
   /**
    * TD-BROWSER-15 phase 4: a loaded policy file. Its authorizer decides every
    * operator-chosen question, its limits replace the embedder options, and
@@ -273,6 +280,7 @@ const STATUS_FOR = {
   [ErrorCode.LOGIN_BINARY_CHANGED]: 409,
   [ErrorCode.LOGIN_BINARY_DOWNGRADED]: 409,
   [ErrorCode.LOGIN_HOSTED_OR_MULTI_TENANT]: 403,
+  [ErrorCode.HANDOFF_COOKIES_NOT_EXPORTABLE]: 403,
 } satisfies Record<ErrorCode, number>;
 
 /** Map protocol error codes onto HTTP statuses. */
@@ -549,6 +557,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     extractMaxBytes,
     engine,
     ...(artifactStore !== undefined ? { artifactStore } : {}),
+    // TD-BROWSER-16 phase 6: the handoff reads through the login browser
+    // (constructed above; enabled encodes operator keys being configured).
+    loginBrowser: options.loginBrowserPort ?? loginBrowser,
     ...(options.evidenceReviewProvider !== undefined
       ? { evidenceReviewProvider: options.evidenceReviewProvider }
       : {}),
@@ -1504,7 +1515,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                 'Approval decision must be approve or deny'
               );
             return responseDraft(
-              await service.decideNonActApproval(sessionId, tokenId, nonActChecked.value.decision),
+              await service.decideNonActApproval(
+                sessionId,
+                tokenId,
+                nonActChecked.value.decision,
+                nonActChecked.value.lease
+              ),
               200
             );
           }
@@ -1723,6 +1739,32 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           return responseDraft(session);
         },
         { capability: 'session.control' }
+      );
+
+      // TD-BROWSER-16 phase 6 (ADR-025 section 3): the cookie handoff. Agent-
+      // invoked (the agent relays APPROVAL_REQUIRED to the operator and
+      // retries with the token); the DECISION it consumes is human-operator
+      // only, on the approvals route above. Runs under one per-session lock;
+      // the mark precedes the write, so racing exports are refused.
+      on(
+        'POST',
+        '/sessions/:sessionId/cookies/handoff',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          const body = request.body;
+          requireBody(body);
+          const validated = validateCookieHandoffRequest(body);
+          if (!validated.ok) {
+            const details = validated.issues
+              .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+              .join('; ');
+            throw new ServiceError('INVALID_REQUEST', `Invalid handoff request: ${details}`);
+          }
+          const result = await service.handoffCookies(sessionId, validated.value);
+          return responseDraft(result, 200);
+        },
+        { safe: true }
       );
 
       on('GET', '/sessions/:sessionId/cookies', async (request) => {
