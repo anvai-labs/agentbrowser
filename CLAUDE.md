@@ -39,7 +39,7 @@ agentbrowser/
 │   ├── engine-obscura/    # Obscura adapter — experimental, benchmark-only, unregistered
 │   ├── core/              # Session coordination, observation normalization, action execution
 │   ├── policy/            # Network egress policy (SSRF defense)
-│   ├── policy-engine/     # Authorizer seam for operator decisions (ADR-024; Cedar later)
+│   ├── policy-engine/     # Authorizer seam for operator decisions (ADR-024; embedded Cedar)
 │   ├── extraction/        # Deterministic + model-adapter page extraction
 │   ├── testkit/           # FakeEngine for contract testing, test utilities
 │   ├── sdk-typescript/    # TypeScript client SDK
@@ -216,8 +216,8 @@ The following ADRs in `docs/adr/` are critical for understanding design choices:
 21. **ADR-021**: form-controls enrichment for ARIA-invisible widgets
 22. **ADR-022** (Proposed): compact identifiers and explicit CLI context
 23. **ADR-023**: Windows server ships as a bundled-Node zip, not a single-file executable
-24. **ADR-024** (Proposed): server policy engine — embedded Cedar, per-tenant, queryable by agents
-25. **ADR-025** (Proposed): operator login browser (pipe, no port) and operator-approved cookie handoff into a contained session
+24. **ADR-024**: server policy engine — embedded Cedar, per-tenant, queryable by agents
+25. **ADR-025**: operator login browser (pipe, no port) and operator-approved cookie handoff into a contained session
 
 ## Core Concepts
 

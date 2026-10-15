@@ -32,6 +32,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   scanner's risk in `properties.risk` and the rule's `defaultConfiguration`; confirmed results keep
   the risk level and add their evidence description. Role-access findings get their own run.
 
+## [1.18.0] — 2026-10-15
+
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
 
 - **Protocol**: the `session.credential` capability joins the closed vocabulary and flows into
@@ -69,7 +71,6 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   variables documented in operations.md as trusted operator configuration. The four operator
   login routes' OpenAPI now documents their typed 400/409 refusals (a phase-4 carried item).
 
-### Added — the cookie handoff (TD-BROWSER-16 phase 6, ADR-025 §3)
 ### Added — the cookie handoff (TD-BROWSER-16 phase 6, ADR-025 §3)
 
 - **`POST /v1/sessions/{sessionId}/cookies/handoff`** `{ domains, approvalToken? }`, under one
@@ -124,8 +125,6 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   (capability grant covers it; the approval step is the unconditional part). floor.handoff.websocket
   is a real guard on a recorded fact. A racing mid-write export test, a foreign-policy-version
   token test, and both pre-mark abort tests pin the new behavior.
-
-### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 
 ### Fixed — event replay paging, artifact eviction, tenant ownership
 

@@ -1,6 +1,6 @@
 # TD-BROWSER-16: Operator login browser and cookie handoff
 
-**Status:** Planned (after TD-BROWSER-15 phase 4)
+**Status:** Delivered — phases 1–7 shipped as #461–#464, #466, #470, #472; ADR-025 Accepted.
 **Decision:** [ADR-025](../adr/025-operator-cookie-handoff.md)
 
 ## Problem
@@ -47,6 +47,8 @@ infrastructure; phase 6 enables the handoff.
   is not reused. Existing act approvals keep their path.
 - **CLI operator commands** read the key from the OS keychain (macOS Keychain, Windows Credential
   Manager, Linux Secret Service) or from a no-echo prompt, **never** from an environment variable.
+  *(As delivered: a key file (`--operator-key-file`) or a no-echo prompt; OS-keychain storage was
+  not implemented — recorded as a deviation in ADR-025's status.)*
 - **Tests:**
   - an API key (`actor: "operator"`, which an agent may hold) is refused on both the view and the
     decide route for each new kind;
