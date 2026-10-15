@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — measured CI runner minutes (T9)
+
+- `scripts/runner-minutes.mjs` reports per-workflow medians from the GitHub API: wall time, job
+  minutes, and billed-style minutes split by hosted and self-hosted runners. It is read-only.
+- The 2026-10-15 baseline is recorded in `docs/spec/evidence/t9-runner-minutes.md`: about 26
+  hosted minutes per CI round on a pull request (CI, Windows and docs), plus about 2 macOS minutes on journal-path
+  pull requests. The repository is public, so these are capacity, not cost.
+
 ### Tests — widget strategies qualified on Firefox and WebKit (T6 W3b)
 
 - The real react-select qualification (add-only and exact chip sets, with the app's state as the
