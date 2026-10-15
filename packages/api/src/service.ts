@@ -399,6 +399,15 @@ export interface ServiceEvidenceReviewContext {
   readonly nativeForm: PreparedNativeFormRead;
 }
 
+/** Event replay envelope. Paged responses also carry the ledger's oldest
+ * retained sequence and whether entries behind the cursor were evicted. */
+export interface SessionEventPage {
+  events: EngineEvent[];
+  nextCursor: number;
+  oldestSeq?: number;
+  gap?: boolean;
+}
+
 export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
   cdpAttachAdmission?: CdpAttachAdmission;
@@ -1017,11 +1026,11 @@ export class AgentBrowserService {
   getSessionEvents(
     sessionId: string,
     options: { type?: string; since?: number; limit?: number }
-  ): { events: EngineEvent[]; nextCursor: number };
+  ): SessionEventPage;
   getSessionEvents(
     sessionId: string,
     selector?: string | { type?: string; since?: number; limit?: number }
-  ): EngineEvent[] | { events: EngineEvent[]; nextCursor: number } {
+  ): EngineEvent[] | SessionEventPage {
     this.requireSession(sessionId);
     const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
     const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
@@ -1047,12 +1056,15 @@ export class AgentBrowserService {
       const ledger = typeFilter.startsWith('request.')
         ? this.requestHistory.get(sessionId)
         : this.eventHistory.get(sessionId);
-      const rows = (ledger?.entriesAfter(since, limit) ?? []).map(({ seq, value }) => ({
-        ...value,
-        seq,
-      }));
-      const last = rows.at(-1)?.seq ?? since;
-      return { events: rows, nextCursor: last };
+      // Filter by the exact type while scanning: the cursor advances past
+      // other types in the same ledger instead of returning them.
+      const page = ledger?.page(since, limit, (event) => event.type === typeFilter);
+      return {
+        events: (page?.rows ?? []).map(({ seq, value }) => ({ ...value, seq })),
+        nextCursor: page?.lastScanned ?? since,
+        oldestSeq: page?.oldestSeq ?? 0,
+        gap: page?.gap ?? false,
+      };
     }
     if (typeFilter === undefined) {
       // Over HTTP the route always builds an object selector, so `{}` is the

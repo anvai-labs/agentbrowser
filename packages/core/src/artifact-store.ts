@@ -2,9 +2,11 @@
  * Artifact Store (TD-017)
  *
  * Bounded, TTL-expiring storage for artifacts (downloads, evidence).
- * Oversize payloads are refused rather than truncated; when the store is
- * full the oldest entry is evicted. MVP storage is in-memory, matching
- * ephemeral sessions.
+ * Oversize payloads are refused rather than truncated. When the store is
+ * full (by count or aggregate bytes) the writing tenant's own oldest entry
+ * is evicted first, so one tenant cannot flush another's evidence; only a
+ * writer holding nothing evicts the global oldest. MVP storage is in-memory,
+ * matching ephemeral sessions.
  */
 
 /** Artifact metadata safe to hand to clients. */
@@ -47,25 +49,37 @@ export interface ArtifactStoreOptions {
   maxBytes?: number;
   /** Maximum number of retained artifacts (oldest evicted). */
   maxArtifacts?: number;
+  /** Maximum aggregate bytes retained across all artifacts. */
+  maxTotalBytes?: number;
   clock?(): number;
 }
 
 const DEFAULT_TTL_MS = 15 * 60_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_ARTIFACTS = 100;
+const DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
 export class ArtifactStore {
   private readonly entries = new Map<string, StoredArtifact>();
   private readonly ttlMs: number;
   private readonly maxBytes: number;
   private readonly maxArtifacts: number;
+  private readonly maxTotalBytes: number;
   private readonly clock: () => number;
   private counter = 0;
+  private storedBytes = 0;
 
   constructor(options: ArtifactStoreOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
     this.maxArtifacts = options.maxArtifacts ?? DEFAULT_MAX_ARTIFACTS;
+    this.maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
+    if (this.maxBytes > this.maxTotalBytes) {
+      throw new ArtifactError(
+        'INVALID_ARTIFACT_LIMITS',
+        `maxBytes (${this.maxBytes}) exceeds maxTotalBytes (${this.maxTotalBytes}).`
+      );
+    }
     this.clock = options.clock ?? Date.now;
   }
 
@@ -83,12 +97,17 @@ export class ArtifactStore {
       );
     }
 
-    // Evict expired entries first, then oldest, until there is room.
+    // Evict expired entries first, then the oldest (own tenant first) until
+    // both the count and the aggregate byte cap leave room.
     this.sweep();
-    while (this.entries.size >= this.maxArtifacts) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
+    while (
+      this.entries.size > 0 &&
+      (this.entries.size >= this.maxArtifacts ||
+        this.storedBytes + bytes.length > this.maxTotalBytes)
+    ) {
+      const victim = this.oldestOf(labels.tenantId) ?? this.entries.keys().next().value;
+      if (victim === undefined) break;
+      this.remove(victim);
     }
 
     const now = this.clock();
@@ -106,6 +125,7 @@ export class ArtifactStore {
     };
 
     this.entries.set(metadata.artifactId, { metadata, bytes });
+    this.storedBytes += bytes.length;
     return metadata;
   }
 
@@ -116,7 +136,7 @@ export class ArtifactStore {
       return undefined;
     }
     if (this.clock() > entry.metadata.expiresAt) {
-      this.entries.delete(artifactId);
+      this.remove(artifactId);
       return undefined;
     }
     return entry;
@@ -128,7 +148,7 @@ export class ArtifactStore {
     let swept = 0;
     for (const [id, entry] of this.entries) {
       if (now > entry.metadata.expiresAt) {
-        this.entries.delete(id);
+        this.remove(id);
         swept += 1;
       }
     }
@@ -139,7 +159,29 @@ export class ArtifactStore {
     return this.entries.size;
   }
 
+  /** Aggregate bytes currently retained. */
+  totalBytes(): number {
+    return this.storedBytes;
+  }
+
   clear(): void {
     this.entries.clear();
+    this.storedBytes = 0;
+  }
+
+  /** Oldest artifact owned by the tenant (insertion order is age order). */
+  private oldestOf(tenantId: string | undefined): string | undefined {
+    if (tenantId === undefined) return undefined;
+    for (const [id, entry] of this.entries) {
+      if (entry.metadata.tenantId === tenantId) return id;
+    }
+    return undefined;
+  }
+
+  private remove(artifactId: string): void {
+    const entry = this.entries.get(artifactId);
+    if (!entry) return;
+    this.entries.delete(artifactId);
+    this.storedBytes -= entry.bytes.length;
   }
 }

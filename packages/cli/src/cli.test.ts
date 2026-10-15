@@ -463,6 +463,18 @@ describe('AgentBrowser CLI', () => {
       expect(sessions.events).toHaveBeenCalledWith('ses_1', { type: 'request.finished' });
     });
 
+    it('prints the eviction gap of a paged event read', async () => {
+      sessions.events.mockResolvedValueOnce({
+        events: [],
+        nextCursor: 12,
+        oldestSeq: 10,
+        gap: true,
+      });
+      await run('session', 'events', 'ses_1', '--type', 'console.log', '--since', '3');
+      expect(out.join('\n')).toContain('gap: true');
+      expect(out.join('\n')).toContain('seq 10');
+    });
+
     it('prints HTML inline by default and pulls stored bytes when not inlined', async () => {
       await run('page', 'html', 'ses_1', 'pg_1');
       expect(sessions.artifact).not.toHaveBeenCalled();

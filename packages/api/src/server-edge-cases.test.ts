@@ -11,7 +11,7 @@ import type { BrowserEngine } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildServer, startServer } from './server.js';
-import { ServiceError } from './service.js';
+import { type AgentBrowserService, ServiceError } from './service.js';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -317,6 +317,23 @@ describe('server edge branches', () => {
         `Session ${sessionId} belongs to another tenant.`
       );
     };
+
+    it('fails closed on a session that carries no tenant when the caller has one', async () => {
+      // Unreachable through POST /v1/sessions with keys configured (the key's
+      // tenant is stamped), so the ownerless session is created directly.
+      const service = (server as unknown as { service: AgentBrowserService }).service;
+      const ownerless = await service.createSession({});
+      try {
+        const response = await server.inject({
+          method: 'GET',
+          url: `/v1/sessions/${ownerless.sessionId}/events/replay`,
+          headers: operatorA,
+        });
+        expect(response.statusCode).toBe(403);
+      } finally {
+        await service.closeSession(ownerless.sessionId);
+      }
+    });
 
     it('rejects cross-tenant reads of session-scoped resources', async () => {
       await expectForbidden('GET', `/v1/sessions/${sessionId}/cookies`);

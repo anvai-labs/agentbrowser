@@ -48,6 +48,13 @@ describe('events_replay', () => {
     expect(tool?.inputSchema.required).toEqual(['sessionId']);
   });
 
+  it('surfaces the eviction gap of a paged read', async () => {
+    const f = fixture();
+    f.events.mockResolvedValue({ events: [], nextCursor: 12, oldestSeq: 10, gap: true });
+    const result = await f.call({ sessionId: 'ses_1', type: 'console.log', since: 3 });
+    expect(result).toMatchObject({ nextCursor: 12, oldestSeq: 10, gap: true });
+  });
+
   it('passes a type filter through and returns the paging envelope unpaged', async () => {
     const f = fixture();
     f.events.mockResolvedValue({

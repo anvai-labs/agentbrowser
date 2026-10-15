@@ -7,6 +7,27 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — event replay paging, artifact eviction, tenant ownership
+
+- **Event replay paging matches the type exactly.** With `since`/`limit`, `?type=` used to select
+  only the ledger, so `type=console.log` also returned `console.error`, dialog and lifecycle rows
+  (and `type=request.failed` returned every `request.*` row). Paged rows now match the type
+  exactly; `nextCursor` advances past skipped rows of other types.
+- **Paged replay reports eviction gaps.** Paged responses add `oldestSeq` (lowest retained ledger
+  sequence) and `gap` (`true` when entries after the cursor were evicted before the read) instead
+  of silently re-reading from the oldest kept entry. Additive: OpenAPI, SDK (`SessionEventsPage`),
+  MCP `events_replay` and the CLI (`gap: true …` line) carry it.
+- **Artifact store: aggregate byte cap and own-tenant eviction.** New `maxTotalBytes` (default
+  256 MiB; `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES`, invalid values abort startup). When full by
+  count or bytes, the writing tenant's own oldest artifact is evicted first, so one tenant can no
+  longer flush another's evidence; previously worst-case retention was 100 × 10 MiB with global
+  FIFO eviction.
+- **Tenant ownership fails closed on ownerless sessions.** An authenticated tenant is refused
+  (403) on a session without a tenant; previously such a session was reachable by any keyed
+  tenant. Not reachable through `POST /v1/sessions` (keys stamp the tenant) — defense in depth.
+- Docs: `artifact-auth` comment and the `AGENTBROWSER_ARTIFACT_KEY` row now describe what is
+  actually signed (`artifactId|exp`; session scoping comes from the route).
+
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 
 - **Marked sessions** (`credentialSource: "operator"`): the marking is **server-side only** — a

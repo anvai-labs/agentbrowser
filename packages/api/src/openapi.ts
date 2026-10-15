@@ -727,10 +727,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'filter with ?type=request.finished etc. Unfiltered returns both ' +
             'ledgers (console first; cross-ledger ordering not preserved). ' +
             'Paging: since/limit require a type filter (cursors are per-ledger ' +
-            'entry sequences; the cursor is returned as nextCursor). A cursor ' +
-            'older than the retained window re-reads from the oldest kept ' +
-            'entry - entries evicted before it are silently skipped. limit ' +
-            'defaults to 200 and is capped at 1000.',
+            'entry sequences; the cursor is returned as nextCursor and advances ' +
+            'past entries of other types). Paged rows match the type exactly. A ' +
+            'cursor older than the retained window re-reads from the oldest kept ' +
+            'entry; the paged response then reports gap: true and oldestSeq, the ' +
+            'lowest retained sequence, so evicted entries are never silently ' +
+            'skipped. limit defaults to 200 and is capped at 1000.',
           tags: ['sessions'],
           parameters: [
             sessionIdParam,
@@ -764,6 +766,18 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 properties: {
                   events: { type: 'array', items: { type: 'object' } },
                   nextCursor: { type: 'integer' },
+                  oldestSeq: {
+                    type: 'integer',
+                    description:
+                      'Paged responses: the lowest retained ledger sequence ' +
+                      '(the next sequence to be written when the ledger is empty).',
+                  },
+                  gap: {
+                    type: 'boolean',
+                    description:
+                      'Paged responses: true when entries after the cursor were ' +
+                      'evicted before this read.',
+                  },
                 },
               }),
             },

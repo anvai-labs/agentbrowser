@@ -108,6 +108,70 @@ describe('ArtifactStore', () => {
     expect(artifacts.get(second.artifactId)).toBeDefined();
   });
 
+  describe('tenant-aware eviction and the aggregate byte cap', () => {
+    const bytes = (size: number) => new Uint8Array(size);
+
+    it("evicts the writing tenant's own oldest artifact before another tenant's", () => {
+      const artifacts = store({ maxArtifacts: 3 });
+      const victim = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
+      const a1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      const a2 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      // Tenant a floods: its own oldest goes, tenant b's evidence stays.
+      const a3 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      const a4 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+
+      expect(artifacts.get(victim.artifactId)).toBeDefined();
+      expect(artifacts.get(a1.artifactId)).toBeUndefined();
+      expect(artifacts.get(a2.artifactId)).toBeUndefined();
+      expect(artifacts.get(a3.artifactId)).toBeDefined();
+      expect(artifacts.get(a4.artifactId)).toBeDefined();
+    });
+
+    it('falls back to the global oldest when the writer holds nothing', () => {
+      const artifacts = store({ maxArtifacts: 2 });
+      const b1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
+      const b2 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
+      const a1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+
+      expect(artifacts.get(b1.artifactId)).toBeUndefined();
+      expect(artifacts.get(b2.artifactId)).toBeDefined();
+      expect(artifacts.get(a1.artifactId)).toBeDefined();
+    });
+
+    it('evicts until the new payload fits under maxTotalBytes', () => {
+      const artifacts = store({ maxBytes: 10, maxTotalBytes: 20 });
+      const first = artifacts.put('pdf', 'application/pdf', bytes(8));
+      const second = artifacts.put('pdf', 'application/pdf', bytes(8));
+      expect(artifacts.totalBytes()).toBe(16);
+      const third = artifacts.put('pdf', 'application/pdf', bytes(10));
+
+      expect(artifacts.get(first.artifactId)).toBeUndefined();
+      expect(artifacts.get(second.artifactId)).toBeDefined();
+      expect(artifacts.get(third.artifactId)).toBeDefined();
+      expect(artifacts.totalBytes()).toBe(18);
+    });
+
+    it('keeps the byte total consistent through expiry, sweep and clear', () => {
+      const artifacts = store({ ttlMs: 1_000 });
+      const first = artifacts.put('pdf', 'application/pdf', bytes(5));
+      clock.now += 600;
+      artifacts.put('pdf', 'application/pdf', bytes(7));
+      clock.now += 500;
+      expect(artifacts.get(first.artifactId)).toBeUndefined();
+      expect(artifacts.totalBytes()).toBe(7);
+      clock.now += 1_000;
+      artifacts.sweep();
+      expect(artifacts.totalBytes()).toBe(0);
+      artifacts.put('pdf', 'application/pdf', bytes(3));
+      artifacts.clear();
+      expect(artifacts.totalBytes()).toBe(0);
+    });
+
+    it('rejects a per-artifact limit above the aggregate cap', () => {
+      expect(() => store({ maxBytes: 11, maxTotalBytes: 10 })).toThrow(ArtifactError);
+    });
+  });
+
   it('should clear with the store', () => {
     const artifacts = store();
     const { artifactId } = artifacts.put('download', 'text/plain', new Uint8Array([1]));

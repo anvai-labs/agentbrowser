@@ -1,11 +1,12 @@
 /**
  * Time-boxed artifact authorization (spec 13.1)
  *
- * Artifact URLs are usable by anyone holding the URL while the artifact
- * lives. This mints short-lived signed tokens: GET /v1/artifacts/{id}?token=...
- * (or Authorization: Bearer) grants access until exp even from callers
- * without a session-scoped path. HMAC-SHA256 over artifactId|exp|sessionId
- * with the server key; constant-time compare.
+ * Mints short-lived signed tokens: GET /v1/sessions/{sessionId}/artifacts/{id}
+ * ?token=... grants access until exp without a tenant credential.
+ * HMAC-SHA256 over artifactId|exp with the server key; constant-time compare.
+ * The token does not sign the session: session scoping comes from the route,
+ * whose getArtifact refuses an artifact that belongs to a different session
+ * than the one in the path.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';

@@ -882,6 +882,9 @@ export function buildCli(deps: CliDependencies): Cli {
               });
               ctx.emit(envelope, () => [
                 `nextCursor: ${envelope.nextCursor}`,
+                ...(envelope.gap
+                  ? [`gap: true (entries evicted before oldest retained seq ${envelope.oldestSeq})`]
+                  : []),
                 ...envelope.events.map(describe),
               ]);
             }

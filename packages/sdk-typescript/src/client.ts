@@ -53,6 +53,15 @@ export type {
   OutcomeRunRequest,
   RunCursor,
 } from '@agentbrowser/protocol';
+/** Event replay envelope. `oldestSeq`/`gap` are present on paged responses:
+ * `gap` is true when entries after the cursor were evicted before the read. */
+export interface SessionEventsPage {
+  events: Array<Record<string, unknown>>;
+  nextCursor: number;
+  oldestSeq?: number;
+  gap?: boolean;
+}
+
 export interface MutationOptions {
   operationId?: string;
 }
@@ -625,13 +634,11 @@ export class SessionsClient {
   async events(
     sessionId: string,
     options: { type?: string; since?: number; limit?: number }
-  ): Promise<{ events: Array<Record<string, unknown>>; nextCursor: number }>;
+  ): Promise<SessionEventsPage>;
   async events(
     sessionId: string,
     selector?: string | { type?: string; since?: number; limit?: number }
-  ): Promise<
-    Array<Record<string, unknown>> | { events: Array<Record<string, unknown>>; nextCursor: number }
-  > {
+  ): Promise<Array<Record<string, unknown>> | SessionEventsPage> {
     let query = '';
     if (selector === undefined || typeof selector === 'string') {
       query =
@@ -646,12 +653,20 @@ export class SessionsClient {
     const body = await this.http.requestJson<{
       events: Array<Record<string, unknown>>;
       nextCursor?: number;
+      oldestSeq?: number;
+      gap?: boolean;
     }>(`/v1/sessions/${sessionId}/events/replay${query}`);
     // No default parameter: an explicitly-undefined argument must keep the
     // legacy array shape (a default `= {}` would silently turn it into the
     // paging envelope and break overload-1 callers at runtime).
     if (selector === undefined || typeof selector === 'string') return body.events;
-    return { events: body.events, nextCursor: body.nextCursor ?? -1 };
+    // oldestSeq/gap are paged-only and absent from older servers.
+    return {
+      events: body.events,
+      nextCursor: body.nextCursor ?? -1,
+      ...(typeof body.oldestSeq === 'number' ? { oldestSeq: body.oldestSeq } : {}),
+      ...(typeof body.gap === 'boolean' ? { gap: body.gap } : {}),
+    };
   }
 
   /** Structured native form filling; choose an operation ID before dispatch. */
