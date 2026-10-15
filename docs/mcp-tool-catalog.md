@@ -10,9 +10,9 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e4192c065e497f53edb41636237f2673caa469574`
+Catalog SHA-256 (complete descriptions and schemas): `4bbc93573f059a1c71d09e912265ca61661aee3c1a8e2161b6dfb828f547b253`
 
-## unbound/qa (19 tools; 67945 result bytes)
+## unbound/qa (19 tools; 68450 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -36,7 +36,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/qa (16 tools; 57368 result bytes)
+## delegated/qa (16 tools; 57873 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/operations (19 tools; 67945 result bytes)
+## unbound/operations (19 tools; 68450 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -81,7 +81,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/operations (16 tools; 57368 result bytes)
+## delegated/operations (16 tools; 57873 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -145,7 +145,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (19 tools; 67945 result bytes)
+## unbound/appsec (19 tools; 68450 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -169,7 +169,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/appsec (16 tools; 57368 result bytes)
+## delegated/appsec (16 tools; 57873 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -190,7 +190,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (19 tools; 67945 result bytes)
+## unbound/bounty (19 tools; 68450 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -214,7 +214,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/bounty (16 tools; 57368 result bytes)
+## delegated/bounty (16 tools; 57873 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -235,7 +235,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (19 tools; 67945 result bytes)
+## unbound/forms (19 tools; 68450 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -259,7 +259,7 @@ Catalog SHA-256 (complete descriptions and schemas): `8b7530332877d5d321725e5e41
 | `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/forms (16 tools; 57368 result bytes)
+## delegated/forms (16 tools; 57873 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |

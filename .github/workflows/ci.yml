@@ -163,10 +163,12 @@ jobs:
         run: pnpm -r build
 
       # Share one host-library provisioning step; Firefox itself comes from Mozilla below.
-      - name: Install browser system libraries and Chromium
+      # T6 W3b: the api suite's widget qualification drives all three Playwright families, so
+      # their binaries are installed here, not only Chromium's.
+      - name: Install browser system libraries and browser binaries
         run: |
-          pnpm --filter @agentbrowser/engine-playwright exec playwright install-deps chromium firefox
-          pnpm --filter @agentbrowser/engine-playwright exec playwright install chromium
+          pnpm --filter @agentbrowser/engine-playwright exec playwright install-deps chromium firefox webkit
+          pnpm --filter @agentbrowser/engine-playwright exec playwright install chromium firefox webkit
 
       # One cached Firefox qualification in this existing job, no browser matrix.
       - name: Cache native Firefox

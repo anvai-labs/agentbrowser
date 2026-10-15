@@ -60,6 +60,17 @@ test start) in real Chromium; the
 app's own committed state is the oracle (exact option, no submission), and a line break in
 `option.value` is refused before dispatch (`autofill-react-select-real.test.ts`).
 
+**Removal and exact sets (2026-10-15, W2):** `chip-multiselect` accepts
+`options: { values, mode: 'exact' }`. It removes extra chips through engine-tied remove controls,
+adds missing values, verifies exact set equality, and reports partial `effects` without
+compensation. It is qualified on react-select 5.10.2
+([evidence](../evidence/t6-exact-chip-sets.md)).
+
+**Cross-engine (2026-10-15, W3b):** the same real react-select qualification (add-only and
+exact chip sets) runs on Chromium, Firefox and WebKit through the Playwright engine, in CI (the
+Test job installs all three binaries), with the session's engine name pinning the family; no
+engine-specific code was needed. W3a (conditional and multi-stage mappings) remains open.
+
 
 The [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
 merged through PR #237 with eight PR and eight post-merge checks green. It extends
