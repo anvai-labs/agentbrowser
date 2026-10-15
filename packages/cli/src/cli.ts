@@ -1069,6 +1069,14 @@ export function buildCli(deps: CliDependencies): Cli {
           '--execution-requirement <requirement>',
           'ephemeral (default) or durable; durable is part of the operation identity and is refused unless the runtime has a durable journal'
         )
+        .option(
+          '--supersedes <operationId>',
+          'continuation provenance: the closed operation this one replaces (needs --supersedes-namespace); metadata only, not part of the operation identity'
+        )
+        .option(
+          '--supersedes-namespace <namespace>',
+          'the journal namespace holding the closed operation named by --supersedes'
+        )
         .action(
           action(
             async (
@@ -1080,9 +1088,16 @@ export function buildCli(deps: CliDependencies): Cli {
                 expectedVersion?: string;
                 approvalToken?: string;
                 executionRequirement?: string;
+                supersedes?: string;
+                supersedesNamespace?: string;
               }
             ) => {
               const requirement = options.executionRequirement;
+              if (
+                (options.supersedes === undefined) !==
+                (options.supersedesNamespace === undefined)
+              )
+                throw new UsageError('--supersedes and --supersedes-namespace go together');
               if (
                 requirement !== undefined &&
                 requirement !== 'ephemeral' &&
@@ -1110,6 +1125,14 @@ export function buildCli(deps: CliDependencies): Cli {
                   ? { approvalToken: options.approvalToken }
                   : {}),
                 ...(requirement !== undefined ? { executionRequirement: requirement } : {}),
+                ...(options.supersedes !== undefined && options.supersedesNamespace !== undefined
+                  ? {
+                      supersedes: {
+                        namespace: options.supersedesNamespace,
+                        operationId: options.supersedes,
+                      },
+                    }
+                  : {}),
               });
               const lines =
                 'replay' in result

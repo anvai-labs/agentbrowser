@@ -149,3 +149,23 @@ it('rejects source accessors, hidden fields and malformed permissions without pr
     expect(() => captureEvidenceReviewSource(value)).toThrow('Evidence review unavailable');
   expect(getter).not.toHaveBeenCalled();
 });
+
+it('carries a continuation supersedes link through review selection and refuses malformed links (J3c part 2)', () => {
+  const link = { namespace: 'agentbrowser', operationId: 'closed-op' };
+  expect(selectApplicationReview({ ...action(), supersedes: link })).toMatchObject({
+    supersedes: link,
+  });
+  expect(selectApplicationReview(action())).not.toHaveProperty('supersedes');
+  for (const supersedes of [
+    { namespace: '', operationId: 'closed-op' },
+    { namespace: 'n'.repeat(129), operationId: 'closed-op' },
+    { namespace: 'agentbrowser', operationId: 'bad id' },
+    { namespace: 'agentbrowser', operationId: 'closed-op', extra: true },
+    { namespace: 'agentbrowser' },
+    'agentbrowser:closed-op',
+    null,
+  ])
+    expect(() => selectApplicationReview({ ...action(), supersedes })).toThrow(
+      'Evidence review unavailable'
+    );
+});

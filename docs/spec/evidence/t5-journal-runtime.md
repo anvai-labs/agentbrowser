@@ -324,3 +324,31 @@ The operator-only recovery writes, on a real store, through the service and over
 - **R08/R10 status:** R08's application-write portion is delivered (records survive, are
   classifiable, closeable and settleable; the browser/autofill portion is explicitly B-dur and
   NOT claimed). R10's durable-application-receipt portion is delivered by J-d/J3a/J3b/J3c-part-1.
+
+## J3c part 2: continue and reconcile (2026-10-15)
+
+- **Continue (D2, step 3).** After close, a NEW operation under a NEW operation ID may carry the
+  optional request field `supersedes: {namespace, operationId}` — on both the execute request and
+  the review request (it is not limited to reviews). It is provenance metadata only: validated
+  (namespace 1-128 characters, operation ID in the control pattern, no other keys) and carried
+  into the reviewed action, so operator consent covers the link, but it is **never part of the
+  operation identity** — the fingerprint is unchanged (pinned against the pre-durable golden), so
+  the same operation without the link replays. The new operation is revalidated from scratch
+  like any other: current binding, payload, expected version and consent. CLI:
+  `application execute --supersedes <id> --supersedes-namespace <ns>` (both or neither).
+- **Reconcile (D3).** `ApplicationAdapter.reconcile(identity)` is an opt-in method; the service's
+  `journalReconcileOperation` (POST `/v1/journal/operations/{operationId}/reconcile`,
+  operator-only, lifecycle, own rate bucket) asks the bound adapter about each in-doubt record.
+  The identity is the record's tenant, application identity, session incarnation and operation
+  ID — no fingerprint or digest crosses (asserted). `committed` / `rejected` commit `completed` /
+  `failed` with no evidence refs; `unknown`, or an adapter that throws, changes nothing and counts
+  as unresolved (the record can still be settled). An adapter without `reconcile` refuses with
+  409 `CONTROL_REQUIRED` — every adapter is resolved before any write, so the refusal never leaves
+  a partial result. Undispatched siblings are left for close; the effect is never replayed.
+- **Tests.** Service level on a real store: committed, rejected, unknown, throwing adapter,
+  no-reconcile refusal, API-key refusal before the adapter is asked, mixed-state composition.
+  HTTP: operator 200, API key 403, resolved operation re-reads as 404, no-reconcile 409.
+  `supersedes`: review-selection carry and seven malformed shapes refused; fingerprint unchanged;
+  REST commit, replay without the link, four malformed shapes refused before execution; CLI
+  forwarding and the both-or-neither rule.
+

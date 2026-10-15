@@ -116,6 +116,7 @@ describe('route contract metadata', () => {
       // T5 J3c part 1: operator-only recovery writes, server-level, not session-scoped.
       ['POST /v1/journal/operations/:operationId/close', 'lifecycle'],
       ['POST /v1/journal/operations/:operationId/settle', 'lifecycle'],
+      ['POST /v1/journal/operations/:operationId/reconcile', 'lifecycle'],
       ['POST /v1/policy/check', 'lifecycle'],
       // T5 J3b: server-level read-only journal queries, not session-scoped.
       ['GET /v1/journal', 'lifecycle'],

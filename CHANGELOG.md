@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — continue and reconcile for journaled operations (T5 J3c part 2)
+
+- A new operation may carry `supersedes: {namespace, operationId}` naming the closed operation it
+  continues, on execute and review requests and via `application execute --supersedes <id>
+  --supersedes-namespace <ns>`. It is provenance only: consent covers it, the operation identity
+  does not include it.
+- `POST /v1/journal/operations/{operationId}/reconcile` (operator key only) asks the bound
+  adapter's new opt-in `reconcile(identity)` what happened to each in-doubt record: `committed` or
+  `rejected` commit the matching terminal; `unknown` changes nothing. An adapter without
+  `reconcile` is refused with 409 `CONTROL_REQUIRED` — settle instead. Nothing is ever replayed.
+
 ### Tests — recovery gates for application writes (T5 J4)
 
 - A service restarted on the same real store refuses a pre-restart event cursor as

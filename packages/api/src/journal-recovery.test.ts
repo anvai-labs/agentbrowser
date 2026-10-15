@@ -10,6 +10,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ApplicationAdapter } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
@@ -60,7 +61,7 @@ async function fixtureWithHorizon(acceptUntil: number) {
   };
 }
 
-async function fixture() {
+async function fixture(applicationAdapters: ServiceDependencies['applicationAdapters'] = []) {
   const { env } = journalEnvironment();
   const config = await journalConfigFromEnvironment(env);
   if (!config) throw new Error('expected configuration');
@@ -69,6 +70,7 @@ async function fixture() {
   const service = new AgentBrowserService({
     engine: new FakeEngine(),
     operationJournal: journal,
+    ...(applicationAdapters ? { applicationAdapters } : {}),
   } satisfies Partial<ServiceDependencies> as ServiceDependencies);
   return {
     service,
@@ -333,5 +335,174 @@ describe('journal recovery writes, review round 1 (J3c part 1)', () => {
     await expect(f.service.journalCloseOperation('many-op', humanOperator)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
+  }, 120_000);
+});
+
+describe('journal reconcile (T5 J3c part 2, D3, real store)', () => {
+  type Identity = Parameters<NonNullable<ApplicationAdapter['reconcile']>>[0];
+  /** An adapter whose reconcile answer is scripted; every call's identity is captured. */
+  const scripted = (
+    answer: 'committed' | 'rejected' | 'unknown' | 'throw',
+    calls: Identity[] = []
+  ): ApplicationAdapter => ({
+    id: 'any-adapter',
+    authorize: () => true,
+    operations: {},
+    receipt: async () => ({}),
+    reconcile: async (identity) => {
+      calls.push(identity);
+      if (answer === 'throw') throw new Error('adapter down');
+      return { status: answer };
+    },
+  });
+  const state = async (
+    journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
+    operationId: string
+  ) => {
+    const found = await journal.findByOperation({ tenantId: 'owner', operationId, limit: 16 });
+    if (found.kind !== 'found') throw new Error('expected records');
+    return found.records.map(
+      (record) => `${record.revision}:${record.dispatched}:${record.terminal?.status ?? 'none'}`
+    );
+  };
+
+  it('committed resolves an in-doubt record as completed, bound to the original identity', async () => {
+    const calls: Identity[] = [];
+    const f = await fixture([scripted('committed', calls)]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-commit', 'in_doubt');
+    await expect(f.service.journalReconcileOperation('rec-commit', humanOperator)).resolves.toEqual(
+      { reconciled: 1, unresolved: 0, truncated: false }
+    );
+    expect(await state(f.journal, 'rec-commit')).toEqual(['3:true:completed']);
+    // The adapter saw exactly the record's identity — and no fingerprint or digest.
+    expect(calls).toEqual([
+      {
+        tenant: 'owner',
+        adapter: 'any-adapter',
+        resource: 'any-resource',
+        bindingGeneration: 'binding-1',
+        sessionIncarnation: 'a'.repeat(22),
+        operationId: 'rec-commit',
+      },
+    ]);
+    expect(JSON.stringify(calls)).not.toMatch(/digest|fingerprint/i);
+  }, 60_000);
+
+  it('rejected resolves as failed', async () => {
+    const f = await fixture([scripted('rejected')]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-reject', 'in_doubt');
+    await expect(f.service.journalReconcileOperation('rec-reject', humanOperator)).resolves.toEqual(
+      { reconciled: 1, unresolved: 0, truncated: false }
+    );
+    expect(await state(f.journal, 'rec-reject')).toEqual(['3:true:failed']);
+  }, 60_000);
+
+  it.each(['unknown', 'throw'] as const)(
+    'an adapter answer of %s changes nothing: the record stays in doubt and can still be settled',
+    async (answer) => {
+      const f = await fixture([scripted(answer)]);
+      cleanup.push(f.stop);
+      await seed(f.journal, `rec-${answer}`, 'in_doubt');
+      await expect(
+        f.service.journalReconcileOperation(`rec-${answer}`, humanOperator)
+      ).resolves.toEqual({ reconciled: 0, unresolved: 1, truncated: false });
+      expect(await state(f.journal, `rec-${answer}`)).toEqual(['2:true:none']);
+      await expect(
+        f.service.journalSettleOperation(`rec-${answer}`, humanOperator)
+      ).resolves.toEqual({ settled: 1, truncated: false });
+    },
+    60_000
+  );
+
+  it('an adapter without reconcile refuses typed and writes nothing (settle instead)', async () => {
+    const f = await fixture([
+      { id: 'any-adapter', authorize: () => true, operations: {}, receipt: async () => ({}) },
+    ]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-none', 'in_doubt');
+    await expect(
+      f.service.journalReconcileOperation('rec-none', humanOperator)
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(await state(f.journal, 'rec-none')).toEqual(['2:true:none']);
+  }, 60_000);
+
+  it('is operator-only: a tenant API key principal is refused before the adapter is asked', async () => {
+    const calls: Identity[] = [];
+    const f = await fixture([scripted('committed', calls)]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-auth', 'in_doubt');
+    await expect(
+      f.service.journalReconcileOperation('rec-auth', tenantApiKeyPrincipal)
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(calls).toEqual([]);
+    expect(await state(f.journal, 'rec-auth')).toEqual(['2:true:none']);
+  }, 60_000);
+
+  it('touches only in-doubt records: an undispatched sibling is left for close', async () => {
+    const f = await fixture([scripted('committed')]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-mixed', 'undispatched', 'a'.repeat(22));
+    await seed(f.journal, 'rec-mixed', 'in_doubt', 'b'.repeat(22));
+    await expect(f.service.journalReconcileOperation('rec-mixed', humanOperator)).resolves.toEqual({
+      reconciled: 1,
+      unresolved: 0,
+      truncated: false,
+    });
+    expect((await state(f.journal, 'rec-mixed')).sort()).toEqual([
+      '1:false:none',
+      '3:true:completed',
+    ]);
+    // With only the undispatched record actionable, reconcile has nothing to do.
+    await expect(
+      f.service.journalReconcileOperation('rec-mixed', humanOperator)
+    ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
+  }, 60_000);
+});
+
+describe('journal reconcile over HTTP (J3c part 2)', () => {
+  it('operator reconciles; a tenant API key is forbidden; an adapter without reconcile is 409', async () => {
+    const { seedAndBuild } = await import('./test-support/journal-recovery-http.js');
+    const adapter: ApplicationAdapter = {
+      id: 'a',
+      authorize: () => true,
+      operations: {},
+      receipt: async () => ({}),
+      reconcile: async () => ({ status: 'committed' }),
+    };
+    const {
+      server,
+      headers,
+      cleanup: done,
+    } = await seedAndBuild('in_doubt', 'http-rec', [adapter]);
+    try {
+      const url = '/v1/journal/operations/http-rec/reconcile';
+      const forbidden = await server.inject({ method: 'POST', url, headers: headers.apiKey });
+      expect(forbidden.statusCode).toBe(403);
+      const ok = await server.inject({ method: 'POST', url, headers: headers.operator });
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect(ok.json()).toEqual({ reconciled: 1, unresolved: 0, truncated: false });
+      // Resolved: the record left the actionable window.
+      const again = await server.inject({ method: 'POST', url, headers: headers.operator });
+      expect(again.statusCode).toBe(404);
+    } finally {
+      await done();
+    }
+
+    const bare = await seedAndBuild('in_doubt', 'http-rec-none', [
+      { id: 'a', authorize: () => true, operations: {}, receipt: async () => ({}) },
+    ]);
+    try {
+      const refused = await bare.server.inject({
+        method: 'POST',
+        url: '/v1/journal/operations/http-rec-none/reconcile',
+        headers: bare.headers.operator,
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().error.code).toBe('CONTROL_REQUIRED');
+    } finally {
+      await bare.cleanup();
+    }
   }, 120_000);
 });

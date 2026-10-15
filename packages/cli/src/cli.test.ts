@@ -2014,6 +2014,39 @@ describe('AgentBrowser CLI', () => {
       expect(sessions.applicationExecute).not.toHaveBeenCalled();
     });
 
+    it('forwards a supersedes link only when both halves are given (J3c part 2)', async () => {
+      sessions.applicationExecute.mockClear();
+      expect(
+        await run(
+          '--operation-id',
+          'continuation-1',
+          'application',
+          'execute',
+          'ses_1',
+          'add',
+          '1',
+          '--supersedes',
+          'closed-op',
+          '--supersedes-namespace',
+          'agentbrowser'
+        )
+      ).toBe(0);
+      expect(sessions.applicationExecute).toHaveBeenCalledWith('ses_1', {
+        operation: 'add',
+        input: 1,
+        operationId: 'continuation-1',
+        supersedes: { namespace: 'agentbrowser', operationId: 'closed-op' },
+      });
+      for (const half of [
+        ['--supersedes', 'closed-op'],
+        ['--supersedes-namespace', 'agentbrowser'],
+      ]) {
+        sessions.applicationExecute.mockClear();
+        expect(await run('application', 'execute', 'ses_1', 'add', '1', ...half)).not.toBe(0);
+        expect(sessions.applicationExecute).not.toHaveBeenCalled();
+      }
+    });
+
     it('renders rejections, replays, and defaults input to null', async () => {
       sessions.applicationExecute = vi
         .fn()

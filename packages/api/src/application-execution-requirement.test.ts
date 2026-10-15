@@ -187,3 +187,39 @@ describe('service-level execution requirement (J-a review)', () => {
     }
   });
 });
+
+it('a continuation may carry supersedes: valid links commit, malformed ones are refused before execution (J3c part 2)', async () => {
+  const { server, state } = await buildApplicationServer();
+  try {
+    const { path, token } = await bindAndDelegate(server);
+    const execute = (payload: Record<string, unknown>) =>
+      server.inject({
+        method: 'POST',
+        url: `${path}/application/execute`,
+        headers: agentHeaders(token),
+        payload,
+      });
+    const base = { operation: 'add', input: 1, operationId: 'continuation-1', expectedVersion: 0 };
+    const linked = await execute({
+      ...base,
+      supersedes: { namespace: 'agentbrowser', operationId: 'closed-op' },
+    });
+    expect(linked.statusCode, linked.body).toBe(200);
+    expect(linked.json()).toMatchObject({ status: 'committed' });
+    // Metadata only: the same operation without the link is the same identity — a replay.
+    expect((await execute(base)).json()).toMatchObject({ replay: true });
+    expect(state.total).toBe(1);
+    for (const supersedes of [
+      { namespace: 'agentbrowser', operationId: 'bad id' },
+      { namespace: 'agentbrowser', operationId: 'closed-op', extra: 1 },
+      { operationId: 'closed-op' },
+      'closed-op',
+    ]) {
+      const refused = await execute({ ...base, operationId: 'continuation-2', supersedes });
+      expect(refused.statusCode).toBe(400);
+    }
+    expect(state.total).toBe(1);
+  } finally {
+    await server.close();
+  }
+});

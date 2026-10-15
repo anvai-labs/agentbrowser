@@ -159,6 +159,21 @@ export interface ApplicationAdapter {
   authorize(scope: { tenant: string; resource: string }): boolean;
   readonly operations: Readonly<Record<string, ApplicationOperation>>;
   receipt(scope: ApplicationScope, operationId: string): Promise<unknown>;
+  /**
+   * T5 J3c part 2 (D3, accepted design): resolve an in-doubt durable write's true outcome from
+   * the adapter's own records. OPT-IN — an adapter that cannot answer for a specific departed
+   * operation does not implement this. The identity carries NO fingerprint: binding is by
+   * tenant, adapter/resource/binding generation, session incarnation and operation ID, so a
+   * later operation that reused the ID can never satisfy it. 'unknown' changes nothing.
+   */
+  reconcile?(identity: {
+    tenant: string;
+    adapter: string;
+    resource: string;
+    bindingGeneration: string;
+    sessionIncarnation: string;
+    operationId: string;
+  }): Promise<{ status: 'committed' | 'rejected' | 'unknown' }>;
 }
 export interface ApplicationBinding {
   adapter: string;
@@ -172,6 +187,8 @@ export interface ApplicationRequest {
   approvalToken?: string | undefined;
   /** C4b: 'ephemeral' (the default) is dropped at normalization; only 'durable' is carried. */
   executionRequirement?: 'ephemeral' | 'durable' | undefined;
+  /** T5 J3c part 2: provenance link to the closed operation this one replaces; metadata only. */
+  supersedes?: { namespace: string; operationId: string } | undefined;
 }
 
 export interface PreparedApplicationOperationReview {
@@ -216,6 +233,7 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
       'expectedVersion',
       'approvalToken',
       'executionRequirement',
+      'supersedes',
     ];
     if (
       Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !allowed.includes(key)) ||
@@ -253,6 +271,26 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
           approvalToken.length > 128))
     )
       throw new Error();
+    // J3c part 2: the supersedes link is bounded caller data (a namespace and an operation ID),
+    // snapshotted like the rest; it is metadata and never part of the operation identity.
+    const supersedesRaw: unknown = own.supersedes?.value;
+    let supersedes: { namespace: string; operationId: string } | undefined;
+    if (supersedesRaw !== undefined) {
+      if (
+        !supersedesRaw ||
+        typeof supersedesRaw !== 'object' ||
+        Array.isArray(supersedesRaw) ||
+        Object.keys(supersedesRaw as Record<string, unknown>).length !== 2 ||
+        typeof (supersedesRaw as Record<string, unknown>).namespace !== 'string' ||
+        ((supersedesRaw as Record<string, unknown>).namespace as string).length < 1 ||
+        ((supersedesRaw as Record<string, unknown>).namespace as string).length > 128 ||
+        !CONTROL_OPERATION_ID.test(
+          String((supersedesRaw as Record<string, unknown>).operationId ?? '')
+        )
+      )
+        throw new Error();
+      supersedes = supersedesRaw as { namespace: string; operationId: string };
+    }
     const input = snapshotReadData(own.input.value);
     const serialized = canonicalJson(input);
     return {
@@ -263,6 +301,7 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
         ...(expectedVersion !== undefined ? { expectedVersion } : {}),
         ...(approvalToken !== undefined ? { approvalToken } : {}),
         ...(executionRequirement === 'durable' ? { executionRequirement } : {}),
+        ...(supersedes !== undefined ? { supersedes } : {}),
       }),
       serialized,
     };
@@ -535,6 +574,7 @@ export class ApplicationAuthority {
         ...(request.executionRequirement === 'durable'
           ? { executionRequirement: request.executionRequirement }
           : {}),
+        ...(request.supersedes !== undefined ? { supersedes: request.supersedes } : {}),
         input: request.input,
       }) as Readonly<Record<string, unknown>>;
       canonicalJson(action);
