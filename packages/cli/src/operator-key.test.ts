@@ -259,4 +259,43 @@ describe('session cookie-handoff relay (TD-BROWSER-16 phase 7)', () => {
     expect(text).toContain('operator approve ses_1 tok_9');
     expect(text).not.toContain('value');
   });
+
+  it('--json relay emits exactly the enumerated approval fields (review R2 pin)', async () => {
+    const lines: string[] = [];
+    const cookieHandoff = vi.fn().mockRejectedValue({
+      code: 'APPROVAL_REQUIRED',
+      message: 'needs an operator decision',
+      retryable: false,
+      details: {
+        tokenId: 'tok_9',
+        kind: 'cookie.handoff',
+        domains: ['example.com'],
+        counts: { cookies: 1, 'example.com': 1 },
+        // A value-shaped field the relay must NEVER carry, even if a future
+        // server adds it to the details.
+        cookies: [{ name: 'sid', value: 'operator-secret' }],
+      },
+    });
+    process.argv = [
+      'node',
+      'agentbrowser',
+      '--json',
+      'session',
+      'cookie-handoff',
+      'ses_1',
+      '--domain',
+      'example.com',
+    ];
+    const cli = buildCli({
+      createClient: () => ({ sessions: { cookieHandoff } }) as unknown as CliClient,
+      out: (line) => lines.push(line),
+      err: () => undefined,
+    });
+    await cli.run(process.argv.slice(2));
+    const relay = JSON.parse(lines[0] ?? '{}') as Record<string, unknown>;
+    expect(Object.keys(relay).sort()).toEqual(
+      ['approvalRequired', 'counts', 'domains', 'kind', 'sessionId', 'tokenId'].sort()
+    );
+    expect(JSON.stringify(relay)).not.toContain('operator-secret');
+  });
 });
