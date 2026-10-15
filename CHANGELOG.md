@@ -22,6 +22,53 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Known for J-d: the journal intent still labels every live fingerprint
   `application-operation:v1`; it must carry the durable domain once durable writes run.
 
+### Added — the journal gates run on macOS (T5 J-f)
+
+- `.github/workflows/journal-darwin.yml` runs the journal manager/child/adapter qualification and
+  the packaging gate (package the server for the runner's target, then prove the extracted
+  candidate resolves the storage child) on `macos-15`, nightly on the default branch (`main`) and
+  on pull requests that touch journal code or its dependencies (including `.tool-versions`, which
+  pins Node and its SQLite). It is deliberately not a required check: it is path-filtered on pull requests,
+  and a path-filtered required check would strand unrelated ones (the T9 packet's invariant now
+  says so).
+
+### Added — autofill qualified against the real react-select (T6 W1)
+
+- The `react-select` and `chip-multiselect` strategies are now tested against react-select 5.10.2
+  on React 19.3.0 in real Chromium, not only markup that imitates it. The app reports its own
+  committed state, which must show the exact option (`Chicago`, not `Chicago Heights`) and no form
+  submission. The qualification uses react-select's `classNamePrefix: 'select'`: the strategies
+  read the committed selection from `select__*` class names (see `docs/bulk-autofill.md`), and on
+  react-select's default generated class names they fail closed rather than verify. The libraries
+  are pinned test-only devDependencies of `@agentbrowser/api`; the shipped tarball and production
+  dependencies are unchanged.
+
+### Changed — `option.value` cannot contain a line break
+
+- An autofill `option.value` with `\n` or `\r` is refused (`INVALID_REQUEST`) before dispatch, for
+  every strategy: the custom strategies type the option text, and a typed line break is an Enter
+  keypress that could commit an unintended option or submit the form (native selects never type,
+  and no real option label contains one). It is refused rather than escaped; other control
+  characters are typed literally and stay allowed.
+
+### Added — a committed observation-overhead benchmark (F1)
+
+- `node packages/benchmarks/dist/run.js observe [n]` observes a 120-element fixture (40 text, 40
+  password, 40 buttons) through the service on real Chromium and prints latency (mean/p50/p95/max);
+  it fails unless all 40 password fields are observed redacted and no password value appears.
+  A baseline snapshot is recorded in `docs/spec/evidence/observation-120-baseline.md`; runs drift
+  ~18% between sessions on the same host, so comparisons (F2) must interleave both builds in one
+  session.
+
+### Added — journal time never moves backwards within a process (T5 J-c)
+
+- The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
+  and retention horizons) use `max(startWall + monotonicElapsed, wallNow, previousReading)`, so a
+  backward wall-clock step mid-process can no longer extend a horizon; they can only become
+  stricter. Everything that persists or deletes (the high-water, namespace retirement, the reopen
+  rollback check) still uses the plain wall reading, so no persisted value derives from the
+  monotonic source and restart behaviour is unchanged.
+
 ### Added — output schemas for the last six MCP tools (T0 M2, part 2)
 
 - `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
