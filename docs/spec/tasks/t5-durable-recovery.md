@@ -73,7 +73,18 @@ loads the concrete ownership/anchor/crash/runtime gates.
 [J2b.1 owner/anchor evidence](../evidence/t5-journal-sqlite-owner.md) records the first
 storage primitive; the raw adapter, bounded child manager and all qualification gates
 are shipped; remaining: F3 authorization, C4b selection, and optional
-constrained-mount depth. J3/J4 remain proposed; their refined design (operator-only historical lookup, continuation of undispatched records only, typed adapter reconciliation, history namespaces, the non-business write classification and browser-operation durability) awaits the owner's sign-off in [J-design](../design/t5-recovery-design.md). A macOS leg (`journal-darwin.yml`, 2026-10-15)
+constrained-mount depth.
+J3/J4 are not built yet. Their refined design was accepted by the owner on 2026-10-15
+([J-design](../design/t5-recovery-design.md)). It covers:
+- historical lookup for the ADR-025 operator or a tenant API key, read-only;
+- writes for the ADR-025 operator only;
+- continuation of undispatched records only;
+- typed adapter reconciliation;
+- history namespaces;
+- the non-business write classification;
+- browser-operation classification.
+
+A macOS leg (`journal-darwin.yml`, 2026-10-15)
 runs the same qualification and packaging gates nightly on main and on journal-path pull requests.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
