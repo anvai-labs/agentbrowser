@@ -74,6 +74,7 @@ describe('GET /v1/policy', () => {
       'cookie.seed',
       'cookie.export',
       'session.headed',
+      'cookie.handoff',
     ]);
     expect(body.capabilities.downloads?.allowed).toBe(true);
   });

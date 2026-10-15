@@ -5050,8 +5050,28 @@
               }
             }
           },
+          "400": {
+            "description": "A typed LOGIN_* refusal: profile mode, display, binary pin, or hosted deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5092,8 +5112,28 @@
               }
             }
           },
+          "400": {
+            "description": "A typed LOGIN_* refusal (the browser is already closed).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5120,7 +5160,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The profile was deleted.",
+            "description": "The login profile deleted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5130,6 +5170,16 @@
                       "type": "boolean"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A typed LOGIN_* refusal (the browser is open — close it before resetting).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5186,6 +5236,16 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A typed LOGIN_* refusal (a closed browser, or the read exceeding the cookie bound).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5287,7 +5347,7 @@
                 "properties": {
                   "action": {
                     "type": "string",
-                    "description": "One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed."
+                    "description": "One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed, cookie.handoff (whose context carries the domain)."
                   },
                   "target": {
                     "type": "string",

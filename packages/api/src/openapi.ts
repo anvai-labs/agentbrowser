@@ -1524,7 +1524,13 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description: 'The login browser opened.',
               content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
             },
+            '400': errorResponse(
+              'A typed LOGIN_* refusal: profile mode, display, binary pin, or hosted deployment.'
+            ),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
+            ),
           },
         },
       },
@@ -1540,7 +1546,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description: 'The login browser closed.',
               content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
             },
+            '400': errorResponse('A typed LOGIN_* refusal (the browser is already closed).'),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
+            ),
           },
         },
       },
@@ -1554,9 +1564,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           security: [{ bearerAuth: [] }],
           responses: {
             '200': {
-              description: 'The profile was deleted.',
+              description: 'The login profile deleted.',
               content: json({ type: 'object', properties: { reset: { type: 'boolean' } } }),
             },
+            '400': errorResponse(
+              'A typed LOGIN_* refusal (the browser is open — close it before resetting).'
+            ),
             '403': errorResponse('A human-operator key is required.'),
           },
         },
@@ -1586,6 +1599,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 },
               }),
             },
+            '400': errorResponse(
+              'A typed LOGIN_* refusal (a closed browser, or the read exceeding the cookie bound).'
+            ),
             '403': errorResponse('A human-operator key is required.'),
           },
         },
@@ -1649,7 +1665,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 action: {
                   type: 'string',
                   description:
-                    'One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed.',
+                    'One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed, cookie.handoff (whose context carries the domain).',
                 },
                 target: {
                   type: 'string',

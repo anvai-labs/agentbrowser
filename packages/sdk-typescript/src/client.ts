@@ -15,6 +15,7 @@ import {
   SELF_ADMITTING_ROUTE_SEGMENTS,
   type SnapshotControl,
   validateApplicationReview,
+  validateCookieHandoffRequest,
   validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 /**
@@ -33,6 +34,7 @@ import type {
   AutofillReport,
   AutofillRequest,
   ControlView,
+  CookieHandoffRequest,
   DELIVERED_ACTION_TYPES,
   OperationRecord,
   RunCursor,
@@ -400,6 +402,15 @@ function approvalViewParser(tokenId: string): (input: unknown) => OperatorApprov
 /**
  * Sessions API client
  */
+/** TD-BROWSER-16 (ADR-025 s3): the completed cookie handoff — counts only, never values. */
+export interface CookieHandoffResult {
+  sessionId: string;
+  credentialSource: 'operator';
+  domains: string[];
+  counts: Record<string, number>;
+  lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
+}
+
 export class SessionsClient {
   constructor(private readonly http: HttpClient) {}
 
@@ -666,6 +677,36 @@ export class SessionsClient {
       ...(typeof body.oldestSeq === 'number' ? { oldestSeq: body.oldestSeq } : {}),
       ...(typeof body.gap === 'boolean' ? { gap: body.gap } : {}),
     };
+  }
+
+  /**
+   * TD-BROWSER-16 (ADR-025 s3): hand the operator's login cookies for the
+   * given domains into this session. Without a decided approval token the
+   * server refuses with APPROVAL_REQUIRED whose details carry
+   * { tokenId, kind: 'cookie.handoff', sessionId, domains, counts } — relay
+   * those to the operator, then retry with the token. Counts are numbers
+   * only; values and cookie names never cross this boundary.
+   */
+  async cookieHandoff(
+    sessionId: string,
+    request: CookieHandoffRequest,
+    options: MutationOptions = {}
+  ): Promise<CookieHandoffResult> {
+    const checked = validateCookieHandoffRequest(request);
+    if (!checked.ok) {
+      throw new AgentBrowserError(
+        'INVALID_REQUEST',
+        `Invalid handoff request: ${checked.issues
+          .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+          .join('; ')}`,
+        false
+      );
+    }
+    return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/cookies/handoff`, {
+      method: 'POST',
+      body: checked.value,
+      ...options,
+    });
   }
 
   /** Structured native form filling; choose an operation ID before dispatch. */

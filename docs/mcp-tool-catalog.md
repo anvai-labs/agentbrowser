@@ -10,15 +10,16 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `034f60965d9db910bce16c8631a0eaaf8df69d90e7dce9ae4294c42e53a0d75e`
+Catalog SHA-256 (complete descriptions and schemas): `15a8a1c0891fe4bf89dc6044fe22eb4457e6fa00c9d9cf6ba111497b17398cf7`
 
-## unbound/qa (18 tools; 49786 result bytes)
+## unbound/qa (19 tools; 50501 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | text JSON | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
 | `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
@@ -56,13 +57,14 @@ Catalog SHA-256 (complete descriptions and schemas): `034f60965d9db910bce16c8631
 | `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/operations (18 tools; 49786 result bytes)
+## unbound/operations (19 tools; 50501 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | text JSON | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
 | `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
@@ -100,12 +102,13 @@ Catalog SHA-256 (complete descriptions and schemas): `034f60965d9db910bce16c8631
 | `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (17 tools; 44917 result bytes)
+## unbound/audit (18 tools; 45632 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `close` | sessionId | text JSON | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
 | `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
@@ -142,13 +145,14 @@ Catalog SHA-256 (complete descriptions and schemas): `034f60965d9db910bce16c8631
 | `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (18 tools; 49786 result bytes)
+## unbound/appsec (19 tools; 50501 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | text JSON | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
 | `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
@@ -186,13 +190,14 @@ Catalog SHA-256 (complete descriptions and schemas): `034f60965d9db910bce16c8631
 | `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (18 tools; 49786 result bytes)
+## unbound/bounty (19 tools; 50501 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | text JSON | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
 | `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
@@ -230,13 +235,14 @@ Catalog SHA-256 (complete descriptions and schemas): `034f60965d9db910bce16c8631
 | `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (18 tools; 49786 result bytes)
+## unbound/forms (19 tools; 50501 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | text JSON | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
 | `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |

@@ -7,6 +7,36 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
+
+- **Protocol**: the `session.credential` capability joins the closed vocabulary and flows into
+  every browser profile (profiles derive by filtering it); the application mode stays fenced out.
+  Profile revision stays 1 — capabilities only grew.
+- **MCP**: a `cookie_handoff` tool (optional `approvalToken`) gated on `session.credential`,
+  dropped for bound sessions (a bound session is never a handoff target). Its handler catches
+  `APPROVAL_REQUIRED` itself and returns a structured relay result — token id, domains, counts —
+  so the agent can forward it to the operator without the error-details allowlist changing.
+  Catalog regenerated; release-smoke pins the tool in the unbound list only.
+- **SDK**: `client.sessions.cookieHandoff(sessionId, { domains, approvalToken? })` returning
+  `{ sessionId, credentialSource, domains, counts, lease? }`; the APPROVAL_REQUIRED details ride
+  `AgentBrowserError.details` unchanged.
+- **CLI**: `session cookie-handoff <id> --domain <d>… [--approval-token]` (prints the approval to
+  relay — token, domains, counts, never values); `operator login-browser open|close|reset`; and
+  `operator approve <session> <token> [--lease hosts=…,minutes=…,actions=…]` which parses the
+  lease and posts the decision (only a cookie.handoff approval may carry one, server-enforced).
+  The operator key resolves from `--operator-key-file` or a no-echo prompt — never env.
+- **Policy**: `GET /v1/policy` gains a `cookie.handoff` entry answering the DEFAULT decision
+  (the sentinel-domain ask); the per-domain answer is a conditional question — `POST
+  /v1/policy/check` with `action: cookie.handoff` and the domain as `target` (never resolved;
+  bare suffixes refuse exactly as the handoff floor does).
+- **Docs**: the new guide **Use your login safely** (threat boundary first: the agent must not
+  share the operator's OS user; the profile is file-permissions-only and must stay out of synced
+  paths; session cookies drop at close — then the loop, leases, guarantees and residuals, one-time
+  copy); a threat-model row plus the accepted ADR-025 residuals; the three login-browser
+  variables documented in operations.md as trusted operator configuration. The four operator
+  login routes' OpenAPI now documents their typed 400/409 refusals (a phase-4 carried item).
+
+### Added — the cookie handoff (TD-BROWSER-16 phase 6, ADR-025 §3)
 ### Added — the cookie handoff (TD-BROWSER-16 phase 6, ADR-025 §3)
 
 - **`POST /v1/sessions/{sessionId}/cookies/handoff`** `{ domains, approvalToken? }`, under one
