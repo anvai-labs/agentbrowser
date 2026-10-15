@@ -117,3 +117,34 @@ A full namespace or store refuses durable work, or startup; it never evicts.
   public durability are J4. Both are proposed and await the J-design document.
 - Automatic namespace rotation (today: the operator configures a new name and horizon).
 - Process-loss rows with the store wired through the service (J-e).
+
+## J-e: process loss through the service (2026-10-15)
+
+`packages/api/src/journal-process-loss.test.ts` runs the compiled service in a child process,
+with the real SQLite journal and an application whose effect appends to an fsynced counter file.
+The child is **SIGKILLed** at each boundary of one durable write. The oracles are the store's
+`journal_record` rows (read-only) and the counter.
+
+| Killed | Stored record | Effects | Classification |
+| --- | --- | ---: | --- |
+| before the intent | none | 0 | `scoped_absent` |
+| after the dispatch marker, before the effect | rev 2, dispatched, no terminal | 0 | in doubt |
+| after the effect, before the terminal | rev 2, dispatched, no terminal | **1** | in doubt |
+| after the terminal, before the response | rev 3, `completed` | 1 | completed |
+| not killed | rev 3, `completed` | 1 | completed |
+
+- **After every kill,** a new process (no initialize) reopens the **same** namespace. The dead
+  owner's fence is cleared by the store's exclusive lock, so this works.
+- **Reopening replays nothing:** rows and the effect count are unchanged. The effect never runs
+  twice.
+- **"Before the intent" and "after the marker" both leave no effect.** They are distinguished by
+  the store: absent versus in doubt.
+- **Keys:** replacing the key material under the same key id (key loss), or keeping the material
+  under a new key id for the same namespace (rotation in place), refuses startup as a
+  `configuration` mismatch. No key material appears in the error, and the namespace and its rows
+  are untouched. Rotation is done by configuring a new namespace.
+- **Stability:** three consecutive runs pass, 7/7 each.
+
+Still not covered here (J4): a cursor from before a restart failing as session-not-found, and the
+operator classification surface (J3).
+
