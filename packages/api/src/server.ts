@@ -8,7 +8,12 @@ import {
   type OperatorCdpAdmissionOptions,
   requireCdpAttachAdmission,
 } from './floor.js';
-import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
+import {
+  journalConfigFromEnvironment,
+  journalRuntimeQualified,
+  openServiceJournal,
+  SERVICE_JOURNAL_RETAIN_MS,
+} from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
@@ -21,7 +26,11 @@ import type { SessionPrincipal } from './session-authority.js';
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
+import type {
+  JournalFindOutcome,
+  TrustedEvidenceSourceRegistry,
+  TrustedVerifierRegistry,
+} from '@agentbrowser/control';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -31,6 +40,7 @@ import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
   CONTROL_OPERATION_ID,
+  classifyJournalRecord,
   DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
@@ -959,6 +969,180 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         (request as FastifyRequest & { tenant?: string }).tenant;
 
       // ------------------------------------------------------------------
+      // T5 J3b (accepted J-design, D1 amended + D5): read-only journal
+      // surfaces. Readable by a tenant API key or the operator key,
+      // tenant-scoped; delegated agent grants are refused (no session-bound
+      // route), and writes do not exist here (J3c, operator-only). Keyless
+      // deployments have no surface: no credential names a tenant.
+      // ------------------------------------------------------------------
+      const journalLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
+      const journalRefusal = (
+        reply: FastifyReply,
+        code: string,
+        message: string,
+        status: number,
+        retryable = false
+      ) => reply.code(status).send({ error: { code, message, retryable } });
+
+      v1.get(
+        '/journal',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (!principal)
+            return journalRefusal(
+              reply,
+              'UNAUTHORIZED',
+              'A valid bearer credential is required',
+              401
+            );
+          if (!journalLimiter.take(principal.tenant))
+            return journalRefusal(
+              reply,
+              'RATE_LIMITED',
+              'Journal lookup rate limit exceeded',
+              429,
+              true
+            );
+          const acceptUntil = journalConfig
+            ? new Date(journalConfig.acceptUntil).toISOString()
+            : undefined;
+          const retainUntil = journalConfig
+            ? new Date(journalConfig.acceptUntil + SERVICE_JOURNAL_RETAIN_MS).toISOString()
+            : undefined;
+          const health = serviceJournal?.journal.health;
+          const qualified = journalRuntimeQualified();
+          return {
+            schemaVersion: 1 as const,
+            configured: journalConfig !== undefined,
+            ...(journalConfig ? { namespace: journalConfig.namespaceId } : {}),
+            ...(health !== undefined ? { health } : {}),
+            ...(acceptUntil !== undefined ? { acceptUntil } : {}),
+            ...(retainUntil !== undefined ? { retainUntil } : {}),
+            runtime: {
+              platform: process.platform,
+              node: process.versions.node,
+              qualified,
+            },
+            recoveryQualified: qualified && health === 'open',
+          };
+        }
+      );
+
+      v1.get(
+        '/journal/operations/:operationId',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (!principal)
+            return journalRefusal(
+              reply,
+              'UNAUTHORIZED',
+              'A valid bearer credential is required',
+              401
+            );
+          if (!journalLimiter.take(principal.tenant))
+            return journalRefusal(
+              reply,
+              'RATE_LIMITED',
+              'Journal lookup rate limit exceeded',
+              429,
+              true
+            );
+          const { operationId } = request.params as { operationId: string };
+          if (!CONTROL_OPERATION_ID.test(operationId))
+            return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
+          if (!serviceJournal) {
+            if (journalConfig)
+              // Configured but not open (for example a passed accept horizon): records may exist
+              // and be unreachable — history is unread, not absent.
+              return journalRefusal(
+                reply,
+                'JOURNAL_UNAVAILABLE',
+                'The journal is configured but not open on this deployment; history is unread, not absent',
+                503,
+                true
+              );
+            return journalRefusal(
+              reply,
+              'JOURNAL_NOT_CONFIGURED',
+              'No durable journal is configured on this deployment',
+              404
+            );
+          }
+          const tenant = principal.tenant;
+          // Keyless deployments authenticate nobody; a credential without a tenant scopes nothing.
+          if (tenant === undefined)
+            return journalRefusal(
+              reply,
+              'FORBIDDEN',
+              'Journal history is tenant-scoped; this credential names no tenant',
+              403
+            );
+          const journal = serviceJournal.journal;
+          let outcome: JournalFindOutcome;
+          try {
+            outcome = await journal.findByOperation({
+              tenantId: tenant,
+              operationId,
+              limit: 16,
+            });
+          } catch {
+            return journalRefusal(
+              reply,
+              'JOURNAL_UNAVAILABLE',
+              'The journal could not answer; treat the history as unread, not absent',
+              503,
+              true
+            );
+          }
+          if (outcome.kind !== 'found') {
+            const reason =
+              outcome.kind === 'definitely_not_read'
+                ? outcome.reason
+                : outcome.kind === 'uncertain'
+                  ? outcome.reason
+                  : 'unavailable';
+            return journalRefusal(
+              reply,
+              'JOURNAL_UNAVAILABLE',
+              `The journal refused this lookup (${reason}); treat the history as unread, not absent`,
+              503,
+              true
+            );
+          }
+          // Projection: only derived classification, application identity and the departed
+          // session's opaque identity cross the wire. Fingerprints, digests, actors, inputs and
+          // evidence content never do.
+          const records = outcome.records.map((record) => ({
+            namespace: record.namespaceId,
+            ...classifyJournalRecord(record),
+            application: {
+              adapter: record.identity.application?.adapterId ?? '',
+              resource: record.identity.application?.resourceId ?? '',
+              bindingGeneration: record.identity.application?.bindingGeneration ?? '',
+            },
+            session: {
+              sessionIncarnation: record.identity.key.sessionIncarnation,
+              epoch: record.identity.key.epoch,
+            },
+          }));
+          return {
+            schemaVersion: 1 as const,
+            operationId,
+            absent: records.length === 0 && !outcome.truncated,
+            truncated: outcome.truncated,
+            records,
+          };
+        }
+      );
+
+      // ------------------------------------------------------------------
       // TD-BROWSER-15 phase 5: the policy query surface. Answers by
       // enumeration, never by resolution; bounded per tenant.
       // ------------------------------------------------------------------
@@ -998,49 +1182,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       };
 
       // ------------------------------------------------------------------
-      // T5 J3c part 1: the operator-only recovery WRITES (D2 close, D3 settle).
-      // Self-contained until J3b's read routes land: own refusal helper and limiter.
+      // T5 J3c part 1: the operator-only recovery WRITES (D2 close, D3 settle),
+      // sharing J3b's journal refusal helper and rate limiter.
       // ------------------------------------------------------------------
-      const recoveryLimiter = new TokenBucketLimiter({
-        capacity: 30,
-        refillPerInterval: 30,
-        intervalMs: 60_000,
-        maxTenants: 4096,
-      });
-      const recoveryRefusal = (
-        reply: FastifyReply,
-        code: string,
-        message: string,
-        status: number,
-        retryable = false
-      ) => reply.code(status).send({ error: { code, message, retryable } });
       const recoveryWrite = (request: FastifyRequest, reply: FastifyReply) => {
         const principal = principals.get(request);
         if (!principal)
-          return recoveryRefusal(
-            reply,
-            'UNAUTHORIZED',
-            'A valid bearer credential is required',
-            401
-          );
+          return journalRefusal(reply, 'UNAUTHORIZED', 'A valid bearer credential is required', 401);
         // D1 as amended: writes are the ADR-025 operator principal only. A tenant API key
         // authenticates as actor 'operator' and the /v1 hook admits it on any route; the
         // service refuses it — the accepted design's named implementation hazard.
         if (principal.actor !== 'human-operator')
-          return recoveryRefusal(
+          return journalRefusal(
             reply,
             'FORBIDDEN',
             'Journal recovery writes require the operator key; a tenant API key may only read',
             403
           );
-        if (!recoveryLimiter.take(principal.tenant))
-          return recoveryRefusal(
-            reply,
-            'RATE_LIMITED',
-            'Journal recovery rate limit exceeded',
-            429,
-            true
-          );
+        if (!journalLimiter.take(principal.tenant))
+          return journalRefusal(reply, 'RATE_LIMITED', 'Journal lookup rate limit exceeded', 429, true);
         return undefined;
       };
       const recoveryOperation = async (
@@ -1051,14 +1211,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (recoveryWrite(request, reply)) return reply;
         const { operationId } = request.params as { operationId: string };
         if (!CONTROL_OPERATION_ID.test(operationId))
-          return recoveryRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
+          return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
         try {
           return await run();
         } catch (error) {
           const code = (error as { code?: string }).code;
           const status = code === 'NOT_FOUND' ? 404 : code === 'OPERATION_CONFLICT' ? 409 : 503;
           if (status !== 503 || code === 'JOURNAL_UNAVAILABLE')
-            return recoveryRefusal(
+            return journalRefusal(
               reply,
               code ?? 'INTERNAL',
               (error as Error).message,

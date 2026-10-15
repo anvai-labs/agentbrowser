@@ -5333,11 +5333,11 @@
         }
       }
     },
-    "/v1/journal/operations/{operationId}/close": {
-      "post": {
-        "operationId": "closeJournalOperation",
-        "summary": "Close every undispatched record of an operation as a marked pre-dispatch failure",
-        "description": "T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.",
+    "/v1/journal": {
+      "get": {
+        "operationId": "getJournalStatus",
+        "summary": "The durable journal: configuration, health and qualified runtime",
+        "description": "T5 J3b (accepted J-design, D5). Read-only; a tenant API key or the operator key may call it. recoveryQualified is advisory (no exactly-once promise): true only when the journal is configured and open on the qualified matrix (Node 24 on Linux or macOS). Keyless deployments authenticate nobody and get 401. Rate limited per tenant.",
         "tags": [
           "journal"
         ],
@@ -5346,48 +5346,74 @@
             "bearerAuth": []
           }
         ],
-        "parameters": [
-          {
-            "name": "operationId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_-]{1,128}$"
-            }
-          }
-        ],
         "responses": {
           "200": {
-            "description": "How many records were closed (of the first 16 that matched).",
+            "description": "The journal status.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "required": [
-                    "closed",
-                    "truncated"
+                    "schemaVersion",
+                    "configured",
+                    "runtime",
+                    "recoveryQualified"
                   ],
                   "properties": {
-                    "closed": {
+                    "schemaVersion": {
                       "type": "integer",
-                      "minimum": 0
+                      "const": 1
                     },
-                    "truncated": {
+                    "configured": {
                       "type": "boolean",
-                      "description": "More than 16 records matched; act again for the rest."
+                      "description": "Whether AGENTBROWSER_JOURNAL_* configured a journal."
+                    },
+                    "namespace": {
+                      "type": "string",
+                      "description": "The configured namespace id."
+                    },
+                    "health": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "quarantined",
+                        "poisoned",
+                        "closed"
+                      ],
+                      "description": "The opened journal handle health, when it is open."
+                    },
+                    "acceptUntil": {
+                      "type": "string",
+                      "description": "ISO-8601: new durable intents are accepted until this instant."
+                    },
+                    "retainUntil": {
+                      "type": "string",
+                      "description": "ISO-8601: records are retained until this instant."
+                    },
+                    "runtime": {
+                      "type": "object",
+                      "required": [
+                        "platform",
+                        "node",
+                        "qualified"
+                      ],
+                      "properties": {
+                        "platform": {
+                          "type": "string"
+                        },
+                        "node": {
+                          "type": "string"
+                        },
+                        "qualified": {
+                          "type": "boolean",
+                          "description": "This runtime is in the qualified matrix."
+                        }
+                      }
+                    },
+                    "recoveryQualified": {
+                      "type": "boolean"
                     }
                   }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid operation ID.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5402,48 +5428,8 @@
               }
             }
           },
-          "403": {
-            "description": "Journal recovery writes require the operator key.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No record of this operation in the searched namespace.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The operation already has a terminal record or is dispatched.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "429": {
-            "description": "Journal recovery rate limit exceeded.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "No open durable journal, or the journal refused the write.",
+            "description": "Journal lookup rate limit exceeded.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5455,11 +5441,11 @@
         }
       }
     },
-    "/v1/journal/operations/{operationId}/settle": {
-      "post": {
-        "operationId": "settleJournalOperation",
-        "summary": "Settle every in-doubt record of an operation as terminal unknown (irreversible)",
-        "description": "T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Legal only on dispatched revision-2 records without a terminal. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.",
+    "/v1/journal/operations/{operationId}": {
+      "get": {
+        "operationId": "lookupJournalOperation",
+        "summary": "Historical records of one durable operation, tenant-scoped and read-only",
+        "description": "T5 J3b (accepted J-design, D1 amended). Every stored record of the operation ID in the configured namespace, projected to classification, application identity and the departed session's opaque identity; fingerprints, digests, actors, inputs and evidence content never cross the wire. Readable by a tenant API key or the operator key, scoped to the credential's tenant; delegated grants are refused; writes do not exist here (J3c). An absent result is scoped absence in this namespace, never proof of non-execution. Rate limited per tenant.",
         "tags": [
           "journal"
         ],
@@ -5475,29 +5461,109 @@
             "required": true,
             "schema": {
               "type": "string",
-              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "How many records were settled (of the first 16 that matched).",
+            "description": "The bounded record list (at most 16).",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "required": [
-                    "settled",
-                    "truncated"
+                    "schemaVersion",
+                    "operationId",
+                    "absent",
+                    "truncated",
+                    "records"
                   ],
                   "properties": {
-                    "settled": {
+                    "schemaVersion": {
                       "type": "integer",
-                      "minimum": 0
+                      "const": 1
+                    },
+                    "operationId": {
+                      "type": "string"
+                    },
+                    "absent": {
+                      "type": "boolean",
+                      "description": "No record matched in the searched namespace; not proof of non-execution."
                     },
                     "truncated": {
-                      "type": "boolean",
-                      "description": "More than 16 records matched; act again for the rest."
+                      "type": "boolean"
+                    },
+                    "records": {
+                      "type": "array",
+                      "maxItems": 16,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "namespace",
+                          "classification",
+                          "actionable",
+                          "application",
+                          "session"
+                        ],
+                        "properties": {
+                          "namespace": {
+                            "type": "string"
+                          },
+                          "classification": {
+                            "type": "string",
+                            "enum": [
+                              "undispatched",
+                              "in_doubt",
+                              "failed_before_dispatch",
+                              "completed",
+                              "failed",
+                              "settled_unknown"
+                            ]
+                          },
+                          "actionable": {
+                            "type": "boolean",
+                            "description": "True only for states J3c can still change."
+                          },
+                          "application": {
+                            "type": "object",
+                            "required": [
+                              "adapter",
+                              "resource",
+                              "bindingGeneration"
+                            ],
+                            "properties": {
+                              "adapter": {
+                                "type": "string"
+                              },
+                              "resource": {
+                                "type": "string"
+                              },
+                              "bindingGeneration": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "session": {
+                            "type": "object",
+                            "required": [
+                              "sessionIncarnation",
+                              "epoch"
+                            ],
+                            "description": "Opaque identity of the departed session.",
+                            "properties": {
+                              "sessionIncarnation": {
+                                "type": "string"
+                              },
+                              "epoch": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "The control epoch; 0 is the initial human-active epoch."
+                              }
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -5524,28 +5590,8 @@
               }
             }
           },
-          "403": {
-            "description": "Journal recovery writes require the operator key.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
           "404": {
-            "description": "No record of this operation in the searched namespace.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The operation already has a terminal record or was never dispatched.",
+            "description": "No durable journal is configured on this deployment.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5555,7 +5601,7 @@
             }
           },
           "429": {
-            "description": "Journal recovery rate limit exceeded.",
+            "description": "Journal lookup rate limit exceeded.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5565,7 +5611,7 @@
             }
           },
           "503": {
-            "description": "No open durable journal, or the journal refused the write.",
+            "description": "The journal refused this lookup or is configured but not open; treat the history as unread, not absent.",
             "content": {
               "application/json": {
                 "schema": {

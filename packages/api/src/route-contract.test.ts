@@ -117,6 +117,9 @@ describe('route contract metadata', () => {
       ['POST /v1/journal/operations/:operationId/close', 'lifecycle'],
       ['POST /v1/journal/operations/:operationId/settle', 'lifecycle'],
       ['POST /v1/policy/check', 'lifecycle'],
+      // T5 J3b: server-level read-only journal queries, not session-scoped.
+      ['GET /v1/journal', 'lifecycle'],
+      ['GET /v1/journal/operations/:operationId', 'lifecycle'],
       // TD-16 phase 4: the login browser's operator routes — server-level,
       // human-operator-only, not session-scoped.
       ['POST /v1/operator/login/open', 'lifecycle'],

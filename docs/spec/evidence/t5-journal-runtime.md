@@ -194,6 +194,64 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
   - Each guard was mutated away and fails a test.
   - Suites: control 834, api 1,562 (CI reports the same on the PR head); journal qualification 32/32.
 
+## J3b: the lookup route (2026-10-15)
+
+`GET /v1/journal/operations/{operationId}` and `GET /v1/journal`, both read-only, both accepting
+the ADR-025 operator key (`actor: 'human-operator'`) **or** a tenant API key, scoped to the
+credential's tenant. Delegated agent grants are refused by the /v1 hook (the routes name no
+session). Keyless deployments get 401: no credential names a tenant. Rate limited per tenant
+(30/min) on BOTH routes, like the policy surface. OpenAPI is regenerated; the SDK gains `journalStatus()` and
+`journalOperations(id)`; the CLI gains `agentbrowser journal status` and
+`agentbrowser journal operations <id>`.
+
+- **Projection.** Each record carries only `namespace`, the `classification` vocabulary, the
+  `actionable` flag, application identity and the departed session's opaque
+  `sessionIncarnation`/`epoch`. Fingerprints, digests, actors, inputs and evidence content never
+  cross the wire; `classifyJournalRecord` (protocol) maps the legal record states and refuses
+  illegal ones.
+- **Absence honesty.** `absent: true` means scoped absence in the searched (configured)
+  namespace — recorded in the route description, the SDK doc and the CLI output as never proof of
+  non-execution.
+- **Status (D5).** `GET /v1/journal` reports configuration, namespace, health, both horizons and
+  `recoveryQualified` = configured-and-open on the qualified matrix
+  (`journalRuntimeQualified`: Node 24 on Linux or macOS), stated as advisory with no exactly-once
+  promise.
+- **Refusals.** No journal configured → 404 `JOURNAL_NOT_CONFIGURED`; a journal refusal or error
+  → 503 `JOURNAL_UNAVAILABLE` with "treat the history as unread, not absent"; invalid operation
+  ID → 400; over the rate limit → 429.
+- **Tests.** `journal-lookup-http.test.ts` seeds each legal record state through the journal
+  facade on a store the REST server then reopens (the departed-process situation): all six
+  classifications including failed-after-dispatch at epoch 0 (the initial control epoch — the
+  schema's epoch minimum is 0 to match), plus the actionable flag, another tenant's operation as scoped absence, the
+  operator key reading the same surface, delegated-grant/keyless/bearer/invalid-ID refusals, 404
+  without a journal, and the status fields against `journalRuntimeQualified()` itself. Protocol
+  tests cover `classifyJournalRecord` (six legal states, four illegal) and strict schema
+  validation, including that a `fingerprint` key is rejected. SDK tests cover both methods and
+  operation-ID encoding.
+- **Review round 1 fixes:** the status route is rate limited like the operations route (429
+  pinned); `journalRuntimeQualified`'s matrix is unit-pinned (linux/darwin on Node 24 qualified;
+  Node 22.13 and Windows not); a configured-but-not-open journal (passed accept horizon) answers
+  503 `JOURNAL_UNAVAILABLE` "history is unread, not absent" instead of 404 — distinguishing it
+  from a deployment with no journal, and giving J3d its signal.
+
+## A2: durable restart claims (2026-10-15)
+
+`packages/api/src/application-durable-restart.test.ts` runs two service instances — fresh
+authorities and storage children, the identity mechanics of fresh OS processes; J-e's
+child-process runs cover the OS-process case with SIGKILL — one after the other, on the same real
+store (the second reopens the namespace J-d style). The first stops GRACEFULLY (drained shutdown,
+then journal close), complementing the J-e SIGKILL table one section up. The oracles are the
+store's committed rows (read-only) and per-instance effect counters.
+
+- **Survival.** A completed durable write (rev 3) is still the store's only row after the restart,
+  and the new process reads it through its own journal handle (`findByOperation`).
+- **No replay.** The second process starts with zero effects and executes nothing on its own.
+- **The weaker, advertised outcome.** Re-submitting the SAME operation ID under the new process
+  commits a second record and runs the effect again: operation identity includes the process's
+  service generation, so there is no cross-process deduplication. The test pins that the two
+  records carry two distinct service generations — two operations, not a replay. Idempotency
+  across restarts is the application adapter's own responsibility; the journal never claims it.
+
 ## J3c part 1: close and settle (2026-10-15)
 
 The operator-only recovery writes, on a real store, through the service and over HTTP:
@@ -229,4 +287,3 @@ The operator-only recovery writes, on a real store, through the service and over
   closes, API key 403, re-close 409), seeding through the journal facade on a store the keyed
   server reopens. **Not in this part:** continue with `supersedes` and the adapter `reconcile`
   (J3c part 2).
-

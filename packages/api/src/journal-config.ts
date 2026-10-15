@@ -203,6 +203,18 @@ export function serviceJournalNamespace(config: ServiceJournalConfig): JournalNa
   };
 }
 
+/**
+ * The accepted design's qualified matrix: Node 24 on Linux (CI) or the macOS leg. Node 22.13+ can
+ * START the journal but is unqualified until a Node 22 leg exists; Windows has no journal leg.
+ */
+export function journalRuntimeQualified(
+  platform: NodeJS.Platform = process.platform,
+  nodeVersion: string = process.versions.node
+): boolean {
+  const major = Number(nodeVersion.split('.')[0]);
+  return (platform === 'linux' || platform === 'darwin') && major === 24;
+}
+
 export interface ServiceJournal {
   readonly journal: OperationJournal;
   close(): Promise<void>;

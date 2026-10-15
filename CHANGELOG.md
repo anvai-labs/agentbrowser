@@ -18,6 +18,30 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   history and is refused here with 403 — pinned at the service and HTTP layers. Tenant-scoped;
   another tenant's operation is not found, never writable. Rate-limited per tenant.
 
+### Added — read-only journal lookup and status (T5 J3b)
+
+- `GET /v1/journal/operations/{operationId}` returns every historical record of one durable
+  operation in the configured namespace, projected to a classification (`undispatched`,
+  `in_doubt`, `failed_before_dispatch`, `completed`, `failed`, `settled_unknown`), an
+  `actionable` flag, application identity and the departed session's opaque identity. Per the
+  accepted design (D1 as amended), it accepts the operator key or a tenant API key, read-only and
+  tenant-scoped; delegated grants are refused and keyless deployments get no surface. Absence is
+  scoped absence, never proof of non-execution.
+- `GET /v1/journal` reports the journal's configuration, namespace, health, horizons and an
+  advisory `recoveryQualified` (Node 24 on Linux/macOS only; no exactly-once promise).
+- Both routes are rate limited per tenant, in the regenerated OpenAPI, and exposed by the SDK
+  (`journalStatus`, `journalOperations`) and the CLI (`agentbrowser journal status`,
+  `agentbrowser journal operations <id>`).
+
+### Tests — the durable-restart claims qualified (T4 A2)
+
+- Two service instances (fresh authorities and storage children) run one after the other on the
+  same real journal store; the first stops gracefully. A completed
+  durable write survives the graceful restart and stays readable through the new process's own
+  journal handle; nothing replays; and re-submitting the same operation ID commits a NEW record
+  with a new service generation — the advertised weaker outcome, with idempotency remaining the
+  adapter's responsibility.
+
 ### Added — journal `findByOperation` (T5 J3a)
 
 - The operation journal port can now find every record of one tenant's operation ID in a
