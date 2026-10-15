@@ -18,7 +18,7 @@ declared files and budgets without contacting a service.
 
 | Task | Current state | Delivered or next gate | Hard task dependencies |
 | --- | --- | --- | --- |
-| [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation. Follow-ons in flight: the 100-step plan cap (#478) and output schemas for the remaining MCP tools (#482 and its part 2) | None |
+| [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation. Delivered since: the 100-step plan cap (#478) and output schemas for six more MCP tools with the structured-error envelope (#482); the last six tools' schemas are in flight | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; Codex-path and Claude-path cursor consumption/retirement qualified (2026-10-03/04); same-tenant/different-principal admission pinned (#476). Open: the mode-footprint refresh. Victor gated on aiserver1's gateway (owner reconciliation 2026-10-15) | T0 |
 | [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; production evidence still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | Delivered through #231, released in 1.9.1. Follow-on: a documented `test evaluate` CI entrypoint | T2 |
@@ -27,7 +27,7 @@ declared files and budgets without contacting a service.
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses, C3c synthetic submission, E0a/E0b eligibility, N0 document read, first E0c listing-capture slice delivered; remaining gates owned by the consuming workflow (E0c/E1 private policy, live workflow qualification) | T2 |
 | [T7](t7-audit-security.md) | **Complete** | ALL slices delivered (the appsec/bounty parity condition on T4 stays open): 2a scope enforcement (primitive + surface, 12 real-Chromium gates plus 14 policy unit tests), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates; audit suite 53 tests after the 2026-10-15 labelling and role-access work | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor gated on aiserver1's gateway, not TLS (owner reconciliation 2026-10-15). Open: MCP cancellation, then the qualification re-runs on both CLIs | T0; profile/full-run slices also require T1/T3 |
-| [T9](t9-release-hardening.md) | Recurring | 1.18.0 released 2026-10-15 (run 38741154969); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions in review (#481). Every release needs fresh promotion evidence. R14 closes with the owner's tag ruleset and `npm` environment protection | T0; each release also requires its changed tasks' acceptance |
+| [T9](t9-release-hardening.md) | Recurring | 1.18.0 released 2026-10-15 (run 38741154969); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions delivered (#481). Every release needs fresh promotion evidence. R14 closes with the owner's tag ruleset and `npm` environment protection | T0; each release also requires its changed tasks' acceptance |
 
 ## Current continuation (2026-10-15)
 

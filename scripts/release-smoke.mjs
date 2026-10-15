@@ -343,7 +343,8 @@ export async function checkMcpContracts(command, options) {
             assert.equal(autofill.outputSchema?.$id, 'urn:agentbrowser:autofill-report:v1', 'Missing canonical output schema');
             assert.equal(autofill.annotations?.readOnlyHint, false, 'Autofill must not claim read-only behavior');
             assert.equal(autofill.annotations?.idempotentHint, false, 'Autofill must not imply safe replay');
-            assert.ok(autofill.outputSchema.properties.receipts.items.properties.status.anyOf.some((entry) => entry.const === 'uncertain'), 'Lost nested output schema');
+            assert.ok(autofill.outputSchema.anyOf[0].properties.receipts.items.properties.status.anyOf.some((entry) => entry.const === 'uncertain'), 'Lost nested output schema');
+            assert.deepEqual(autofill.outputSchema.anyOf[1].required, ['error'], 'Advertised schema must accept the structured-error envelope');
           } else assert.ok(listed.tools.every((tool) => !tool.outputSchema && !tool.annotations), 'Legacy catalog gained modern fields');
           assert.equal(autofill.inputSchema.properties.fields.items.properties.match.properties.block.properties.label.maxLength, 512, 'Lost nested match schema');
           assert.equal(autofill.inputSchema.required.includes('operationId'), catalog === 'delegated');
