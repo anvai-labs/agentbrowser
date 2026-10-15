@@ -9,6 +9,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [1.18.0] — 2026-10-15
 
+### Fixed — the login browser's no-disabling-flags test now actually checks (TD-BROWSER-16 phase 4)
+
+- The test "the live argv carries NONE of the disabling flags" passed vacuously: Chromium rewrites
+  its `/proc/<pid>/cmdline` into one space-joined string, and the test split it on NUL only, so no
+  flag could ever match. Re-adding `--disable-component-update` to the launch passed it. It also
+  located "the newest Chromium" on the machine, which under parallel suites could be another
+  test's Playwright browser (the CI failure seen on #475). The test now tokenizes on NUL and
+  spaces, finds the login browser by its exact `--user-data-dir`, and asserts that profile is in
+  the argv it inspects. The re-added flag now fails it. The login browser itself was correct:
+  verified to carry none of the three flags.
+
 ### Added — release tags must be cut from main (T9 S1a, R14)
 
 - The release workflow's `tag-guard` job now fetches `main` and runs
