@@ -73,7 +73,9 @@ describe('declared adapter output (parseOutput)', () => {
   it('a mismatched write is recorded dispatched with an unknown outcome, never committed, and its retry does not re-run the effect', async () => {
     const s = setup({ wrong: true });
     const request = { operation: 'add', input: 1, operationId: 'write-1', expectedVersion: 0 };
-    const error = await s.port.execute('session', operator, request).catch((caught: unknown) => caught);
+    const error = await s.port
+      .execute('session', operator, request)
+      .catch((caught: unknown) => caught);
     // A post-dispatch adapter fault: not a request error (no INVALID_REQUEST code).
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('Invalid application output');
