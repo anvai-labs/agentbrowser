@@ -107,6 +107,10 @@ export function defineApplicationOperation<Input, Output>(operation: {
           value = parseOutput(result.value);
         } catch {
           // Static diagnostics: neither the adapter output nor the parser's message is echoed.
+          // A read is refused like any invalid read result. A write's effect has already run, so
+          // it is an internal adapter fault (HTTP 500, outcome unknown), never a 400 that invites
+          // the caller to "fix the request" and repeat the side effect.
+          if (mode === 'write') throw new Error('Invalid application output');
           throw new ControlError('INVALID_REQUEST', 'Invalid application output');
         }
         return { status: result.status, value };

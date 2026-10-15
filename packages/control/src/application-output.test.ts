@@ -65,14 +65,20 @@ describe('declared adapter output (parseOutput)', () => {
       .catch((caught: unknown) => caught);
     expect(error).toMatchObject({ code: 'INVALID_REQUEST', message: 'Invalid application output' });
     expect(String((error as Error).message)).not.toMatch(/PRIVATE/);
+    // Nothing rides along: no cause, no extra own properties.
+    expect((error as Error).cause).toBeUndefined();
+    expect(Object.keys(error as object).sort()).toEqual(['code', 'name']);
   });
 
   it('a mismatched write is recorded dispatched with an unknown outcome, never committed, and its retry does not re-run the effect', async () => {
     const s = setup({ wrong: true });
     const request = { operation: 'add', input: 1, operationId: 'write-1', expectedVersion: 0 };
-    await expect(s.port.execute('session', operator, request)).rejects.toMatchObject({
-      message: 'Invalid application output',
-    });
+    const error = await s.port.execute('session', operator, request).catch((caught: unknown) => caught);
+    // A post-dispatch adapter fault: not a request error (no INVALID_REQUEST code).
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('Invalid application output');
+    expect((error as { code?: string }).code).toBeUndefined();
+    expect((error as Error).cause).toBeUndefined();
     expect(s.effect).toHaveBeenCalledTimes(1);
     const record = s.authority.get('session')!.operation('write-1');
     expect(record).toMatchObject({ dispatched: true });
@@ -129,6 +135,6 @@ describe('declared adapter output (parseOutput)', () => {
         const reader = s.port.prepareReadInScope('session', { operation: 'total', input: null });
         return reader.read();
       })
-    ).rejects.toThrow(/^(Invalid application output|Application read callback failed)$/);
+    ).rejects.toThrow(/^Application read callback failed$/);
   });
 });

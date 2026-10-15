@@ -9,12 +9,56 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added — declared adapter output (T4)
 
-- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A read or committed
-  value that does not match fails with a static `Invalid application output` (neither the
-  adapter output nor the parser's message is echoed) instead of being reported as success; a
-  matching value is replaced by the parsed one. A mismatched **write** has already run, so its
-  operation stays dispatched with `outcome_unknown` and the same operation ID never executes
-  again. Rejected results skip the parser; operations without `parseOutput` are unchanged.
+- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not
+  match is never reported as success, and neither the adapter output nor the parser's message
+  is echoed; a matching value is replaced by the parsed one.
+  - A mismatched **read** is refused like any invalid read result (`400 INVALID_REQUEST`,
+    `Invalid application output`).
+  - A mismatched **write** has already run: it is an internal adapter fault (`500 INTERNAL`), its
+    operation stays dispatched with `outcome_unknown`, and the same operation ID never executes
+    again.
+  - Rejected results skip the parser; operations without `parseOutput` are unchanged.
+
+### Added — output schemas for six more MCP tools (T0 M2, part 1)
+
+- `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` advertise an
+  `outputSchema` on the `2025-06-18` protocol, so structured-capable clients receive
+  `structuredContent` for them. New protocol schemas: `PageResponseSchema`,
+  `SessionCreatedResultSchema`, `PageListResultSchema`, `SessionClosedResultSchema` and
+  `SessionEventsPageResultSchema`; `pdf` shares `screenshot`'s `ArtifactRefSchema`. The schemas
+  stay open to additive fields. A full-stack test validates every tool's real result against its
+  schema.
+
+### Fixed — structured tool errors no longer break MCP clients that validate output
+
+- MCP clients (the official TypeScript SDK among them) validate `structuredContent` against a
+  tool's `outputSchema` even on `isError` results. Ours advertised the success shape only, so a
+  structured error (`{error: {code, message, operationId?}}`, shipped in 1.17) from `act`,
+  `navigate`, `extract`, `observe`, `autofill`, `plan`, `screenshot` and the tools above became a
+  client-side `-32602` and the agent never saw the error. Every advertised `outputSchema` is now
+  `{type: "object", anyOf: [<result schema>, <error envelope>]}`, keeping the result schema's
+  `$id` at the root. Protocol schemas, OpenAPI and discovery are unchanged. A client-view test
+  reads `tools/list` and validates every `structuredContent`, errors included, with a draft-07
+  validator.
+
+### Fixed — the documented session response no longer requires `engine.capabilities`
+
+- OpenAPI's `EngineInfo` (in every session response) marked `capabilities` required, but no
+  session response has ever carried it. It is now optional; capabilities come from
+  `GET /v1/engine`.
+
+### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
+
+- Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository
+  default. In `release.yml` only the `release` job (GitHub Release and asset upload) can write
+  contents; `npm-publish` keeps only its OIDC `id-token`.
+- All 67 action references in the four workflows are pinned to the full commit SHA of their
+  release, with a `# vX.Y.Z` comment for Dependabot. `scripts/release-workflow.test.mjs` checks
+  every workflow file: it refuses an unpinned reference, any top-level permissions other than
+  `contents: read`, and any job-level grant beyond an exact allowlist (`release`, `npm-publish`
+  and the docs `deploy` job).
+- The T9 packet records why skipped or canceled jobs cannot turn the required checks or the
+  release graph green.
 
 ### Changed — plans are capped at 100 steps (T0)
 

@@ -203,7 +203,8 @@ export interface SessionResponse {
 export interface EngineInfo {
   name: string;
   version: string;
-  capabilities: EngineCapabilities;
+  /** Absent from session responses; read capabilities from GET /v1/engine. */
+  capabilities?: EngineCapabilities;
 }
 
 /**
