@@ -30,6 +30,7 @@ import {
   NavigationStatusSchema,
   navigationFailureDetail,
   ObservationRequestSchema,
+  OperationRecordResultSchema,
   PageHtmlResultSchema,
   PageListResultSchema,
   PageResponseSchema,
@@ -875,7 +876,10 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         const maxBytes =
-          typeof args.maxBytes === 'number' && args.maxBytes > 0 ? args.maxBytes : 200000;
+          // Whole bytes: a fractional cap would index between bytes and defeat the UTF-8 back-off.
+          typeof args.maxBytes === 'number' && args.maxBytes > 0
+            ? Math.floor(args.maxBytes)
+            : 200000;
 
         const exported = await client.sessions.html(sessionId, pageId);
         let base64 = exported.inline?.contentBase64;
@@ -1101,6 +1105,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           properties: { operationId: { type: 'string' } },
           required: ['operationId'],
         },
+        outputSchema: OperationRecordResultSchema,
         handler: async (args) => {
           if (!client.sessions.operation || typeof args.operationId !== 'string')
             throw new UsageError('operationId is required');

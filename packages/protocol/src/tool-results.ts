@@ -1,5 +1,5 @@
 import { Type } from '@sinclair/typebox';
-import { ControlViewSchema } from './control.js';
+import { ControlViewSchema, OperationRecordSchema } from './control.js';
 import { SessionEventsPageSchema } from './event-replay.js';
 import { SessionResponseSchema } from './schemas.js';
 import { SessionViewSchema } from './session-diagnostics.js';
@@ -192,13 +192,59 @@ export const PageHtmlResultSchema = Type.Object(
   { $id: 'urn:agentbrowser:page-html:v1' }
 );
 
+/**
+ * A client-facing copy of a protocol schema: every nested object stays open and closed string
+ * enums widen to `string`, while required fields are kept. The MCP binary ships separately from
+ * the server it talks to, so a newer server adding a field, a diagnostic or an enum value must not
+ * make an older client reject the whole result. The canonical protocol schemas stay strict.
+ */
+export function relaxForClients(schema: unknown): Record<string, unknown> {
+  const relax = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(relax);
+    if (node === null || typeof node !== 'object') return node;
+    const source = node as Record<string, unknown>;
+    const alternatives = source.anyOf;
+    if (
+      Array.isArray(alternatives) &&
+      alternatives.length > 0 &&
+      alternatives.every(
+        (entry) =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          typeof (entry as { const?: unknown }).const === 'string'
+      )
+    ) {
+      const { anyOf: _closed, ...rest } = source;
+      return { ...relaxEntries(rest), type: 'string' };
+    }
+    return relaxEntries(source);
+  };
+  const relaxEntries = (source: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source)) {
+      if (key === 'additionalProperties' && value === false) continue;
+      out[key] = relax(value);
+    }
+    return out;
+  };
+  return relax(schema) as Record<string, unknown>;
+}
+
 /** MCP `session`: the session view, its pages and (for a bound session) the control view. */
 export const SessionInspectionResultSchema = Type.Object(
   {
     sessionId: Type.String({ minLength: 1 }),
-    session: Type.Object({ ...SessionViewSchema.properties }),
-    control: Type.Optional(Type.Object({ ...ControlViewSchema.properties })),
+    session: Type.Unsafe<Record<string, unknown>>(relaxForClients(SessionViewSchema)),
+    control: Type.Optional(
+      Type.Unsafe<Record<string, unknown>>(relaxForClients(ControlViewSchema))
+    ),
     pages: Type.Array(Type.Object(pageProperties)),
   },
   { $id: 'urn:agentbrowser:session-inspection:v1' }
 );
+
+/** MCP `operation` (delegated sessions): the operation record, relaxed for clients. */
+export const OperationRecordResultSchema = Type.Unsafe<Record<string, unknown>>({
+  ...relaxForClients(OperationRecordSchema),
+  $id: 'urn:agentbrowser:operation-record:v1',
+});

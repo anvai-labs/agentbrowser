@@ -83,7 +83,8 @@ both catalogs. T1 must measure selection savings rather than claim shrinking all
    tools); advertised schemas now accept the error envelope (`anyOf`), qualified from the
    client's side over JSON-RPC. **Part 2 (2026-10-15):** `policy`,
    `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise qualified schemas
-   too, so every MCP tool now does; the qualification adds a real cookie handoff (relay,
+   too, as does the delegated `operation` tool, so every MCP tool in every catalog does (nested
+   views relaxed for forward compatibility); the qualification adds a real cookie handoff (relay,
    operator decision, completion) and asserts no tool lacks a schema.
 2. Preserve the adversarial review resolution: autofill reports are validated before
    CLI success/output and the malformed-report case has a red-then-green regression.

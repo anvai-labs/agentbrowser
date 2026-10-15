@@ -7,6 +7,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { OperationRecordResultSchema } from '@agentbrowser/protocol';
 import { FakeEngine } from '@agentbrowser/testkit';
 import AjvDraft7 from 'ajv';
 import Ajv2020 from 'ajv/dist/2020';
@@ -363,5 +364,132 @@ describe('advertised schemas accept every structured result a client receives, e
       expect(result.isError, `${name} after close should be an error`).toBe(true);
       expect(result.structuredContent?.error).toMatchObject({ code: expect.any(String) });
     }
+  });
+});
+
+describe('schema contracts beyond the live fixtures (M2b review)', () => {
+  const compile = (schema: unknown) => new Ajv2020({ strict: false }).compile(schema as object);
+  const schemaOf = (name: string) => {
+    const schema = tools.get(name)?.outputSchema;
+    if (schema === undefined) throw new Error(`no schema for ${name}`);
+    return schema;
+  };
+
+  it('a bound (delegated) MCP server advertises an object-rooted schema for every tool, operation included', async () => {
+    const mcp = buildMcpServer({
+      createClient: () => new AgentBrowserClient({ baseUrl: 'http://injected.test' }),
+      sessionId: 'ses_bound',
+    } as never);
+    const send = async (id: number, method: string, params: unknown) =>
+      JSON.parse(
+        (await mcp.handle(JSON.stringify({ jsonrpc: '2.0', id, method, params }))) ?? 'null'
+      );
+    await send(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} });
+    const listed = (await send(2, 'tools/list', {})).result.tools as Array<{
+      name: string;
+      outputSchema?: { type?: string };
+    }>;
+    expect(listed.map((tool) => tool.name)).toContain('operation');
+    expect(
+      listed.filter((tool) => tool.outputSchema?.type !== 'object').map((t) => t.name)
+    ).toEqual([]);
+  });
+
+  it('documented minimal shapes validate (optional fields really are optional)', () => {
+    const cases: Array<[string, unknown]> = [
+      ['policy', { policyVersion: 'v', summaryFor: 's', capabilities: { x: { allowed: true } } }],
+      ['policy', { action: 'request', answers: [{ classSet: 'c', answer: { kind: 'invalid' } }] }],
+      [
+        'cookie_handoff',
+        { sessionId: 's', credentialSource: 'operator', domains: ['a.example'], counts: {} },
+      ],
+      [
+        'snapshot',
+        {
+          url: 'about:blank',
+          title: '',
+          revision: 0,
+          mode: 'stable',
+          fields: [],
+          controls: [{ ref: 'e0_0', role: 'combobox', label: '' }],
+        },
+      ],
+      [
+        'cookies',
+        {
+          sessionId: 's',
+          cookies: [
+            {
+              name: 'sid',
+              value: 'v',
+              domain: 'a.example',
+              path: '/',
+              expires: -1,
+              sameSite: 'Lax',
+              partitionKey: 'k',
+            },
+          ],
+        },
+      ],
+      [
+        'html',
+        {
+          sessionId: 's',
+          pageId: 'p',
+          artifactId: 'a',
+          html: '',
+          truncated: false,
+          sizeBytes: 0,
+          untrustedContent: true,
+          warning: 'w',
+        },
+      ],
+    ];
+    for (const [name, instance] of cases) {
+      const validate = compile(schemaOf(name));
+      expect(validate(instance), `${name}: ${JSON.stringify(validate.errors)}`).toBe(true);
+    }
+  });
+
+  it('every schema stays open: unknown fields at the top level are accepted', async () => {
+    const created = await callValidated('create', { tenantId: 'openness' });
+    const sessionId = created.sessionId as string;
+    const pageId = created.pageId as string;
+    for (const [name, args] of [
+      ['snapshot', { sessionId, pageId }],
+      ['html', { sessionId, pageId }],
+      ['session', { sessionId }],
+      ['cookies', { sessionId }],
+      ['policy', {}],
+    ] as const) {
+      const result = await callValidated(name, args);
+      const validate = compile(schemaOf(name));
+      expect(validate({ ...result, futureField: { nested: true } }), name).toBe(true);
+    }
+    await callValidated('close', { sessionId });
+  });
+
+  it("a newer server's session and operation shapes still validate (relaxed nested objects and enums)", async () => {
+    const created = await callValidated('create', { tenantId: 'forward' });
+    const inspected = await callValidated('session', { sessionId: created.sessionId });
+    const session = inspected.session as Record<string, unknown>;
+    const newer = {
+      ...inspected,
+      session: {
+        ...session,
+        status: 'hibernating',
+        lease: { ...(session.lease as object), futureLeaseField: 1 },
+        closeCause: 'future_cause',
+      },
+    };
+    expect(compile(schemaOf('session'))(newer)).toBe(true);
+    await callValidated('close', { sessionId: created.sessionId });
+    // The operation record schema: required fields kept (rejects {}), nested objects open.
+    const operation = compile(OperationRecordResultSchema);
+    expect(operation({})).toBe(false);
+    expect(OperationRecordResultSchema.type).toBe('object');
+    expect(JSON.stringify(OperationRecordResultSchema)).not.toContain(
+      '"additionalProperties":false'
+    );
   });
 });
