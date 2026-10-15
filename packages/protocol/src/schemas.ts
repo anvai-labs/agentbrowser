@@ -264,7 +264,9 @@ export const EngineCapabilitiesSchema = Type.Object({
 export const EngineInfoSchema = Type.Object({
   name: Type.String(),
   version: Type.String(),
-  capabilities: EngineCapabilitiesSchema,
+  // Session responses carry the engine identity only; read capabilities from GET /v1/engine.
+  // (Documented as required until 2026-10-15, but no session response ever included it.)
+  capabilities: Type.Optional(EngineCapabilitiesSchema),
 });
 
 // ============================================================================

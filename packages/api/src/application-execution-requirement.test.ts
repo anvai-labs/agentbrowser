@@ -4,7 +4,9 @@
  * second call is a replay); `durable` is refused while no durable store is qualified; REST
  * discovery publishes `writeExecution` when bound and stays `null` when unbound.
  */
-import { expect, it } from 'vitest';
+import { FakeEngine } from '@agentbrowser/testkit';
+import { describe, expect, it } from 'vitest';
+import { AgentBrowserService } from './service.js';
 import {
   agentHeaders,
   bindAndDelegate,
@@ -100,4 +102,88 @@ it('REST discovery publishes writeExecution when bound and null when unbound', a
   } finally {
     await server.close();
   }
+});
+
+describe('service-level execution requirement (J-a review)', () => {
+  const operator = { actor: 'operator', tenant: 'owner' } as const;
+  async function serviceWith(durableJournalAvailable: boolean) {
+    let effects = 0;
+    const service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      durableJournalAvailable,
+      applicationAdapters: [
+        {
+          id: 'owned-counter',
+          authorize: () => true,
+          operations: {
+            add: {
+              mode: 'write' as const,
+              prepare: () => async () => {
+                effects += 1;
+                return { status: 'committed' as const, value: effects };
+              },
+            },
+          },
+          receipt: async () => ({}),
+        },
+      ],
+    });
+    const { sessionId } = await service.createSession({
+      tenantId: 'owner',
+      controlMode: 'delegated',
+    });
+    service.applicationBind(sessionId, operator, { adapter: 'owned-counter', resource: 'account' });
+    return { service, sessionId, effects: () => effects };
+  }
+
+  it('durable fails closed even when a durable store is configured: refused, no effect, no identity', async () => {
+    const s = await serviceWith(true);
+    try {
+      await expect(
+        s.service.applicationExecute(s.sessionId, operator, {
+          operation: 'add',
+          input: 1,
+          operationId: 'd1',
+          expectedVersion: 0,
+          executionRequirement: 'durable',
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+      expect(s.effects()).toBe(0);
+      // Discovery does not advertise what execute refuses.
+      expect(await s.service.applicationDiscover(s.sessionId, operator)).toMatchObject({
+        writeExecution: { supportedRequirements: ['ephemeral'] },
+      });
+    } finally {
+      await s.service.shutdown();
+    }
+  });
+
+  it('an explicit ephemeral does not bypass the caller-data checks', async () => {
+    const s = await serviceWith(false);
+    try {
+      const withGetter = {
+        operation: 'add',
+        operationId: 'g1',
+        expectedVersion: 0,
+        executionRequirement: 'ephemeral',
+        get input() {
+          return 1;
+        },
+      };
+      const nullProto = Object.assign(Object.create(null), {
+        operation: 'add',
+        input: 1,
+        operationId: 'g2',
+        expectedVersion: 0,
+        executionRequirement: 'ephemeral',
+      });
+      for (const request of [withGetter, nullProto])
+        await expect(
+          s.service.applicationExecute(s.sessionId, operator, request)
+        ).rejects.toThrow();
+      expect(s.effects()).toBe(0);
+    } finally {
+      await s.service.shutdown();
+    }
+  });
 });

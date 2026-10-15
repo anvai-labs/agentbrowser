@@ -2670,21 +2670,23 @@ export class AgentBrowserService {
             ...discovery,
             writeExecution: {
               defaultRequirement: 'ephemeral',
-              supportedRequirements: this.durableJournalAvailable
-                ? ['ephemeral', 'durable']
-                : ['ephemeral'],
+              // Durable is advertised only once it is part of the operation identity (J-b);
+              // until then execute refuses it even with a qualified store.
+              supportedRequirements: ['ephemeral'],
             },
           } as unknown as T);
+    // Snapshot first (validates and captures publish now, as every publication path does).
+    const options = publication === undefined ? undefined : snapshotPublication(publication);
     const published =
-      publication === undefined
+      options === undefined
         ? undefined
         : {
-            timeoutMs: publication.timeoutMs,
-            ...(publication.signal !== undefined ? { signal: publication.signal } : {}),
+            timeoutMs: options.timeoutMs,
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
             publish: (
-              value: Parameters<typeof publication.publish>[0],
-              context: Parameters<typeof publication.publish>[1]
-            ) => publication.publish(withWriteExecution(value), context),
+              value: Parameters<typeof options.publish>[0],
+              context: Parameters<typeof options.publish>[1]
+            ) => options.publish(withWriteExecution(value), context),
           };
     return withWriteExecution(
       await this.applicationAuthority.discover(sessionId, principal, published)
@@ -2805,18 +2807,12 @@ export class AgentBrowserService {
         false
       );
     }
-    // 'ephemeral' is the default made explicit: strip it so an explicit and an omitted
-    // requirement reach the authority as the same request (same canonical operation identity).
-    // 'durable' stays in the request until it is folded into the operation identity (J-b); the
-    // authority's request allowlist refuses it meanwhile, so it can never run as ephemeral.
-    const { executionRequirement: _requirement, ...request } = validated.value as Record<
-      string,
-      unknown
-    >;
+    // 'ephemeral' (explicit or omitted) passes through: the authority's request normalizer drops
+    // it behind its own caller-data checks, and refuses any other requirement.
     return this.applicationAuthority.execute(
       sessionId,
       principal,
-      (executionRequirement === 'durable' ? validated.value : request) as typeof validated.value,
+      validated.value,
       publication,
       replay
     );
