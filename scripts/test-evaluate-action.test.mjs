@@ -265,7 +265,12 @@ process.exit(1);
 describe('bounded and private by construction', { skip: !posix }, () => {
   it('turns a hung CLI into an error instead of a hung job', () => {
     const path = join(work, 'hung-cli.mjs');
-    writeFileSync(path, '#!/usr/bin/env node\nsetInterval(() => {}, 1000);\n');
+    // Ends on its own after 15 s: if the bound regressed, spawnSync (which blocks the event loop)
+    // returns late and the assertion fails, instead of the suite hanging until the job timeout.
+    writeFileSync(
+      path,
+      '#!/usr/bin/env node\nsetInterval(() => {}, 1000);\nsetTimeout(() => process.exit(0), 15000);\n'
+    );
     chmodSync(path, 0o755);
     const started = Date.now();
     const result = evaluateBundle(path, passed, 300);
