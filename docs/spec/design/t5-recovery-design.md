@@ -1,6 +1,8 @@
 # T5 J-design: historical lookup (J3), recovery gates (J4) and browser-operation durability
 
-**Status:** Proposed (2026-10-15), for the owner's sign-off. Nothing here is implemented.
+**Status:** Accepted by the owner (2026-10-15), with D1 amended: tenant API keys may also *read*
+history, while every write action stays operator-only. D2–D7 are accepted as recommended. The
+implementation follows the sequence below.
 
 It refines the J3/J4 sections of the [operation-journal design](t5-operation-journal.md). It
 builds on the durable journal wired into the service by J-d (#498; evidence record
@@ -44,18 +46,19 @@ and narrows R08's autofill part (see D6).
 
 ### Who may look
 
-**D1: operator credentials only.** Recommended.
-- Uses the ADR-025 operator key, which exists only in keyed, single-tenant deployments
-  (`AGENTBROWSER_OPERATOR_KEYS_FILE`, whose tenant must equal the API-key tenant). Multi-tenant
-  and keyless deployments get **no** recovery surface in this slice; that is stated, not hidden.
-- Agents get no historical surface: their grants, epochs and sessions are gone after a restart,
-  by design.
-- **Alternative:** tenant API keys. That widens the recovery surface to every automation holding
-  a key; rejected for now.
+**D1 (accepted, amended): reads for the operator and tenant API keys; writes for the operator only.**
+- **Lookup (read-only):** the ADR-025 operator key, **or** a tenant API key, is accepted, scoped to
+  the credential's tenant. This makes the surface reachable in multi-tenant keyed deployments,
+  which have no operator key. Keyless deployments still get none, because no credential names a
+  tenant there.
+- **Writes** (D2 close and continue, D3 reconcile and settle) accept **only** the operator key:
+  they change recorded outcomes, and settlement is irreversible.
+- **Delegated agent grants** (session-bound tokens) get no historical surface. Their sessions are
+  gone after a restart, by design.
 
 ### What is returned
 
-`GET /v1/journal/operations/{operationId}` (operator, tenant-scoped) returns a bounded set (at
+`GET /v1/journal/operations/{operationId}` (operator or tenant API key, tenant-scoped) returns a bounded set (at
 most 16) of matching records across the **searched namespaces** (see D7). Each item:
 
 | Field | Source |
@@ -229,8 +232,8 @@ bus is built.
 
 **D5: report recovery to operators only, for the qualified matrix.** Recommended.
 
-- Agents get no historical surface (D1), so there is no agent capability.
-- An operator-only `GET /v1/journal` reports:
+- Delegated agent grants get no historical surface (D1), so there is no agent capability flag.
+- `GET /v1/journal` (operator or tenant API key, read-only) reports:
   - whether the journal is configured, the namespace, its health and accept horizon;
   - the searched history namespaces;
   - `recoveryQualified`, true only on the qualified matrix.
@@ -271,7 +274,8 @@ order: D6 **after** J3, reusing J3's read path.
 1. **J-e:** process-loss rows through the service, plus key rotation and key loss through
    retention.
 2. **J3a:** the `findByOperation` port (bounded scan), conformance, both fixtures.
-3. **J3b:** the operator lookup route (D1) with REST, SDK and CLI parity; `GET /v1/journal` (D5).
+3. **J3b:** the read-only lookup route for the operator or a tenant API key (D1), with REST, SDK and
+   CLI parity, plus `GET /v1/journal` (D5).
 4. **J3c:** the recovery write path; close and continue (D2) with `supersedes`; operator
    settlement; the opt-in adapter `reconcile` (D3).
 5. **J3d:** history namespaces (D7) with full-descriptor entries and the retention-deadline

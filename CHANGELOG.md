@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — T5 recovery design accepted (J-design sign-off)
+
+- The owner accepted `docs/spec/design/t5-recovery-design.md` on 2026-10-15. D1 is amended:
+  historical lookup accepts the operator key **or** a tenant API key (read-only, tenant-scoped),
+  so it also works in multi-tenant keyed deployments.
+- Writes stay operator-only: close and continue (D2), and reconcile and settle (D3).
+- D2–D7 are accepted as recommended. Implementation follows: J3a → J3b → J3c → J3d → J4 →
+  browser-operation classification.
+
 ### Tests — process loss through the service with the durable journal (T5 J-e)
 
 - The compiled service, with the real SQLite journal, is SIGKILLed before the intent, after the
