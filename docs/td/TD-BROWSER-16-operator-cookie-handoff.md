@@ -404,7 +404,7 @@ guide, and the threat-model entry.
   location, and `reset`.
 - **Public Suffix List freshness.** `tldts` is pinned and updated by Dependabot.
 
-**Delivered (phase 7, #TBD-at-PR):** `session.credential` in the closed capability vocabulary
+**Delivered (phase 7, #472):** `session.credential` in the closed capability vocabulary
 (flows into every browser profile by derivation; application stays fenced; revision stays 1 —
 capabilities only grew). MCP `cookie_handoff` gated on it, dropped when bound, with the handler
 catching APPROVAL_REQUIRED itself so the relay payload (token/domains/counts) reaches the agent
