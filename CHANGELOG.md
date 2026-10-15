@@ -15,6 +15,29 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   hosted minutes per CI round on a pull request (CI, Windows and docs), plus about 2 macOS minutes on journal-path
   pull requests. The repository is public, so these are capacity, not cost.
 
+### Docs — T5 recovery design accepted (J-design sign-off)
+
+- The owner accepted `docs/spec/design/t5-recovery-design.md` on 2026-10-15. D1 is amended:
+  historical lookup accepts the operator key **or** a tenant API key (read-only, tenant-scoped),
+  so it also works in multi-tenant keyed deployments.
+- Writes stay operator-only: close and continue (D2), and reconcile and settle (D3).
+- D2–D7 are accepted as recommended. Implementation follows: J3a → J3b → J3c → J3d → J4 →
+  browser-operation classification.
+
+### Added — exact chip sets with removal for `chip-multiselect` (T6 W2)
+
+- An autofill field can set `options: { values: [...], mode: 'exact' }`, with
+  `strategy: 'chip-multiselect'`. The control's committed membership must end exactly that set.
+- **How it writes.** Extra chips are removed one at a time, through the remove control the engine
+  ties to that combobox and chip label, and each removal is confirmed. Missing values are added
+  through the existing typeahead.
+- **Receipts.** A receipt reports `effects: { removed, added }`, including on failure. Nothing is
+  rolled back by guesswork.
+- **Refusals.** Refused before any dispatch on a control that is not a proven multi-value widget,
+  or whose membership is incomplete, duplicated, or has an extra chip without exactly one owned
+  remove control. Values must be non-blank and trimmed.
+- Qualified against the real react-select 5.10.2.
+
 ### Tests — process loss through the service with the durable journal (T5 J-e)
 
 - The compiled service, with the real SQLite journal, is SIGKILLed before the intent, after the

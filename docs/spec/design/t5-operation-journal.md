@@ -158,7 +158,7 @@ namespace is stable across restarts). Quarantine/reconciliation stays as specifi
 
 ## J3: authorized historical lookup and explicit continuation
 
-Refined, with decision points, in [J-design](t5-recovery-design.md) (Proposed).
+Refined in [J-design](t5-recovery-design.md), accepted 2026-10-15 with D1 amended.
 
 Require current authentication and explicit authorization for the original tenant and
 historical namespace. Old bearer tokens, epochs and cursors remain invalid. Return

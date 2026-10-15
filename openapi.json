@@ -2368,6 +2368,29 @@
                             }
                           }
                         },
+                        "options": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "values",
+                            "mode"
+                          ],
+                          "properties": {
+                            "values": {
+                              "maxItems": 32,
+                              "type": "array",
+                              "items": {
+                                "minLength": 1,
+                                "maxLength": 512,
+                                "type": "string"
+                              }
+                            },
+                            "mode": {
+                              "const": "exact",
+                              "type": "string"
+                            }
+                          }
+                        },
                         "verify": {
                           "anyOf": [
                             {
@@ -2586,6 +2609,32 @@
                           },
                           "actualTruncated": {
                             "type": "boolean"
+                          },
+                          "effects": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "removed",
+                              "added"
+                            ],
+                            "properties": {
+                              "removed": {
+                                "maxItems": 32,
+                                "type": "array",
+                                "items": {
+                                  "maxLength": 512,
+                                  "type": "string"
+                                }
+                              },
+                              "added": {
+                                "maxItems": 32,
+                                "type": "array",
+                                "items": {
+                                  "maxLength": 512,
+                                  "type": "string"
+                                }
+                              }
+                            }
                           },
                           "error": {
                             "additionalProperties": false,
