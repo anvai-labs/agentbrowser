@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   isNavigationFailureReason,
   MAX_PLAN_STEPS,
@@ -2681,6 +2682,16 @@ export class AgentBrowserService {
   }
 
   /**
+   * The supersession marker (evidence-ref id format, <=128 chars): the operation ID when it
+   * fits, else its SHA-256 prefix — deterministic, so the marker is stable per operation.
+   */
+  private supersessionMarker(operationId: string): string {
+    const literal = `superseded.${operationId}`;
+    if (literal.length <= 128) return literal;
+    return `superseded.${createHash('sha256').update(operationId).digest('hex').slice(0, 32)}`;
+  }
+
+  /**
    * T5 J3c (D2, first half): close every actionable UNDISPATCHED record of one operation ID as a
    * marked pre-dispatch failure. Operator-only (ADR-025 human-operator principal): a tenant API
    * key authenticates as `operator` and is refused — writes change recorded outcomes. Legal only
@@ -2690,29 +2701,34 @@ export class AgentBrowserService {
   async journalCloseOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ closed: number }> {
-    const records = await this.recoveryTargets(operationId, principal);
+  ): Promise<{ closed: number; truncated: boolean }> {
+    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+    // Actionability is PER RECORD (accepted design): close touches only the never-dispatched
+    // records of the ID; dispatched or terminal siblings are other actions' business, never a
+    // refusal here — a blanket refusal would deadlock mixed-state operations forever. Zero
+    // eligible records is the conflict.
+    const eligible = records.filter((record) => record.revision === 1 && !record.dispatched);
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No undispatched record to close; dispatched work is settled or reconciled, terminal work is final'
+      );
     let closed = 0;
-    for (const record of records) {
-      if (record.revision !== 1 || record.dispatched)
-        throw new ServiceError(
-          'OPERATION_CONFLICT',
-          'Only an undispatched record can be closed; dispatched work is settled or reconciled'
-        );
+    for (const record of eligible) {
       const commit = await this.operationJournal?.commitTerminal({
         identity: record.identity,
         expectedRevision: 1,
         dispatched: false,
-        terminal: { status: 'failed', evidenceRefIds: [`superseded.${operationId}`] },
+        terminal: { status: 'failed', evidenceRefIds: [this.supersessionMarker(operationId)] },
       });
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          'The record changed; re-read it before acting'
+          `The record changed after ${closed} record(s) were closed; re-read before acting again`
         );
       closed += 1;
     }
-    return { closed };
+    return { closed, truncated };
   }
 
   /**
@@ -2723,15 +2739,18 @@ export class AgentBrowserService {
   async journalSettleOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ settled: number }> {
-    const records = await this.recoveryTargets(operationId, principal);
+  ): Promise<{ settled: number; truncated: boolean }> {
+    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+    const eligible = records.filter(
+      (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
+    );
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No in-doubt record to settle; undispatched work is closed, terminal work is final'
+      );
     let settled = 0;
-    for (const record of records) {
-      if (record.revision !== 2 || !record.dispatched || record.terminal !== undefined)
-        throw new ServiceError(
-          'OPERATION_CONFLICT',
-          'Only an in-doubt record can be settled; undispatched work is closed, settled work is final'
-        );
+    for (const record of eligible) {
       const commit = await this.operationJournal?.commitTerminal({
         identity: record.identity,
         expectedRevision: 2,
@@ -2741,11 +2760,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          'The record changed; re-read it before acting'
+          `The record changed after ${settled} record(s) were settled; re-read before acting again`
         );
       settled += 1;
     }
-    return { settled };
+    return { settled, truncated };
   }
 
   /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
@@ -2755,9 +2774,13 @@ export class AgentBrowserService {
         'FORBIDDEN',
         'Journal recovery writes require the operator key; a tenant API key may only read'
       );
-    if (!this.durableAvailable() || !this.operationJournal)
+    // The recovery gate is the OPEN journal, not the accept horizon: the design's deadline for
+    // these writes is retainUntil (30 days past ACCEPT_UNTIL), which the store enforces itself.
+    // Reusing durableAvailable() would kill the fallback exactly when its deadline begins.
+    const recoveryJournal = this.operationJournal;
+    if (recoveryJournal?.health !== 'open')
       throw new ServiceError('JOURNAL_UNAVAILABLE', 'No open durable journal');
-    const found = await this.operationJournal.findByOperation({
+    const found = await recoveryJournal.findByOperation({
       tenantId: principal.tenant,
       operationId,
       limit: 16,
@@ -2769,10 +2792,7 @@ export class AgentBrowserService {
       );
     if (found.records.length === 0)
       throw new ServiceError('NOT_FOUND', 'No record of this operation in the searched namespace');
-    // A terminal record present means the operation is already final: every write on it refuses.
-    if (found.records.some((record) => record.terminal !== undefined))
-      throw new ServiceError('OPERATION_CONFLICT', 'The operation already has a terminal record');
-    return found.records;
+    return { records: found.records, truncated: found.truncated };
   }
 
   /**

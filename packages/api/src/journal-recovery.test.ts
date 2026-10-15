@@ -40,6 +40,26 @@ function journalEnvironment() {
   };
 }
 
+async function fixtureWithHorizon(acceptUntil: number) {
+  const { env } = journalEnvironment();
+  env.AGENTBROWSER_JOURNAL_ACCEPT_UNTIL = new Date(acceptUntil).toISOString();
+  const config = await journalConfigFromEnvironment(env);
+  if (!config) throw new Error('expected configuration');
+  const opened = await openServiceJournal(config);
+  const service = new AgentBrowserService({
+    engine: new FakeEngine(),
+    operationJournal: opened.journal,
+  } satisfies Partial<ServiceDependencies> as ServiceDependencies);
+  return {
+    service,
+    journal: opened.journal,
+    stop: async () => {
+      await service.shutdown();
+      await opened.close();
+    },
+  };
+}
+
 async function fixture() {
   const { env } = journalEnvironment();
   const config = await journalConfigFromEnvironment(env);
@@ -81,9 +101,10 @@ const intentOf = (operationId: string, incarnation = 'a'.repeat(22)) => ({
 async function seed(
   journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
   operationId: string,
-  state: 'undispatched' | 'in_doubt'
+  state: 'undispatched' | 'in_doubt',
+  incarnation = 'a'.repeat(22)
 ) {
-  const reserved = await journal.reserveIntent(intentOf(operationId));
+  const reserved = await journal.reserveIntent(intentOf(operationId, incarnation));
   if (reserved.kind !== 'acknowledged') throw new Error(`seed failed: ${reserved.kind}`);
   if (state === 'in_doubt') {
     const dispatched = await journal.markDispatch({
@@ -107,7 +128,7 @@ describe('journal recovery writes (T5 J3c part 1, real store)', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     const result = await f.service.journalCloseOperation('close-me', humanOperator);
-    expect(result).toMatchObject({ closed: 1 });
+    expect(result).toEqual({ closed: 1, truncated: false });
     const after = await f.journal.findByOperation({
       tenantId: 'owner',
       operationId: 'close-me',
@@ -146,7 +167,7 @@ describe('journal recovery writes (T5 J3c part 1, real store)', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     const settled = await f.service.journalSettleOperation('settle-me', humanOperator);
-    expect(settled).toMatchObject({ settled: 1 });
+    expect(settled).toEqual({ settled: 1, truncated: false });
     const after = await f.journal.findByOperation({
       tenantId: 'owner',
       operationId: 'settle-me',
@@ -216,7 +237,7 @@ describe('journal recovery writes over HTTP (J3c part 1)', () => {
         headers: headers.operator,
       });
       expect(closed.statusCode, closed.body).toBe(200);
-      expect(closed.json()).toEqual({ closed: 1 });
+      expect(closed.json()).toEqual({ closed: 1, truncated: false });
 
       // Terminal now: closing again conflicts.
       const again = await server.inject({
@@ -228,5 +249,81 @@ describe('journal recovery writes over HTTP (J3c part 1)', () => {
     } finally {
       await cleanup();
     }
+  }, 120_000);
+});
+
+describe('journal recovery writes, review round 1 (J3c part 1)', () => {
+  it('mixed-state operation IDs compose: close takes the rev-1 record, settle the rev-2, no deadlock', async () => {
+    const f = await fixture();
+    cleanup.push(f.stop);
+    // One operation ID, two incarnations: one undispatched, one in doubt.
+    await seed(f.journal, 'mixed-op', 'undispatched', 'a'.repeat(22));
+    await seed(f.journal, 'mixed-op', 'in_doubt', 'b'.repeat(22));
+
+    const closed = await f.service.journalCloseOperation('mixed-op', humanOperator);
+    expect(closed).toEqual({ closed: 1, truncated: false });
+    const settled = await f.service.journalSettleOperation('mixed-op', humanOperator);
+    expect(settled).toEqual({ settled: 1, truncated: false });
+
+    const after = await f.journal.findByOperation({
+      tenantId: 'owner',
+      operationId: 'mixed-op',
+      limit: 16,
+    });
+    if (after.kind !== 'found') throw new Error('expected records');
+    const states = after.records
+      .map(
+        (record) => `${record.revision}:${record.dispatched}:${record.terminal?.status ?? 'none'}`
+      )
+      .sort();
+    expect(states).toEqual(['2:false:failed', '3:true:outcome_unknown']);
+    // Both exhausted: every write now refuses with the no-eligible conflict.
+    await expect(f.service.journalCloseOperation('mixed-op', humanOperator)).rejects.toMatchObject({
+      code: 'OPERATION_CONFLICT',
+    });
+  }, 60_000);
+
+  it('closes a 128-character operation ID (the marker hashes when the literal would not fit)', async () => {
+    const f = await fixture();
+    cleanup.push(f.stop);
+    const longId = `op-${'x'.repeat(125)}`;
+    expect(longId).toHaveLength(128);
+    await seed(f.journal, longId, 'undispatched');
+    const result = await f.service.journalCloseOperation(longId, humanOperator);
+    expect(result).toEqual({ closed: 1, truncated: false });
+    const after = await f.journal.findByOperation({
+      tenantId: 'owner',
+      operationId: longId,
+      limit: 16,
+    });
+    if (after.kind !== 'found') throw new Error('expected records');
+    const marker = after.records[0]?.terminal?.evidenceRefIds[0] ?? '';
+    // Either the literal (fits) or the deterministic hash form; always within the id bound.
+    expect(marker).toMatch(/^superseded\./);
+    expect(marker.length).toBeLessThanOrEqual(128);
+    // Deterministic: the same ID yields the same marker.
+    expect(marker).toBe(f.service.supersessionMarker(longId));
+  }, 60_000);
+
+  it('settle works after the accept horizon has passed (the deadline is retainUntil)', async () => {
+    const f = await fixtureWithHorizon(Date.now() + 1_500);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'late-settle', 'in_doubt');
+    await new Promise((done) => setTimeout(done, 1_700));
+    const settled = await f.service.journalSettleOperation('late-settle', humanOperator);
+    expect(settled).toEqual({ settled: 1, truncated: false });
+  }, 60_000);
+
+  it('reports truncation when more than 16 records match', async () => {
+    const f = await fixture();
+    cleanup.push(f.stop);
+    for (let index = 0; index < 17; index += 1) {
+      const reserved = await f.journal.reserveIntent(
+        intentOf('many-op', `${index}`.padStart(22, 'a'))
+      );
+      if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
+    }
+    const result = await f.service.journalCloseOperation('many-op', humanOperator);
+    expect(result).toEqual({ closed: 16, truncated: true });
   }, 120_000);
 });

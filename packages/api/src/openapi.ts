@@ -1616,7 +1616,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           summary:
             'Close every undispatched record of an operation as a marked pre-dispatch failure',
           description:
-            'T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Legal only on records still at revision 1 (never dispatched); dispatched work is settled or reconciled, never closed. The terminal carries a supersession marker (superseded.<operationId>) in the evidence-ref id format; it resolves to nothing. Rate limited per tenant.',
+            'T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.',
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
           parameters: [
@@ -1624,16 +1624,22 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               name: 'operationId',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$' },
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
             },
           ],
           responses: {
             '200': {
-              description: 'How many records were closed.',
+              description: 'How many records were closed (of the first 16 that matched).',
               content: json({
                 type: 'object',
-                required: ['closed'],
-                properties: { closed: { type: 'integer', minimum: 0 } },
+                required: ['closed', 'truncated'],
+                properties: {
+                  closed: { type: 'integer', minimum: 0 },
+                  truncated: {
+                    type: 'boolean',
+                    description: 'More than 16 records matched; act again for the rest.',
+                  },
+                },
               }),
             },
             '400': errorResponse('Invalid operation ID.'),
@@ -1661,16 +1667,22 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               name: 'operationId',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$' },
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
             },
           ],
           responses: {
             '200': {
-              description: 'How many records were settled.',
+              description: 'How many records were settled (of the first 16 that matched).',
               content: json({
                 type: 'object',
-                required: ['settled'],
-                properties: { settled: { type: 'integer', minimum: 0 } },
+                required: ['settled', 'truncated'],
+                properties: {
+                  settled: { type: 'integer', minimum: 0 },
+                  truncated: {
+                    type: 'boolean',
+                    description: 'More than 16 records matched; act again for the rest.',
+                  },
+                },
               }),
             },
             '400': errorResponse('Invalid operation ID.'),
