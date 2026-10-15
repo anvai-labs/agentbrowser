@@ -115,7 +115,7 @@ added. The discovery/schema/spec context check is already local and reused:
 `pnpm release:artifacts` (`scripts/check-release-artifacts.mjs`) runs `spec-context.test.mjs`
 and `checkSpecContext()` inside the existing CI and Windows jobs.
 
-Measured runner-use improvements remain open. T9 stays active because every candidate needs fresh review, exact-head CI,
+Runner minutes are now measured: [baseline](../evidence/t9-runner-minutes.md) from `scripts/runner-minutes.mjs`, 2026-10-15. Measured runner-use improvements remain open. T9 stays active because every candidate needs fresh review, exact-head CI,
 promotion and publication evidence.
 
 ## Delivered checkpoint and remaining work

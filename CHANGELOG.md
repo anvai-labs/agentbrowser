@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — measured CI runner minutes (T9)
+
+- `scripts/runner-minutes.mjs` reports per-workflow medians from the GitHub API: wall time, job
+  minutes, and billed-style minutes split by hosted and self-hosted runners. It is read-only.
+- The 2026-10-15 baseline is recorded in `docs/spec/evidence/t9-runner-minutes.md`: about 25
+  hosted minutes per pull request (CI plus Windows), plus about 2 macOS minutes on journal-path
+  pull requests. The repository is public, so these are capacity, not cost.
+
 ### Docs — proposed: T5 recovery design (J3, J4, browser-operation durability)
 
 - `docs/spec/design/t5-recovery-design.md` (Proposed, awaiting the owner's sign-off) refines J3
