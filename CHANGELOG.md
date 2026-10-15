@@ -9,10 +9,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Docs — browser-operation durability, the open choices (T5 B-dur, accepted)
 
-- A design addendum settles the four implementation choices D6 left open, accepted by the owner:
-  browser operations are journaled only on request (`executionRequirement: 'durable'`), as one
-  record per operation with the marker at the first page action, after owner-level revalidation
-  (staleness, egress, approval; autofill's pinned preflight), sharing the namespace's capacity.
+- A design addendum settles the implementation choices D6 left open, accepted by the owner:
+  browser operations are journaled only on request (`executionRequirement: 'durable'`, controlled
+  sessions only), as one record per operation with the marker at the first page action, after an
+  asynchronous owner-level recheck whose remaining window is disclosed (the approval token is
+  consumed only after the marker), sharing the namespace's capacity, under a reserved `browser`
+  application identity (no store-format change). Known step or field failures stay `failed` with
+  their report returned, never `JOURNAL_UNAVAILABLE`.
 
 ### Added — continue and reconcile for journaled operations (T5 J3c part 2)
 
