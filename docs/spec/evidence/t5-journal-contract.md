@@ -1,7 +1,8 @@
 # T5 J1-B1/B2 journal contract evidence
 
 Base: develop `5eae01dca6c83be75dea3f3a8aea154dd1b0eef7` (PR #284).
-Status: implementation candidate; exact-head review, hooks and CI pending.
+Status: **delivered** — merged to develop as PR #285 (`5ebf820`, 2026-09-24), first released in
+1.11.0. (Status line corrected 2026-10-15; it previously still read as a pending candidate.)
 Design: [journal contract and integration gates](../design/t5-journal-contract.md).
 
 This packet adds a storage-neutral validating facade, immutable metadata types and

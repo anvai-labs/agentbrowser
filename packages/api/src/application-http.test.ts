@@ -24,6 +24,7 @@ it('returns no discovery while unbound and lists operations after binding', asyn
         { name: 'add', mode: 'write' },
         { name: 'balance', mode: 'read' },
       ],
+      writeExecution: { defaultRequirement: 'ephemeral', supportedRequirements: ['ephemeral'] },
     });
     // A different tenant's fresh session sees no binding of its own.
     const other = await server.inject({

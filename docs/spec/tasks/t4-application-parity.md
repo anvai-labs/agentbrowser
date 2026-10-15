@@ -45,6 +45,9 @@ stock remote exploit. Keep the 1.9.1 release immutable; deliver this slice to de
 Test stale expected versions, resource/account rebinding, revoked grants, duplicate IDs,
 invalid nested input, output schema mismatch and after-commit response loss. Application
 mutation, idempotency and expected-version validation are atomic at the app fixture.
+Output schema mismatch (2026-10-15): an operation's optional `parseOutput` refuses a
+non-matching read (400) and turns a non-matching write into an internal fault (500) that stays
+dispatched with `outcome_unknown` and is never re-run (`application-output*.test.ts`).
 The service cannot report a browser command as that fixture's commit receipt.
 
 Run existing application independence audits with browser packages unavailable.

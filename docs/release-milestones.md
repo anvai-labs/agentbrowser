@@ -449,8 +449,10 @@ the operations guide's outdated source-only CLI installation guidance.
    merged task branches/worktrees. Preserve unmerged work and retained evidence.
 
 Do not silently retag or replace published asset bytes to repair a failed
-release. The existing release upload permits clobbering, so this is an explicit
-operating constraint until immutable-publication handling is implemented.
+release. The release job uploads without `--clobber`, so `gh release upload` refuses to replace
+an asset that already exists on the release: a re-run against a partly published release fails
+instead of swapping bytes. Repair by publishing a new patch version, never by deleting and
+re-uploading an asset. (Corrected 2026-10-15; earlier text said the upload permitted clobbering.)
 
 ## Delivery evidence template
 
