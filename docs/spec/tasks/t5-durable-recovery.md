@@ -62,6 +62,11 @@ trusted `AGENTBROWSER_JOURNAL_*` configuration ([evidence](../evidence/t5-journa
 - The application authority refuses durable on its own when it cannot be journaled.
 
 F3 deployment, enabling the store on a given host, is an operator action.
+J-e (2026-10-15): process loss at each boundary of a durable write (SIGKILL through the real
+service and store) leaves the expected record state, proven by an in-process read at the hold
+point. The effect runs at most once, the next process reopens the namespace and replays nothing,
+and key loss or in-place rotation is refused
+([evidence](../evidence/t5-journal-runtime.md#j-e-process-loss-through-the-service-2026-10-15)).
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)
 loads the concrete ownership/anchor/crash/runtime gates.
