@@ -97,6 +97,7 @@ export const ApplicationReviewRequestSchema = Type.Object(
         input: Type.Unknown(),
         operationId: ID_SCHEMA,
         expectedVersion: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+        executionRequirement: Type.Optional(ExecutionRequirementSchema),
       },
       strict
     ),

@@ -7,6 +7,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the durable requirement is part of the operation identity (T5 C4b, part 2)
+
+- A `durable` application write now has its own operation identity: its fingerprint uses the
+  `application-operation:v2-durable` domain and names the requirement, so consent and replay can
+  never cross requirements. Ephemeral fingerprints are unchanged byte for byte (pinned to golden
+  hashes captured before this change). The operator review intent names a durable requirement;
+  an ephemeral intent, explicit or omitted, is unchanged.
+- `application reviews` accept `request.executionRequirement`; the CLI's `application execute`
+  takes `--execution-requirement ephemeral|durable`.
+- Durable execution itself stays refused (`CONTROL_REQUIRED`) until a durable journal is wired to
+  the runtime (J-d), even with `durableJournalAvailable` set: the flag alone proves nothing.
+
 ### Docs — release records and task-status reconciliation
 
 - Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).

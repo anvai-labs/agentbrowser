@@ -2794,16 +2794,15 @@ export class AgentBrowserService {
         false,
         { credentialSource: 'operator' }
       );
-    // C4b: normalize the execution requirement (missing → ephemeral) and
-    // refuse 'durable' when the runtime has no qualified durable journal
-    // store. The refusal is typed and must not reserve an identity or
-    // consume approval.
+    // C4b: 'durable' is part of the operation identity (J-b) but is refused before any identity
+    // is reserved until a durable journal is wired to execution (J-d). The availability flag alone
+    // is not proof of durability, so it does not lift the refusal.
     const executionRequirement = (validated.value as { executionRequirement?: string })
       .executionRequirement;
-    if (executionRequirement === 'durable' && !this.durableJournalAvailable) {
+    if (executionRequirement === 'durable') {
       throw new ServiceError(
         'CONTROL_REQUIRED',
-        'durable execution requires a qualified durable journal store; this runtime supports ephemeral only',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
         false
       );
     }
