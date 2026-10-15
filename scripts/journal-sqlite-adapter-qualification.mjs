@@ -194,50 +194,6 @@ test('full operation lifecycle through one child, durable across manager generat
   await second.dispose();
 });
 
-test('a restarted child purges expired namespaces at startup and keeps the tombstone', async () => {
-  const paths = freshPaths('journal-mgr-purge-');
-  const first = await startAdapter({ ...paths }, true);
-  const start = Date.now();
-  const shortLived = {
-    ...namespaceConfiguration('purge-a'),
-    acceptUntil: start + 1_000,
-    retainUntil: start + 2_000,
-  };
-  const opened = await openOperationJournal(first, shortLived, Buffer.alloc(32, 7));
-  assertOpened(opened);
-  assertAcknowledged(
-    await opened.journal.reserveIntent({
-      key: intentKey('op-purge'),
-      actor: 'operator-a',
-      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-purge' },
-    })
-  );
-  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
-  await awaitChildSelfExit(first);
-  await first.dispose();
-  await sleep(Math.max(0, start + 2_100 - Date.now()));
-
-  // The new child's acquisition unit clears fences and purges in one commit.
-  const second = await startAdapter({ ...paths }, false);
-  const refused = await openOperationJournal(second, shortLived, Buffer.alloc(32, 7));
-  assert.deepEqual(refused, { kind: 'definitely_not_opened', reason: 'expired' });
-  await second.dispose();
-  const database = new DatabaseSync(join(paths.directory, 'journal.sqlite'), { readOnly: true });
-  try {
-    assert.equal(
-      database.prepare("SELECT count(*) AS count FROM journal_record WHERE namespace_id = 'purge-a'").get()
-        .count,
-      0
-    );
-    assert.deepEqual(
-      { ...database.prepare("SELECT reserved_bytes FROM journal_namespace WHERE namespace_id = 'purge-a'").get() },
-      { reserved_bytes: 0 }
-    );
-  } finally {
-    database.close();
-  }
-});
-
 test('refuses a second handle for a live namespace at the manager', async () => {
   const paths = freshPaths('journal-mgr-second-');
   const adapter = await startAdapter({ ...paths }, true);

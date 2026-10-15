@@ -102,21 +102,27 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
           return { kind: 'definitely_not_opened', reason: 'configuration' };
         }
         storeMaxNamespaces ??= request.bounds.maxNamespaces;
-        // Retention: an expired, released namespace keeps its descriptor as a
-        // tombstone (its id never reopens) but drops its records and no longer
-        // counts toward capacity. A fenced namespace is never purged.
-        let live = 0;
-        for (const existing of namespaces.values()) {
-          const expired =
-            existing.activeFence === undefined &&
-            Math.max(clock, highWaterOf(existing)) > existing.descriptor.retainUntil;
-          if (expired) {
-            existing.records.clear();
-            existing.reservedBytes = 0;
-          } else live += 1;
+        // Retention reclaims capacity only at the point of need: a released,
+        // expired and settled (every record terminal) namespace is retired —
+        // records dropped, high-water raised so the tombstone never reopens.
+        // In-doubt or fenced namespaces are never retired and always count.
+        if (namespaces.size >= storeMaxNamespaces) {
+          let live = 0;
+          for (const existing of namespaces.values()) {
+            const effective = Math.max(clock, highWaterOf(existing));
+            const retirable =
+              existing.activeFence === undefined &&
+              effective > existing.descriptor.retainUntil &&
+              [...existing.records.values()].every((record) => record.terminal !== undefined);
+            if (retirable) {
+              existing.records.clear();
+              existing.reservedBytes = 0;
+              existing.highWater = effective;
+            } else live += 1;
+          }
+          if (live >= storeMaxNamespaces)
+            return { kind: 'definitely_not_opened', reason: 'capacity' };
         }
-        if (live >= storeMaxNamespaces)
-          return { kind: 'definitely_not_opened', reason: 'capacity' };
         state = {
           descriptor: copy(request),
           records: new Map(),
@@ -670,52 +676,82 @@ export function operationJournalAdapterConformance(
       ).toEqual({ kind: 'definitely_not_opened', reason: 'configuration' });
     });
 
-    it('reclaims capacity from expired released namespaces without letting their ids back in', async () => {
+    const settle = async (journal: Awaited<ReturnType<typeof open>>, operationId: string) => {
+      const reserved = await journal.reserveIntent(intent(operationId));
+      if (reserved.kind !== 'acknowledged') throw new Error('intent was not reserved');
+      const failed = await journal.commitTerminal({
+        identity: reserved.record.identity,
+        expectedRevision: 1,
+        dispatched: false,
+        terminal: { status: 'failed', evidenceRefIds: [] },
+      });
+      expect(failed.kind).toBe('acknowledged');
+    };
+    const later = { acceptUntil: 8_000, retainUntil: 9_000 };
+    const openRaw = (fixture: JournalConformanceFixture, configuration: JournalNamespace) =>
+      openOperationJournal(fixture.adapter, configuration, fixture.fingerprintKey);
+
+    it('retires settled expired released namespaces at capacity, never letting their ids back in', async () => {
       const fixture = factory();
       const a = await open(fixture, { ...namespace(), namespaceId: 'deployment-a' });
-      expect((await a.reserveIntent(intent('op-a'))).kind).toBe('acknowledged');
+      await settle(a, 'op-a');
       const b = await open(fixture, { ...namespace(), namespaceId: 'deployment-b' });
       expect((await b.reserveIntent(intent('op-b'))).kind).toBe('acknowledged');
       await a.close();
-      // Past retainUntil (5_000): a is expired and released, b is expired but still fenced.
+      // Past retainUntil (5_000): a is expired, released and settled; b is still fenced.
       fixture.advance(5_000);
-      const later = { acceptUntil: 8_000, retainUntil: 9_000 };
-      const c = await openOperationJournal(
-        fixture.adapter,
-        { ...namespace(), ...later, namespaceId: 'deployment-c' },
-        fixture.fingerprintKey
-      );
-      expect(c.kind).toBe('opened');
-      // a's records are purged and its reservation released; its descriptor stays as a tombstone.
+      expect(
+        (await openRaw(fixture, { ...namespace(), ...later, namespaceId: 'deployment-c' })).kind
+      ).toBe('opened');
+      // a is retired: records gone, reservation released, descriptor kept as a tombstone.
       expect(fixture.observe('deployment-a')).toMatchObject({ records: [], reservedBytes: 0 });
-      // A fenced namespace is never purged and still counts toward capacity.
+      // A fenced namespace is never retired and still counts toward capacity.
       // reservedBytes is diagnostic accounting: one maxRecordBytes slot per retained record.
       expect(fixture.observe('deployment-b')).toMatchObject({
         reservedBytes: namespace().bounds.maxRecordBytes,
       });
       expect(fixture.observe('deployment-b')?.records).toHaveLength(1);
       expect(
-        await openOperationJournal(
-          fixture.adapter,
-          { ...namespace(), ...later, namespaceId: 'deployment-d' },
-          fixture.fingerprintKey
-        )
+        await openRaw(fixture, { ...namespace(), ...later, namespaceId: 'deployment-d' })
       ).toEqual({ kind: 'definitely_not_opened', reason: 'capacity' });
-      // The tombstone keeps the id closed: same descriptor expired, any other refused.
+      // The tombstone never reopens: same descriptor expired, any other refused.
+      expect(await openRaw(fixture, { ...namespace(), namespaceId: 'deployment-a' })).toEqual({
+        kind: 'definitely_not_opened',
+        reason: 'expired',
+      });
       expect(
-        await openOperationJournal(
-          fixture.adapter,
-          { ...namespace(), namespaceId: 'deployment-a' },
-          fixture.fingerprintKey
-        )
-      ).toEqual({ kind: 'definitely_not_opened', reason: 'expired' });
-      expect(
-        await openOperationJournal(
-          fixture.adapter,
-          { ...namespace(), ...later, namespaceId: 'deployment-a' },
-          fixture.fingerprintKey
-        )
+        await openRaw(fixture, { ...namespace(), ...later, namespaceId: 'deployment-a' })
       ).toEqual({ kind: 'definitely_not_opened', reason: 'configuration' });
+      // Review regression: retirement raised the high-water, so a clock rolled back
+      // inside the old horizon cannot reopen the empty namespace and readmit op-a.
+      // (The stores order their rollback and horizon checks differently, so the
+      // reason is `configuration` or `expired`; either way it stays closed.)
+      fixture.setClock(1_500);
+      const rolledBack = await openRaw(fixture, { ...namespace(), namespaceId: 'deployment-a' });
+      expect(rolledBack.kind).toBe('definitely_not_opened');
+      expect(['configuration', 'expired']).toContain((rolledBack as { reason?: string }).reason);
+    });
+
+    it('never retires a namespace holding an in-doubt record', async () => {
+      const fixture = factory();
+      const a = await open(fixture, { ...namespace(), namespaceId: 'deployment-a' });
+      // Review regression: an intent without a terminal fact is the only evidence of
+      // an uncertain effect; deleting it would clear a quarantine.
+      expect((await a.reserveIntent(intent('op-in-doubt'))).kind).toBe('acknowledged');
+      await a.close();
+      const b = await open(fixture, { ...namespace(), namespaceId: 'deployment-b' });
+      await settle(b, 'op-b');
+      await b.close();
+      fixture.advance(5_000);
+      expect(
+        (await openRaw(fixture, { ...namespace(), ...later, namespaceId: 'deployment-c' })).kind
+      ).toBe('opened');
+      expect(fixture.observe('deployment-a')?.records).toHaveLength(1);
+      expect(fixture.observe('deployment-b')?.records).toEqual([]);
+      // a still counts: c plus the in-doubt a fill the ceiling.
+      expect(
+        await openRaw(fixture, { ...namespace(), ...later, namespaceId: 'deployment-d' })
+      ).toEqual({ kind: 'definitely_not_opened', reason: 'capacity' });
     });
 
     it('uses one immutable store-wide namespace ceiling that a later namespace cannot widen', async () => {
