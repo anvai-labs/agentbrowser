@@ -120,18 +120,22 @@ function rows(store: string): Array<{ tenant: string; operationId: string; revis
 }
 
 describe('durable restart claims (T4 A2, real store)', () => {
-  it('records survive, nothing replays, and a re-submitted ID is a new operation — not deduplication', async () => {
+  it('records survive a graceful restart, nothing replays, and a re-submitted ID is a new operation', async () => {
     const { store, env } = journalEnvironment();
 
-    // Process A: one durable write completes, then a graceful stop.
-    const first = await serviceProcess(env, 'counter-a', true);
-    await expect(first.write('restart-op', 0)).resolves.toMatchObject({ status: 'committed' });
-    expect(first.effects()).toBe(1);
-    await first.stop();
+    // Instance A: one durable write completes, then a graceful stop. The stop runs even when an
+    // assertion fails, so its storage child never outlives a failed test.
+    const first = await serviceProcess(env, true);
+    try {
+      await expect(first.write('restart-op', 0)).resolves.toMatchObject({ status: 'committed' });
+      expect(first.effects()).toBe(1);
+    } finally {
+      await first.stop();
+    }
     expect(rows(store)).toEqual([{ tenant: 'owner', operationId: 'restart-op', revision: 3 }]);
 
-    // Process B reopens the same namespace and starts empty: nothing replayed.
-    const second = await serviceProcess(env, 'counter-b', false);
+    // Instance B reopens the same namespace and starts empty: nothing replayed.
+    const second = await serviceProcess(env, false);
     try {
       expect(second.effects()).toBe(0);
       expect(rows(store)).toHaveLength(1);
