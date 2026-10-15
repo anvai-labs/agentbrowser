@@ -320,3 +320,36 @@ it('guards approval-required challenge details from an admitted action after lat
     await f.server.close();
   }
 }, 10_000);
+
+it('a durable review request is refused typed (403 CONTROL_REQUIRED), never an internal error', async () => {
+  const f = await fixture();
+  try {
+    const { path, body } = await f.setup();
+    const durable = {
+      ...body,
+      request: { ...(body as { request: object }).request, executionRequirement: 'durable' },
+    };
+    const refused = await f.server.inject({
+      method: 'POST',
+      url: `${path}/application/reviews`,
+      headers,
+      payload: durable,
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json().error.code).toBe('CONTROL_REQUIRED');
+    expect(f.collect).not.toHaveBeenCalled();
+    // An explicit ephemeral review is the default made explicit: accepted.
+    const ephemeral = await f.server.inject({
+      method: 'POST',
+      url: `${path}/application/reviews`,
+      headers,
+      payload: {
+        ...body,
+        request: { ...(body as { request: object }).request, executionRequirement: 'ephemeral' },
+      },
+    });
+    expect(ephemeral.statusCode).toBe(200);
+  } finally {
+    await f.server.close();
+  }
+}, 10_000);

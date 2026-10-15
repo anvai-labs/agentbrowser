@@ -78,10 +78,10 @@ Delivered this session (2026-10-02..05, 14 merged PRs #356–#372):
 - **F3 authorization** — every technical precondition passed (the C4b
   precondition audit confirmed all five delivery gates; the operator
   reconciliation procedure is delivered). C4b execution-requirement selection
-  is partial: explicit `ephemeral` and discovery work, but `durable` is refused
-  until the requirement is part of the operation identity (J-b) and a journal
-  store is wired into the service (J-d); the `durableJournalAvailable` flag
-  alone does not enable it.
+  is partial: explicit `ephemeral`, discovery and the durable operation identity
+  (J-b) are in place, but `durable` execution is refused until a journal store
+  is wired into the service (J-d); the `durableJournalAvailable` flag alone does
+  not enable it.
 - **T4 live-target evidence** — requires named authorized targets and the
   consuming workflow to drive the gates.
 - **Victor TLS trust** — the Sandhi gateway CA must be trusted in Victor's

@@ -147,7 +147,7 @@ describe('service-level execution requirement (J-a review)', () => {
           expectedVersion: 0,
           executionRequirement: 'durable',
         })
-      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+      ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
       expect(s.effects()).toBe(0);
       // Discovery does not advertise what execute refuses.
       expect(await s.service.applicationDiscover(s.sessionId, operator)).toMatchObject({
