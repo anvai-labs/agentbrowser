@@ -153,9 +153,13 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   `GET /v1/journal` reports health and horizons. With the operator key only, `close` ends
   never-dispatched records, `settle` ends in-doubt ones as unknown (irreversible), and
   `reconcile` asks an adapter that implements it what truly happened. Nothing is ever replayed.
-- **Rotating with history (D7).** Before a namespace's `ACCEPT_UNTIL` passes, configure the next
-  namespace and list the old one in `AGENTBROWSER_JOURNAL_HISTORY_FILE`, an owner-only (`0600`)
-  JSON file:
+- **After the horizon passes.** A namespace whose `ACCEPT_UNTIL` has passed no longer takes
+  durable writes, but the server still opens it **recover-only** at startup: its records stay
+  readable by lookup and recoverable by the operator until `retainUntil`.
+- **Rotating with history (D7).** Once the old namespace's `ACCEPT_UNTIL` has passed, configure the
+  next namespace and list the old one in `AGENTBROWSER_JOURNAL_HISTORY_FILE`, an owner-only
+  (`0600`) JSON file. An entry listed before its horizon passes is reported and NOT opened (the
+  store would otherwise create a missing namespace, so a typo could take a slot):
 
   ```json
   {
@@ -184,9 +188,11 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   namespace in `unreadNamespaces` — unread, never absent — without affecting the current
   namespace. **Deadline:** after `retainUntil` (30 days past the old `ACCEPT_UNTIL`) the store
   refuses every write to it, so close, reconcile or settle its open records before then; the
-  server warns at startup within 7 days of it. An open record left at `retainUntil` keeps one of
-  the store's 64 slots forever (a recorded residual). Counting open records per history
-  namespace is not yet offered.
+  server warns at startup within 7 days of it. Remove an entry once it is past `retainUntil`:
+  the store no longer opens it, so it would read as unread forever. An open record left at
+  `retainUntil` keeps one of the store's 64 slots forever (a recorded residual). Counting open
+  records per history namespace is not yet offered. The CLI's `journal status` lists history
+  namespaces and `journal operations` names unread ones.
 
 ## Installation
 
@@ -363,7 +369,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_JOURNAL_ANCHOR_DIR` | service | **Trusted operator configuration**: a separate existing, private, local directory for the journal's commit anchor. A layout the store refuses aborts startup; follow the [operator reconciliation procedure](spec/design/t5-operator-reconciliation.md), never edit the files. |
 | `AGENTBROWSER_JOURNAL_KEY_FILE` | service | **Trusted operator configuration**: a file holding one `keyId:hex` line, the 32–64 byte journal fingerprint key, readable by its owner only (`chmod 600`; startup refuses otherwise on POSIX). The key is never an environment-variable value; only its file path is. Replacing the key under the same id is refused by the store. |
 | `AGENTBROWSER_JOURNAL_RESTORE_GENERATION` | service | **Trusted operator configuration**: the operator-managed restore generation (1–128 letters, digits, `_`, `-`). Change it only as part of a restore, per the reconciliation procedure. |
-| `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL` | service | **Trusted operator configuration**: the ISO-8601 instant (with a time zone, e.g. `2027-01-01T00:00:00Z`) until which the namespace accepts new durable writes; records are kept 30 days beyond it. Immutable for a namespace: changing it under the same `AGENTBROWSER_JOURNAL_NAMESPACE` aborts startup. A passed instant aborts startup. |
+| `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL` | service | **Trusted operator configuration**: the ISO-8601 instant (with a time zone, e.g. `2027-01-01T00:00:00Z`) until which the namespace accepts new durable writes; records are kept 30 days beyond it. Immutable for a namespace: changing it under the same `AGENTBROWSER_JOURNAL_NAMESPACE` aborts startup. Once it has passed, the server starts without durable execution and opens the namespace recover-only (readable and recoverable until its retention ends). |
 | `AGENTBROWSER_JOURNAL_NAMESPACE` | service | Optional (default `agentbrowser`): the journal namespace. Every start reopens it, so records survive restarts. To rotate (new horizon, key or capacity), configure a new name; the old namespace keeps its records until its retention ends. |
 | `AGENTBROWSER_JOURNAL_MAX_RECORDS` | service | Optional (default 10,000, at most 1,000,000): durable writes the namespace can hold before it refuses more. Immutable for a namespace. |
 | `AGENTBROWSER_JOURNAL_HISTORY_FILE` | service | Optional, **trusted operator configuration** (T5 J3d): absolute path to an owner-only (`0600`) JSON file listing at most 16 namespaces rotated away from, each with its original descriptor inputs and key file (format in [the journal section](#durable-application-writes-t5-c4b)). They stay searchable and recoverable until `retainUntil` and never accept new writes. Requires the other `AGENTBROWSER_JOURNAL_*` variables; a malformed file aborts startup, while an entry the store refuses is reported in `GET /v1/journal` and never stops the current namespace. |

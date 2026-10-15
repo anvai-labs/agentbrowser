@@ -406,4 +406,22 @@ The operator-only recovery writes, on a real store, through the service and over
   status lists A; lookup finds A's record tagged `ns-a`; the operator settles it and the
   terminal lands in `ns-a`; a refused entry makes lookup partial (`unreadNamespaces: ["ns-a"]`)
   and recovery 503; a history file without the journal configuration aborts startup.
+- **Review round 1 fixes (J3d).**
+  - *Past-horizon current namespace (HIGH).* It was neither searched nor counted unread, so a
+    lookup could claim absence for an existing record. It now opens **recover-only** and is
+    searched like history (status lists it), or is reported unread when the store refuses it;
+    pinned over HTTP with and without a history file (lookup finds it, settle commits in it).
+  - *History entries open only past their horizon.* The store CREATES a missing namespace whose
+    horizon is ahead, so an early (or typo'd) entry is reported and never opened — pinned by
+    asserting the store's namespace rows are unchanged.
+  - *Recover-only wrapper.* History and past-horizon journals refuse `reserveIntent` and
+    `markDispatch` without touching the store; recovery's own calls pass through (pinned with a
+    stub).
+  - *CLI/SDK.* `journal status` lists history namespaces with state and reason; `journal
+    operations` names each record's namespace and any unread namespaces; the SDK types carry
+    `history` and `unreadNamespaces` (CLI tests added).
+  - *Close in history pinned*; the warning logic is a tested function; a runtime-unhealthy
+    history handle reports `unavailable`; recovery responses name unread namespaces; a commit
+    the journal does not apply now reports its kind and reason instead of claiming the record
+    changed; the history file's size is checked in bytes before it is read.
 

@@ -117,7 +117,11 @@ export const JournalStatusSchema = Type.Object(
         Type.Object(
           {
             namespace: Type.String({ maxLength: 128 }),
-            state: Type.Union([Type.Literal('open'), Type.Literal('refused')]),
+            state: Type.Union([
+              Type.Literal('open'),
+              Type.Literal('refused'),
+              Type.Literal('unavailable'),
+            ]),
             reason: Type.Optional(Type.String({ maxLength: 128 })),
             acceptUntil: Type.String({ maxLength: 40 }),
             retainUntil: Type.String({ maxLength: 40 }),

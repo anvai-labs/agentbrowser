@@ -31,6 +31,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   entry, which never stops the current namespace). Lookups report any namespace they could not
   read in `unreadNamespaces`, and are never `absent` while one is unread.
 - The server warns at startup within 7 days of a history namespace's `retainUntil`.
+- A namespace past its `ACCEPT_UNTIL` is opened recover-only: no durable writes, but its records
+  stay readable and recoverable until retention ends. History entries are opened only once their
+  horizon has passed (an early or typo'd entry is reported and never creates a namespace).
+- `agentbrowser journal status` lists history namespaces; `journal operations` names each
+  record's namespace and any namespace it could not read.
 
 ### Tests — recovery gates for application writes (T5 J4)
 

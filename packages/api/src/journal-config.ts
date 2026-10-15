@@ -236,6 +236,11 @@ export async function openServiceJournal(
   config: ServiceJournalConfig,
   options: { now?: () => number } = {}
 ): Promise<ServiceJournal> {
+  const now = options.now ?? Date.now;
+  if (config.acceptUntil <= now())
+    throw new JournalConfigError(
+      'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: this namespace no longer accepts durable work; configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon'
+    );
   const set = await openServiceJournalSet(config, [], options);
   if (!set.journal) {
     await set.close();
@@ -264,6 +269,8 @@ export interface ServiceJournalHistoryEntry {
 
 export interface ServiceJournalHistoryState {
   readonly namespaceId: string;
+  /** True for the CURRENT namespace once its accept horizon has passed (opened recover-only). */
+  readonly current?: boolean;
   readonly acceptUntil: number;
   readonly retainUntil: number;
   /** The open handle; undefined when the store refused the namespace (see `refusal`). */
@@ -324,10 +331,7 @@ export async function openServiceJournalSet(
 ): Promise<ServiceJournalSet> {
   const now = options.now ?? Date.now;
   const currentOpen = config.acceptUntil > now();
-  if (!currentOpen && history.length === 0)
-    throw new JournalConfigError(
-      'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: this namespace no longer accepts durable work; configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon'
-    );
+  const currentDescriptor = serviceJournalNamespace(config);
   let adapter: Awaited<ReturnType<typeof openJournalSqliteOperationJournalAdapter>>;
   try {
     adapter = await openJournalSqliteOperationJournalAdapter({
@@ -337,6 +341,21 @@ export async function openServiceJournalSet(
       initialize: config.initialize,
     });
   } catch {
+    // A past-horizon namespace with no history never ABORTED startup (durable work is simply
+    // refused); keep that, but report it as configured-and-unread rather than silent.
+    if (!currentOpen && history.length === 0)
+      return {
+        history: [
+          {
+            namespaceId: config.namespaceId,
+            current: true,
+            acceptUntil: currentDescriptor.acceptUntil,
+            retainUntil: currentDescriptor.retainUntil,
+            refusal: 'store did not start',
+          },
+        ],
+        close: async () => {},
+      };
     throw new JournalConfigError(
       'The durable journal store did not start: another process may hold it (one server per store), or AGENTBROWSER_JOURNAL_DIR / AGENTBROWSER_JOURNAL_ANCHOR_DIR or the store layout is refused (docs/spec/design/t5-operator-reconciliation.md). The journal needs Node 22.13 or later.'
     );
@@ -364,17 +383,51 @@ export async function openServiceJournalSet(
     opened.push(journal);
   }
   const states: ServiceJournalHistoryState[] = [];
+  // Review F1: a CURRENT namespace past its horizon is still inside retention, so its records
+  // must stay reachable (and recoverable) like any history namespace — opened recover-only and
+  // searched, or reported unread when the store refuses it. Never silently left out.
+  if (!currentOpen) {
+    const past = await openOperationJournal(adapter, currentDescriptor, config.key).catch(
+      () => undefined
+    );
+    const base = {
+      namespaceId: config.namespaceId,
+      current: true,
+      acceptUntil: currentDescriptor.acceptUntil,
+      retainUntil: currentDescriptor.retainUntil,
+    };
+    if (past?.kind === 'opened') {
+      opened.push(past.journal);
+      states.push({ ...base, journal: recoverOnly(past.journal) });
+    } else {
+      states.push({
+        ...base,
+        refusal: past === undefined ? 'error' : `${past.kind}: ${past.reason}`,
+      });
+    }
+  }
   for (const entry of history) {
     const namespace = historyJournalNamespace(entry);
-    const result = await openOperationJournal(adapter, namespace, entry.key).catch(() => undefined);
     const base = {
       namespaceId: entry.namespaceId,
       acceptUntil: namespace.acceptUntil,
       retainUntil: namespace.retainUntil,
     };
+    // A history entry opens only once its accept horizon has passed: the store CREATES a missing
+    // namespace whose horizon is still ahead, so a typo'd name listed early would silently take a
+    // store slot. Past the horizon the store refuses to create one. An entry listed too early is
+    // reported (and its records read as unread), never opened.
+    if (namespace.acceptUntil > now()) {
+      states.push({
+        ...base,
+        refusal: 'not yet past its accept horizon: list it once its ACCEPT_UNTIL has passed',
+      });
+      continue;
+    }
+    const result = await openOperationJournal(adapter, namespace, entry.key).catch(() => undefined);
     if (result?.kind === 'opened') {
       opened.push(result.journal);
-      states.push({ ...base, journal: result.journal });
+      states.push({ ...base, journal: recoverOnly(result.journal) });
     } else {
       states.push({
         ...base,
@@ -422,14 +475,15 @@ export async function journalHistoryFromEnvironment(
   if (!isAbsolute(path)) throw invalid('the path must be absolute');
   let text: string;
   try {
-    if (process.platform !== 'win32' && ((await stat(path)).mode & 0o077) !== 0)
+    const info = await stat(path);
+    if (process.platform !== 'win32' && (info.mode & 0o077) !== 0)
       throw invalid('the file must be readable by its owner only (chmod 600)');
+    if (info.size > 65_536) throw invalid('the file is larger than 64 KiB');
     text = await readFile(path, 'utf8');
   } catch (error) {
     if (error instanceof JournalConfigError) throw error;
     throw invalid('the file cannot be read');
   }
-  if (text.length > 65_536) throw invalid('the file is larger than 64 KiB');
   let document: unknown;
   try {
     document = JSON.parse(text);
@@ -541,6 +595,7 @@ export async function searchJournalNamespaces(
       });
     } catch {
       unreadNamespaces.push(journal.namespace.namespaceId);
+      lastReason = 'error';
       continue;
     }
     if (outcome.kind !== 'found') {
@@ -559,4 +614,56 @@ export async function searchJournalNamespaces(
     truncated = true;
   }
   return { entries, truncated, unreadNamespaces, lastReason };
+}
+
+/**
+ * J3d review F2: a history (or past-horizon) namespace is recover-only. The store's admission
+ * gate is time-based, so a history entry listed BEFORE its horizon passed would admit an intent;
+ * this wrapper refuses new intents and dispatch marks without touching the store. Lookup and the
+ * operator's terminal commits (D2/D3) pass through.
+ */
+export function recoverOnly(journal: OperationJournal): OperationJournal {
+  const refused = (): ReturnType<OperationJournal['reserveIntent']> => {
+    const call = Promise.resolve({
+      kind: 'definitely_not_written' as const,
+      reason: 'admission_expired' as const,
+    });
+    return Object.assign(call, { settled: Promise.resolve() });
+  };
+  return {
+    get namespace() {
+      return journal.namespace;
+    },
+    get health() {
+      return journal.health;
+    },
+    get pending() {
+      return journal.pending;
+    },
+    reserveIntent: () => refused(),
+    markDispatch: () => refused(),
+    commitTerminal: (transition, signal) => journal.commitTerminal(transition, signal),
+    lookup: (key, signal) => journal.lookup(key, signal),
+    findByOperation: (query, signal) => journal.findByOperation(query, signal),
+    close: () => journal.close(),
+  };
+}
+
+/** J3d: startup warnings for history namespaces (refused, or open within 7 days of retainUntil). */
+export function journalHistoryWarnings(
+  states: readonly ServiceJournalHistoryState[],
+  now: number = Date.now()
+): string[] {
+  const warnings: string[] = [];
+  for (const state of states) {
+    if (state.refusal !== undefined)
+      warnings.push(
+        `journal history namespace ${state.namespaceId} did not open (${state.refusal}); its records are unread until the entry is corrected (remove an entry once it is past retainUntil)`
+      );
+    else if (state.retainUntil - now < 7 * 24 * 60 * 60 * 1000)
+      warnings.push(
+        `journal history namespace ${state.namespaceId} reaches retainUntil at ${new Date(state.retainUntil).toISOString()}: close, reconcile or settle its actionable records before then — after it they can never be closed`
+      );
+  }
+  return warnings;
 }

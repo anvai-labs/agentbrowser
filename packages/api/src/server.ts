@@ -12,11 +12,11 @@ import {
   JournalConfigError,
   journalConfigFromEnvironment,
   journalHistoryFromEnvironment,
+  journalHistoryWarnings,
   journalRuntimeQualified,
   openServiceJournalSet,
   SERVICE_JOURNAL_RETAIN_MS,
   searchJournalNamespaces,
-  serviceJournalHistoryTemplate,
 } from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
@@ -30,12 +30,7 @@ import type { SessionPrincipal } from './session-authority.js';
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import type {
-  JournalFindOutcome,
-  JournalRecord,
-  TrustedEvidenceSourceRegistry,
-  TrustedVerifierRegistry,
-} from '@agentbrowser/control';
+import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -580,7 +575,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const horizonPassed = journalConfig !== undefined && journalConfig.acceptUntil <= Date.now();
   if (horizonPassed)
     console.warn(
-      '[agentbrowser] AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: starting WITHOUT the durable journal (durable execution is refused). Configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon.'
+      "[agentbrowser] AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: durable execution is refused; the namespace's records stay readable and recoverable (recover-only) until its retainUntil. Configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon, listing this one in AGENTBROWSER_JOURNAL_HISTORY_FILE."
     );
   // T5 J3d (D7): namespaces the operator rotated away from, listed with every descriptor input.
   // They open on the SAME store adapter (the store admits one server) and stay searchable and
@@ -592,8 +587,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     throw new JournalConfigError(
       'AGENTBROWSER_JOURNAL_HISTORY_FILE requires the durable journal configuration (AGENTBROWSER_JOURNAL_DIR and the rest)'
     );
+  // A configured journal always opens its set: the current namespace for durable work while its
+  // horizon holds, and recover-only once it has passed (review F1), plus every history namespace.
   const journalSet =
-    journalConfig === undefined || (horizonPassed && journalHistory.length === 0)
+    journalConfig === undefined
       ? undefined
       : await openServiceJournalSet(journalConfig, journalHistory);
   const serviceJournal = journalSet?.journal ? { journal: journalSet.journal } : undefined;
@@ -605,16 +602,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const refusedHistory = (journalSet?.history ?? []).flatMap((state) =>
     state.journal ? [] : [state.namespaceId]
   );
-  for (const state of journalSet?.history ?? []) {
-    if (state.refusal !== undefined)
-      console.warn(
-        `[agentbrowser] journal history namespace ${state.namespaceId} did not open (${state.refusal}); its records are unreachable until the entry is corrected`
-      );
-    else if (state.retainUntil - Date.now() < 7 * 24 * 60 * 60 * 1000)
-      console.warn(
-        `[agentbrowser] journal history namespace ${state.namespaceId} reaches retainUntil at ${new Date(state.retainUntil).toISOString()}: close, reconcile or settle its actionable records before then — after it they can never be closed`
-      );
-  }
+  for (const warning of journalHistoryWarnings(journalSet?.history ?? []))
+    console.warn(`[agentbrowser] ${warning}`);
   let service: AgentBrowserService;
   try {
     service = new AgentBrowserService({
@@ -1073,9 +1062,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                     // A refused namespace stays refused for this process; an opened one reports
                     // open while its handle is healthy.
                     state:
-                      state.journal !== undefined && state.journal.health === 'open'
-                        ? ('open' as const)
-                        : ('refused' as const),
+                      state.journal === undefined
+                        ? ('refused' as const)
+                        : state.journal.health === 'open'
+                          ? ('open' as const)
+                          : ('unavailable' as const),
                     ...(state.refusal !== undefined
                       ? { reason: state.refusal }
                       : state.journal !== undefined && state.journal.health !== 'open'

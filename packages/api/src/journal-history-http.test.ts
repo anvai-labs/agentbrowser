@@ -88,18 +88,30 @@ const intentOf = (operationId: string) => ({
   liveFingerprint: { algorithm: 'application-operation:v1', digest: `d-${operationId}` },
 });
 
-/** Namespace A: an in-doubt record, then A's horizon passes. Returns A's history template. */
-async function seedRotatedNamespace(l: ReturnType<typeof layout>) {
+/**
+ * A namespace with one record (in doubt by default), then its horizon passes. Returns its
+ * history template.
+ */
+async function seedRotatedNamespace(
+  l: ReturnType<typeof layout>,
+  options: {
+    namespace?: string;
+    keyFile?: string;
+    operationId?: string;
+    state?: 'undispatched' | 'in_doubt';
+  } = {}
+) {
   const horizon = new Date(Date.now() + 2_000).toISOString();
   const configA = await journalConfigFromEnvironment({
-    ...l.env('ns-a', l.keyA, horizon),
+    ...l.env(options.namespace ?? 'ns-a', options.keyFile ?? l.keyA, horizon),
     AGENTBROWSER_JOURNAL_INITIALIZE: '1',
   });
   if (!configA) throw new Error('expected configuration');
   const a = await openServiceJournal(configA);
-  const reserved = await a.journal.reserveIntent(intentOf('rotated-op'));
+  const reserved = await a.journal.reserveIntent(intentOf(options.operationId ?? 'rotated-op'));
   if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
-  await a.journal.markDispatch({ identity: reserved.record.identity, expectedRevision: 1 });
+  if ((options.state ?? 'in_doubt') === 'in_doubt')
+    await a.journal.markDispatch({ identity: reserved.record.identity, expectedRevision: 1 });
   await a.close();
   await new Promise((done) => setTimeout(done, 2_300));
   return serviceJournalHistoryTemplate(configA);
@@ -248,4 +260,113 @@ describe('history namespaces over HTTP (J3d)', () => {
       /requires the durable journal configuration/
     );
   });
+});
+
+describe('history namespaces over HTTP, review round 1 (J3d)', () => {
+  const lookup = (built: Awaited<ReturnType<typeof server>>['built'], operationId: string) =>
+    built.inject({
+      method: 'GET',
+      url: `/v1/journal/operations/${operationId}`,
+      headers: apiHeaders,
+    });
+  const act = (
+    built: Awaited<ReturnType<typeof server>>['built'],
+    operationId: string,
+    action: 'close' | 'settle'
+  ) =>
+    built.inject({
+      method: 'POST',
+      url: `/v1/journal/operations/${operationId}/${action}`,
+      headers: operatorHeaders,
+    });
+
+  it('F1: a past-horizon CURRENT namespace stays readable and recoverable — with or without history', async () => {
+    const l = layout();
+    const templateB = await seedRotatedNamespace(l, {
+      namespace: 'ns-b',
+      keyFile: l.keyB,
+      operationId: 'current-op',
+    });
+    // Restarted with the SAME (now passed) horizon and no history file.
+    const { built } = await server({
+      ...l.env('ns-b', l.keyB, templateB.acceptUntil),
+      AGENTBROWSER_OPERATOR_KEYS_FILE: l.operatorKeys,
+    });
+    const status = (
+      await built.inject({ method: 'GET', url: '/v1/journal', headers: apiHeaders })
+    ).json();
+    // Durable work is not offered (no current health), but the namespace is listed recover-only.
+    expect(status).not.toHaveProperty('health');
+    expect(status.recoveryQualified).toBe(false);
+    expect(status.history).toEqual([expect.objectContaining({ namespace: 'ns-b', state: 'open' })]);
+    const before = await lookup(built, 'current-op');
+    expect(before.statusCode, before.body).toBe(200);
+    expect(before.json()).toMatchObject({
+      absent: false,
+      records: [{ namespace: 'ns-b', classification: 'in_doubt' }],
+    });
+    const settled = await act(built, 'current-op', 'settle');
+    expect(settled.statusCode, settled.body).toBe(200);
+    expect((await lookup(built, 'current-op')).json()).toMatchObject({
+      records: [{ namespace: 'ns-b', classification: 'settled_unknown' }],
+    });
+  }, 60_000);
+
+  it('F4: close lands a never-dispatched history record in the namespace that owns it', async () => {
+    const l = layout();
+    const template = await seedRotatedNamespace(l, {
+      state: 'undispatched',
+      operationId: 'old-op',
+    });
+    writeFileSync(
+      l.historyFile,
+      JSON.stringify({ schemaVersion: 1, namespaces: [{ ...template, keyFile: l.keyA }] }),
+      { mode: 0o600 }
+    );
+    const { built } = await server({
+      ...l.env('ns-b', l.keyB, '2099-01-01T00:00:00Z'),
+      AGENTBROWSER_JOURNAL_HISTORY_FILE: l.historyFile,
+      AGENTBROWSER_OPERATOR_KEYS_FILE: l.operatorKeys,
+    });
+    const closed = await act(built, 'old-op', 'close');
+    expect(closed.statusCode, closed.body).toBe(200);
+    expect(closed.json()).toEqual({ closed: 1, truncated: false });
+    expect((await lookup(built, 'old-op')).json()).toMatchObject({
+      records: [{ namespace: 'ns-a', classification: 'failed_before_dispatch' }],
+    });
+  }, 60_000);
+
+  it('F6: partial recovery acts on what it found and names what it could not read', async () => {
+    const l = layout();
+    const template = await seedRotatedNamespace(l);
+    writeFileSync(
+      l.historyFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        namespaces: [
+          { ...template, keyFile: l.keyA },
+          // Listed too early (future horizon): reported, never opened, read as unread.
+          {
+            ...template,
+            namespace: 'ns-early',
+            acceptUntil: '2099-01-01T00:00:00.000Z',
+            keyFile: l.keyA,
+          },
+        ],
+      }),
+      { mode: 0o600 }
+    );
+    const { built } = await server({
+      ...l.env('ns-b', l.keyB, '2099-01-01T00:00:00Z'),
+      AGENTBROWSER_JOURNAL_HISTORY_FILE: l.historyFile,
+      AGENTBROWSER_OPERATOR_KEYS_FILE: l.operatorKeys,
+    });
+    const settled = await act(built, 'rotated-op', 'settle');
+    expect(settled.statusCode, settled.body).toBe(200);
+    expect(settled.json()).toEqual({
+      settled: 1,
+      truncated: false,
+      unreadNamespaces: ['ns-early'],
+    });
+  }, 60_000);
 });

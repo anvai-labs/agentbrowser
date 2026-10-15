@@ -2738,8 +2738,11 @@ export class AgentBrowserService {
   async journalCloseOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ closed: number; truncated: boolean }> {
-    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+  ): Promise<{ closed: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
     // Actionability is PER RECORD (accepted design): close touches only the never-dispatched
     // records of the ID; dispatched or terminal siblings are other actions' business, never a
     // refusal here — a blanket refusal would deadlock mixed-state operations forever. Zero
@@ -2761,11 +2764,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          `The record changed after ${closed} record(s) were closed; re-read before acting again`
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${closed} record(s) were closed; re-read before acting again`
         );
       closed += 1;
     }
-    return { closed, truncated };
+    return { closed, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
   /**
@@ -2776,8 +2779,11 @@ export class AgentBrowserService {
   async journalSettleOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ settled: number; truncated: boolean }> {
-    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+  ): Promise<{ settled: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
     const eligible = records.filter(
       (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
     );
@@ -2797,11 +2803,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          `The record changed after ${settled} record(s) were settled; re-read before acting again`
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${settled} record(s) were settled; re-read before acting again`
         );
       settled += 1;
     }
-    return { settled, truncated };
+    return { settled, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
   /**
@@ -2814,8 +2820,16 @@ export class AgentBrowserService {
   async journalReconcileOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ reconciled: number; unresolved: number; truncated: boolean }> {
-    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+  ): Promise<{
+    reconciled: number;
+    unresolved: number;
+    truncated: boolean;
+    unreadNamespaces?: string[];
+  }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
     const eligible = records.filter(
       (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
     );
@@ -2888,11 +2902,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          `The record changed after ${reconciled} record(s) were reconciled; re-read before acting again`
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${reconciled} record(s) were reconciled; re-read before acting again`
         );
       reconciled += 1;
     }
-    return { reconciled, unresolved, truncated };
+    return { reconciled, unresolved, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
   /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
@@ -2928,7 +2942,14 @@ export class AgentBrowserService {
         'No actionable record of this operation in the searched namespaces'
       );
     for (const entry of entries) this.recordJournals.set(entry.record, entry.journal);
-    return { records: entries.map((entry) => entry.record), truncated };
+    // Partial recovery is allowed (records found act), but never silent about what it could not
+    // read: the response names those namespaces.
+    const unread = [...unreadNamespaces, ...this.refusedHistoryNamespaces];
+    return {
+      records: entries.map((entry) => entry.record),
+      truncated,
+      ...(unread.length > 0 ? { unreadNamespaces: unread } : {}),
+    };
   }
 
   /**

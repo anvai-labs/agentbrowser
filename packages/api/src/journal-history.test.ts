@@ -9,14 +9,17 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   historyJournalNamespace,
   JournalConfigError,
   journalConfigFromEnvironment,
   journalHistoryFromEnvironment,
+  journalHistoryWarnings,
   openServiceJournal,
   openServiceJournalSet,
+  recoverOnly,
   searchJournalNamespaces,
   serviceJournalHistoryTemplate,
   serviceJournalNamespace,
@@ -172,6 +175,18 @@ function entryFor(l: ReturnType<typeof layout>, namespace: string, keyFile = l.k
   };
 }
 
+/** Creates namespace `name` with a horizon 2 s ahead, closes it, and waits until it has passed. */
+async function seedPastHorizon(l: ReturnType<typeof layout>, name: string, keyFile: string) {
+  const config = await journalConfigFromEnvironment({
+    ...l.env(name, keyFile, new Date(Date.now() + 2_000).toISOString()),
+    AGENTBROWSER_JOURNAL_INITIALIZE: '1',
+  });
+  if (!config) throw new Error('expected configuration');
+  await (await openServiceJournal(config)).close();
+  await new Promise((done) => setTimeout(done, 2_300));
+  return config;
+}
+
 describe('rotation with history (real store)', () => {
   it('a rotated-away namespace reopens from its history entry; its records stay readable', async () => {
     const l = layout();
@@ -238,12 +253,7 @@ describe('rotation with history (real store)', () => {
 
   it('a wrong history entry is reported per namespace and never takes the current one down', async () => {
     const l = layout();
-    const configA = await journalConfigFromEnvironment({
-      ...l.env('ns-a', l.keyA, '2099-01-01T00:00:00Z'),
-      AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-    });
-    if (!configA) throw new Error('expected configuration');
-    await (await openServiceJournal(configA)).close();
+    const configA = await seedPastHorizon(l, 'ns-a', l.keyA);
     // The history entry names A with the WRONG key file: the store refuses it (configuration).
     l.writeHistory([{ ...serviceJournalHistoryTemplate(configA), keyFile: l.keyB }]);
     const configB = await journalConfigFromEnvironment(
@@ -269,12 +279,7 @@ describe('rotation with history (real store)', () => {
 
   it('history alone (the current horizon also passed) still opens the store for history', async () => {
     const l = layout();
-    const configA = await journalConfigFromEnvironment({
-      ...l.env('ns-a', l.keyA, '2099-01-01T00:00:00Z'),
-      AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-    });
-    if (!configA) throw new Error('expected configuration');
-    await (await openServiceJournal(configA)).close();
+    const configA = await seedPastHorizon(l, 'ns-a', l.keyA);
     l.writeHistory([{ ...serviceJournalHistoryTemplate(configA), keyFile: l.keyA }]);
     const passed = await journalConfigFromEnvironment(
       l.env('ns-b', l.keyB, '2001-01-01T00:00:00Z')
@@ -287,7 +292,15 @@ describe('rotation with history (real store)', () => {
     const set = await openServiceJournalSet(passed, history);
     try {
       expect(set.journal).toBeUndefined();
-      expect(set.history[0]?.journal?.health).toBe('open');
+      // The past-horizon current namespace is never silently left out (review F1): here it never
+      // existed in the store, so the store refuses it and it is REPORTED (unread), never absent.
+      const current = set.history.find((state) => state.namespaceId === 'ns-b');
+      expect(current).toMatchObject({ current: true });
+      expect(current?.journal).toBeUndefined();
+      expect(current?.refusal).toMatch(/expired/);
+      expect(set.history.find((state) => state.namespaceId === 'ns-a')?.journal?.health).toBe(
+        'open'
+      );
     } finally {
       await set.close();
     }
@@ -369,5 +382,98 @@ describe('searchJournalNamespaces (J3d merge semantics, stub journals)', () => {
     });
     expect(result.entries).toHaveLength(16);
     expect(result.truncated).toBe(true);
+  });
+});
+
+describe('review round 1 hardening (J3d)', () => {
+  const namespaceRows = (base: string) => {
+    const database = new DatabaseSync(join(base, 'store', 'journal.sqlite'), { readOnly: true });
+    try {
+      return (
+        database.prepare('SELECT namespace_id AS id FROM journal_namespace').all() as Array<{
+          id: string;
+        }>
+      )
+        .map((row) => row.id)
+        .sort();
+    } finally {
+      database.close();
+    }
+  };
+
+  it('never opens a history entry before its horizon: a typo cannot create a namespace', async () => {
+    const l = layout();
+    const configA = await seedPastHorizon(l, 'ns-a', l.keyA);
+    l.writeHistory([
+      { ...serviceJournalHistoryTemplate(configA), keyFile: l.keyA },
+      // A typo'd name with a future horizon: opening it would CREATE a namespace.
+      { ...entryFor(l, 'ns-typo'), acceptUntil: '2099-01-01T00:00:00Z' },
+    ]);
+    const configB = await journalConfigFromEnvironment(
+      l.env('ns-b', l.keyB, '2099-01-01T00:00:00Z')
+    );
+    if (!configB) throw new Error('expected configuration');
+    const history = await journalHistoryFromEnvironment(
+      { AGENTBROWSER_JOURNAL_HISTORY_FILE: l.historyFile },
+      configB
+    );
+    const set = await openServiceJournalSet(configB, history);
+    try {
+      expect(set.history.find((state) => state.namespaceId === 'ns-typo')).toMatchObject({
+        refusal: expect.stringMatching(/not yet past its accept horizon/),
+      });
+      expect(set.history.find((state) => state.namespaceId === 'ns-a')?.journal?.health).toBe(
+        'open'
+      );
+    } finally {
+      await set.close();
+    }
+    expect(namespaceRows(l.base)).toEqual(['ns-a', 'ns-b']);
+  }, 60_000);
+
+  it('recover-only journals refuse new intents and dispatch marks without touching the store', async () => {
+    const inner = {
+      namespace: { namespaceId: 'x' },
+      health: 'open',
+      pending: 0,
+      reserveIntent: vi.fn(),
+      markDispatch: vi.fn(),
+      commitTerminal: vi.fn(async () => ({ kind: 'acknowledged' })),
+      lookup: vi.fn(),
+      findByOperation: vi.fn(async () => ({ kind: 'found', records: [], truncated: false })),
+      close: vi.fn(async () => ({ kind: 'closed' })),
+    };
+    const wrapped = recoverOnly(inner as never);
+    await expect(wrapped.reserveIntent({} as never)).resolves.toEqual({
+      kind: 'definitely_not_written',
+      reason: 'admission_expired',
+    });
+    await expect(wrapped.markDispatch({} as never)).resolves.toMatchObject({
+      kind: 'definitely_not_written',
+    });
+    expect(inner.reserveIntent).not.toHaveBeenCalled();
+    expect(inner.markDispatch).not.toHaveBeenCalled();
+    // Recovery's own calls pass through.
+    await wrapped.commitTerminal({} as never);
+    await wrapped.findByOperation({} as never);
+    expect(inner.commitTerminal).toHaveBeenCalledTimes(1);
+    expect(inner.findByOperation).toHaveBeenCalledTimes(1);
+    expect(wrapped.health).toBe('open');
+  });
+
+  it('warns for a refused entry and within 7 days of retainUntil, not otherwise', () => {
+    const now = Date.parse('2026-10-16T00:00:00Z');
+    const day = 24 * 60 * 60 * 1000;
+    const warnings = journalHistoryWarnings(
+      [
+        { namespaceId: 'soon', acceptUntil: 0, retainUntil: now + 6 * day, journal: {} as never },
+        { namespaceId: 'later', acceptUntil: 0, retainUntil: now + 8 * day, journal: {} as never },
+        { namespaceId: 'bad', acceptUntil: 0, retainUntil: now + 30 * day, refusal: 'x: y' },
+      ],
+      now
+    );
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/soon reaches retainUntil/);
+    expect(warnings[1]).toMatch(/bad did not open \(x: y\)/);
   });
 });

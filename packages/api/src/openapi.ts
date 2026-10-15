@@ -1667,7 +1667,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                       required: ['namespace', 'state', 'acceptUntil', 'retainUntil'],
                       properties: {
                         namespace: { type: 'string' },
-                        state: { type: 'string', enum: ['open', 'refused'] },
+                        state: { type: 'string', enum: ['open', 'refused', 'unavailable'] },
                         reason: { type: 'string' },
                         acceptUntil: { type: 'string' },
                         retainUntil: { type: 'string' },
