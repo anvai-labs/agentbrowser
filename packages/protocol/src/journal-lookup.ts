@@ -46,7 +46,7 @@ export const JournalHistoricalRecordSchema = Type.Object(
     session: Type.Object(
       {
         sessionIncarnation: Type.String({ maxLength: 22 }),
-        epoch: Type.Integer({ minimum: 1 }),
+        epoch: Type.Integer({ minimum: 0 }),
       },
       strict
     ),

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   JournalConfigError,
   journalConfigFromEnvironment,
+  journalRuntimeQualified,
   openServiceJournal,
 } from './journal-config.js';
 
@@ -202,4 +203,16 @@ describe('openServiceJournal (real SQLite store)', () => {
     if (!config) throw new Error('expected configuration');
     await expect(openServiceJournal(config)).rejects.toBeInstanceOf(JournalConfigError);
   }, 60_000);
+});
+
+describe('journalRuntimeQualified (the D5 matrix, pinned)', () => {
+  it.each([
+    ['linux', '24.21.0', true],
+    ['darwin', '24.5.0', true],
+    ['linux', '22.13.1', false],
+    ['win32', '24.21.0', false],
+    ['linux', '26.0.0', false],
+  ])('%s on Node %s is qualified: %s', (platform, nodeVersion, expected) => {
+    expect(journalRuntimeQualified(platform as never, nodeVersion)).toBe(expected);
+  });
 });

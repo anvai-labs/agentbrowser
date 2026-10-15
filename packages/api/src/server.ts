@@ -1000,6 +1000,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               'A valid bearer credential is required',
               401
             );
+          if (!journalLimiter.take(principal.tenant))
+            return journalRefusal(
+              reply,
+              'RATE_LIMITED',
+              'Journal lookup rate limit exceeded',
+              429,
+              true
+            );
           const acceptUntil = journalConfig
             ? new Date(journalConfig.acceptUntil).toISOString()
             : undefined;
@@ -1048,13 +1056,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { operationId } = request.params as { operationId: string };
           if (!CONTROL_OPERATION_ID.test(operationId))
             return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
-          if (!serviceJournal)
+          if (!serviceJournal) {
+            if (journalConfig)
+              // Configured but not open (for example a passed accept horizon): records may exist
+              // and be unreachable — history is unread, not absent.
+              return journalRefusal(
+                reply,
+                'JOURNAL_UNAVAILABLE',
+                'The journal is configured but not open on this deployment; history is unread, not absent',
+                503,
+                true
+              );
             return journalRefusal(
               reply,
               'JOURNAL_NOT_CONFIGURED',
               'No durable journal is configured on this deployment',
               404
             );
+          }
           const tenant = principal.tenant;
           // Keyless deployments authenticate nobody; a credential without a tenant scopes nothing.
           if (tenant === undefined)

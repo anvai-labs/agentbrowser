@@ -5556,7 +5556,9 @@
                                 "type": "string"
                               },
                               "epoch": {
-                                "type": "integer"
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "The control epoch; 0 is the initial human-active epoch."
                               }
                             }
                           }
@@ -5609,7 +5611,7 @@
             }
           },
           "503": {
-            "description": "The journal refused this lookup; treat the history as unread, not absent.",
+            "description": "The journal refused this lookup or is configured but not open; treat the history as unread, not absent.",
             "content": {
               "application/json": {
                 "schema": {

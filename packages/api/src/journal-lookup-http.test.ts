@@ -114,6 +114,19 @@ async function seedStates(store: string, env: Record<string, string | undefined>
     });
     if (call.kind !== 'acknowledged') throw new Error(`seed terminal failed: ${call.kind}`);
   }
+  // rev 3, failed after dispatch (a live-reachable state), at epoch 0 (the initial epoch).
+  {
+    const identity = await acknowledged(intentOf('http-failed-after', 'owner', 0, 0));
+    await journal.markDispatch({ identity, expectedRevision: 1 });
+    const call = await journal.commitTerminal({
+      identity,
+      expectedRevision: 2,
+      dispatched: true,
+      terminal: { status: 'failed', evidenceRefIds: [] },
+    });
+    if (call.kind !== 'acknowledged') throw new Error('seed failed-after failed');
+  }
+
   // Another tenant's record: never disclosed to the owner credential.
   await acknowledged(intentOf('http-secret', 'someone-else', 0));
   await opened.close();
@@ -171,6 +184,7 @@ describe('GET /v1/journal/operations/:operationId (J3b)', () => {
       'http-failed-before': { classification: 'failed_before_dispatch', actionable: false },
       'http-completed': { classification: 'completed', actionable: false },
       'http-settled': { classification: 'settled_unknown', actionable: false },
+      'http-failed-after': { classification: 'failed', actionable: false },
     };
     for (const [operationId, projection] of Object.entries(expected)) {
       const response = await lookup(operationId);
@@ -191,7 +205,10 @@ describe('GET /v1/journal/operations/:operationId (J3b)', () => {
           resource: 'account',
           bindingGeneration: 'binding-1',
         },
-        session: { sessionIncarnation: expect.any(String), epoch: expect.any(Number) },
+        session: {
+          sessionIncarnation: expect.any(String),
+          epoch: operationId === 'http-failed-after' ? 0 : expect.any(Number),
+        },
       });
     }
 
@@ -204,6 +221,46 @@ describe('GET /v1/journal/operations/:operationId (J3b)', () => {
 
     // The operator key reads the same surface.
     expect((await lookup('http-completed', operatorHeaders)).statusCode).toBe(200);
+  }, 60_000);
+
+  it('rate limits both journal routes per tenant (F2)', async () => {
+    const seeded = journalEnvironment(true);
+    await seedStates(seeded.store, seeded.env);
+    const { AGENTBROWSER_JOURNAL_INITIALIZE: _drop, ...reopenEnv } = seeded.env;
+    const server = await buildRestServer(reopenEnv);
+    let limited = 0;
+    for (let index = 0; index < 32; index += 1) {
+      const response = await server.inject({
+        method: 'GET',
+        url: '/v1/journal',
+        headers: apiHeaders,
+      });
+      if (response.statusCode === 429) limited += 1;
+    }
+    expect(limited).toBeGreaterThan(0);
+    const operations = await server.inject({
+      method: 'GET',
+      url: '/v1/journal/operations/http-completed',
+      headers: apiHeaders,
+    });
+    expect(operations.statusCode).toBe(429);
+  }, 60_000);
+
+  it('reports configured-but-not-open as unread history, not as unconfigured (F5)', async () => {
+    const seeded = journalEnvironment(false);
+    seeded.env.AGENTBROWSER_JOURNAL_ACCEPT_UNTIL = '2001-01-01T00:00:00Z';
+    const server = await buildRestServer(seeded.env);
+    const status = await server.inject({ method: 'GET', url: '/v1/journal', headers: apiHeaders });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toMatchObject({ configured: true, recoveryQualified: false });
+    const lookup = await server.inject({
+      method: 'GET',
+      url: '/v1/journal/operations/any-op',
+      headers: apiHeaders,
+    });
+    expect(lookup.statusCode).toBe(503);
+    expect(lookup.json().error.code).toBe('JOURNAL_UNAVAILABLE');
+    expect(lookup.json().error.message).toMatch(/unread, not absent/);
   }, 60_000);
 
   it('refuses delegated grants, keyless callers, and invalid IDs', async () => {

@@ -200,7 +200,7 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
 the ADR-025 operator key (`actor: 'human-operator'`) **or** a tenant API key, scoped to the
 credential's tenant. Delegated agent grants are refused by the /v1 hook (the routes name no
 session). Keyless deployments get 401: no credential names a tenant. Rate limited per tenant
-(30/min), like the policy surface. OpenAPI is regenerated; the SDK gains `journalStatus()` and
+(30/min) on BOTH routes, like the policy surface. OpenAPI is regenerated; the SDK gains `journalStatus()` and
 `journalOperations(id)`; the CLI gains `agentbrowser journal status` and
 `agentbrowser journal operations <id>`.
 
@@ -220,11 +220,17 @@ session). Keyless deployments get 401: no credential names a tenant. Rate limite
   → 503 `JOURNAL_UNAVAILABLE` with "treat the history as unread, not absent"; invalid operation
   ID → 400; over the rate limit → 429.
 - **Tests.** `journal-lookup-http.test.ts` seeds each legal record state through the journal
-  facade on a store the REST server then reopens (the departed-process situation): one assertion
-  per classification plus the actionable flag, another tenant's operation as scoped absence, the
+  facade on a store the REST server then reopens (the departed-process situation): all six
+  classifications including failed-after-dispatch at epoch 0 (the initial control epoch — the
+  schema's epoch minimum is 0 to match), plus the actionable flag, another tenant's operation as scoped absence, the
   operator key reading the same surface, delegated-grant/keyless/bearer/invalid-ID refusals, 404
   without a journal, and the status fields against `journalRuntimeQualified()` itself. Protocol
   tests cover `classifyJournalRecord` (six legal states, four illegal) and strict schema
   validation, including that a `fingerprint` key is rejected. SDK tests cover both methods and
   operation-ID encoding.
+- **Review round 1 fixes:** the status route is rate limited like the operations route (429
+  pinned); `journalRuntimeQualified`'s matrix is unit-pinned (linux/darwin on Node 24 qualified;
+  Node 22.13 and Windows not); a configured-but-not-open journal (passed accept horizon) answers
+  503 `JOURNAL_UNAVAILABLE` "history is unread, not absent" instead of 404 — distinguishing it
+  from a deployment with no journal, and giving J3d its signal.
 

@@ -1741,7 +1741,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                           description: 'Opaque identity of the departed session.',
                           properties: {
                             sessionIncarnation: { type: 'string' },
-                            epoch: { type: 'integer' },
+                            epoch: {
+                              type: 'integer',
+                              minimum: 0,
+                              description:
+                                'The control epoch; 0 is the initial human-active epoch.',
+                            },
                           },
                         },
                       },
@@ -1755,7 +1760,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             '404': errorResponse('No durable journal is configured on this deployment.'),
             '429': errorResponse('Journal lookup rate limit exceeded.'),
             '503': errorResponse(
-              'The journal refused this lookup; treat the history as unread, not absent.'
+              'The journal refused this lookup or is configured but not open; treat the history as unread, not absent.'
             ),
           },
         },
