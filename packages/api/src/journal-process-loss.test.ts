@@ -176,8 +176,8 @@ describe('process loss through the service (real store, SIGKILL)', () => {
     );
     expect(done.message.phase).toBe('done');
     expect(done.code).toBe(0);
-    expect(rows(l.store)).toMatchObject([
-      { revision: 3, dispatched: true, terminal: { status: 'completed' } },
+    expect(rows(l.store)).toEqual([
+      { revision: 3, dispatched: true, terminal: { status: 'completed', evidenceRefIds: [] } },
     ]);
     expect(effects(l.counter)).toBe(1);
   }, 120_000);
@@ -210,8 +210,9 @@ describe('process loss through the service (real store, SIGKILL)', () => {
       });
       const [code] = (await once(child, 'exit')) as [number | null];
       expect(code).not.toBe(0);
-      // Refused as a configuration mismatch: rotate by configuring a new namespace instead.
-      expect(stderr).toMatch(/configuration/);
+      // Refused precisely as a descriptor (key-check) mismatch, not any other open refusal.
+      // Rotation means configuring a new namespace instead.
+      expect(stderr).toMatch(/did not open \(definitely_not_opened: configuration\)/);
       expect(stderr).not.toMatch(/(ef){4}|(01){4}/);
       expect(rows(l.store)).toEqual(before);
     },
