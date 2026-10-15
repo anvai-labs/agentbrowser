@@ -481,9 +481,56 @@ keyed deployments are per tenant.
   - `@internal` exists for confidentiality.
 - **ADR-024 status → Accepted** when phase 5 ships.
 
+### Phase 8 (Proposed, awaiting ADR-026): reload without restart
+
+Not scheduled; implement only after [ADR-026](../adr/026-policy-reload-without-restart.md) is
+accepted.
+
+- **Trigger and credential:** `POST /v1/admin/policy/reload`, enabled only when
+  `AGENTBROWSER_POLICY_ADMIN_KEY_FILE` is configured, accepting only that server-scope admin key
+  (distinct from API and operator keys; overlap aborts startup; the key file without a policy file
+  aborts startup). No signal (`SIGHUP` stays shutdown); no file watcher. Optional CLI wrapper.
+- **Swap:** startup-grade validation into a new authorizer; on any error keep the running one and
+  report. Serialized. Document identity = SHA-256 over the whole document including `limits`; an
+  unchanged identity is a no-op.
+- **Per-session state (new):** each session stores its pinned document and its chain (every
+  document loaded since, deduplicated). A composite `Authorizer` allows only if every document in
+  the chain allows; approval modes follow from the same two questions. Never collapse the chain
+  to "pinned AND current".
+- **Ordering:** session creation snapshots the current document and decides creation-time grants
+  against it without a lock; registration takes the short lock a reload holds while swapping and
+  extending chains, and, if documents were loaded since the snapshot, appends them to the chain
+  and re-checks the creation-time grants against them, failing creation (browser closed,
+  retryable) if any would deny a held grant.
+- **Limits:** per-session effective limits = minimum over the chain of each document's
+  default-resolved value; `maxResponseBytes` becomes a live per-session value and
+  `extractMaxBytes` per-session.
+- **Cache:** `MemoizedAuthorizer` keys on the chain identity (or clears on chain growth).
+- **Approvals:** `act` and `cookie.handoff` tokens bind to the chain identity at mint and are
+  refused on use after the chain grows.
+- **Not reached (reported, not enforced):** creation-time grants (`cdp.attach`, `downloads`,
+  `serviceWorkers`, `cookie.seed`, `session.headed`) — the reload response counts live sessions
+  holding a grant the new document would deny; established connections continue.
+- **Surfaces:** session views keep `policyVersion` as the pinned version and add `policyChain`
+  (document identities; additive schema/OpenAPI change); `GET /v1/policy` reports the current
+  `policyVersion` and document identity; logs carry the previous and new identities.
+- **Tests first:** a tightening reload denies an in-flight session's next request; a request
+  allowed and cached before the reload is denied after it; a loosening reload does not reach a
+  live session but does reach a new one; A → B → C where B blocks and C does not leaves a session
+  pinned at A blocked; A → B → A keeps B for live sessions; a limits-only change is not a no-op
+  and lowers a live session's limit; an invalid file is refused and the old policy keeps
+  deciding; `act` and handoff tokens minted before a reload are refused after it; a key in two
+  roles aborts startup; an API or operator key cannot reload; the creation-time-grant count is
+  reported; without the admin key file the endpoint does not exist; the admin key file without a
+  policy file aborts startup; a session created concurrently with a tightening reload is either
+  pinned at the new document or carries it in its chain, and holds no creation-time grant that the
+  new document denies (creation fails instead); a slow browser launch does not delay a reload; a document that omits a limit after one
+  that set it higher lowers the live limit to the default.
+
 ## Non-goals
 
-- Reloading policy without restart (a reload must never relax a live session).
+- Reloading policy without restart in phases 0–7 (proposed as phase 8 under ADR-026; a reload must
+  never relax a live session).
 - Policy over page content; Cedar in the CLI or MCP executables.
 - Replacing session narrowing or engagement scope.
 - Making the floor configurable; DNS pinning for browser traffic.

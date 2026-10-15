@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — proposed: policy reload without restart (ADR-026)
+
+- ADR-026 (Proposed) and TD-BROWSER-15 phase 8 (Proposed) design an opt-in reload of the Cedar
+  policy file through one endpoint guarded by a server-scope admin key held in a file (no signal:
+  `SIGHUP` stays shutdown). The new document is validated before the swap and never fails open.
+  New sessions get the new policy; live sessions are decided by their pinned policy AND every
+  policy loaded since, with limits taking the minimum, so per-call tightenings reach running
+  agents and loosenings never do. Creation-time grants are reported, not revoked. Nothing is
+  implemented.
+
 ### Added — a committed provider-CLI qualification driver (T8 Q1)
 
 - `scripts/t8-harness-qualification.mjs` re-qualifies the MCP bridge through the installed Codex
