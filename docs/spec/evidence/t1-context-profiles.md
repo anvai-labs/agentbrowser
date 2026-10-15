@@ -157,14 +157,28 @@ call).
 
 ## Same tenant, different principal (2026-10-15)
 
-The acceptance row "test same tenant/different principal … for stale-memory leakage" is
-now pinned in `packages/control/src/session-authority.test.ts`:
+The acceptance row reads: "Test same tenant/different principal and operator-mediated
+account/mode switches for stale-memory leakage." Its two halves are covered in
+`packages/control/src/session-authority.test.ts` as follows.
 
-- **Agents.** Two delegated sessions of one tenant: each agent principal is refused on
-  the other session. A human takeover revokes the session's agent principal at once;
-  re-delegation mints a new principal, the earlier token never authenticates again and
-  its principal is refused, while the other session's grant is untouched. Re-delegating
-  a session whose grant is still live is refused until a takeover.
+**Same tenant, different principal** (new):
+
+- **Agents.** Two delegated sessions of one tenant get distinct run cursors (memory is
+  cursor-scoped): different `sessionId` and `bindingGeneration`. Each agent principal is
+  refused (`CONTROL_REQUIRED`) on the other session; the session identity and the
+  per-grant binding generation both differ there, and the `sessionId` comparison alone is
+  pinned by the existing altered-principal test. A human takeover revokes the session's
+  agent principal at once; re-delegation mints a new principal and binding generation, the
+  earlier token never authenticates again and its principal is refused, while the other
+  session's grant is untouched. A session whose grant is still live cannot even be
+  re-reviewed: the review precondition refuses before delegation.
 - **Operators.** Admission keys on the tenant alone (`admit()`): two operator
   principals of one tenant are one principal by design, and another tenant's operator
-  is refused. This is pinned as intended behaviour, not a gap.
+  is refused. This is pinned as intended behaviour, not a gap. (The cross-tenant refusal is
+  the only test that catches an operator check ignoring the tenant.)
+
+**Operator-mediated account/mode switches** (existing): a mode change on re-delegation
+mints a new cursor and binding generation and retires the old token ("issues non-secret
+run cursors that isolate service, binding and mode memory"). An account switch inside a
+live grant is page/document-revision state by the packet's own rule; across grants it is
+the takeover-then-re-delegate choreography above.
