@@ -6,11 +6,24 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
-import { buildServer } from './server.js';
 import { AgentBrowserService } from './service.js';
+
+const operator = { actor: 'operator' as const, tenant: 'owner' };
+/** The store's committed rows, read directly (read-only) — independent of any service. */
+const storeRows = (store: string): number => {
+  const database = new DatabaseSync(join(store, 'journal.sqlite'), { readOnly: true });
+  try {
+    return Number(
+      (database.prepare('SELECT count(*) AS n FROM journal_record').get() as { n: number }).n
+    );
+  } finally {
+    database.close();
+  }
+};
 
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -24,6 +37,7 @@ function journalEnvironment() {
   mkdirSync(join(base, 'anchor'), { mode: 0o700 });
   writeFileSync(join(base, 'key'), `key-1:${'4a'.repeat(32)}\n`, { mode: 0o600 });
   return {
+    store: join(base, 'store'),
     env: {
       AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
       AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
@@ -37,30 +51,57 @@ function journalEnvironment() {
 
 describe('events and cursors across a durable restart (J4, D4)', () => {
   it('a pre-restart event cursor fails as session-not-found; the journal replays nothing', async () => {
-    const { env } = journalEnvironment();
-    // Process A: one session whose events were consumed up to a cursor, then a graceful stop.
+    const { store, env } = journalEnvironment();
+    // Instance A: one session with ONE durable journaled write, so "no replay" is falsifiable —
+    // there IS something in the journal a wrong implementation could replay. Graceful stop; the
+    // store is read directly as the independent oracle.
     const config = await journalConfigFromEnvironment(env);
     if (!config) throw new Error('expected configuration');
     const opened = await openServiceJournal(config);
+    let effects = 0;
     const first = new AgentBrowserService({
       engine: new FakeEngine(),
       operationJournal: opened.journal,
+      applicationAdapters: [
+        {
+          id: 'counter',
+          authorize: () => true,
+          operations: {
+            add: {
+              mode: 'write' as const,
+              prepare: () => async () => {
+                effects += 1;
+                return { status: 'committed' as const, value: effects };
+              },
+            },
+          },
+          receipt: async () => ({}),
+        },
+      ],
     });
-    const sessionA = await first.createSession({ tenantId: 'owner' });
+    const sessionA = await first.createSession({ tenantId: 'owner', controlMode: 'delegated' });
+    first.applicationBind(sessionA.sessionId, operator, {
+      adapter: 'counter',
+      resource: 'account',
+    });
+    await first.applicationExecute(sessionA.sessionId, operator, {
+      operation: 'add',
+      input: 1,
+      operationId: 'd4-baseline',
+      expectedVersion: 0,
+      executionRequirement: 'durable',
+    });
+    expect(effects).toBe(1);
     await first.shutdown();
     await opened.close();
+    // Positive baseline: the durable row SURVIVED the restart (one row, read directly).
+    expect(storeRows(store)).toBe(1);
 
-    // Process B reopens the same namespace; the journal record survives.
+    // Instance B reopens the same namespace.
     const { AGENTBROWSER_JOURNAL_INITIALIZE: _drop, ...reopen } = env;
     const configB = await journalConfigFromEnvironment(reopen);
     if (!configB) throw new Error('expected configuration');
     const reopened = await openServiceJournal(configB);
-    const found = await reopened.journal.findByOperation({
-      tenantId: 'owner',
-      operationId: 'none',
-      limit: 16,
-    });
-    expect(found).toMatchObject({ kind: 'found', records: [] });
     const second = new AgentBrowserService({
       engine: new FakeEngine(),
       operationJournal: reopened.journal,
@@ -70,18 +111,23 @@ describe('events and cursors across a durable restart (J4, D4)', () => {
       await reopened.close();
     });
 
-    // The old session is gone: its cursor cannot be resumed, and no event replay happens.
-    // The old session is gone: its event cursor cannot be resumed (the ledger is per session
-    // and per process; the journal holds no events to replay).
+    // The old session is gone: its event cursor cannot be resumed — session-not-found, never a
+    // silent reset to zero.
     expect(() =>
       second.getSessionEvents(sessionA.sessionId, { type: 'request', since: 0 })
     ).toThrow(/does not exist/);
-    // The journal holds nothing that revives it: the store's rows are unchanged by the attempt.
-    const after = await reopened.journal.findByOperation({
+    // No replay: the row set and the baseline row are unchanged by the attempt, and the
+    // surviving record is still readable through the new process's journal handle.
+    expect(storeRows(store)).toBe(1);
+    const surviving = await reopened.journal.findByOperation({
       tenantId: 'owner',
-      operationId: 'none',
+      operationId: 'd4-baseline',
       limit: 16,
     });
-    expect(after).toEqual(found);
-  }, 60_000);
+    expect(surviving).toMatchObject({
+      kind: 'found',
+      truncated: false,
+      records: [{ identity: { key: { operationId: 'd4-baseline' } }, revision: 3 }],
+    });
+  }, 120_000);
 });

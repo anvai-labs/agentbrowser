@@ -74,7 +74,9 @@ loads the concrete ownership/anchor/crash/runtime gates.
 storage primitive; the raw adapter, bounded child manager and all qualification gates
 are shipped; remaining: F3 authorization, C4b selection, and optional
 constrained-mount depth.
-J3/J4 are not built yet. Their refined design was accepted by the owner on 2026-10-15
+J3a/J3b, J3c part 1 and J4's application-write gates are built (2026-10-15); J3c part 2
+(continue/supersedes/reconcile) and J3d (history namespaces) remain. The refined design was
+accepted by the owner on 2026-10-15
 ([J-design](../design/t5-recovery-design.md)). It covers:
 - historical lookup for the ADR-025 operator or a tenant API key, read-only;
 - writes for the ADR-025 operator only;

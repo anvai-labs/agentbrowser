@@ -264,11 +264,17 @@ store's committed rows (read-only) and per-instance effect counters.
 | `takeDownload` consumption | ephemeral, per session | no |
 | Application writes requesting `durable` | qualified durable work (J-d) | **yes** |
 
-- **Events and cursors are not recovered (D4).** `journal-recovery-gates.test.ts` restarts a
-  service on the same real store and then asks for the departed session's events with a
+- **Events and cursors are not recovered (D4).** `journal-recovery-gates.test.ts` seeds ONE
+  durable journaled write in instance A (so "no replay" is falsifiable — the journal holds
+  something a wrong implementation could replay), restarts on the same real store, asserts the
+  row survived (positive baseline), then asks for the departed session's events with a
   pre-restart cursor: the session no longer exists, so the request fails as session-not-found —
-  never a silent reset to zero, never a journal replay (the store's rows are unchanged by the
-  attempt). The event ledger stays per process and per session; there is no second event bus.
+  never a silent reset to zero — and the row set is unchanged by the attempt (read directly from
+  `journal_record`, independent of the service), with the surviving record still readable through
+  the new process's journal handle. The event ledger stays per process and per session; there is
+  no second event bus. Scope: the cursor-carrying REST replay path (the service-level
+  `getSessionEvents` the route shares); the WS stream's 4404 close is the same D4 rule on a
+  different code path and is not separately gated.
 - **`recoveryQualified` (D5)** shipped with J3b's `GET /v1/journal`: configured-and-open on the
   qualified matrix (Node 24 on Linux or macOS), advisory only, no exactly-once promise. The
   macOS journal leg qualifies the runtime nightly and on journal-path pull requests; Windows
