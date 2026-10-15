@@ -10,8 +10,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 ### Added — a CI entrypoint for `test evaluate` (T3)
 
 - `.github/actions/test-evaluate` is a composite GitHub Action that other repositories can pin.
-  - It installs a release CLI and verifies it against the release's `sha256sums.txt`; a mismatch
-    is never run.
+  - It installs a release CLI and verifies it against the release's `sha256sums.txt`, so a
+    corrupted or mismatched download is never run. The check does not prove the release itself is
+    authentic.
   - It evaluates a directory of caller-observed test-case bundles offline and writes JUnit,
     carrying identities and verdicts only.
   - It fails the job unless every bundle passed.

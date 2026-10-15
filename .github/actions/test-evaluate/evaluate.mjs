@@ -4,7 +4,7 @@
  *
  * Installs one pinned, checksum-verified release CLI, evaluates every caller-observed evaluation
  * bundle it is given (offline: nothing is executed or fetched), writes a JUnit report and exits
- * non-zero unless every bundle passed. Builtins only; runs under any Node 22+.
+ * non-zero unless every bundle passed. Builtins only; runs under Node 18 or later.
  *
  * Inputs (environment, as the composite action passes them):
  *   INPUT_VERSION      release tag, e.g. v1.18.0 (required unless AGENTBROWSER_EVALUATE_CLI)
@@ -17,9 +17,9 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const RELEASES = 'https://github.com/anvai-labs/agentbrowser/releases/download';
@@ -70,8 +70,12 @@ export async function installCli(version, options = {}) {
   const actual = createHash('sha256').update(bytes).digest('hex');
   if (actual !== expected)
     throw new EvaluateError(`Checksum mismatch for ${asset}: refusing to run it`);
-  const directory = join(options.directory ?? tmpdir(), `agentbrowser-cli-${version}`);
-  mkdirSync(directory, { recursive: true });
+  // A private directory: under RUNNER_TEMP (job-private) when given, otherwise a fresh mkdtemp,
+  // never a predictable shared path another user could pre-create.
+  const directory = options.directory
+    ? join(options.directory, `agentbrowser-cli-${version}`)
+    : mkdtempSync(join(tmpdir(), `agentbrowser-cli-${version}-`));
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
   const path = join(directory, asset);
   writeFileSync(path, bytes, { mode: 0o755 });
   chmodSync(path, 0o755);
@@ -97,16 +101,20 @@ export function bundleFiles(input) {
         if (name.endsWith('.json')) files.push(join(path, name));
     if (stat.isFile()) files.push(path);
   }
-  if (files.length === 0) throw new EvaluateError('No evaluation bundles found');
-  return files;
+  const unique = [...new Set(files)];
+  if (unique.length === 0) throw new EvaluateError('No evaluation bundles found');
+  return unique;
 }
+
+/** Upper bound for one offline evaluation; a hung CLI is an error, not a hung job. */
+const EVALUATE_TIMEOUT_MS = 120_000;
 
 /** Evaluates one bundle through the CLI: passed, failed, or error (invalid input/no report). */
 export function evaluateBundle(cli, file) {
   const run = spawnSync(cli, ['--json', 'test', 'evaluate', `@${file}`], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
-    shell: cli.endsWith('.cmd'),
+    timeout: EVALUATE_TIMEOUT_MS,
   });
   let report;
   try {
@@ -126,10 +134,13 @@ export function evaluateBundle(cli, file) {
 }
 
 const xml = (text) =>
-  String(text).replace(
-    /[<>&'"]/g,
-    (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]
-  );
+  String(text)
+    // XML 1.0 forbids C0 controls even when escaped.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '\uFFFD')
+    .replace(
+      /[<>&'"]/g,
+      (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]
+    );
 
 /**
  * JUnit with identities and verdicts only: report contents (which may carry caller data) never
@@ -165,16 +176,21 @@ export async function main(env = process.env, log = console.log) {
     }));
   const results = bundleFiles(env.INPUT_BUNDLES).map((file) => evaluateBundle(cli, file));
   const junitPath = resolve(env.INPUT_JUNIT || 'agentbrowser-evaluate.xml');
+  mkdirSync(dirname(junitPath), { recursive: true });
   writeFileSync(junitPath, junit(results));
   if (env.INPUT_REPORTS_DIR) {
     mkdirSync(env.INPUT_REPORTS_DIR, { recursive: true, mode: 0o700 });
-    for (const r of results)
-      if (r.report)
-        writeFileSync(
-          join(env.INPUT_REPORTS_DIR, `${basename(r.file, '.json')}.report.json`),
-          `${JSON.stringify(r.report, null, 2)}\n`,
-          { mode: 0o600 }
+    // Index-prefixed so bundles sharing a basename never overwrite each other's report; chmod
+    // after writing because a mode only applies to a newly created file.
+    for (const [index, r] of results.entries())
+      if (r.report) {
+        const path = join(
+          env.INPUT_REPORTS_DIR,
+          `${String(index + 1).padStart(3, '0')}-${basename(r.file, '.json')}.report.json`
         );
+        writeFileSync(path, `${JSON.stringify(r.report, null, 2)}\n`, { mode: 0o600 });
+        chmodSync(path, 0o600);
+      }
   }
   for (const r of results) log(`${r.outcome.padEnd(6)} ${r.id} (${basename(r.file)})`);
   const passed = results.filter((r) => r.outcome === 'passed').length;
