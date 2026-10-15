@@ -1,94 +1,161 @@
 # T5 J-design: historical lookup (J3), recovery gates (J4) and browser-operation durability
 
-**Status:** Proposed (2026-10-15). This is a design for the owner's sign-off; nothing here is
-implemented. It refines the J3/J4 sections of the
-[operation-journal design](t5-operation-journal.md) now that a durable journal is wired into the
-service (J-d, #498; its evidence record is `docs/spec/evidence/t5-journal-runtime.md`).
-**Closes when implemented:** R08 (restart survival of status and receipts) and the durable portion
-of R10. **Decision points** are marked **D1–D6**, each with a recommendation.
+**Status:** Proposed (2026-10-15), for the owner's sign-off. Nothing here is implemented.
 
-## What J-d already gives us
+It refines the J3/J4 sections of the [operation-journal design](t5-operation-journal.md). It
+builds on the durable journal wired into the service by J-d (#498; evidence record
+`docs/spec/evidence/t5-journal-runtime.md`).
 
-- **The namespace is stable across restarts.** Every start reopens the same namespace from
-  configuration, so the new process owns the fence over the old process's records. That is what
-  makes an explicit continuation possible at all.
-- **Each record holds its classification.** Intent (rev 1), dispatch marker (rev 2,
-  `dispatched`), known pre-dispatch failure (rev 2, failed), terminal (rev 3).
-- **Records hold only identities.** Each carries the tenant, session incarnation, epoch,
-  operation ID, application adapter/resource/binding generation and a keyed fingerprint. Never
-  inputs, tokens or form values.
-- **No read path exists across a restart.** `lookup(key)` needs the full key, including the
-  previous process's `serviceGeneration` and `sessionIncarnation`, and no caller holds those
-  after a restart.
+**When implemented:** closes the application-write part of R08 and the durable portion of R10,
+and narrows R08's autofill part (see D6).
 
-## J3: authorized historical lookup
+**Decision points:** **D1–D7**, each with a recommendation.
+
+## What exists, stated precisely
+
+- **Records.** A journal record holds `schemaVersion`, `namespaceId`, its identity, `revision`,
+  `intent`, `dispatched` and `terminal` (status and evidence refs).
+  - The identity is: key (`serviceGeneration`, tenant, `sessionIncarnation`, epoch, operation ID),
+    actor, application identity and the keyed fingerprint.
+  - **There are no timestamps**, and no inputs, tokens or form values.
+- **Rev 1 really means "never ran".** The dispatch marker is acknowledged before the effect is
+  invoked, so a record still at rev 1 was never dispatched.
+- **Lookup needs the full key.** `lookup(key)` requires the dead process's random
+  `serviceGeneration` and `sessionIncarnation`, which no caller holds after a restart.
+- **Keys are per process.** `SessionAuthority` builds keys only with its own process's
+  `serviceGeneration`. No path today writes to another process's records.
+- **The namespace is stable across restarts (J-d).** The new process acquires it through the
+  store's exclusive OS lock, which also clears the dead process's fence. That lock and fence
+  clearing make a single owner hold. It assumes a local filesystem, with no second server on the
+  same directory; J-d refuses a second server at startup.
+- **No retirement while in doubt.** A namespace retires only when every record has a terminal and
+  retention has passed. An `outcome_unknown` record without a terminal therefore keeps its
+  namespace, and one of the store's 64 slots, forever.
+- **Receipts need a live session.** An application adapter's `receipt(scope, operationId)` needs
+  a live session scope (`sessionId`, `sessionIncarnation`) and is reachable only through a bound
+  session. Receipts are untyped (`unknown`), and fixtures key them differently: one by
+  session incarnation, one by operation ID only.
+- **Evidence refs are opaque.** The live path commits `evidenceRefIds: []`, and no durable
+  evidence store resolves refs after a restart.
+- **Cursors are per session.** An event cursor is a per-session `since` integer. After a restart
+  an old cursor fails because its **session no longer exists**, not because of a cursor check.
+
+## J3: historical lookup
 
 ### Who may look
 
 **D1: operator credentials only.** Recommended.
-- After a restart every agent grant, bearer epoch and cursor is invalid, by design. Historical
-  lookup needs *current* authentication *and* explicit authorization for the record's tenant.
-- **Recommendation:** the ADR-025 operator key, scoped to its one tenant. Agents get no
-  historical surface. An agent that needs to know what happened asks its operator, who reviews.
-- **Alternative:** tenant API keys. That widens a recovery surface to every automation holding a
-  key; rejected for the first slice.
+- Uses the ADR-025 operator key, which exists only in keyed, single-tenant deployments
+  (`AGENTBROWSER_OPERATOR_KEYS_FILE`, whose tenant must equal the API-key tenant). Multi-tenant
+  and keyless deployments get **no** recovery surface in this slice; that is stated, not hidden.
+- Agents get no historical surface: their grants, epochs and sessions are gone after a restart,
+  by design.
+- **Alternative:** tenant API keys. That widens the recovery surface to every automation holding
+  a key; rejected for now.
 
 ### What is returned
 
-`GET /v1/journal/operations/{operationId}` (operator, tenant-scoped) returns the bounded list of
-records in the configured namespace whose tenant and operation ID match. One operation ID can
-appear in several sessions or epochs; at most 16 are returned, newest first. Each item carries:
+`GET /v1/journal/operations/{operationId}` (operator, tenant-scoped) returns a bounded set (at
+most 16) of matching records across the **searched namespaces** (see D7). Each item:
 
 | Field | Source |
 | --- | --- |
-| `classification` | `undispatched` / `outcome_unknown` / `failed_before_dispatch` / `completed` / `failed` / `outcome_unknown_terminal`, from the crash table |
-| `application` | adapter, resource and binding generation |
-| `session` | opaque `sessionIncarnation` and `epoch` (never a live session id) |
-| `recordedAt` | intent and terminal times |
-| `evidenceRefIds` | only those the terminal recorded, resolved through the existing evidence projections and their own authorization |
+| `namespace` | the namespace holding the record |
+| `classification` | `undispatched` (rev 1) / `outcome_unknown` (rev 2, dispatched) / `failed_before_dispatch` (rev 2, failed) / `completed`, `failed`, `outcome_unknown` (rev 3) |
+| `application` | adapter, resource, binding generation |
+| `session` | opaque `sessionIncarnation` and epoch (random, never a bearer) |
 
-Never returned: the keyed fingerprint, the live fingerprint, inputs, approval tokens or any
-replay capability. Absence is reported as `scoped_absent`, never as proof of non-execution.
+- **No times and no order.** Records hold no timestamps, so none are returned and the order is
+  unspecified. Adding times would be a record-format change, which is out of scope.
+- **Never returned:** fingerprints, inputs, evidence content or any replay capability.
+- **Absence:**
+  - within an open namespace: `scoped_absent`, never proof of non-execution;
+  - in a namespace past `retainUntil`: `retention_expired` (its records may be deleted);
+  - for a namespace not configured for search: `not_searched`.
 
-**Port change (contract work, not storage work).** The raw adapter gains one bounded, read-only
-query, `findByOperation(tenantId, operationId, limit)`.
-- It is fenced and namespace-scoped, like every data call.
-- It goes into the conformance suite and both fixtures (memory, SQLite), on the existing
-  `journal_record` table with an index over the tenant and operation ID.
-- `lookup(key)` is unchanged.
+### Port and storage
 
-### Explicit continuation
+- **The query.** The raw adapter gains a fenced, read-only
+  `findByOperation(tenantId, operationId, limit)`, added to the conformance suite and both
+  fixtures. It returns **full identities internally**, because D2/D3 must commit against the
+  exact stored identity. The route strips the fingerprint.
+- **No new DDL in this slice.** The tenant and operation ID live only inside the record JSON, so
+  the SQLite implementation is a bounded scan with `json_extract`, capped by `maxRecords`. An
+  index would mean new columns, which the store treats as a **new `formatVersion`** (new stores
+  only, no migration). That is deferred until a namespace's size makes the scan matter.
 
-**D2: continuation exists only for `undispatched` records, and only by operator action.**
-Recommended.
+### D7: historical namespaces after rotation (new)
 
-An undispatched intent (rev 1) is a *candidate* for a new, separately reviewed operation, and
-never something to resume:
+Recommended: opt-in history.
 
-1. The operator asks to continue it.
-2. The service commits a terminal `failed` on the **original** record: a known pre-dispatch
-   failure. This is a legal rev 1 → rev 2 (`dispatched: false`) transition. The store's
-   expected-revision check makes it atomic: if anything dispatched it meanwhile, the commit
-   conflicts and the continuation is refused. Terminal records carry only a status and evidence
-   refs, so the supersession link lives on the new operation, not on the old record.
-3. Only then may the operator submit a **new** operation under a **new** operation ID, carrying a
-   `supersedes` link (namespace, original key) in its review. It is revalidated from scratch:
-   current binding, account, payload, expected version and consent.
+- **Configuration.** Each namespace an operator rotates away from can be listed in
+  `AGENTBROWSER_JOURNAL_HISTORY`, a file of `name, ACCEPT_UNTIL, key file` entries. The service
+  opens each listed namespace with its exact original descriptor and original key. The key
+  check requires the original key, so **old key files are retained through retention**.
+- **Access.** History namespaces are searched by lookup and writable only by D2/D3. They never
+  accept a new intent: they are past their horizon.
+- **Retirement.** Once a history namespace is settled and past retention, it retires and its
+  entry can be removed. A namespace still holding in-doubt records cannot retire; D2/D3, or the
+  operator settlement below, is what frees it.
+- **Without this,** a rotation makes the old namespace's in-doubt records unreachable while they
+  still occupy a store slot. That is today's J-d behaviour, recorded as a residual.
 
-This proves the original was never dispatched and never reuses its identity. A new ID here is not
-"concealing ambiguity", because step 2 removed the ambiguity first.
+### New write path for recovery
 
-**D3: `outcome_unknown` resolves only through the adapter's receipt, and never by replay.**
-Recommended.
+D2 and D3 need a trusted, non-session write path. It calls the facade's `commitTerminal` with
+the **full stored identity** returned by `findByOperation`, under the operator's authorization
+and the namespace fence. Nothing else gains access to another process's records.
 
-For a dispatched record without a terminal, the operator may ask the service to **reconcile** it:
-- the service calls the bound application adapter's existing `receipt(scope, operationId)` under
-  current authorization;
-- if the receipt proves `committed` or `rejected`, the service commits the matching terminal with
-  the receipt as evidence;
-- otherwise the record stays `outcome_unknown`.
+### Explicit continuation (D2)
 
-There is no other path to a terminal, and no path to re-execution.
+**D2: only `undispatched` records, only by operator action.** Recommended.
+
+1. The operator asks to continue a rev 1 record.
+2. The recovery path commits a terminal `failed` on it: a known pre-dispatch failure, which is a
+   legal rev 1 → rev 2 transition with `dispatched: false`.
+   - **Why this is safe:** no live code can produce the dead process's key, and the exclusive
+     store lock with fence clearing guarantees a single writer. The expected-revision check is a
+     second guard.
+   - **Marking it:** terminals carry only a status and evidence refs. The terminal therefore
+     carries a supersession evidence ref, subject to the evidence-reference format, so that a
+     superseded intent is distinguishable from an ordinary pre-dispatch failure.
+3. Only then may the operator submit a **new** operation, under a **new** operation ID, with an
+   optional request field `supersedes: {namespace, operationId}`.
+   - The field is a protocol addition, so non-reviewed writes can carry the link too; it is not
+     limited to reviews.
+   - The new operation is revalidated from scratch: current binding, account, payload, expected
+     version and consent.
+
+### Unknown outcomes (D3)
+
+**D3: an unknown outcome is resolved only by an adapter's typed reconciliation, never by
+replay.** Recommended.
+
+The existing `receipt()` cannot serve here: it needs a live session, it is untyped, and it is
+keyed inconsistently. D3 therefore adds an **opt-in** adapter method:
+
+```ts
+reconcile(identity: {
+  tenant: string;
+  adapter: string;
+  resource: string;
+  bindingGeneration: string;
+  sessionIncarnation: string;
+  operationId: string;
+}): Promise<{ status: 'committed' | 'rejected' | 'unknown' }>
+```
+
+- **Binding to the original operation.** The adapter answers for **that** operation only. It
+  must have recorded the identity, including the session incarnation, at commit time, so a later
+  operation that reused the operation ID can never satisfy it. An adapter that cannot do this
+  does not implement `reconcile`, and its unknown outcomes stay unknown.
+- **What gets committed.** `committed` or `rejected` commits the matching terminal (`completed`
+  or `failed`). `unknown` changes nothing.
+- **No evidence refs.** None are recorded, because no durable evidence store exists to resolve
+  them. Durable evidence is a separate design.
+- **Operator settlement.** The operator may instead **settle** an unknown record as terminal
+  `outcome_unknown` (rev 3, legal). This claims nothing about the effect, and it lets the
+  namespace retire.
 
 ## J4: process-loss and publication gates
 
@@ -107,80 +174,84 @@ Process-loss rows, run as J-e through the real service with the store wired:
 Each row also asserts:
 - no replay;
 - the old grant is refused;
-- the old cursor is refused;
+- an old event cursor fails with **session not found**;
 - the new process reopens the namespace.
 
-### Events and cursors are not recovered
+### Events and cursors (D4)
 
 **D4: events and cursors are not recovered.** Recommended.
 
-The event ledger stays per-process. After a restart, a cursor from the old process is refused
-through the existing stale-cursor path; it is never silently reset to zero. The journal does not
-back events, and no second event bus is built.
+The event ledger stays per process and per session. After a restart, a cursor's session is gone,
+so its requests fail as session-not-found. The journal does not back events, and no second event
+bus is built.
 
 ### Writes that are not business writes
-
-The operation-journal design asks each of these to be classified before any capability
-advertises it:
 
 | Write | Classification | Durable? |
 | --- | --- | --- |
 | Session provisioning, seeded cookies | service-owned setup; a restart ends the session | no |
 | Lifecycle teardown, spontaneous popup cleanup | service-owned cleanup | no |
-| Artifact publication | artifact-store durability, separate from business commitment | no (artifact retention is its own setting) |
+| Artifact publication | artifact-store durability, separate from business commitment | no |
 | `takeDownload` consumption | ephemeral, per session | no |
 | Application writes requesting `durable` | qualified durable work (J-d) | **yes** |
 
-### Advertising recovery
+### Advertising recovery (D5)
 
-**D5: advertise recovery only for the qualified matrix.** Recommended.
+**D5: report recovery to operators only, for the qualified matrix.** Recommended.
 
-The `recovery` capability is advertised only for application writes, on the SQLite store, on the
-Node runtimes qualified by the journal gates (Linux CI, plus the macOS leg). Windows is gated
-until a Windows journal leg exists. There is no exactly-once promise.
+- Agents get no historical surface (D1), so there is no agent capability.
+- An operator-only `GET /v1/journal` reports:
+  - whether the journal is configured, the namespace, its health and accept horizon;
+  - the searched history namespaces;
+  - `recoveryQualified`, true only on the qualified matrix.
+- **Qualified matrix:** application writes; the SQLite store; Linux on Node 24 (the CI runtime)
+  and Node 22.13+ (the journal's minimum); and the macOS leg (nightly, and on journal pull
+  requests). Windows has no journal leg and stays unqualified.
+- There is no exactly-once promise.
 
-## Browser-operation durability
+## Browser-operation durability (D6)
 
-**D6: browser operations keep classification only: they are journaled but never recovered.**
-Recommended.
+**D6: browser operations are journaled for classification only, never recovered.** Recommended.
 
-Durable `act`, `plan` and `autofill` would get the same intent → marker → terminal records, and
-so close R08's "synchronous autofill receipts do not survive restart". They are **never**
-continued or reconciled into re-execution: the browser state they acted on does not survive a
-restart.
+This **narrows** R08 rather than closing it. Records cannot hold receipt contents (no form
+values), so after a restart an operator can see *that* an `autofill` or `act` was intended,
+dispatched or finished, and *how* it was classified, but not its receipt.
 
-Two requirements before shipping:
+Durable `act`, `plan` and `autofill` would get the same intent, marker and terminal records, and
+**never** continuation or reconciliation: the page they acted on does not survive.
 
-- **Post-storage-wait revalidation.** A browser action waits for the intent's fsync before
-  dispatching. During that wait the page can change. After the wait and before dispatch, the
-  existing owners must re-check:
-  - target staleness (revision and ref identity);
-  - egress and target policy;
-  - approval-token currency.
+**Prerequisite: revalidation after the storage wait.** A browser action waits for the intent's
+fsync before dispatching, and the page can change during that wait. After the wait and before
+dispatch, these must be re-checked synchronously, as `assertDispatch` does on the application
+path:
+- target staleness (revision and ref identity);
+- egress and target policy;
+- approval-token currency.
 
-  Each owner exposes a synchronous "still current" check, like the application path's
-  `assertDispatch`. If any check fails, the intent becomes `failed_before_dispatch`.
-- **The receipt is the record.** After a restart, the operator's lookup (J3) shows what happened.
-  There is no `receipt()` equivalent for a page, so a browser `outcome_unknown` stays unknown.
+Each owner must first expose that check. Any failure becomes `failed_before_dispatch`.
 
-**Alternative:** do not journal browser operations at all, and close R08 for application writes
-only. That is simpler, but it leaves autofill receipts ephemeral. Recommendation: D6 as written,
-sequenced **after** J3 ships, because it reuses J3's read path.
+**Alternative:** do not journal browser operations; R08's autofill part stays open. Recommended
+order: D6 **after** J3, reusing J3's read path.
 
 ## Sequencing (each one PR, test-first, independently reviewed)
 
-1. **J-e:** process-loss rows through the service, plus key rotation/loss through retention.
-2. **J3a:** `findByOperation` port, conformance, SQLite index.
-3. **J3b:** the operator lookup route (D1), with REST, SDK and CLI parity.
-4. **J3c:** continuation of undispatched records (D2), then reconciliation through receipts (D3).
-5. **J4:** the classification table above in docs, then the stale-cursor-after-restart test (D4)
-   and the recovery capability for the qualified matrix (D5). Closes R08 for application writes,
-   and the durable part of R10.
-6. **B-dur:** browser-operation durability (D6): revalidation hooks in the target, policy and
-   approval owners first, then journaled `act`, `plan` and `autofill`.
+1. **J-e:** process-loss rows through the service, plus key rotation and key loss through
+   retention.
+2. **J3a:** the `findByOperation` port (bounded scan), conformance, both fixtures.
+3. **J3b:** the operator lookup route (D1) with REST, SDK and CLI parity; `GET /v1/journal` (D5).
+4. **J3c:** the recovery write path; continuation (D2) with `supersedes`; operator settlement;
+   the opt-in adapter `reconcile` (D3).
+5. **J3d:** history namespaces (D7).
+6. **J4:** the classification table in the docs, the cursor-after-restart test (D4), and
+   `recoveryQualified` (D5). Closes R08 for application writes and the durable part of R10.
+7. **B-dur:** revalidation hooks first, then journaled browser operations (D6).
 
 ## Out of scope
 
-Restoring browser sessions, callbacks, grants or consent from serialized state; automatic replay
-of any step; exactly-once external effects; a historical surface for agents; journal-backed
-events.
+- Restoring browser sessions, callbacks, grants or consent from serialized state.
+- Automatic replay of any step.
+- Exactly-once external effects.
+- A historical surface for agents.
+- Journal-backed events.
+- Record timestamps or indexes (a future `formatVersion`).
+- A durable evidence store.
