@@ -350,8 +350,10 @@ Neither provider used any other tool.
 **Observation: screenshot bytes do cross the bridge.** The screenshot's artifact reference also
 carries the image inline (`ArtifactRef.inline.contentBase64`, base64 PNG), and both providers
 received it. This is by design for small artifacts, and it is not a password leak: the field
-renders masked, and the value never appears. But the bytes reach the model as about 28 KB of
-base64 **text** inside a JSON result, not as an MCP image block. The model cannot view that text
+renders masked, and the value never appears. But the bytes reach the model as base64 **text**
+inside a JSON result, not as an MCP image block: 15,444 characters (about 15 KB) for this
+fixture's screenshot, carried twice per result (once in the text content, once in the structured
+content). The model cannot view that text
 as an image, so it only costs context.
 
 Recorded as a follow-up decision, not changed here: either the MCP `screenshot` and `pdf` tools
