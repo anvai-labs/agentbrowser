@@ -42,6 +42,7 @@ import {
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
+  type OperationJournal,
   type OperationPublication,
   type PreparedApplicationConsent,
   type PreparedApplicationOperationReview,
@@ -437,11 +438,17 @@ export interface ServiceDependencies {
     }>;
   };
   /**
-   * C4b: reserved for J-d. Currently has NO effect: durable execution and durable reviews are
-   * refused until a durable journal is wired to execution, and a boolean alone proves nothing
-   * about durability. Trusted deployment configuration — never settable from request input.
+   * @deprecated Has no effect. Durability is never a configuration claim: it is available only
+   * while an `operationJournal` is attached and open.
    */
   durableJournalAvailable?: boolean;
+  /**
+   * C4b (J-d): an opened durable operation journal (trusted deployment configuration, see
+   * `journal-config.ts`). With it, application writes requesting `executionRequirement:
+   * 'durable'` are journaled; durable is advertised and accepted only while it is open and
+   * accepting. The caller owns its lifetime and closes it after `shutdown()`.
+   */
+  operationJournal?: OperationJournal;
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
@@ -626,10 +633,13 @@ export type PartialObservation = {
 };
 
 /** Optional observation enrichments the stack actually delivers. */
+/** Longest graceful shutdown waits for in-flight controlled runs to settle. */
+const SHUTDOWN_DRAIN_MS = 30_000;
+
 const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
 export class AgentBrowserService {
-  readonly authority = new SessionAuthority();
+  readonly authority: SessionAuthority;
   /**
    * Composed over this service's own SessionAuthority; without adapters
    * every application operation still fails closed (bind rejects, no
@@ -665,7 +675,7 @@ export class AgentBrowserService {
     | TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>
     | undefined;
   private readonly evidenceReviewProvider: ServiceDependencies['evidenceReviewProvider'];
-  private readonly durableJournalAvailable: boolean;
+  private readonly operationJournal: OperationJournal | undefined;
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -730,6 +740,10 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.operationJournal = deps.operationJournal;
+    this.authority = new SessionAuthority(
+      this.operationJournal !== undefined ? { journal: this.operationJournal } : {}
+    );
     this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
     this.loginBrowser = deps.loginBrowser;
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
@@ -737,13 +751,15 @@ export class AgentBrowserService {
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
       throw new Error('Invalid evidence review provider');
     this.evidenceReviewProvider = evidenceReviewProvider;
-    this.durableJournalAvailable = deps.durableJournalAvailable ?? false;
     if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
       throw new Error('Evidence source registry and provider are mutually exclusive');
     this.applicationAuthority = new ApplicationAuthority(
       this.authority,
       deps.applicationAdapters ?? [],
-      { consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId) }
+      {
+        consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId),
+        durableWrites: this.operationJournal !== undefined,
+      }
     );
     if (evidenceSourceRegistryProvider !== undefined) {
       if (typeof evidenceSourceRegistryProvider !== 'function')
@@ -2517,6 +2533,17 @@ export class AgentBrowserService {
     request: ApplicationRequest,
     source: EvidenceReviewSource
   ): PreparedEvidenceReview {
+    // Same refusal as the public review and execute paths: a durable review is created only
+    // while it could be executed (closes the J-b residual of an unapprovable pending review).
+    if (
+      (request as { executionRequirement?: unknown }).executionRequirement === 'durable' &&
+      !this.durableAvailable()
+    )
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
+        false
+      );
     const review = this.applicationAuthority.prepareOperationReviewInScope(sessionId, request);
     return this.prepareBoundEvidenceReview(
       sessionId,
@@ -2653,6 +2680,19 @@ export class AgentBrowserService {
     return { unbound: true };
   }
 
+  /**
+   * C4b (J-d): durable application writes are available only while an attached journal is open
+   * and its namespace still accepts new intents. Never a configuration claim.
+   */
+  private durableAvailable(): boolean {
+    const journal = this.operationJournal;
+    return (
+      journal !== undefined &&
+      this.authority.journalOpen() &&
+      Date.now() < journal.namespace.acceptUntil
+    );
+  }
+
   /** Discovery: the bound adapter's operations, or null when nothing is bound. */
   async applicationDiscover(
     sessionId: string,
@@ -2670,9 +2710,10 @@ export class AgentBrowserService {
             ...discovery,
             writeExecution: {
               defaultRequirement: 'ephemeral',
-              // Durable is advertised only once it is part of the operation identity (J-b);
-              // until then execute refuses it even with a qualified store.
-              supportedRequirements: ['ephemeral'],
+              // Durable is advertised only while it would be accepted (J-d).
+              supportedRequirements: this.durableAvailable()
+                ? ['ephemeral', 'durable']
+                : ['ephemeral'],
             },
           } as unknown as T);
     // Snapshot first (validates and captures publish now, as every publication path does).
@@ -2707,9 +2748,9 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
-    // A durable review could never be executed (durable execution is refused until J-d), so it
-    // is refused here with the same typed reason rather than reaching evidence selection.
-    if (validated.value.request.executionRequirement === 'durable')
+    // A durable review that could not be executed is refused here with the same typed reason
+    // as execute, rather than reaching evidence selection.
+    if (validated.value.request.executionRequirement === 'durable' && !this.durableAvailable())
       throw new ServiceError(
         'CONTROL_REQUIRED',
         'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
@@ -2750,9 +2791,9 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
-    // A durable review could never be executed (durable execution is refused until J-d), so it
-    // is refused here with the same typed reason rather than reaching evidence selection.
-    if (validated.value.request.executionRequirement === 'durable')
+    // A durable review that could not be executed is refused here with the same typed reason
+    // as execute, rather than reaching evidence selection.
+    if (validated.value.request.executionRequirement === 'durable' && !this.durableAvailable())
       throw new ServiceError(
         'CONTROL_REQUIRED',
         'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
@@ -2810,12 +2851,12 @@ export class AgentBrowserService {
         false,
         { credentialSource: 'operator' }
       );
-    // C4b: 'durable' is part of the operation identity (J-b) but is refused before any identity
-    // is reserved until a durable journal is wired to execution (J-d). The availability flag alone
-    // is not proof of durability, so it does not lift the refusal.
+    // C4b (J-d): 'durable' is accepted only while the attached journal is open and accepting;
+    // otherwise it is refused before any identity is reserved. The application authority refuses
+    // it again on its own (defence in depth) and journals it when accepted.
     const executionRequirement = (validated.value as { executionRequirement?: string })
       .executionRequirement;
-    if (executionRequirement === 'durable') {
+    if (executionRequirement === 'durable' && !this.durableAvailable()) {
       throw new ServiceError(
         'CONTROL_REQUIRED',
         'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
@@ -4767,6 +4808,10 @@ export class AgentBrowserService {
     this.shuttingDown = true;
     for (const transport of this.downloads.values())
       transport.revoke(new ServiceError('SESSION_NOT_FOUND', 'Service shutdown'));
+    // C4b (J-d): with a journal attached, refuse new journaled runs and let in-flight ones reach
+    // their terminal record (bounded) before anything they depend on is torn down; the journal is
+    // closed after this. Without a journal, shutdown is unchanged.
+    if (this.operationJournal !== undefined) await this.authority.drain(SHUTDOWN_DRAIN_MS);
     if (this.sweepTimer !== undefined) {
       clearInterval(this.sweepTimer);
     }
@@ -4872,6 +4917,9 @@ export class AgentBrowserService {
           operationId: selector.application.operationId,
           expectedVersion: selector.application.expectedVersion,
           input: action.input,
+          ...(selector.application.executionRequirement === 'durable'
+            ? { executionRequirement: 'durable' as const }
+            : {}),
         });
         application.assertCurrent();
         if (canonicalJson(application.action) !== canonicalJson(action))
