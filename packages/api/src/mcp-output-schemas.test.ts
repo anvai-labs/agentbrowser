@@ -187,6 +187,8 @@ describe('advertised schemas accept every structured result a client receives, e
       ['navigate', { sessionId, pageId: 'pg_missing', url: 'https://example.com/' }],
       ['page_create', { sessionId, url: 'http://169.254.169.254/' }],
       ['create', { tenantId: 'client-view', engine: 'no-such-engine' }],
+      // A thrown navigation failure: its envelope carries retryable and details as well.
+      ['navigate', { sessionId, pageId, url: 'http://169.254.169.254/' }],
     ] as const) {
       const result = await call(name, args);
       expect(result.isError, `${name} should be an error`).toBe(true);
