@@ -140,6 +140,17 @@ dispatches need a browser qualification through the page guard (B2); durable nee
 session (B1); and the capacity, close and `ephemeral`-identity statements were incomplete (B4,
 recovery, B1).
 
+## Implementation notes (from the final design review)
+
+- **The browser qualification guard must be able to await.** Today's guard is synchronous (the
+  application qualification refuses any non-`undefined` result, so a promise fails); B6's
+  re-resolve, re-observe and approval reads need their own async-capable guard path in the
+  dispatch boundary, running after the marker.
+- **The first approval decision stays before the marker.** Only the approval's currency
+  re-validation and its consumption move after it; the initial `APPROVAL_REQUIRED` refusal (no
+  token) still happens before any marker, which is what makes an approval round trip
+  `failed_before_dispatch`. B-dur-1 tests this.
+
 ## Sequencing
 
 1. **B-dur-1:** the reserved `browser` identity (refused for real adapters) and the owner-level
