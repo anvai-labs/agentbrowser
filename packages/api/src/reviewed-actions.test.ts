@@ -232,6 +232,50 @@ describe('marked sessions: the lease (ADR-025 s5)', () => {
     expect(refusal.details).toMatchObject({ effect: 'unknown' });
   });
 
+  it('a policy deny stands above the lease, even for a covered unknown action (review F3)', async () => {
+    // Deny only the act questions; everything else stays allowed so the
+    // fixture's session and page lifecycle behave normally.
+    const denyActs = {
+      version: 'test-deny-acts',
+      decide: (request: { action: string }) =>
+        request.action === 'act'
+          ? { allowed: false, reason: 'test deny', rulesMatched: [] }
+          : { allowed: true, reason: 'test allow', rulesMatched: [] },
+    };
+    const engine = new FakeEngine();
+    const service = new AgentBrowserService({ engine, authorizer: denyActs });
+    services.push(service);
+    const { sessionId } = await service.createSession({
+      tenantId: 'owner',
+      credentialSource: 'operator',
+      controlMode: 'delegated',
+      allowedHosts: ['example.com'],
+    });
+    const run = <T>(read: () => Promise<T>): Promise<T> =>
+      service.authority.run(sessionId, operator, {}, read) as Promise<T>;
+    const { pageId } = await run(() => service.createPage(sessionId));
+    const raw = engine.getFakePage(engine.getSessionIds()[0] ?? '', pageId);
+    if (!raw) throw new Error('Expected an engine page');
+    await raw.navigate({ url: 'https://example.com/start' });
+    raw.setElements([{ role: 'button', name: 'Denied routine' }]);
+    // A live lease covers the host — the deny must still win.
+    await service.grantActionLease(sessionId, {
+      hosts: ['example.com'],
+      expiresInMs: 60_000,
+      maxActions: 5,
+    });
+    const view = (await run(() => service.observe(sessionId, pageId, {}))) as {
+      elements?: Array<{ ref: string }>;
+    };
+    const ref = view.elements?.[0]?.ref;
+    if (!ref) throw new Error('Expected the button');
+    const refusal = await refused(
+      run(() => service.act(sessionId, pageId, { action: 'click', target: { ref } }))
+    );
+    expect(refusal.code).toBe('POLICY_DENIED');
+    expect(refusal.details).toMatchObject({ effect: 'unknown' });
+  });
+
   it('grant validation: usable hosts within the session allowlist, and the bounds', async () => {
     const f = await markedFixture({ allowedHosts: ['example.com'] });
     await expect(
@@ -405,6 +449,28 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
         payload: { hosts: ['other.org'], expiresInMs: 1000, maxActions: 5 },
       });
       expect(outside.statusCode).toBe(400);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('an agent cannot mark its own session: credentialSource in the create body is refused by name (review F1)', async () => {
+    const server = await operatorServer();
+    try {
+      const created = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: { authorization: 'Bearer api-key-aaaaaaaaaaaa' },
+        payload: {
+          tenantId: 'owner',
+          // The wire passes unknown keys through — this one must be refused
+          // BY NAME, or the agent forges the trust indicator phase 6 builds on.
+          credentialSource: 'operator',
+          policy: { allowedHosts: ['example.com'] },
+        },
+      });
+      expect(created.statusCode).toBe(400);
+      expect(created.json().error.code).toBe('INVALID_REQUEST');
     } finally {
       await server.close();
     }

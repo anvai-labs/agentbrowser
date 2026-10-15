@@ -10,17 +10,21 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 
 - **Marked sessions** (`credentialSource: "operator"`): the marking is **server-side only** — a
-  `ServiceSessionRequest` field plus an internal mark method (phase 6's handoff calls it); no
-  agent-facing schema accepts it, and the session view reports it read-only. In a marked session:
+  `ServiceSessionRequest` field plus an internal mark method (phase 6's handoff calls it); the
+  wire create route refuses `credentialSource` **by name** (the request validator passes unknown
+  keys through, so a name check is required — review F1 caught the first cut forwarding an
+  agent-supplied marker), and the session view reports it read-only. In a marked session:
   - **high-risk effects** (`transaction`, `external-message`, `account-security`, `destructive`)
-    always need an `act.reviewed` decision — a per-rule `decision: "allow"` is overridden (a policy
-    `deny` still denies); **unknown effects** need one too, unless the session's live lease covers
-    the page's host; `read`/`write-local` classification is honoured unchanged.
+    always need an `act.reviewed` decision — a per-rule `decision: "allow"` is overridden; a policy
+    `deny` still denies, **above the lease** (pinned by test after review F3); **unknown effects**
+    need review too, unless the session's live lease covers the page's host; `read`/`write-local`
+    classification is honoured unchanged.
   - Reviewed act approvals now carry `kind: "act.reviewed"` on the token and in the operator view
     (the fingerprint covers the kind, so a token can never be replayed as another kind).
-    `'act.reviewed'` stays on the delegated decide path — routing it through the simple
-    decide-and-burn non-act path (which phase 1's `getApprovalKind` did by kind alone, dead code
-    until now) would burn it on decide and make it unconsumable.
+    `getApprovalKind`/`findNonActToken` exclude `'act.reviewed'` as act-family — defense in depth:
+    `getToken` returns confirmation records only, so they cannot see an act.reviewed token today,
+    and counterfactually the non-act decide path would throw `INVALID_TOKEN` (its burn requires a
+    confirmation record) rather than mis-decide.
 - **The lease**: `POST /v1/sessions/{sessionId}/lease` — **human-operator key only** (an API-key
   operator is refused; lease-shaped input on agent routes is inert). `{ hosts ≤ 16,
   expiresInMs ≤ 4 h, maxActions ≤ 500 }`; every host must be a usable host lying within the
@@ -39,6 +43,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   AFTER the storage `kind`, so any kind-stamped reviewed approval threw `Invalid token kind` —
   nothing stamped a kind on the reviewed path before, so it never fired. The binding now spreads
   first; reviewed records keep storage kind `reviewed` while their token carries the approval kind.
+  (A second suspected latent bug — `getApprovalKind` mis-routing `'act.reviewed'` — was claimed in
+  the first cut of this entry and retracted after review: the path was unreachable, not latent;
+  see the marking bullet above for the corrected statement.)
 
 ### Added — the login browser (TD-BROWSER-16 phase 4, ADR-025 §1)
 

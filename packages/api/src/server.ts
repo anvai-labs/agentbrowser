@@ -1303,6 +1303,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             'INVALID_REQUEST',
             'CDP endpoints are trusted startup configuration, never session input.'
           );
+        // TD-BROWSER-16 (ADR-025 §5): the credential-source marking is set by
+        // the operator side (the handoff) or an embedder — an agent marking
+        // its own session would forge the trust indicator phase 6 builds on.
+        // The wire passes unknown keys through, so refuse it BY NAME here.
+        if ('credentialSource' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'credentialSource is server-assigned (the cookie handoff), never session input.'
+          );
         if (validated.value.cdpAttach === true) {
           const address = fastify.server.address();
           if (
