@@ -44,8 +44,8 @@ The published baseline is **1.18.0** (released 2026-10-15 from main `9406045`, r
 38741154969, all 14 jobs green; see [release-1.18.0](../evidence/release-1.18.0.md)). Records for
 1.16.0, 1.16.1, 1.17.0 and 1.17.1 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
 and earlier per-release records remain historical references. Both `main` and `develop` are
-protected with the same 11 strict required contexts; `develop` also requires a review, `main`
-enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
+protected with the same 11 strict required contexts and require a pull request (zero approving
+reviews); `main` also enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
 remain required. Label acceptance phases and measure their timing before changing
 budgets. No durable recovery, installed external-harness qualification or production
 use-case completion is implied.

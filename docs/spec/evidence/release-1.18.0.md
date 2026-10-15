@@ -11,7 +11,12 @@ Issue #447 closed (fixed by #454, now released).
 
 - **TD-BROWSER-15, the server policy engine** (ADR-024, Accepted): the egress safety floor, the
   policy-engine seam, the differential oracle, the Cedar schema and generator, the opt-in policy
-  file with shadow mode, the policy query surface and its documentation (#444–#458, #460).
+  file with shadow mode, the policy query surface and its documentation (#444–#453, #455–#458,
+  #460).
+- **Engagement scope** (TD-BROWSER-9): the redirect-hop set is bounded (#454, closing #447).
+- **Log levels** (#441): `AGENTBROWSER_LOG_LEVEL` accepts `warn`/`error`; the SDK sets the variable
+  the service reads.
+- **Design records**: ADR-024 / TD-BROWSER-15 and ADR-025 / TD-BROWSER-16 (#442, #443).
 - **TD-BROWSER-16, operator login and cookie handoff** (ADR-025, Accepted): the operator
   credential, per-session secret registration, the cookie-domain matcher, the login browser,
   reviewed actions and the lease, the cookie handoff, and its REST/SDK/CLI/MCP surfaces
@@ -24,6 +29,8 @@ Issue #447 closed (fixed by #454, now released).
   environment protection (commands in #475).
 - **Test integrity** (#479): the login browser's no-disabling-flags test had passed vacuously; it
   now checks the real argv.
+
+Full notes: the `[1.18.0]` section of the CHANGELOG.
 
 ## Qualification
 
