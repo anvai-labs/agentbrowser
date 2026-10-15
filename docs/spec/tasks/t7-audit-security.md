@@ -11,7 +11,9 @@ all-hop walker) with real-Chromium gates and nine acceptance rows in
 surface for scope (policy.scope / MCP scope / CLI --scope-file) is
 delivered with it; slice 3 (the OWASP ZAP client adapter) DELIVERED 2026-10-03 with the
 real-ZAP recorded run EXECUTED (ZAP 2.17.0, six normalized findings
-including the seeded reflected-XSS confirmed high — see the evidence
+including the seeded reflected-XSS high, ZAP-confidence "Confirmed" (under the 2026-10-15
+labelling rule that is `suspected` with `scannerConfidence: confirmed-by-scanner-user` until an
+independent reproduction confirms it) — see the evidence
 record); slice 4 (SARIF 2.1.0 report adapter) DELIVERED 2026-10-03. The
 2026-10-15 reconciliation found two acceptance items still open, now DELIVERED:
 the slice-3 role/business-logic fixture (a vulnerable/fixed IDOR pair driven by

@@ -6,7 +6,9 @@
 
 export interface SarifResult {
   ruleId: string;
-  level: 'error' | 'warning' | 'note';
+  /** SARIF 2.1.0 §3.27.10: a result whose kind is not `fail` SHALL have level `none`, so a
+   * suspected finding is `none` and carries its risk in `properties.risk`. */
+  level: 'error' | 'warning' | 'note' | 'none';
   /** SARIF 2.1.0 result kind. T7: a suspected finding is `review` (needs a human), a confirmed
    * one is `fail`. Absent for adapters without a confirmation concept (accessibility). */
   kind?: 'fail' | 'review';
@@ -163,7 +165,7 @@ function scannerSarif(
     }
     return {
       ruleId: String(finding.pluginId),
-      level: RISK_TO_LEVEL[finding.risk] ?? 'warning',
+      level: finding.status === 'confirmed' ? (RISK_TO_LEVEL[finding.risk] ?? 'warning') : 'none',
       message: { text: finding.name },
       locations: [
         {
@@ -178,9 +180,12 @@ function scannerSarif(
       ...confirmationProperties(
         finding.status,
         (finding as ScannerFinding & { evidence?: ConfirmationEvidence }).evidence,
-        finding.scannerConfidence !== undefined
-          ? { scannerConfidence: finding.scannerConfidence }
-          : {}
+        {
+          risk: finding.risk,
+          ...(finding.scannerConfidence !== undefined
+            ? { scannerConfidence: finding.scannerConfidence }
+            : {}),
+        }
       ),
     };
   });

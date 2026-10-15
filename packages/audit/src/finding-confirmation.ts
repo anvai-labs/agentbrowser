@@ -2,8 +2,12 @@ import { VisualAuditError } from './visual-audit.js';
 
 /** T7 acceptance: "Confirmed findings include independent evidence and cleanup; suspected
  * findings remain labeled." A finding moves from `suspected` to `confirmed` only here, and only
- * with evidence that does not come from the tool that raised it: a reproduction the auditor
- * performed independently. A scanner's own confidence is never accepted as confirmation. */
+ * with evidence of a reproduction separate from the scan that raised it. A scanner's own
+ * confidence is never accepted as confirmation.
+ *
+ * The evidence is an ATTESTATION, not proof: this function checks its shape (method label, a real
+ * date-time, a bounded observation, a cleanup record) and refuses required-but-unperformed
+ * cleanup. It cannot verify that the reproduction happened; the caller vouches for that. */
 
 export interface ConfirmationCleanup {
   /** Whether the reproduction created state that must be removed. */
@@ -29,6 +33,8 @@ export type Confirmed<T> = Omit<T, 'status'> & {
 };
 
 const MAX_OBSERVATION = 2_000;
+/** A full ISO-8601 date-time with an explicit offset: `Date.parse` alone accepts '1' or 'Oct 15'. */
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
 
 function validEvidence(
   evidence: ConfirmationEvidence | undefined
@@ -42,8 +48,12 @@ function validEvidence(
   if (evidence === null || typeof evidence !== 'object') invalid('missing');
   if (evidence?.method !== 'independent-reproduction')
     invalid('method must be independent-reproduction (a scanner opinion is not evidence)');
-  if (typeof evidence?.reproducedAt !== 'string' || Number.isNaN(Date.parse(evidence.reproducedAt)))
-    invalid('reproducedAt must be an ISO-8601 time');
+  if (
+    typeof evidence?.reproducedAt !== 'string' ||
+    !ISO_DATE_TIME.test(evidence.reproducedAt) ||
+    Number.isNaN(Date.parse(evidence.reproducedAt))
+  )
+    invalid('reproducedAt must be an ISO-8601 date-time with an offset');
   if (
     typeof evidence?.observation !== 'string' ||
     evidence.observation.trim() === '' ||

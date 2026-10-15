@@ -19,7 +19,7 @@ afterEach(async () => {
  * vulnerable: any authenticated identity reads any invoice (IDOR).
  * fixed: only the owner reads an invoice; others get 404 (no existence oracle).
  * Every request's identity headers are recorded for the no-leak gate. */
-async function startInvoiceFixture(mode: 'vulnerable' | 'fixed') {
+async function startInvoiceFixture(mode: 'vulnerable' | 'fixed' | 'forbidden-200' | 'redirect') {
   const invoices: Record<string, { owner: string; marker: string }> = {
     '1001': { owner: 'alice', marker: 'ALICE-PRIVATE-7f3a' },
     '2002': { owner: 'bob', marker: 'BOB-PRIVATE-91c4' },
@@ -37,6 +37,16 @@ async function startInvoiceFixture(mode: 'vulnerable' | 'fixed') {
     const invoice = match ? invoices[match[1] ?? ''] : undefined;
     if (identity === undefined) {
       response.writeHead(401).end();
+      return;
+    }
+    if (mode === 'redirect') {
+      response.writeHead(302, { location: 'http://elsewhere.example/login' }).end();
+      return;
+    }
+    if (invoice !== undefined && mode === 'forbidden-200' && invoice.owner !== identity) {
+      // A fixed app that answers 200 with a generic page: success status, no private data.
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<h1>Forbidden</h1><p>You cannot view this invoice.</p>');
       return;
     }
     if (invoice === undefined || (mode === 'fixed' && invoice.owner !== identity)) {
@@ -96,7 +106,46 @@ describe('role/business-logic fixture pair (T7 slice 3)', () => {
     const fixture = await startInvoiceFixture('fixed');
     const result = await checkRoleAccess(options(fixture.port));
     expect(result.findings).toEqual([]);
-    expect(result.ownerControls).toEqual({ passed: 2, failed: 0 });
+    expect(result.ownerControls).toEqual({ passed: 2 });
+  });
+
+  it('fixed with a 200 "forbidden" page: a success status without the marker is not a finding', async () => {
+    const fixture = await startInvoiceFixture('forbidden-200');
+    const result = await checkRoleAccess(options(fixture.port));
+    expect(result.findings).toEqual([]);
+    expect(result.ownerControls).toEqual({ passed: 2 });
+  });
+
+  it('an owner read that succeeds without its marker invalidates the fixture', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    await expect(
+      checkRoleAccess({
+        ...scoped,
+        resources: [
+          {
+            url: `http://127.0.0.1:${fixture.port}/invoices/1001`,
+            owner: 'alice',
+            marker: 'NOT-THERE',
+          },
+        ],
+      })
+    ).rejects.toThrow(/FIXTURE_INVALID/);
+  });
+
+  it('a redirect is never followed: the owner control fails closed and no other host is contacted', async () => {
+    const fixture = await startInvoiceFixture('redirect');
+    const requested: string[] = [];
+    const recording: typeof fetch = (input, init) => {
+      requested.push(String(input));
+      return fetch(input, init);
+    };
+    await expect(
+      checkRoleAccess({ ...options(fixture.port), fetchImpl: recording })
+    ).rejects.toThrow(/FIXTURE_INVALID.*status 302/);
+    expect(requested.every((url) => url.startsWith(`http://127.0.0.1:${fixture.port}/`))).toBe(
+      true
+    );
   });
 
   it('identities do not leak: every request carries exactly one identity, the intended one', async () => {
@@ -110,15 +159,54 @@ describe('role/business-logic fixture pair (T7 slice 3)', () => {
     expect(fixture.seen).toHaveLength(4);
   });
 
-  it('a resource outside the allowed hosts is refused before any request', async () => {
+  it('a resource outside the allowed hosts is refused before any request, even after in-scope ones', async () => {
     const fixture = await startInvoiceFixture('vulnerable');
     const scoped = options(fixture.port);
     await expect(
       checkRoleAccess({
         ...scoped,
-        resources: [{ url: 'http://elsewhere.example/invoices/1', owner: 'alice', marker: 'X-1' }],
+        resources: [
+          ...scoped.resources,
+          { url: 'http://elsewhere.example/invoices/1', owner: 'alice', marker: 'X-1' },
+        ],
       })
     ).rejects.toThrow(/SCOPE_HOST_DENIED/);
+    expect(fixture.seen).toHaveLength(0);
+  });
+
+  it('a suffix scope entry matches only subdomains on a label boundary', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    for (const url of ['http://evilexample.test/x', 'http://example.test/x']) {
+      await expect(
+        checkRoleAccess({
+          ...scoped,
+          allowedHosts: ['.example.test'],
+          resources: [{ url, owner: 'alice', marker: 'X-1' }],
+        })
+      ).rejects.toThrow(/SCOPE_HOST_DENIED/);
+    }
+    expect(fixture.seen).toHaveLength(0);
+  });
+
+  it('refuses fixture mistakes before any request: prototype-key owners and markers in the URL', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    const base = `http://127.0.0.1:${fixture.port}`;
+    for (const resource of [
+      { url: `${base}/invoices/1001`, owner: 'constructor', marker: 'ALICE-PRIVATE-7f3a' },
+      { url: `${base}/invoices/1001`, owner: 'toString', marker: 'ALICE-PRIVATE-7f3a' },
+      { url: `${base}/doc/ALICE-PRIVATE-7f3a`, owner: 'alice', marker: 'ALICE-PRIVATE-7f3a' },
+      { url: `${base}/invoices/1001`, owner: 'alice', marker: '' },
+    ]) {
+      const error = await checkRoleAccess({ ...scoped, resources: [resource] }).catch(
+        (caught: Error) => caught
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^FIXTURE_INVALID/);
+      // The refusal never echoes the private marker.
+      if (resource.marker !== '') expect((error as Error).message).not.toContain(resource.marker);
+    }
     expect(fixture.seen).toHaveLength(0);
   });
 
