@@ -7,6 +7,54 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the login browser (TD-BROWSER-16 phase 4, ADR-025 §1)
+
+- **`LoginBrowser` (`engine-playwright`)**: a pipe-connected **persistent** Chromium context over a
+  dedicated profile directory. Playwright drives `--remote-debugging-pipe`, so **no TCP port is
+  ever opened** — asserted by test against the process's own listening sockets. The login walls
+  a human needs (Safe Browsing phishing detection, component and background updates) are
+  RE-ENABLED by REMOVING Playwright's disabling flags through `ignoreDefaultArgs`.
+- **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
+  with `LOGIN_PROFILE_MODE`); Windows grants the owner's SID `(OI)(CI)F` via `icacls` with
+  inheritance stripping intended (the runner's observed result is the ADR-tolerated owner +
+  SYSTEM + Administrators posture), and startup parses the `icacls` ACE lines — with the
+  pipe-glued filename header stripped — refusing any identity beyond the owner, where "the
+  owner" and the exempted SYSTEM/Administrators match every icacls spelling (SID,
+  `MACHINE\user`, translated well-known names). The Windows CI job runs this suite, where
+  the win32 branches execute. (icacls, not PowerShell's Get-Acl, after the runner could not load
+  PowerShell 5.1's Security module — caught by review executing the gate; the name-vs-SID
+  comparison likewise.)
+  The profile sits under `AGENTBROWSER_LOGIN_PROFILE_DIR` or, by default, the OS private
+  per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA` on Windows); whether
+  that root is synced or backed up is the operator's environment, not a property claimed here.
+- **Binary pinning:** the resolved executable, its file identity (size + mtime), and Chromium's own
+  version are recorded in the profile on first launch. A different path refuses
+  `LOGIN_BINARY_CHANGED`; the same path with a changed file identity (an in-place update) refuses
+  `LOGIN_BINARY_DOWNGRADED`; either way reset adopts. The compared field is file identity, not the
+  version string — `chrome.exe --version` prints nothing on Windows (GUI-subsystem exe,
+  runner-proven), which made a version-probe check silently fail open there; `fs.stat` has no such
+  platform gap. The recorded `chromiumVersion` stays as documentation, never compared.
+  Launch-time refusals leave the profile unlocked — the lock is acquired after every pre-launch
+  check, so a transient refusal never wedges the profile.
+- **Lifecycle:** `open`/`close`/`reset`/`readCookies` serialized on a profile lock — a live second
+  owner (or a hand-started Chrome, via its ProcessSingleton failure) refuses with
+  `LOGIN_PROFILE_IN_USE`, a stale lock (dead owner) is adopted, the operator closing the last
+  window reconciles the state, and reads refuse with `LOGIN_BROWSER_CLOSED`. Partitioned cookies
+  (`partitionKey` OR `partitionKeyOpaque`) and expired ones are skipped and counted; the expired
+  filter is asserted with a clock frozen ahead (Chromium culls expired cookies at write) and the
+  opaque one with a stubbed cookie set.
+- **Typed refusals at the client:** the seven `LOGIN_*` codes joined the protocol error enum
+  (409/403/400, never 500) — every engine refusal maps to its code at the routes, and a
+  non-typed launch failure (a hand-started Chrome) maps to `LOGIN_PROFILE_IN_USE`.
+- **Headless CI:** `AGENTBROWSER_LOGIN_HEADLESS=1` lets the whole suite run without a display;
+  CI runs the engine suites with it.
+- **`LoginBrowserService` + `AGENTBROWSER_LOGIN_BROWSER=1`**: enabled only with operator keys
+  present (boot refuses otherwise); `POST /v1/operator/login/{open,close,reset,read}` are
+  human-operator-only operator routes — agent credentials and API-key operators are refused; a
+  multi-tenant deployment refuses to open (single-tenant by design); server shutdown closes an
+  open browser. The login browser is not a session: no id, no refs, no pages on any agent surface.
+
+
 ### Added — the cookie-domain matcher (TD-BROWSER-16 phase 3, ADR-025 §3)
 
 - **`packages/core/src/domain-matcher.ts`**, on pinned `tldts` with **the private section in

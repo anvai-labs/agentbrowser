@@ -994,6 +994,9 @@ function browserVersion(browser: Browser): string | undefined {
   }
 }
 
+export type { LoginBrowserOptions, LoginCookie, ReadLoginCookiesResult } from './login-browser.js';
+export { LoginBrowser, LoginBrowserError } from './login-browser.js';
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';

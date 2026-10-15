@@ -30,6 +30,13 @@ export * from './types.js';
 // ============================================================================
 
 export const ErrorCodeEnum = Type.Union([
+  Type.Literal('LOGIN_BROWSER_CLOSED'),
+  Type.Literal('LOGIN_PROFILE_IN_USE'),
+  Type.Literal('LOGIN_PROFILE_MODE'),
+  Type.Literal('LOGIN_BROWSER_DISPLAY'),
+  Type.Literal('LOGIN_BINARY_CHANGED'),
+  Type.Literal('LOGIN_BINARY_DOWNGRADED'),
+  Type.Literal('LOGIN_HOSTED_OR_MULTI_TENANT'),
   Type.Literal('RATE_LIMITED'),
   Type.Literal('SESSION_BUSY'),
   Type.Literal('CONTROL_REVOKED'),

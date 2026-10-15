@@ -1397,6 +1397,85 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/operator/login/open': {
+        post: {
+          operationId: 'operatorLoginOpen',
+          summary: 'Open the operator login browser (human operators only)',
+          description:
+            'TD-BROWSER-16 phase 4. Requires a human-operator key (operator routes only); agent credentials and API-key operators are refused. Headed, single-tenant, local deployments.',
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The login browser opened.',
+              content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
+            },
+            '403': errorResponse('A human-operator key is required.'),
+          },
+        },
+      },
+      '/v1/operator/login/close': {
+        post: {
+          operationId: 'operatorLoginClose',
+          summary: 'Close the operator login browser',
+          description: 'TD-BROWSER-16 phase 4. Human operators only.',
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The login browser closed.',
+              content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
+            },
+            '403': errorResponse('A human-operator key is required.'),
+          },
+        },
+      },
+      '/v1/operator/login/reset': {
+        post: {
+          operationId: 'operatorLoginReset',
+          summary: 'Delete the login browser profile',
+          description:
+            'TD-BROWSER-16 phase 4. Deletes the profile directory (close first). Human operators only.',
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The profile was deleted.',
+              content: json({ type: 'object', properties: { reset: { type: 'boolean' } } }),
+            },
+            '403': errorResponse('A human-operator key is required.'),
+          },
+        },
+      },
+      '/v1/operator/login/read': {
+        post: {
+          operationId: 'operatorLoginRead',
+          summary: "Read the open login browser's cookies",
+          description:
+            "TD-BROWSER-16 phase 4. The OPEN browser only; no headless read. Partitioned and expired cookies are skipped and counted. Human operators only; the values are the operator's own.",
+          tags: ['operator'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The cookies and the skip counts.',
+              content: json({
+                type: 'object',
+                properties: {
+                  cookies: { type: 'array', items: { type: 'object' } },
+                  skipped: {
+                    type: 'object',
+                    properties: {
+                      partitioned: { type: 'integer' },
+                      expired: { type: 'integer' },
+                    },
+                  },
+                },
+              }),
+            },
+            '403': errorResponse('A human-operator key is required.'),
+          },
+        },
+      },
       '/v1/policy': {
         get: {
           operationId: 'getPolicy',
