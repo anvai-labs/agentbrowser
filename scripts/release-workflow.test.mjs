@@ -139,7 +139,7 @@ test('job-level permissions grant exactly the allowlisted scopes and nothing els
       .filter((line) => /^\s+[^\s#-][^:]*:(?:\s|$)/.test(line) && /^ {1,3}\S/.test(line));
     for (const line of keyLines)
       assert.match(line, /^ {2}[A-Za-z0-9_-]+:$/, `${name}: job key not in the bare form: ${line}`);
-    const declared = (text.match(/^\s*permissions\s*:/gm) ?? []).length;
+    const declared = (text.match(/^\s*["']?permissions["']?\s*:/gm) ?? []).length;
     const recognised =
       1 + [...jobs.values()].filter((body) => permissionsAt(body, 4) !== undefined).length;
     assert.equal(declared, recognised, `${name}: a permissions block the reader does not see`);
