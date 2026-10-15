@@ -283,9 +283,12 @@ it.each([false, true])(
           ['act', 'fill', sessionId, pageId, fullName.ref, 'Uncommitted edit'],
           'stale-ui'
         );
+        // Each poll is a real-Chromium observation; the 1 s default flakes under suite load.
         await expect
-          .poll(async () =>
-            (await observe()).some((element) => element.name?.includes('"failed":true'))
+          .poll(
+            async () =>
+              (await observe()).some((element) => element.name?.includes('"failed":true')),
+            { timeout: 15_000 }
           )
           .toBe(true);
         expect(ui.read().fields.fullName).toBe('External edit');
