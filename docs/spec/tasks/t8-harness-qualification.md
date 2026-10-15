@@ -99,10 +99,14 @@ exercisable because neither CLI can cancel one in-flight call from a scripted ru
 claimed). MCP client-internal reply correlation is provider-client
 semantics qualified at the manager/bridge level. **2026-10-15 (Q1):** both Codex 0.162.1 and
 Claude Code 2.1.300 were re-qualified through a committed driver
-(`scripts/t8-harness-qualification.mjs`). Covered: unbound tool-call fidelity, structured results,
-delegated navigate/act with operation IDs, image artifact references and password redaction.
-Every dimension is verified by the fixture server or the service's operation records, not by
-model claims (see the availability record). Still open: the same treatment on Victor. (Owner reconciliation 2026-10-15: the current blocker is aiserver1's gateway, which has no
+(`scripts/t8-harness-qualification.mjs`). Each provider was locked to the bridge: Codex had its
+shell, exec, browser and computer-use features disabled, and Claude ran `--restricted --tools ""`.
+Any other tool fails the run. Covered: unbound tool-call fidelity, structured results, delegated
+navigate/act with operation IDs, screenshots as artifact references, and password redaction. Every
+dimension is verified by the fixture server or the service's operation records, not by model
+claims (see the availability record). One recorded observation: screenshot bytes also cross the
+bridge inline, as base64 text. That is not a privacy leak, but it is a follow-up decision. Still
+open: the same treatment on Victor. (Owner reconciliation 2026-10-15: the current blocker is aiserver1's gateway, which has no
 registered upstream, ahead of any TLS question.)
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.

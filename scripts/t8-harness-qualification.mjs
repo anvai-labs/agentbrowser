@@ -4,16 +4,20 @@
  * scratch service built from this checkout. The evidence is independent of the model's narrative:
  * the fixture server records what the browser actually did, the service's own operation records
  * confirm delegated writes, and the providers' JSON event streams are scanned for what crossed
- * the bridge (structured results, redaction, image artifact references).
+ * the bridge (structured results, redaction, artifact references) and for any tool that is not
+ * the agentbrowser bridge (a run that used one fails, so no oracle can be satisfied around it).
  *
  *   pnpm -r build
  *   node scripts/t8-harness-qualification.mjs --providers codex,claude --out <file.json>
  *
  * Safety: the service runs in KEYED mode on a scratch loopback port with AGENTBROWSER_ALLOW_LOOPBACK
  * (the fixture lives on loopback). Codex runs `exec --ephemeral --ignore-user-config
- * --approve-for-me` with only this MCP server; Claude Code runs `-p` with a strict MCP config and
- * ONLY the agentbrowser tools allowed (no shell, file or web tools). Nothing is submitted anywhere
- * but the fixture.
+ * --approve-for-me` with its shell, exec, browser, computer-use, apps, plugin and multi-agent
+ * features disabled and only this MCP server configured; Claude Code runs `-p --restricted
+ * --tools ""` (no built-in tools, user/project settings ignored) with a strict MCP config.
+ * Credentials never appear in a provider's argv or config: the bridge is started through a small
+ * launcher that reads them from a private file outside the provider's working directory. Nothing
+ * is submitted anywhere but the fixture.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -21,7 +25,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const SERVER_BIN = join(root, 'packages/api/dist/bin.js');
@@ -64,15 +68,20 @@ const fixture = createServer((request, response) => {
 // ---------------------------------------------------------------- scratch service
 async function startService(apiKey) {
   const port = 20000 + Math.floor(Math.random() * 20000);
+  // Only the operator's non-agentbrowser environment is inherited, so a stray AGENTBROWSER_*
+  // variable cannot change the scratch service under qualification.
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith('AGENTBROWSER_'))
+  );
   const child = spawn(process.execPath, [SERVER_BIN], {
     env: {
-      ...process.env,
+      ...inherited,
       PORT: String(port),
       HOST: '127.0.0.1',
       AGENTBROWSER_API_KEYS: `${apiKey}:qual`,
       AGENTBROWSER_ALLOW_LOOPBACK: '1',
     },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: 'ignore',
   });
   const base = `http://127.0.0.1:${port}`;
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -118,6 +127,12 @@ function spawnAsync(command, commandArgs, options) {
       stderr += chunk;
     });
     const timer = setTimeout(() => child.kill('SIGTERM'), options.timeout ?? 600_000);
+    // A missing binary (ENOENT) is a failed run, never an unhandled exception that would skip
+    // the cleanup below and orphan the scratch service.
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ status: null, stdout, stderr: `${stderr}${error.code ?? error.message}` });
+    });
     child.on('close', (code) => {
       clearTimeout(timer);
       resolve({ status: code, stdout, stderr });
@@ -132,14 +147,45 @@ async function runProvider(provider, mcpEnv, prompt) {
   return result;
 }
 
+/** Codex features that would give the model a way around the agentbrowser bridge. */
+const CODEX_DISABLED_FEATURES = [
+  'shell_tool',
+  'unified_exec',
+  'browser_use',
+  'browser_use_external',
+  'in_app_browser',
+  'computer_use',
+  'apps',
+  'plugins',
+  'multi_agent',
+];
+
+/**
+ * The bridge's credentials go in a private file outside the provider's working directory; a tiny
+ * launcher loads them into its own environment and starts the bridge. Nothing secret reaches the
+ * provider's argv or MCP configuration.
+ */
+function bridgeLauncher(mcpEnv) {
+  const directory = mkdtempSync(join(tmpdir(), 't8-bridge-'));
+  const credentials = join(directory, 'credentials.json');
+  writeFileSync(credentials, JSON.stringify(mcpEnv), { mode: 0o600 });
+  const launcher = join(directory, 'launch.mjs');
+  writeFileSync(
+    launcher,
+    `import { readFileSync } from 'node:fs';
+Object.assign(process.env, JSON.parse(readFileSync(${JSON.stringify(credentials)}, 'utf8')));
+await import(${JSON.stringify(pathToFileURL(MCP_BIN).href)});
+`,
+    { mode: 0o600 }
+  );
+  return { directory, args: [launcher] };
+}
+
 async function runProviderRaw(provider, mcpEnv, prompt) {
   const work = mkdtempSync(join(tmpdir(), `t8-${provider}-`));
+  const bridge = bridgeLauncher(mcpEnv);
   try {
     if (provider === 'codex') {
-      const envArgs = Object.entries(mcpEnv).flatMap(([key, value]) => [
-        '-c',
-        `mcp_servers.agentbrowser.env.${key}=${JSON.stringify(value)}`,
-      ]);
       const result = await spawnAsync(
         'codex',
         [
@@ -149,11 +195,11 @@ async function runProviderRaw(provider, mcpEnv, prompt) {
           '--approve-for-me',
           '--skip-git-repo-check',
           '--json',
+          ...CODEX_DISABLED_FEATURES.flatMap((feature) => ['--disable', feature]),
           '-c',
           `mcp_servers.agentbrowser.command=${JSON.stringify(process.execPath)}`,
           '-c',
-          `mcp_servers.agentbrowser.args=${JSON.stringify([MCP_BIN])}`,
-          ...envArgs,
+          `mcp_servers.agentbrowser.args=${JSON.stringify(bridge.args)}`,
           prompt,
         ],
         { cwd: work, timeout: 600_000 }
@@ -168,7 +214,7 @@ async function runProviderRaw(provider, mcpEnv, prompt) {
     writeFileSync(
       config,
       JSON.stringify({
-        mcpServers: { agentbrowser: { command: process.execPath, args: [MCP_BIN], env: mcpEnv } },
+        mcpServers: { agentbrowser: { command: process.execPath, args: bridge.args } },
       })
     );
     const result = await spawnAsync(
@@ -176,6 +222,9 @@ async function runProviderRaw(provider, mcpEnv, prompt) {
       [
         '-p',
         prompt,
+        '--restricted',
+        '--tools',
+        '',
         '--mcp-config',
         config,
         '--strict-mcp-config',
@@ -194,16 +243,24 @@ async function runProviderRaw(provider, mcpEnv, prompt) {
     };
   } finally {
     rmSync(work, { recursive: true, force: true });
+    rmSync(bridge.directory, { recursive: true, force: true });
   }
 }
 
+/** Codex event items that are not tool invocations. */
+const CODEX_NON_TOOL_ITEMS = new Set(['agent_message', 'reasoning', 'todo_list', 'error']);
+/** Claude Code's deferred-tool loader: it only loads schemas, it reaches nothing. */
+const CLAUDE_HARNESS_TOOLS = new Set(['ToolSearch']);
+
 /**
- * Tool names the provider actually invoked on the agentbrowser server, read from the invocation
- * events only (Claude Code's init event lists every available tool, so a text scan would count
- * tools that were merely offered).
+ * What the provider actually invoked, read from invocation events only (Claude Code's init event
+ * lists every available tool, so a text scan would count tools that were merely offered):
+ * `bridge` holds agentbrowser tool names; `other` holds every other tool or command item. A run
+ * with any `other` entry fails, whatever the oracles say.
  */
-function toolCalls(stream) {
-  const names = new Set();
+function invocations(stream) {
+  const bridge = new Set();
+  const other = new Set();
   for (const line of stream.split('\n')) {
     let event;
     try {
@@ -213,19 +270,52 @@ function toolCalls(stream) {
     }
     // Codex: {"type":"item.*","item":{"type":"mcp_tool_call","server":"agentbrowser","tool":...}}
     const item = event?.item;
-    if (item?.type === 'mcp_tool_call' && item.server === 'agentbrowser') names.add(item.tool);
-    // Claude Code: assistant messages carrying tool_use blocks named mcp__agentbrowser__<tool>.
+    if (item && typeof item.type === 'string') {
+      if (item.type === 'mcp_tool_call' && item.server === 'agentbrowser') bridge.add(item.tool);
+      else if (item.type === 'mcp_tool_call') other.add(`mcp:${item.server}:${item.tool}`);
+      else if (!CODEX_NON_TOOL_ITEMS.has(item.type)) other.add(item.type);
+    }
+    // Claude Code: assistant messages carrying tool_use blocks.
     if (event?.type === 'assistant') {
       for (const block of event.message?.content ?? []) {
-        const match = block?.type === 'tool_use' && /^mcp__agentbrowser__(.+)$/.exec(block.name);
-        if (match) names.add(match[1]);
+        if (block?.type !== 'tool_use') continue;
+        const match = /^mcp__agentbrowser__(.+)$/.exec(block.name);
+        if (match) bridge.add(match[1]);
+        else if (!CLAUDE_HARNESS_TOOLS.has(block.name)) other.add(block.name);
       }
     }
   }
-  return [...names].sort();
+  return { bridge: [...bridge].sort(), other: [...other].sort() };
 }
 
+const includesAll = (called, required) => required.every((name) => called.includes(name));
+/** Structured tool results in either provider's stream format. */
+const structuredSeen = (stream) => /structuredContent|structured_content/.test(stream);
+/** Raw PNG or JPEG magic in base64, wherever it appears (image block, data URL, JSON field). */
+const INLINE_IMAGE = /iVBORw0KGgo|\/9j\/4/;
+
 // ---------------------------------------------------------------- dimensions
+/**
+ * Every dimension passes only if the provider exited cleanly, used NO tool other than the bridge,
+ * invoked the bridge tools the scenario requires, and its stream never carried the fixture's
+ * password value, in addition to the dimension's own independent oracle.
+ */
+function verdict(run, required) {
+  const called = invocations(run.stream);
+  const common = {
+    exitCode: run.code,
+    toolsCalled: called.bridge,
+    otherToolsUsed: called.other,
+    passwordValueCrossedBridge: run.stream.includes(SECRET),
+  };
+  const ok =
+    run.code === 0 &&
+    called.other.length === 0 &&
+    includesAll(called.bridge, required) &&
+    !common.passwordValueCrossedBridge;
+  return { ok, common, ...(run.code !== 0 ? { stderrTail: run.stderr } : {}) };
+}
+
 async function qualify(provider, fixtureBase, serviceBase, operatorKey) {
   const results = [];
 
@@ -245,17 +335,13 @@ async function qualify(provider, fixtureBase, serviceBase, operatorKey) {
     const submitted = hits
       .slice(before)
       .some((hit) => hit.path === '/submit' && hit.query.first === value);
+    const { ok, common, ...tail } = verdict(run, ['create', 'navigate', 'snapshot', 'act']);
+    const structured = structuredSeen(run.stream);
     results.push({
-      dimension: 'tool-call fidelity (unbound create/navigate/snapshot/act/close)',
-      pass: run.code === 0 && submitted,
-      evidence: {
-        exitCode: run.code,
-        fixtureSawSubmission: submitted,
-        toolsCalled: toolCalls(run.stream),
-        structuredContentSeen: /structuredContent|structured_content/.test(run.stream),
-        passwordValueCrossedBridge: run.stream.includes(SECRET),
-      },
-      ...(run.code !== 0 ? { stderrTail: run.stderr } : {}),
+      dimension: 'tool-call fidelity and structured results (unbound create/navigate/snapshot/act)',
+      pass: ok && submitted && structured,
+      evidence: { ...common, fixtureSawSubmission: submitted, structuredContentSeen: structured },
+      ...tail,
     });
   }
 
@@ -295,29 +381,25 @@ async function qualify(provider, fixtureBase, serviceBase, operatorKey) {
     const fill = await rest(serviceBase, operatorKey, 'GET', `${path}/operations/${fillId}`);
     await rest(serviceBase, operatorKey, 'POST', `${path}/control/takeover`);
     await rest(serviceBase, operatorKey, 'DELETE', path);
+    const { ok, common, ...tail } = verdict(run, ['navigate', 'act']);
     results.push({
       dimension: 'delegated navigate/act with operation IDs (operator-verified records)',
       pass:
-        run.code === 0 &&
+        ok &&
         nav.json?.status === 'completed' &&
         nav.json?.dispatched === true &&
         fill.json?.status === 'completed' &&
         fill.json?.dispatched === true &&
         hits.slice(before).some((hit) => hit.path === '/form'),
-      evidence: {
-        exitCode: run.code,
-        navigateRecord: nav.json,
-        actRecord: fill.json,
-        toolsCalled: toolCalls(run.stream),
-        passwordValueCrossedBridge: run.stream.includes(SECRET),
-      },
-      ...(run.code !== 0 ? { stderrTail: run.stderr } : {}),
+      evidence: { ...common, navigateRecord: nav.json, actRecord: fill.json },
+      ...tail,
     });
   }
 
-  // D3: image reference privacy — a screenshot reaches the model as an artifact reference, never
-  // inline image bytes, and the observation withholds the password. (HTML is deliberately inline
-  // and not secret-redacted, ADR-020, so it is not a privacy dimension here.)
+  // D3: a screenshot is returned as an artifact reference (a service-minted art_ id the model
+  // reports back) and the password never crosses the bridge. Small artifacts ALSO carry their
+  // bytes inline (ArtifactRef.inline.contentBase64, by design); that is recorded, not hidden.
+  // HTML is deliberately inline and not secret-redacted (ADR-020), so it is not covered here.
   {
     const run = await runProvider(
       provider,
@@ -327,23 +409,16 @@ async function qualify(provider, fixtureBase, serviceBase, operatorKey) {
         `screenshot's artifactId exactly as returned, then close the session.`
     );
     const artifactIds = [...new Set(run.stream.match(/art_[0-9]+_[0-9a-z]+/g) ?? [])];
-    // Base64 PNG or JPEG bytes in an MCP image block or a data URL.
-    const inlineImage = /"data"\s*:\s*"(iVBOR|\/9j\/)|base64,(iVBOR|\/9j\/)/;
+    const { ok, common, ...tail } = verdict(run, ['create', 'navigate', 'screenshot']);
     results.push({
-      dimension: 'image reference privacy (artifact ref, no inline bytes, redacted observation)',
-      pass:
-        run.code === 0 &&
-        artifactIds.length > 0 &&
-        !inlineImage.test(run.stream) &&
-        !run.stream.includes(SECRET),
+      dimension: 'screenshot as an artifact reference; password never crosses the bridge',
+      pass: ok && artifactIds.length > 0,
       evidence: {
-        exitCode: run.code,
+        ...common,
         artifactIdsInStream: artifactIds,
-        inlineImageBytesInStream: inlineImage.test(run.stream),
-        passwordValueCrossedBridge: run.stream.includes(SECRET),
-        toolsCalled: toolCalls(run.stream),
+        inlineImageBytesInStream: INLINE_IMAGE.test(run.stream),
       },
-      ...(run.code !== 0 ? { stderrTail: run.stderr } : {}),
+      ...tail,
     });
   }
 

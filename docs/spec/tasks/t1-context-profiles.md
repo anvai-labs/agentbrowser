@@ -72,7 +72,7 @@ The manual [qualification record](../evidence/t1-context-profiles.md) separates 
 catalog bytes, exact cl100k/o200k token counts and fresh-process cold/warm RSS medians.
 The common MCP import dominates RSS, so no general memory-saving claim is made. No
 dependency was added. The footprint was re-measured on 2026-10-15, after the output schemas
-(T0 M2): the full catalog is now 15.7k cl100k tokens and the application profile is still 4–193. Installed Codex AND Claude cursor consumption are qualified
+(T0 M2): the full catalog is now 15.7k cl100k tokens and the application profile is still 4–193 cl100k (4–203 o200k) tokens. Installed Codex AND Claude cursor consumption are qualified
 (2026-10-03: the full delegate/takeover/resume/re-delegate choreography
 through both provider tool-call paths — see the T1 evidence record's
 dated sections); Victor's live loop stays blocked on the Sandhi TLS
