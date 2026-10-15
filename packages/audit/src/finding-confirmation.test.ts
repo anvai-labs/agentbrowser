@@ -53,6 +53,7 @@ describe('finding confirmation (T7: confirmed needs independent evidence and cle
       { ...evidence, reproducedAt: '1' },
       { ...evidence, reproducedAt: 'Oct 15 2026' },
       { ...evidence, reproducedAt: '2026-10-15' },
+      { ...evidence, reproducedAt: '2026-10-15T10:00:00' },
       { ...evidence, cleanup: undefined },
     ]) {
       expect(() => confirmFinding(suspected, bad as unknown as ConfirmationEvidence)).toThrow(

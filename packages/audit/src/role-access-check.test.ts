@@ -197,6 +197,12 @@ describe('role/business-logic fixture pair (T7 slice 3)', () => {
       { url: `${base}/invoices/1001`, owner: 'constructor', marker: 'ALICE-PRIVATE-7f3a' },
       { url: `${base}/invoices/1001`, owner: 'toString', marker: 'ALICE-PRIVATE-7f3a' },
       { url: `${base}/doc/ALICE-PRIVATE-7f3a`, owner: 'alice', marker: 'ALICE-PRIVATE-7f3a' },
+      // Percent-encoded marker, with a malformed escape elsewhere that defeats whole-URL decoding.
+      {
+        url: `${base}/doc/%41LICE-PRIVATE-7f3a?x=%ZZ`,
+        owner: 'alice',
+        marker: 'ALICE-PRIVATE-7f3a',
+      },
       { url: `${base}/invoices/1001`, owner: 'alice', marker: '' },
     ]) {
       const error = await checkRoleAccess({ ...scoped, resources: [resource] }).catch(
@@ -220,5 +226,74 @@ describe('role/business-logic fixture pair (T7 slice 3)', () => {
         ],
       })
     ).rejects.toThrow(/FIXTURE_INVALID/);
+  });
+
+  it('response handling is bounded: a marker past 1 MiB is not read, slow reads time out, refused bodies are released', async () => {
+    const { createServer: create } = await import('node:http');
+    let refusedBodyClosed = false;
+    const server = create((request, response) => {
+      const identity = request.headers['x-test-identity'];
+      if (request.url === '/big') {
+        if (identity === 'alice') {
+          response.end('ALICE-BIG-MARKER');
+          return;
+        }
+        // A non-owner gets 1.1 MiB of padding and only then the marker.
+        response.write('x'.repeat(1_153_434));
+        response.end('ALICE-BIG-MARKER');
+        return;
+      }
+      if (request.url === '/slow') {
+        if (identity === 'alice') response.end('ALICE-SLOW-MARKER');
+        // bob's read never answers.
+        return;
+      }
+      // /refused: owner OK; non-owner gets a 403 whose body streams forever.
+      if (identity === 'alice') {
+        response.end('ALICE-REFUSED-MARKER');
+        return;
+      }
+      response.on('close', () => {
+        refusedBodyClosed = true;
+      });
+      response.writeHead(403);
+      const timer = setInterval(() => response.write('.'), 5);
+      response.on('close', () => clearInterval(timer));
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+    const base = `http://127.0.0.1:${address.port}`;
+    const identities = {
+      alice: { 'x-test-identity': 'alice' },
+      bob: { 'x-test-identity': 'bob' },
+    };
+    const allowedHosts = [`127.0.0.1:${address.port}`];
+
+    const big = await checkRoleAccess({
+      allowedHosts,
+      identities,
+      resources: [{ url: `${base}/big`, owner: 'alice', marker: 'ALICE-BIG-MARKER' }],
+    });
+    expect(big.findings).toEqual([]);
+
+    await expect(
+      checkRoleAccess({
+        allowedHosts,
+        identities,
+        timeoutMs: 200,
+        resources: [{ url: `${base}/slow`, owner: 'alice', marker: 'ALICE-SLOW-MARKER' }],
+      })
+    ).rejects.toThrow(/timeout|abort/i);
+
+    const refused = await checkRoleAccess({
+      allowedHosts,
+      identities,
+      resources: [{ url: `${base}/refused`, owner: 'alice', marker: 'ALICE-REFUSED-MARKER' }],
+    });
+    expect(refused.findings).toEqual([]);
+    await new Promise((settle) => setTimeout(settle, 100));
+    expect(refusedBodyClosed).toBe(true);
   });
 });

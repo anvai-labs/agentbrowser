@@ -157,12 +157,19 @@ export async function checkRoleAccess(options: RoleAccessCheckOptions): Promise<
   return { findings, ownerControls };
 }
 
+/** Percent-decode each run of `%XX` escapes on its own, so one malformed escape elsewhere in the
+ * URL (e.g. `?x=%ZZ`) cannot switch decoding off for the rest. A run that is not valid UTF-8 is
+ * decoded byte by byte. */
 function safeDecode(url: string): string {
-  try {
-    return decodeURIComponent(url);
-  } catch {
-    return url;
-  }
+  return url.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%([0-9A-Fa-f]{2})/g, (_, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16))
+      );
+    }
+  });
 }
 
 async function boundedText(response: Response): Promise<string> {
