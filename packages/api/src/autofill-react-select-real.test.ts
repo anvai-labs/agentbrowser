@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import { build } from 'esbuild';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';
 
 const APP = `
@@ -90,200 +90,207 @@ afterAll(async () => {
   await new Promise<void>((resolve) => fixture.close(() => resolve()));
 });
 
-it('fills a real react-select single and multi select; the app state agrees and nothing submits', async () => {
-  expect(bundle.length).toBeGreaterThan(10_000);
-  const owner = { authorization: 'Bearer owner' };
-  const server = await buildServer({
-    engine: new PlaywrightChromiumEngine(),
-    networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
-    apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'tenant']]),
-  });
-  try {
-    const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
-    const sessionId = (
-      await server.inject({ method: 'POST', url: '/v1/sessions', headers: owner, payload: {} })
-    ).json().sessionId as string;
-    const path = `/v1/sessions/${sessionId}`;
-    const pageId = (
-      await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner })
-    ).json().pageId as string;
-    const nav = await server.inject({
-      method: 'POST',
-      url: `${path}/pages/${pageId}/navigate`,
-      headers: owner,
-      payload: { url, waitUntil: 'networkidle' },
+// T6 W3b: the same qualification on every engine the Playwright engine drives. The widget
+// evidence (owned popups, committed membership, chip remove controls) is captured in the page,
+// so it must hold on Firefox and WebKit too, not only Chromium.
+describe.each(['chromium', 'firefox', 'webkit'] as const)('%s', (browser) => {
+  it('fills a real react-select single and multi select; the app state agrees and nothing submits', async () => {
+    expect(bundle.length).toBeGreaterThan(10_000);
+    const owner = { authorization: 'Bearer owner' };
+    const server = await buildServer({
+      engine: new PlaywrightChromiumEngine({ browser }),
+      networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
+      apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'tenant']]),
     });
-    expect(nav.statusCode).toBe(200);
-
-    const autofill = await server.inject({
-      method: 'POST',
-      url: `${path}/pages/${pageId}/autofill`,
-      headers: { ...owner, 'x-agentbrowser-operation-id': 'fill-real-react-select' },
-      payload: {
-        scope: { url },
-        fields: [
-          {
-            match: { role: 'combobox', label: 'Location (City)' },
-            strategy: 'react-select',
-            option: { value: 'Chicago' },
-          },
-          {
-            match: { role: 'combobox', label: 'Country Phone Code' },
-            strategy: 'chip-multiselect',
-            option: { value: 'United States of America' },
-          },
-        ],
-        policy: { settleMs: 50 },
-      },
-    });
-    expect(autofill.statusCode, autofill.body).toBe(200);
-    const report = autofill.json();
-    expect(report.receipts.map((receipt: { status: string }) => receipt.status)).toEqual([
-      'verified',
-      'verified',
-    ]);
-    // The independent oracle: the real component state, reported by the app itself.
-    await expect
-      .poll(() => state, { timeout: 5_000 })
-      .toEqual({
-        city: 'Chicago',
-        codes: ['United States of America'],
+    try {
+      const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
+      const sessionId = (
+        await server.inject({ method: 'POST', url: '/v1/sessions', headers: owner, payload: {} })
+      ).json().sessionId as string;
+      const path = `/v1/sessions/${sessionId}`;
+      const pageId = (
+        await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner })
+      ).json().pageId as string;
+      const nav = await server.inject({
+        method: 'POST',
+        url: `${path}/pages/${pageId}/navigate`,
+        headers: owner,
+        payload: { url, waitUntil: 'networkidle' },
       });
-    // The exact option was chosen ("Chicago", not "Chicago Heights"), and committing never
-    // submitted the form (no stray Enter).
-    expect(submissions).toBe(0);
+      expect(nav.statusCode).toBe(200);
 
-    // An internal line break in option.value would be typed as Enter mid-query (a trailing one is
-    // trimmed before typing anyway): refused before any dispatch.
-    const refused = await server.inject({
-      method: 'POST',
-      url: `${path}/pages/${pageId}/autofill`,
-      headers: { ...owner, 'x-agentbrowser-operation-id': 'fill-newline' },
-      payload: {
-        scope: { url },
-        fields: [
-          {
-            match: { role: 'combobox', label: 'Location (City)' },
-            strategy: 'react-select',
-            option: { value: 'Bos\nzz' },
-          },
-        ],
-      },
-    });
-    expect(refused.statusCode).toBe(400);
-    expect(refused.json().error.message).toMatch(/line break/);
-    await new Promise((settle) => setTimeout(settle, 300));
-    expect(state).toEqual({ city: 'Chicago', codes: ['United States of America'] });
-    expect(submissions).toBe(0);
-  } finally {
-    await server.close();
-  }
-}, 120_000);
-
-it('writes an exact chip set on the real react-select: removes, adds, reports partial effects (W2)', async () => {
-  const owner = { authorization: 'Bearer owner' };
-  const server = await buildServer({
-    engine: new PlaywrightChromiumEngine(),
-    networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
-    apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'tenant']]),
-  });
-  try {
-    const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
-    const sessionId = (
-      await server.inject({ method: 'POST', url: '/v1/sessions', headers: owner, payload: {} })
-    ).json().sessionId as string;
-    const path = `/v1/sessions/${sessionId}`;
-    const pageId = (
-      await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner })
-    ).json().pageId as string;
-    await server.inject({
-      method: 'POST',
-      url: `${path}/pages/${pageId}/navigate`,
-      headers: owner,
-      payload: { url, waitUntil: 'networkidle' },
-    });
-    await expect.poll(() => state, { timeout: 5_000 }).toEqual({ city: null, codes: [] });
-    let operation = 0;
-    const exact = async (values: string[]) => {
-      const response = await server.inject({
+      const autofill = await server.inject({
         method: 'POST',
         url: `${path}/pages/${pageId}/autofill`,
-        headers: { ...owner, 'x-agentbrowser-operation-id': `exact-${++operation}` },
+        headers: { ...owner, 'x-agentbrowser-operation-id': 'fill-real-react-select' },
         payload: {
           scope: { url },
           fields: [
             {
+              match: { role: 'combobox', label: 'Location (City)' },
+              strategy: 'react-select',
+              option: { value: 'Chicago' },
+            },
+            {
               match: { role: 'combobox', label: 'Country Phone Code' },
               strategy: 'chip-multiselect',
-              options: { values, mode: 'exact' },
+              option: { value: 'United States of America' },
             },
           ],
           policy: { settleMs: 50 },
         },
       });
-      expect(response.statusCode, response.body).toBe(200);
-      return response.json().receipts[0];
-    };
+      expect(autofill.statusCode, autofill.body).toBe(200);
+      const report = autofill.json();
+      expect(report.receipts.map((receipt: { status: string }) => receipt.status)).toEqual([
+        'verified',
+        'verified',
+      ]);
+      // The independent oracle: the real component state, reported by the app itself.
+      await expect
+        .poll(() => state, { timeout: 5_000 })
+        .toEqual({
+          city: 'Chicago',
+          codes: ['United States of America'],
+        });
+      // The exact option was chosen ("Chicago", not "Chicago Heights"), and committing never
+      // submitted the form (no stray Enter).
+      expect(submissions).toBe(0);
 
-    // Empty → both (adds only).
-    let receipt = await exact(['United States of America', 'Canada']);
-    expect(receipt).toMatchObject({
-      status: 'verified',
-      effects: { removed: [], added: ['United States of America', 'Canada'] },
+      // An internal line break in option.value would be typed as Enter mid-query (a trailing one is
+      // trimmed before typing anyway): refused before any dispatch.
+      const refused = await server.inject({
+        method: 'POST',
+        url: `${path}/pages/${pageId}/autofill`,
+        headers: { ...owner, 'x-agentbrowser-operation-id': 'fill-newline' },
+        payload: {
+          scope: { url },
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Location (City)' },
+              strategy: 'react-select',
+              option: { value: 'Bos\nzz' },
+            },
+          ],
+        },
+      });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json().error.message).toMatch(/line break/);
+      await new Promise((settle) => setTimeout(settle, 300));
+      expect(state).toEqual({ city: 'Chicago', codes: ['United States of America'] });
+      expect(submissions).toBe(0);
+    } finally {
+      await server.close();
+    }
+  }, 120_000);
+
+  it('writes an exact chip set on the real react-select: removes, adds, reports partial effects (W2)', async () => {
+    const owner = { authorization: 'Bearer owner' };
+    const server = await buildServer({
+      engine: new PlaywrightChromiumEngine({ browser }),
+      networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
+      apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'tenant']]),
     });
-    await expect
-      .poll(() => [...state.codes].sort(), { timeout: 5_000 })
-      .toEqual(['Canada', 'United States of America']);
-
-    // Both → {Canada}: one verified removal through the chip's own remove control.
-    receipt = await exact(['Canada']);
-    expect(receipt).toMatchObject({
-      status: 'verified',
-      effects: { removed: ['United States of America'], added: [] },
-    });
-    await expect.poll(() => state.codes, { timeout: 5_000 }).toEqual(['Canada']);
-
-    // Already exact: nothing dispatched beyond verification, no effects.
-    receipt = await exact(['Canada']);
-    expect(receipt.status).toBe('verified');
-    expect(receipt.effects).toBeUndefined();
-
-    // {Canada} → {} (remove only).
-    receipt = await exact([]);
-    expect(receipt).toMatchObject({
-      status: 'verified',
-      effects: { removed: ['Canada'], added: [] },
-    });
-    await expect.poll(() => state.codes, { timeout: 5_000 }).toEqual([]);
-
-    // A failure part-way reports exactly the effects that happened, and nothing is undone.
-    await exact(['Canada']);
-    receipt = await exact(['United States of America', 'Atlantis']);
-    expect(receipt.status).toBe('uncertain');
-    expect(receipt.effects).toEqual({ removed: ['Canada'], added: ['United States of America'] });
-    await expect.poll(() => state.codes, { timeout: 5_000 }).toEqual(['United States of America']);
-
-    // The single-select combobox has no proven membership: refused before any dispatch.
-    const single = await server.inject({
-      method: 'POST',
-      url: `${path}/pages/${pageId}/autofill`,
-      headers: { ...owner, 'x-agentbrowser-operation-id': 'exact-single' },
-      payload: {
-        fields: [
-          {
-            match: { role: 'combobox', label: 'Location (City)' },
-            strategy: 'chip-multiselect',
-            options: { values: ['Boston'], mode: 'exact' },
+    try {
+      const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
+      const sessionId = (
+        await server.inject({ method: 'POST', url: '/v1/sessions', headers: owner, payload: {} })
+      ).json().sessionId as string;
+      const path = `/v1/sessions/${sessionId}`;
+      const pageId = (
+        await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner })
+      ).json().pageId as string;
+      await server.inject({
+        method: 'POST',
+        url: `${path}/pages/${pageId}/navigate`,
+        headers: owner,
+        payload: { url, waitUntil: 'networkidle' },
+      });
+      await expect.poll(() => state, { timeout: 5_000 }).toEqual({ city: null, codes: [] });
+      let operation = 0;
+      const exact = async (values: string[]) => {
+        const response = await server.inject({
+          method: 'POST',
+          url: `${path}/pages/${pageId}/autofill`,
+          headers: { ...owner, 'x-agentbrowser-operation-id': `exact-${++operation}` },
+          payload: {
+            scope: { url },
+            fields: [
+              {
+                match: { role: 'combobox', label: 'Country Phone Code' },
+                strategy: 'chip-multiselect',
+                options: { values, mode: 'exact' },
+              },
+            ],
+            policy: { settleMs: 50 },
           },
-        ],
-        policy: { settleMs: 50 },
-      },
-    });
-    expect(single.json().receipts[0]).toMatchObject({ status: 'failed' });
-    expect(single.json().receipts[0].effects).toBeUndefined();
-    expect(state.city).toBeNull();
-    expect(submissions).toBe(0);
-  } finally {
-    await server.close();
-  }
-}, 180_000);
+        });
+        expect(response.statusCode, response.body).toBe(200);
+        return response.json().receipts[0];
+      };
+
+      // Empty → both (adds only).
+      let receipt = await exact(['United States of America', 'Canada']);
+      expect(receipt).toMatchObject({
+        status: 'verified',
+        effects: { removed: [], added: ['United States of America', 'Canada'] },
+      });
+      await expect
+        .poll(() => [...state.codes].sort(), { timeout: 5_000 })
+        .toEqual(['Canada', 'United States of America']);
+
+      // Both → {Canada}: one verified removal through the chip's own remove control.
+      receipt = await exact(['Canada']);
+      expect(receipt).toMatchObject({
+        status: 'verified',
+        effects: { removed: ['United States of America'], added: [] },
+      });
+      await expect.poll(() => state.codes, { timeout: 5_000 }).toEqual(['Canada']);
+
+      // Already exact: nothing dispatched beyond verification, no effects.
+      receipt = await exact(['Canada']);
+      expect(receipt.status).toBe('verified');
+      expect(receipt.effects).toBeUndefined();
+
+      // {Canada} → {} (remove only).
+      receipt = await exact([]);
+      expect(receipt).toMatchObject({
+        status: 'verified',
+        effects: { removed: ['Canada'], added: [] },
+      });
+      await expect.poll(() => state.codes, { timeout: 5_000 }).toEqual([]);
+
+      // A failure part-way reports exactly the effects that happened, and nothing is undone.
+      await exact(['Canada']);
+      receipt = await exact(['United States of America', 'Atlantis']);
+      expect(receipt.status).toBe('uncertain');
+      expect(receipt.effects).toEqual({ removed: ['Canada'], added: ['United States of America'] });
+      await expect
+        .poll(() => state.codes, { timeout: 5_000 })
+        .toEqual(['United States of America']);
+
+      // The single-select combobox has no proven membership: refused before any dispatch.
+      const single = await server.inject({
+        method: 'POST',
+        url: `${path}/pages/${pageId}/autofill`,
+        headers: { ...owner, 'x-agentbrowser-operation-id': 'exact-single' },
+        payload: {
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Location (City)' },
+              strategy: 'chip-multiselect',
+              options: { values: ['Boston'], mode: 'exact' },
+            },
+          ],
+          policy: { settleMs: 50 },
+        },
+      });
+      expect(single.json().receipts[0]).toMatchObject({ status: 'failed' });
+      expect(single.json().receipts[0].effects).toBeUndefined();
+      expect(state.city).toBeNull();
+      expect(submissions).toBe(0);
+    } finally {
+      await server.close();
+    }
+  }, 180_000);
+});
