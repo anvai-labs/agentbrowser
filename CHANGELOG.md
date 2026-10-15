@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — MCP request cancellation (T0/T8)
+
+- The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is
+  aborted down to its HTTP request, and no response is sent for it (MCP 2025-06-18). A cancel for
+  a finished or unknown request is ignored and re-runs nothing; `initialize` is never cancelled;
+  concurrent calls are independent.
+- SDK: `ClientOptions.requestSignal` (a hook read per request) lets a caller cancel. A cancelled
+  request fails with `CANCELLED` — not retryable, `operationId` attached, "outcome may be
+  unknown" — so a cancelled write is reconciled, never treated as success or replayed blindly.
+
 ### Added — confirmed vs suspected findings, and a role-access fixture (T7)
 
 - **Scanner alerts are labelled.** Every `ScannerFinding` now carries `status: 'suspected'`;
