@@ -111,10 +111,12 @@ function rows(store: string): Row[] {
     }
   }
 }
+// node:sqlite surfaces SQLITE_BUSY (errcode 5) as ERR_SQLITE_ERROR with this message; the
+// message is kept as a belt in case the code shape changes again.
 const isLockError = (error: unknown): boolean =>
   error !== null &&
   typeof error === 'object' &&
-  ((error as { code?: string }).code === 'ERR_SQLITE_BUSY' ||
+  ((error as { errcode?: unknown }).errcode === 5 ||
     /database is locked/i.test(String((error as Error).message ?? '')));
 function readRows(database: DatabaseSync): Row[] {
   return (
