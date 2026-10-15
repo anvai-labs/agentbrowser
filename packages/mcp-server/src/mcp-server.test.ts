@@ -147,6 +147,9 @@ describe('AgentBrowser MCP server', () => {
           .label.maxLength
       ).toBe(512);
       expect(autofill.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+      const plan = tools.find((tool: { name: string }) => tool.name === 'plan');
+      expect(plan.inputSchema.properties.actions.maxItems).toBe(100);
+      expect(plan.description).toContain('at most 100 steps per plan');
     });
 
     it('preserves legacy text-only catalogs and successful calls', async () => {

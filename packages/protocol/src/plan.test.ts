@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { OutcomeRunRequestSchema, parseOutcomeRunRequest } from './outcome.js';
 import {
   createPlanReportParser,
   MAX_PLAN_STEPS,
@@ -29,6 +30,13 @@ describe('canonical plan contracts', () => {
     expect(() => parsePlanSteps(over)).toThrow(
       `A plan accepts at most ${MAX_PLAN_STEPS} steps; got ${MAX_PLAN_STEPS + 1}`
     );
+    // An outcome run carries a plan: its actions share the cap.
+    expect(OutcomeRunRequestSchema.properties.actions.maxItems).toBe(MAX_PLAN_STEPS);
+    const verification = { verifier: { id: 'v', version: '1' }, input: {} };
+    expect(parseOutcomeRunRequest({ actions: atLimit, verification }).actions).toHaveLength(
+      MAX_PLAN_STEPS
+    );
+    expect(() => parseOutcomeRunRequest({ actions: over, verification })).toThrow();
   });
 
   it.each([
