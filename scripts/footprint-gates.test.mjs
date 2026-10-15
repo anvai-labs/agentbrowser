@@ -9,6 +9,8 @@
  * The CLI one-shot peak is measured EXACTLY: the kernel's `ru_maxrss` for the reaped child
  * (wait4 rusage, via a python3 helper; KB on Linux, bytes on macOS), so a process that exits
  * within one sampling interval can neither escape the gate nor pass on an understated number.
+ * Floor: on Linux, exec folds the parent's high-water mark into the child's ru_maxrss, so readings
+ * never go below the helper's own ~10-12 MB (a max, not a sum; irrelevant at the 75 MB gate).
  * The MCP bridge's idle peak is polled every 10 ms while it idles after the handshake (current
  * RSS: `VmRSS` from /proc on Linux, `ps -o rss=` elsewhere); polling can miss sub-10ms spikes,
  * so the limits carry headroom. First tightening pass 2026-10-02 (120 -> 75 MB),
@@ -99,7 +101,8 @@ function exactPeakMb(command, args) {
       command,
       ...args,
     ],
-    { encoding: 'utf8' }
+    // A hung --version must fail the gate, not stall the job.
+    { encoding: 'utf8', timeout: 30_000 }
   );
   const [code, maxrss] = out.trim().split(' ').map(Number);
   // ru_maxrss is KB on Linux and bytes on macOS.
