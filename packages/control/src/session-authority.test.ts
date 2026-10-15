@@ -451,6 +451,70 @@ it('rejects altered and unknown principals without changing the original grant',
   expect(authority.authenticate(original.token)).toEqual(original.principal);
 });
 
+it('same tenant, different principal: an agent grant admits only its own session and only while current', async () => {
+  // T1 acceptance: stale context must not leak across principals of ONE tenant. Two sessions of
+  // tenant "owner", each delegated, and a session re-delegated to a new grant.
+  const authority = new SessionAuthority();
+  authority.register('session-a', 'owner', new AbortController().signal);
+  authority.register('session-b', 'owner', new AbortController().signal);
+  const a = grant(authority, 'session-a');
+  const b = grant(authority, 'session-b');
+  expect(a.principal.tenant).toBe(b.principal.tenant);
+  const effect = vi.fn(async () => undefined);
+  const refused = { code: 'CONTROL_REQUIRED' };
+
+  // Stale memory is scoped by the run cursor: the two same-tenant grants never share one.
+  const cursorA = authority.status('session-a').cursor;
+  const cursorB = authority.status('session-b').cursor;
+  expect(cursorA?.sessionId).toBe('session-a');
+  expect(cursorB?.sessionId).toBe('session-b');
+  expect(cursorA?.bindingGeneration).not.toBe(cursorB?.bindingGeneration);
+
+  // Each agent principal is refused on the other session of the same tenant. Both the session
+  // identity and the per-grant binding generation differ, and either alone refuses; the
+  // sessionId comparison on its own is pinned by the altered-principal test above.
+  await expect(authority.run('session-a', b.principal, {}, effect)).rejects.toMatchObject(refused);
+  await expect(authority.run('session-b', a.principal, {}, effect)).rejects.toMatchObject(refused);
+  expect(effect).not.toHaveBeenCalled();
+
+  // A human takeover of session-a revokes its agent principal at once; re-delegating then mints a
+  // NEW principal of the same tenant and session. The earlier token never authenticates again and
+  // its principal is refused; the new grant is admitted.
+  authority.takeover('session-a');
+  await expect(authority.run('session-a', a.principal, {}, effect)).rejects.toMatchObject(refused);
+  // A live grant cannot even be re-reviewed: the review precondition refuses before delegate().
+  expect(() => authority.get('session-b')!.prepareResume()).toThrow(
+    'Human takeover is required before review'
+  );
+  const replacement = grant(authority, 'session-a');
+  expect(authority.authenticate(a.token)).toBeUndefined();
+  expect(authority.status('session-a').cursor?.bindingGeneration).not.toBe(
+    cursorA?.bindingGeneration
+  );
+  await expect(authority.run('session-a', a.principal, {}, effect)).rejects.toMatchObject(refused);
+  expect(effect).not.toHaveBeenCalled();
+  await authority.run('session-a', replacement.principal, {}, effect);
+  expect(effect).toHaveBeenCalledTimes(1);
+  // The other session's grant is untouched by session-a's re-delegation.
+  expect(authority.authenticate(b.token)).toEqual(b.principal);
+});
+
+it('operators are admitted by tenant alone: same-tenant operators are one principal, other tenants are refused', async () => {
+  // Pinned behaviour, not a gap: an operator acts for its tenant, so admission keys on the tenant
+  // (session-authority.ts admit()). Two operator principals of one tenant are indistinguishable;
+  // a different tenant's operator is refused.
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const effect = vi.fn(async () => undefined);
+  await authority.run('session', { actor: 'operator', tenant: 'owner' }, {}, effect);
+  await authority.run('session', { actor: 'operator', tenant: 'owner' }, {}, effect);
+  expect(effect).toHaveBeenCalledTimes(2);
+  await expect(
+    authority.run('session', { actor: 'operator', tenant: 'other-account' }, {}, effect)
+  ).rejects.toThrow();
+  expect(effect).toHaveBeenCalledTimes(2);
+});
+
 it('snapshots caller principal properties once before reading authority state', async () => {
   const authority = new SessionAuthority();
   authority.register('session', 'owner', new AbortController().signal);
