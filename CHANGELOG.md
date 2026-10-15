@@ -18,6 +18,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Key loss and in-place key rotation are refused at startup as a configuration mismatch, without
   exposing key material.
 
+### Added — a CI entrypoint for `test evaluate` (T3)
+
+- `.github/actions/test-evaluate` is a composite GitHub Action that other repositories can pin.
+  - It installs a release CLI and verifies it against the release's `sha256sums.txt`, so a
+    corrupted or mismatched download is never run. The check does not prove the release itself is
+    authentic.
+  - It evaluates a directory of caller-observed test-case bundles offline and writes JUnit,
+    carrying identities and verdicts only.
+  - It fails the job unless every bundle passed.
+- Qualified with a stub CLI and against the compiled CLI in CI. It executes nothing itself:
+  test execution stays with the caller's job.
+
 ### Added — a repeatable real-ZAP recorded run (T7 depth)
 
 - `scripts/zap-depth-run.mjs` runs the ZAP adapter against a real OWASP ZAP daemon and its own
