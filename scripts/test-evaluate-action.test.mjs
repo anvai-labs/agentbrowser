@@ -17,13 +17,14 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   assetFor,
   bundleFiles,
   EvaluateError,
+  evaluateBundle,
   expectedDigest,
   installCli,
   main,
@@ -261,11 +262,48 @@ process.exit(1);
   });
 });
 
+describe('bounded and private by construction', { skip: !posix }, () => {
+  it('turns a hung CLI into an error instead of a hung job', () => {
+    const path = join(work, 'hung-cli.mjs');
+    writeFileSync(path, '#!/usr/bin/env node\nsetInterval(() => {}, 1000);\n');
+    chmodSync(path, 0o755);
+    const started = Date.now();
+    const result = evaluateBundle(path, passed, 300);
+    assert.equal(result.outcome, 'error');
+    assert.ok(Date.now() - started < 10_000);
+  });
+
+  it('downloads into a fresh private directory when no runner temp is given', async () => {
+    const bytes = Buffer.from('#!/bin/sh\necho ok\n');
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const server = createServer((request, response) => {
+      if (request.url?.endsWith('sha256sums.txt'))
+        response.end(`${digest}  agentbrowser-cli-linux-x64\n`);
+      else response.end(bytes);
+    });
+    await new Promise((done) => server.listen(0, '127.0.0.1', done));
+    try {
+      const options = {
+        baseUrl: `http://127.0.0.1:${server.address().port}`,
+        platform: 'linux',
+        arch: 'x64',
+      };
+      const first = await installCli('v9.9.8', options);
+      const second = await installCli('v9.9.8', options);
+      assert.notEqual(dirname(first), dirname(second));
+      assert.equal(statSync(dirname(first)).mode & 0o077, 0);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe('JUnit is well-formed for any file name', { skip: !posix }, () => {
   it('replaces XML-forbidden control characters', async () => {
     const odd = join(work, 'b\x01.json');
     writeFileSync(odd, readFileSync(passed));
     const { junit } = await runMain(stubCli(), odd);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence.
     assert.doesNotMatch(junit, /[\x00-\x08\x0B\x0C\x0E-\x1F]/);
   });
 

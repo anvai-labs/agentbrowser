@@ -107,14 +107,14 @@ export function bundleFiles(input) {
 }
 
 /** Upper bound for one offline evaluation; a hung CLI is an error, not a hung job. */
-const EVALUATE_TIMEOUT_MS = 120_000;
+export const EVALUATE_TIMEOUT_MS = 120_000;
 
 /** Evaluates one bundle through the CLI: passed, failed, or error (invalid input/no report). */
-export function evaluateBundle(cli, file) {
+export function evaluateBundle(cli, file, timeoutMs = EVALUATE_TIMEOUT_MS) {
   const run = spawnSync(cli, ['--json', 'test', 'evaluate', `@${file}`], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
-    timeout: EVALUATE_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   let report;
   try {
@@ -136,6 +136,7 @@ export function evaluateBundle(cli, file) {
 const xml = (text) =>
   String(text)
     // XML 1.0 forbids C0 controls even when escaped.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point.
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '\uFFFD')
     .replace(
       /[<>&'"]/g,
