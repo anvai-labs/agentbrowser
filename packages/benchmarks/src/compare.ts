@@ -399,15 +399,18 @@ export { percentile };
 export interface ObservationOverheadResult {
   engineName: string;
   iterations: number;
-  /** Interactive elements in the last observation (120 on a real engine). */
+  /** Interactive elements in the last observation (122 on a real engine: 120 + main + h1). */
   elements: number;
+  /** Password elements observed with `valueRedacted: true` in the last observation (40). */
+  redactedPasswords: number;
   /** True when any password value appeared anywhere in an observation (must stay false). */
   secretLeaked: boolean;
   ms: { mean: number; p50: number; p95: number; max: number };
 }
 
 /**
- * F1: observe the 120-element fixture `iterations` times (after one warm-up) and report latency.
+ * F1: observe the 120-element fixture `iterations` times (after sample()'s two warm-ups) and
+ * report latency.
  * The baseline for probe batching (F2) and the redaction parity check ride in the same run.
  */
 export async function runObservationOverheadBenchmark(
@@ -431,12 +434,19 @@ export async function runObservationOverheadBenchmark(
     await service.navigate(sessionId, pageId, { url: `http://127.0.0.1:${port}/observe120` });
     let secretLeaked = false;
     let elements = 0;
+    let redactedPasswords = 0;
     const observe = async () => {
       const observation = await service.observe(sessionId, pageId, { mode: 'interactive' });
       elements = observation.elements.length;
+      // The leak check is only meaningful if the password fields were observed at all.
+      redactedPasswords = observation.elements.filter(
+        (element) =>
+          /^Password \d+$/.test(element.name ?? '') &&
+          (element as { valueRedacted?: boolean }).valueRedacted === true
+      ).length;
       if (JSON.stringify(observation).includes(OBSERVE_120_SECRET)) secretLeaked = true;
     };
-    await observe(); // warm-up, not sampled
+    // sample() runs two unmeasured warm-up observes before the measured ones.
     const samples = await sample(observe, iterations);
     const mean = samples.reduce((total, value) => total + value, 0) / samples.length;
     const round = (value: number) => Math.round(value * 10) / 10;
@@ -444,6 +454,7 @@ export async function runObservationOverheadBenchmark(
       engineName: options.engine.name,
       iterations,
       elements,
+      redactedPasswords,
       secretLeaked,
       ms: {
         mean: round(mean),

@@ -176,13 +176,16 @@ if (command === 'soak' || command === 'all') {
 }
 
 if (command === 'observe') {
-  const iterations =
-    Number.isInteger(soakCycles) && process.argv[3] !== undefined ? soakCycles : 10;
+  const iterations = process.argv[3] !== undefined ? soakCycles : 10;
+  if (!Number.isInteger(iterations) || iterations < 1) {
+    console.error('observe: the sample count must be a positive integer');
+    process.exit(2);
+  }
   const engine = new PlaywrightChromiumEngine();
   try {
     const result = await runObservationOverheadBenchmark({ engine, iterations });
     console.log(JSON.stringify(result));
-    ok = !result.secretLeaked && result.elements >= 120 && ok;
+    ok = !result.secretLeaked && result.redactedPasswords === 40 && result.elements >= 120 && ok;
   } finally {
     await engine.close();
   }
