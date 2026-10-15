@@ -170,13 +170,27 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
   tenant's or operation's record, or more records than the limit, as `invalid_response`.
 - **Full identities.** Records keep their full identity, including the keyed fingerprint, for
   J3c's writes. The future route strips the fingerprint.
+- **Envelope budget (review round 1).** A full page of 16 records at `maxRecordBytes` each
+  legitimately exceeds lookup's 64 KiB single-record envelope budget (and the 1,024-node snapshot
+  limit, and `canonicalJson`'s own 64 KiB output cap). The find path therefore scales all three:
+  `maxRecordBytes × (limit + 1)` bytes, `64 × (limit + 1)` nodes, and a matching `canonicalJson`
+  budget. A truthful 16 × ~4.4 KiB answer now validates instead of poisoning the journal; a test
+  pins it (32 × 128-char evidence refs per record, the port contract's own maximum).
 - **Tests.**
-  - Conformance runs on the memory fixture and both SQLite fixtures (the in-process one and the
-    child-process one): found across session incarnations and epochs, in order, excluding other
-    tenants and operation IDs; truncation; no cross-namespace disclosure; fence refusal; six
-    invalid queries refused.
+  - Conformance runs on the memory fixture and the in-process SQLite fixture: found across
+    session incarnations and epochs, in order, excluding other tenants and operation IDs;
+    truncation; no cross-namespace disclosure; fence refusal; six invalid queries refused.
+  - The child-process SQLite fixture has its own find test: insertion order across three
+    incarnations, truncation at limit 2, and an empty answer for another tenant, through the real
+    IPC protocol.
+  - **Scan cost (measured, review round 1):** through the real store function, a full-scan miss
+    costs ~2.3 µs/record: 20,000 records ≈ 44 ms, 100,000 ≈ 226 ms, extrapolated 1,000,000 (the
+    configuration ceiling) ≈ 2.3 s — synchronously in the single-threaded storage child, stalling
+    journal reads and writes for that duration. The 10,000 default (~23 ms) is fine; at very
+    large `maxRecords` the deferred `json_extract` index (a new formatVersion) starts to matter.
+    Recorded for J3b's rate limit and D7.
   - The facade test uses a lying adapter.
   - The real compiled adapter and child are exercised through a durable write in the api tests.
   - Each guard was mutated away and fails a test.
-  - Suites: control 832, api 1,541; journal qualification 32/32.
+  - Suites: control 834, api 1,558 (CI reports the same on the PR head); journal qualification 32/32.
 

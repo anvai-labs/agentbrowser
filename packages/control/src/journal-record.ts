@@ -23,9 +23,13 @@ const invalid = (): never => {
   throw new Error('Invalid journal metadata');
 };
 /** Shared detachment and exact encoded-byte budget, before domain validation. */
-export function journalData(input: unknown, maxBytes: number = limits.maxBytes): unknown {
-  const value = snapshotJsonData(input, { ...limits, maxBytes });
-  if (Buffer.byteLength(canonicalJson(value), 'utf8') > maxBytes) invalid();
+export function journalData(
+  input: unknown,
+  maxBytes: number = limits.maxBytes,
+  maxNodes: number = limits.maxNodes
+): unknown {
+  const value = snapshotJsonData(input, { ...limits, maxBytes, maxNodes });
+  if (canonicalJson(value, maxBytes).length > maxBytes) invalid();
   return value;
 }
 export function journalObject(

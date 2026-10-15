@@ -248,9 +248,15 @@ function createJournal(
     deeplyFreezeSnapshot({ namespaceId: namespace.namespaceId, ownerFence, value });
   const unstamp = (
     input: unknown,
-    optional: readonly string[] = ['reason', 'disposition', 'record']
+    optional: readonly string[] = ['reason', 'disposition', 'record'],
+    maxBytes = 65_536,
+    maxNodes = 1_024
   ): Record<string, unknown> => {
-    const envelope = journalObject(journalData(input), ['namespaceId', 'ownerFence', 'value']);
+    const envelope = journalObject(journalData(input, maxBytes, maxNodes), [
+      'namespaceId',
+      'ownerFence',
+      'value',
+    ]);
     if (envelope.namespaceId !== namespace.namespaceId || envelope.ownerFence !== ownerFence)
       badResponse();
     return journalObject(envelope.value, ['kind'], optional);
@@ -517,7 +523,11 @@ function createJournal(
         false,
         (abort) => raw.findByOperation(stamp(query), abort),
         (rawResult): JournalFindOutcome => {
-          const value = unstamp(rawResult, ['reason', 'records', 'truncated']);
+          // A find answer legitimately carries up to `limit` records of `maxRecordBytes` each;
+          // lookup's 64 KiB envelope budget would poison a truthful full answer (review F2).
+          const budget = namespace.bounds.maxRecordBytes * (query.limit + 1) + 1024;
+          const nodes = 64 * (query.limit + 1) + 256;
+          const value = unstamp(rawResult, ['reason', 'records', 'truncated'], budget, nodes);
           const refusal = negative(value, 'lookup');
           if (refusal) return refusal as JournalFindOutcome;
           journalObject(value, ['kind', 'records', 'truncated']);

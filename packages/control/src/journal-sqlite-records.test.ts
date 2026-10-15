@@ -587,6 +587,59 @@ describe('concrete SQLite record storage (J2b.2 step 1)', () => {
       );
   });
 
+  it('answers findByOperation through the real child process: order, truncation, tenant scope (J3a)', async () => {
+    const paths = freshPaths('journal-find-child-');
+    const fixture = await startFixture(paths, true);
+    const opened = await openOperationJournal(
+      fixture.adapter,
+      namespaceConfiguration('find-child'),
+      fixture.fingerprintKey
+    );
+    expect(opened.kind).toBe('opened');
+    if (opened.kind !== 'opened') throw new Error('journal did not open');
+    const intents = ['a', 'b', 'c'].map((incarnation, index) => ({
+      key: {
+        serviceGeneration: 's'.repeat(22),
+        tenantId: 'tenant-a',
+        sessionIncarnation: incarnation.repeat(22),
+        epoch: index + 1,
+        operationId: 'op-find-child',
+      },
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: `digest-${incarnation}` },
+    }));
+    for (const intent of intents)
+      expect(await opened.journal.reserveIntent(intent)).toMatchObject({
+        kind: 'acknowledged',
+      });
+    const full = await opened.journal.findByOperation({
+      tenantId: 'tenant-a',
+      operationId: 'op-find-child',
+      limit: 16,
+    });
+    expect(full).toMatchObject({ kind: 'found', truncated: false });
+    if (full.kind === 'found') {
+      expect(full.records.map((record) => record.identity.key.sessionIncarnation)).toEqual(
+        intents.map((intent) => intent.key.sessionIncarnation)
+      );
+    }
+    const truncated = await opened.journal.findByOperation({
+      tenantId: 'tenant-a',
+      operationId: 'op-find-child',
+      limit: 2,
+    });
+    expect(truncated).toMatchObject({ kind: 'found', truncated: true });
+    expect(
+      await opened.journal.findByOperation({
+        tenantId: 'tenant-b',
+        operationId: 'op-find-child',
+        limit: 16,
+      })
+    ).toEqual({ kind: 'found', records: [], truncated: false });
+    await opened.journal.close();
+    await fixture.dispose();
+  });
+
   it('persists acknowledged records across a child restart and reopens with a fresh fence', async () => {
     const paths = freshPaths('journal-restart-');
     const first = await startFixture(paths, true);
