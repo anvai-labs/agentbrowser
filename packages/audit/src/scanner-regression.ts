@@ -10,12 +10,44 @@ import { VisualAuditError } from './visual-audit.js';
  * coverage is not browser containment, and this adapter must never be
  * described as such. */
 
+/** ZAP's own confidence in an alert, normalized. Information only: a scanner's opinion of
+ * itself is never independent evidence (see finding-confirmation.ts). ZAP's "Confirmed" means a
+ * scanner USER confirmed it inside ZAP, hence the explicit name. */
+export type ScannerConfidence =
+  | 'false-positive'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'confirmed-by-scanner-user';
+
 export interface ScannerFinding {
   pluginId: number;
   url: string;
   parameter: string | null;
   risk: 'informational' | 'low' | 'medium' | 'high';
   name: string;
+  /** T7: every scanner alert is a CLAIM — `suspected` until independently confirmed. */
+  status: 'suspected' | 'confirmed';
+  scannerConfidence?: ScannerConfidence;
+}
+
+const CONFIDENCE_NAMES: readonly ScannerConfidence[] = [
+  'false-positive',
+  'low',
+  'medium',
+  'high',
+  'confirmed-by-scanner-user',
+];
+const ZAP_CONFIDENCE_LABELS = ['false positive', 'low', 'medium', 'high', 'confirmed'];
+
+/** Map ZAP's confidence (a 0-4 level or its capitalized name) to a label; unknown → absent. */
+export function normalizeScannerConfidence(raw: string | undefined): ScannerConfidence | undefined {
+  if (raw === undefined) return undefined;
+  const numeric = Number(raw);
+  if (raw.trim() !== '' && Number.isInteger(numeric) && numeric >= 0 && numeric <= 4)
+    return CONFIDENCE_NAMES[numeric];
+  const index = ZAP_CONFIDENCE_LABELS.indexOf(raw.trim().toLowerCase());
+  return index >= 0 ? CONFIDENCE_NAMES[index] : undefined;
 }
 
 export interface ScannerScanResult {
@@ -176,6 +208,7 @@ export class ZapClient {
         url: string;
         param: string;
         risk: string;
+        confidence?: string;
         name: string;
       }>;
     }>('/JSON/core/view/alerts/', { baseurl: parsed.origin, start: '0' });
@@ -187,12 +220,15 @@ export class ZapClient {
         droppedOutOfScope += 1;
         continue;
       }
+      const scannerConfidence = normalizeScannerConfidence(alert.confidence);
       findings.push({
         pluginId: Number(alert.pluginId),
         url: alert.url,
         parameter: alert.param === '' ? null : alert.param,
         risk: normalizeRisk(alert.risk),
         name: alert.name,
+        status: 'suspected',
+        ...(scannerConfidence !== undefined ? { scannerConfidence } : {}),
       });
     }
     const scannerVersion = await this.version();
