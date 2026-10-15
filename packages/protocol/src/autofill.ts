@@ -178,6 +178,10 @@ export function parseAutofillRequest(input: unknown): AutofillRequest {
   for (const field of request.fields) {
     if ((field.value === undefined) === (field.option === undefined))
       throw new Error('Each autofill field requires exactly one of value or option.value');
+    // Custom widget strategies type the option text; a typed line break is an Enter keypress
+    // that can commit an unintended option or submit the form. Refused, not escaped.
+    if (field.option !== undefined && /[\r\n]/.test(field.option.value))
+      throw new Error('An autofill option value cannot contain a line break');
     const match = field.match;
     if (!match.label && !match.labelRegex && !match.dataAutomationId)
       throw new Error('Each autofill match requires label, labelRegex or dataAutomationId');

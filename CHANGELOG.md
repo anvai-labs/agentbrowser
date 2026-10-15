@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — autofill qualified against the real react-select (T6 W1)
+
+- The `react-select` and `chip-multiselect` strategies are now tested against react-select 5.10.2
+  on React 19.3.0 in real Chromium, not only markup that imitates it. The app reports its own
+  committed state, which must show the exact option (`Chicago`, not `Chicago Heights`) and no form
+  submission. The libraries are pinned test-only devDependencies of `@agentbrowser/api`; the
+  shipped tarball and production dependencies are unchanged.
+
+### Changed — `option.value` cannot contain a line break
+
+- An autofill `option.value` with `\n` or `\r` is refused (`INVALID_REQUEST`) before dispatch: the
+  custom strategies type the option text, and a typed line break is an Enter keypress that could
+  commit an unintended option or submit the form. It is refused rather than escaped.
+
 ### Added — MCP request cancellation (T0/T8)
 
 - The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is
