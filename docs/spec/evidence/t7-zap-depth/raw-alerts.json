@@ -1,0 +1,90 @@
+[
+  {
+    "pluginId": "10020",
+    "alert": "Missing Anti-clickjacking Header",
+    "risk": "Medium",
+    "confidence": "Medium",
+    "url": "http://127.0.0.1:39363/",
+    "param": "x-frame-options",
+    "attack": "",
+    "evidence": "",
+    "cweid": "1021"
+  },
+  {
+    "pluginId": "10038",
+    "alert": "Content Security Policy (CSP) Header Not Set",
+    "risk": "Medium",
+    "confidence": "High",
+    "url": "http://127.0.0.1:39363/",
+    "param": "",
+    "attack": "",
+    "evidence": "",
+    "cweid": "693"
+  },
+  {
+    "pluginId": "10021",
+    "alert": "X-Content-Type-Options Header Missing",
+    "risk": "Low",
+    "confidence": "Medium",
+    "url": "http://127.0.0.1:39363/",
+    "param": "x-content-type-options",
+    "attack": "",
+    "evidence": "",
+    "cweid": "693"
+  },
+  {
+    "pluginId": "40012",
+    "alert": "Cross Site Scripting (Reflected)",
+    "risk": "High",
+    "confidence": "Medium",
+    "url": "http://127.0.0.1:39363/greet?name=%3C%2Fp%3E%3CscrIpt%3Ealert%281%29%3B%3C%2FscRipt%3E%3Cp%3E",
+    "param": "name",
+    "attack": "</p><scrIpt>alert(1);</scRipt><p>",
+    "evidence": "</p><scrIpt>alert(1);</scRipt><p>",
+    "cweid": "79"
+  },
+  {
+    "pluginId": "10020",
+    "alert": "Missing Anti-clickjacking Header",
+    "risk": "Medium",
+    "confidence": "Medium",
+    "url": "http://127.0.0.1:39363/greet?name=visitor",
+    "param": "x-frame-options",
+    "attack": "",
+    "evidence": "",
+    "cweid": "1021"
+  },
+  {
+    "pluginId": "10038",
+    "alert": "Content Security Policy (CSP) Header Not Set",
+    "risk": "Medium",
+    "confidence": "High",
+    "url": "http://127.0.0.1:39363/greet?name=visitor",
+    "param": "",
+    "attack": "",
+    "evidence": "",
+    "cweid": "693"
+  },
+  {
+    "pluginId": "10021",
+    "alert": "X-Content-Type-Options Header Missing",
+    "risk": "Low",
+    "confidence": "Medium",
+    "url": "http://127.0.0.1:39363/greet?name=visitor",
+    "param": "x-content-type-options",
+    "attack": "",
+    "evidence": "",
+    "cweid": "693"
+  },
+  {
+    "pluginId": "40026",
+    "alert": "Cross Site Scripting (DOM Based)",
+    "risk": "High",
+    "confidence": "High",
+    "url": "http://127.0.0.1:39363/greet?name=%3Cscript%3Ealert(5397)%3C/script%3E",
+    "param": "name",
+    "attack": "<script>alert(5397)</script>",
+    "evidence": "",
+    "cweid": "79"
+  }
+]

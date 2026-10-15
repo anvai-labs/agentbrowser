@@ -1,0 +1,86 @@
+{
+  "recordedAt": "2026-10-15T17:18:30.713Z",
+  "scanner": {
+    "name": "OWASP ZAP",
+    "version": "2.17.0"
+  },
+  "target": "http://127.0.0.1:39363/greet?name=visitor",
+  "verdict": "pass",
+  "seededFound": true,
+  "allSuspected": true,
+  "droppedOutOfScope": 0,
+  "findings": [
+    {
+      "pluginId": 10020,
+      "url": "http://127.0.0.1:39363/",
+      "parameter": "x-frame-options",
+      "risk": "medium",
+      "name": "Missing Anti-clickjacking Header",
+      "status": "suspected",
+      "scannerConfidence": "medium"
+    },
+    {
+      "pluginId": 10038,
+      "url": "http://127.0.0.1:39363/",
+      "parameter": null,
+      "risk": "medium",
+      "name": "Content Security Policy (CSP) Header Not Set",
+      "status": "suspected",
+      "scannerConfidence": "high"
+    },
+    {
+      "pluginId": 10021,
+      "url": "http://127.0.0.1:39363/",
+      "parameter": "x-content-type-options",
+      "risk": "low",
+      "name": "X-Content-Type-Options Header Missing",
+      "status": "suspected",
+      "scannerConfidence": "medium"
+    },
+    {
+      "pluginId": 40012,
+      "url": "http://127.0.0.1:39363/greet?name=%3C%2Fp%3E%3CscrIpt%3Ealert%281%29%3B%3C%2FscRipt%3E%3Cp%3E",
+      "parameter": "name",
+      "risk": "high",
+      "name": "Cross Site Scripting (Reflected)",
+      "status": "suspected",
+      "scannerConfidence": "medium"
+    },
+    {
+      "pluginId": 10020,
+      "url": "http://127.0.0.1:39363/greet?name=visitor",
+      "parameter": "x-frame-options",
+      "risk": "medium",
+      "name": "Missing Anti-clickjacking Header",
+      "status": "suspected",
+      "scannerConfidence": "medium"
+    },
+    {
+      "pluginId": 10038,
+      "url": "http://127.0.0.1:39363/greet?name=visitor",
+      "parameter": null,
+      "risk": "medium",
+      "name": "Content Security Policy (CSP) Header Not Set",
+      "status": "suspected",
+      "scannerConfidence": "high"
+    },
+    {
+      "pluginId": 10021,
+      "url": "http://127.0.0.1:39363/greet?name=visitor",
+      "parameter": "x-content-type-options",
+      "risk": "low",
+      "name": "X-Content-Type-Options Header Missing",
+      "status": "suspected",
+      "scannerConfidence": "medium"
+    },
+    {
+      "pluginId": 40026,
+      "url": "http://127.0.0.1:39363/greet?name=%3Cscript%3Ealert(5397)%3C/script%3E",
+      "parameter": "name",
+      "risk": "high",
+      "name": "Cross Site Scripting (DOM Based)",
+      "status": "suspected",
+      "scannerConfidence": "high"
+    }
+  ]
+}
