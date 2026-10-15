@@ -9,9 +9,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ensureJournalSqliteRecordSchema,
   openJournalSqliteRecords,
+  reserveJournalSqliteIntent,
 } from './journal-sqlite-records.js';
 import type { JournalSqliteTransaction } from './journal-sqlite-store.js';
-import type { RawJournalNamespace } from './journal-types.js';
+import type { JournalTransition, RawJournalNamespace } from './journal-types.js';
 
 const descriptor: RawJournalNamespace = {
   schemaVersion: 1,
@@ -83,5 +84,65 @@ describe('journal record time: checks vs persistence (T5 J-c)', () => {
     const s = store();
     expect(openJournalSqliteRecords(s.tx, descriptor, 1_300)).toMatchObject({ kind: 'opened' });
     expect(s.highWater()).toBe(1_300);
+  });
+
+  const transition: JournalTransition = {
+    identity: {
+      key: {
+        serviceGeneration: 's'.repeat(22),
+        tenantId: 'tenant-a',
+        sessionIncarnation: 'i'.repeat(22),
+        epoch: 1,
+        operationId: 'op-time',
+      },
+      actor: 'agent',
+      fingerprint: { version: 1, keyId: 'key-1', digest: 'd'.repeat(64) },
+    },
+    expectedRevision: 0,
+  };
+
+  it('a reopen persists the wall reading, not the effective time', () => {
+    const s = store();
+    openJournalSqliteRecords(s.tx, descriptor, 1_000, 1_000);
+    s.release();
+    expect(openJournalSqliteRecords(s.tx, descriptor, 1_600, 1_200)).toMatchObject({
+      kind: 'opened',
+    });
+    expect(s.highWater()).toBe(1_200);
+  });
+
+  it('a mutation (prepareWrite) and a resumed intent persist the wall reading', () => {
+    const s = store();
+    const opened = openJournalSqliteRecords(s.tx, descriptor, 1_000, 1_000);
+    if (opened.kind !== 'opened') throw new Error('not opened');
+    expect(
+      reserveJournalSqliteIntent(s.tx, 'ns-time', opened.ownerFence, transition, 1_500, 1_100)
+    ).toMatchObject({ kind: 'acknowledged', disposition: 'applied' });
+    expect(s.highWater()).toBe(1_100);
+    expect(
+      reserveJournalSqliteIntent(s.tx, 'ns-time', opened.ownerFence, transition, 1_700, 1_300)
+    ).toMatchObject({ kind: 'acknowledged', disposition: 'existing' });
+    expect(s.highWater()).toBe(1_300);
+  });
+
+  it('retirement judges the wall reading: an effective time past retention never deletes', () => {
+    const s = store();
+    for (const namespaceId of ['ns-time', 'ns-two']) {
+      openJournalSqliteRecords(s.tx, { ...descriptor, namespaceId }, 1_000, 1_000);
+      s.release();
+    }
+    // At capacity (2): opening a third namespace would retire settled, expired ones. Effective
+    // 5_100 is past their retainUntil (5_000) but the wall (4_900) is not, so nothing retires.
+    const third = {
+      ...descriptor,
+      namespaceId: 'ns-three',
+      acceptUntil: 9_000,
+      retainUntil: 9_000,
+    };
+    expect(openJournalSqliteRecords(s.tx, third, 5_100, 4_900)).toMatchObject({
+      kind: 'refused',
+      reason: 'capacity',
+    });
+    expect(s.highWater()).toBe(1_000);
   });
 });
