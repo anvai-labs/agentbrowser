@@ -556,6 +556,10 @@ function captureFormEvidence(
     const single = valueContainer.querySelector('.select__single-value')?.textContent?.trim();
     if (single && single.length <= 512) attributes['autofill-committed'] = single;
 
+    // T6 W2: only a multi-value container can hold a chip set.
+    attributes['autofill-multi'] = String(
+      valueContainer.matches('.select__value-container--is-multi')
+    );
     const candidates = valueContainer.querySelectorAll('.select__multi-value__label');
     let complete = candidates.length <= 32;
     const members: string[] = [];
@@ -573,6 +577,20 @@ function captureFormEvidence(
     if (encoded.length > 16_384) complete = false;
     attributes['autofill-committed-members-complete'] = String(complete);
     if (complete) attributes['autofill-committed-members'] = encoded;
+  }
+  // T6 W2: a known React-Select chip remove control is tied to the combobox that owns its value
+  // container and to its chip's label, so a removal can never reach another widget's chip. (The
+  // label is also the control's accessible name, "Remove <label>", so it reveals nothing new.)
+  if (role === 'button' && node.matches('.select__multi-value__remove')) {
+    const chip = node.closest('.select__multi-value');
+    const owner = node
+      .closest('.select__value-container')
+      ?.querySelector('input[role="combobox"]') as FormEvidenceNode | null | undefined;
+    const label = chip?.querySelector('.select__multi-value__label')?.textContent?.trim();
+    if (owner && label !== undefined && label.length > 0 && label.length <= 512) {
+      attributes['autofill-chip-owner'] = token(owner);
+      attributes['autofill-chip-label'] = label;
+    }
   }
   // Credentials never become additional observation evidence.
   const readable =

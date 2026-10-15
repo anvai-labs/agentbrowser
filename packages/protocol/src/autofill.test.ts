@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   AutofillReportSchema,
   labelPattern,
@@ -28,6 +28,71 @@ it.each(['Chicago\nIL', 'Chicago\r', '\r\nChicago'])(
     expect(() => parseAutofillRequest(request)).toThrow(/line break/);
   }
 );
+describe('exact-set multiselect (T6 W2)', () => {
+  const chips = (options: unknown, extra: Record<string, unknown> = {}) => ({
+    fields: [{ match: { label: 'Codes' }, strategy: 'chip-multiselect', options, ...extra }],
+  });
+  it('accepts an exact set, including the empty set', () => {
+    expect(
+      parseAutofillRequest(chips({ values: ['Canada', 'United States'], mode: 'exact' })).fields[0]
+        ?.options
+    ).toEqual({ values: ['Canada', 'United States'], mode: 'exact' });
+    expect(parseAutofillRequest(chips({ values: [], mode: 'exact' })).fields[0]?.options).toEqual({
+      values: [],
+      mode: 'exact',
+    });
+  });
+  it.each([
+    [
+      'another strategy',
+      {
+        fields: [
+          {
+            match: { label: 'C' },
+            strategy: 'react-select',
+            options: { values: ['a'], mode: 'exact' },
+          },
+        ],
+      },
+    ],
+    [
+      'no strategy',
+      { fields: [{ match: { label: 'C' }, options: { values: ['a'], mode: 'exact' } }] },
+    ],
+    ['an option as well', chips({ values: ['a'], mode: 'exact' }, { option: { value: 'a' } })],
+    ['a value as well', chips({ values: ['a'], mode: 'exact' }, { value: 'a' })],
+    ['a duplicate value', chips({ values: ['a', 'a'], mode: 'exact' })],
+    ['a line break', chips({ values: ['a\nb'], mode: 'exact' })],
+    ['an empty label', chips({ values: [''], mode: 'exact' })],
+    [
+      'too many values',
+      chips({ values: Array.from({ length: 33 }, (_, i) => `v${i}`), mode: 'exact' }),
+    ],
+    ['an over-long label', chips({ values: ['x'.repeat(513)], mode: 'exact' })],
+    ['another mode', chips({ values: ['a'], mode: 'add' })],
+  ])('refuses %s', (_name, request) => {
+    expect(() => parseAutofillRequest(request)).toThrow();
+  });
+  it('reports partial effects in a receipt', () => {
+    const report = parseAutofillReport(
+      {
+        ok: false,
+        elapsedMs: 1,
+        receipts: [
+          {
+            field: 0,
+            match: { label: 'Codes' },
+            status: 'uncertain',
+            verified: false,
+            effects: { removed: ['Canada'], added: [] },
+          },
+        ],
+      },
+      1
+    );
+    expect(report.receipts[0]?.effects).toEqual({ removed: ['Canada'], added: [] });
+  });
+});
 it.each([
   ['^Company.*name$', 'Company legal name', true],
   ['^Company.*name$', 'Prior Company legal name', false],

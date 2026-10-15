@@ -49,6 +49,21 @@ export const AutofillRequestSchema = Type.Object(
           match: AutofillMatchSchema,
           value: Type.Optional(Type.String({ maxLength: 8192 })),
           option: Type.Optional(Type.Object({ value: Type.String({ maxLength: 8192 }) }, strict)),
+          /**
+           * T6 W2: `chip-multiselect` only. The committed membership must end EXACTLY this set:
+           * extra chips are removed (one verified removal at a time), missing ones added.
+           */
+          options: Type.Optional(
+            Type.Object(
+              {
+                values: Type.Array(Type.String({ minLength: 1, maxLength: 512 }), {
+                  maxItems: 32,
+                }),
+                mode: Type.Literal('exact'),
+              },
+              strict
+            )
+          ),
           verify: Type.Optional(Type.Union([Type.Literal('exact'), Type.Literal('none')])),
           strategy: Type.Optional(
             Type.Union([
@@ -105,6 +120,19 @@ export const AutofillReceiptSchema = Type.Object(
     verificationWithheld: Type.Optional(Type.Boolean()),
     actual: Type.Optional(Type.String({ maxLength: 512 })),
     actualTruncated: Type.Optional(Type.Boolean()),
+    /**
+     * T6 W2: chips this field removed and added, in order, including on failure: an exact-set
+     * write is not a transaction, and nothing is compensated by guesswork.
+     */
+    effects: Type.Optional(
+      Type.Object(
+        {
+          removed: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 32 }),
+          added: Type.Array(Type.String({ maxLength: 512 }), { maxItems: 32 }),
+        },
+        strict
+      )
+    ),
     error: Type.Optional(Type.Object({ code: Type.String(), message: Type.String() }, strict)),
   },
   strict
@@ -176,12 +204,24 @@ export function parseAutofillRequest(input: unknown): AutofillRequest {
       );
   }
   for (const field of request.fields) {
-    if ((field.value === undefined) === (field.option === undefined))
-      throw new Error('Each autofill field requires exactly one of value or option.value');
+    if (
+      [field.value, field.option, field.options].filter((given) => given !== undefined).length !== 1
+    )
+      throw new Error(
+        'Each autofill field requires exactly one of value, option.value or options.values'
+      );
     // Custom widget strategies type the option text; a typed line break is an Enter keypress
     // that can commit an unintended option or submit the form. Refused, not escaped.
     if (field.option !== undefined && /[\r\n]/.test(field.option.value))
       throw new Error('An autofill option value cannot contain a line break');
+    if (field.options !== undefined) {
+      if (field.strategy !== 'chip-multiselect')
+        throw new Error('options.values requires the explicit chip-multiselect strategy');
+      if (field.options.values.some((value) => /[\r\n]/.test(value)))
+        throw new Error('An autofill option value cannot contain a line break');
+      if (new Set(field.options.values).size !== field.options.values.length)
+        throw new Error('options.values must not repeat a value');
+    }
     const match = field.match;
     if (!match.label && !match.labelRegex && !match.dataAutomationId)
       throw new Error('Each autofill match requires label, labelRegex or dataAutomationId');
