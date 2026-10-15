@@ -62,8 +62,49 @@ recorded runs: archive the fixture source and the sanitized raw alert
 JSON with the record, so the finding table is independently
 re-verifiable rather than transcribed.
 
+## Repeatable recorded run — 2026-10-15
+
+The depth run is now committed and repeatable, rather than a one-off on the development host.
+
+- **Driver:** [`scripts/zap-depth-run.mjs`](../../../scripts/zap-depth-run.mjs), which contains its
+  own vulnerable fixture.
+- **Workflow:** [`zap-depth.yml`](../../../.github/workflows/zap-depth.yml), dispatch-only.
+- **Scanner:** the same digest-pinned `zaproxy/zap-stable` image, run as a daemon on the host
+  network with its keyless API bound to loopback.
+- **Setup:** the driver primes ZAP's sites tree (the setup step the adapter deliberately does not
+  automate), runs `ZapClient.scan`, and archives three files: `result.json`, `raw-alerts.json`
+  (sanitized: no headers or bodies) and the fixture source. That follows the norm above.
+- **Exit:** 0 only if the seeded reflected XSS (40012, high, `name`) is found and every finding
+  stays `suspected`.
+
+**First run** (development host, 2026-10-15, ZAP 2.17.0), archived in
+[`t7-zap-depth/`](t7-zap-depth/result.json), with the exact fixture source that produced it
+(`fixture-source.mjs`):
+
+| pluginId | Risk | Finding | Parameter |
+| --- | --- | --- | --- |
+| 40012 | high | Cross Site Scripting (Reflected): **the seeded vulnerability** | `name` |
+| 40026 | high | Cross Site Scripting (DOM Based) | `name` |
+| 10020 | medium | Missing Anti-clickjacking Header | `x-frame-options` |
+| 10038 | medium | Content Security Policy (CSP) Header Not Set | |
+| 10021 | low | X-Content-Type-Options Header Missing | `x-content-type-options` |
+
+- There are 8 findings in total: the three header findings appear once for each of the fixture's
+  two URLs.
+- `droppedOutOfScope: 0`.
+- All are `suspected`. A scanner alert is a claim until it is independently reproduced.
+- **Correction to the 2026-10-03 record.** DOM-based XSS reports its own rule id, 40026, here and
+  in an independent re-run with the same image digest (the same ZAP 2.17.0). The earlier record's
+  "40012 as observed verbatim" for the DOM-based finding was most likely a transcription error. It
+  cannot be checked, because that run archived no raw JSON, which is why this record archives it.
+- **Not reproduced: "HTTP Only Site" (10106).** The earlier record listed it; neither run here
+  raised it. The plausible cause is the target: `host.docker.internal` then, loopback now. That
+  is unverified.
+- The CI-hosted run is available by dispatching the workflow; that is the owner's call, because
+  it pulls a ~1.5 GB image.
+
 ## Remaining
 
+- The CI-hosted run: the workflow exists, but no dispatched run has been archived yet. A
+  constrained-mount run was not attempted.
 - Slice 4 (report templates) — on demand.
-- The recorded run above used the development host's docker; a
-  constrained-mount / CI-hosted ZAP run remains optional depth.

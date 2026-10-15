@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "descriptor": {
+    "id": "counter",
+    "version": "1.0.0",
+    "testedSeam": "ui",
+    "environment": {
+      "productVersion": "1.9.0",
+      "cliVersion": "1.9.0",
+      "engine": {
+        "name": "chromium",
+        "version": "140.0.0"
+      },
+      "fixture": {
+        "id": "counter",
+        "version": "1.0.0"
+      }
+    },
+    "assertions": [
+      {
+        "id": "commit",
+        "required": true
+      }
+    ]
+  },
+  "invocations": [
+    {
+      "id": "commit",
+      "operationId": "outer-1",
+      "request": {
+        "actions": [
+          {
+            "action": "click",
+            "target": {
+              "ref": "e1_0"
+            }
+          }
+        ],
+        "verification": {
+          "verifier": {
+            "id": "counter",
+            "version": "1.0.0"
+          },
+          "input": {
+            "secret": "PRIVATE-EXPECTED-INPUT"
+          }
+        }
+      }
+    }
+  ],
+  "report": {
+    "case": {
+      "id": "counter",
+      "version": "1.0.0"
+    },
+    "environment": {
+      "productVersion": "1.9.0",
+      "cliVersion": "1.9.0",
+      "engine": {
+        "name": "chromium",
+        "version": "140.0.0"
+      },
+      "fixture": {
+        "id": "counter",
+        "version": "1.0.0"
+      }
+    },
+    "setup": "completed",
+    "cleanup": "complete",
+    "assertions": [
+      {
+        "id": "commit",
+        "status": "completed",
+        "operationId": "outer-1",
+        "report": {
+          "plan": {
+            "ok": true,
+            "completed": 1,
+            "results": [
+              {
+                "step": 0,
+                "ok": true
+              }
+            ]
+          },
+          "outcome": {
+            "availability": "available",
+            "execution": "completed",
+            "cleanup": "complete",
+            "testedSeam": "ui",
+            "verification": {
+              "status": "failed",
+              "verifier": {
+                "id": "counter",
+                "version": "1.0.0"
+              },
+              "requiredLayer": "G4",
+              "achievedLayer": "G0",
+              "evidenceRefIds": [
+                "event-1"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}

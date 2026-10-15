@@ -158,6 +158,8 @@ namespace is stable across restarts). Quarantine/reconciliation stays as specifi
 
 ## J3: authorized historical lookup and explicit continuation
 
+Refined, with decision points, in [J-design](t5-recovery-design.md) (Proposed).
+
 Require current authentication and explicit authorization for the original tenant and
 historical namespace. Old bearer tokens, epochs and cursors remain invalid. Return
 bounded status and authorized evidence locators through existing projections; do not

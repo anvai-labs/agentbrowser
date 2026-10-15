@@ -381,6 +381,11 @@ jobs:
       - name: Compile the CLI for packaged workflow acceptance
         run: node packages/cli/scripts/compile.mjs
 
+      - name: Qualify the test-evaluate CI entrypoint against the compiled CLI
+        env:
+          AGENTBROWSER_EVALUATE_REAL_CLI: packages/cli/dist-bin/agentbrowser
+        run: node --test scripts/test-evaluate-action.test.mjs
+
       - name: T8 footprint gates (peak RSS)
         run: node --test scripts/footprint-gates.test.mjs
 
