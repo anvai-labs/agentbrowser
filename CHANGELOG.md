@@ -20,6 +20,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
   uses one shared line reader with a pending-request map.
 
+### Docs — release records and task-status reconciliation
+
+- Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).
+- The task table and manifest match the 2026-10-15 reconciliation: T1 is active, T7 complete, the
+  Victor gate is aiserver1's gateway (not TLS), and C4b is partial. Stale "candidate" status lines
+  on three delivered evidence records are corrected, C3b cites #254, the T9 checkpoint names the
+  current protections, and the release guide no longer claims the upload permits clobbering.
+
 ### Fixed — the execution requirement as shipped (T5 C4b, part 1)
 
 - An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
