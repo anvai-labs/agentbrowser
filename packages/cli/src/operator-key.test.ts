@@ -163,6 +163,48 @@ describe('operator commands (TD-BROWSER-16 phase 7)', () => {
     );
   });
 
+  it('operator approve refuses stray and duplicated lease parts (review F3)', async () => {
+    const path = join(dir, 'keys');
+    await writeFile(path, 'op-key-one-aaaaaaaa:acme\n');
+    const stray = await run(
+      [
+        '--operator-key-file',
+        path,
+        'operator',
+        'approve',
+        'ses_1',
+        'tok_1',
+        '--lease',
+        'hosts=example.com,',
+        'api.example.com',
+        'minutes=5',
+        'actions=10',
+      ],
+      {}
+    ).catch((error) => ({ err: [String(error)], fetchCalls: [] }));
+    expect((stray.err ?? []).join('\n') + JSON.stringify(stray.fetchCalls ?? [])).toMatch(
+      /unrecognized part 'api.example.com'/
+    );
+
+    const dup = await run(
+      [
+        '--operator-key-file',
+        path,
+        'operator',
+        'approve',
+        'ses_1',
+        'tok_1',
+        '--lease',
+        'hosts=a.com',
+        'hosts=b.com',
+        'minutes=5',
+        'actions=10',
+      ],
+      {}
+    ).catch((error) => ({ err: [String(error)] }));
+    expect((dup.err ?? []).join('\n')).toMatch(/repeats 'hosts='/);
+  });
+
   it('operator approve refuses an incomplete lease spec', async () => {
     const path = join(dir, 'keys');
     await writeFile(path, 'op-key-one-aaaaaaaa:acme\n');

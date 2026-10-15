@@ -29,6 +29,14 @@ const propertiesOf = (name: string): Set<string> => {
 };
 
 describe('MCP tool-schema sync', () => {
+  it('cookie_handoff reads exactly what it advertises (TD-BROWSER-16 phase 7)', () => {
+    // Handler reads sessionId, domains (1-16 validated inline) and the
+    // optional approvalToken; nothing else.
+    expect(propertiesOf('cookie_handoff')).toEqual(
+      new Set(['sessionId', 'domains', 'approvalToken'])
+    );
+  });
+
   it('session reads exactly the one advertised session identity', () => {
     expect(propertiesOf('session')).toEqual(new Set(['sessionId']));
   });

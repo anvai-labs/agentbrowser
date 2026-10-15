@@ -1525,11 +1525,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
             },
             '400': errorResponse(
-              'A typed LOGIN_* refusal: profile mode, display, binary pin, or hosted deployment.'
+              'INVALID_REQUEST: the login browser is disabled, or a typed LOGIN_PROFILE_MODE / LOGIN_BROWSER_DISPLAY refusal.'
             ),
             '403': errorResponse('A human-operator key is required.'),
             '409': errorResponse(
-              'The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
+              'LOGIN_PROFILE_IN_USE (another process owns the profile) or the binary pin (LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
             ),
           },
         },
@@ -1546,10 +1546,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description: 'The login browser closed.',
               content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
             },
-            '400': errorResponse('A typed LOGIN_* refusal (the browser is already closed).'),
+            '400': errorResponse('INVALID_REQUEST: the login browser is disabled.'),
             '403': errorResponse('A human-operator key is required.'),
             '409': errorResponse(
-              'The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
+              'LOGIN_BROWSER_CLOSED (nothing to close) or LOGIN_PROFILE_IN_USE.'
             ),
           },
         },
@@ -1567,10 +1567,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description: 'The login profile deleted.',
               content: json({ type: 'object', properties: { reset: { type: 'boolean' } } }),
             },
-            '400': errorResponse(
-              'A typed LOGIN_* refusal (the browser is open — close it before resetting).'
-            ),
+            '400': errorResponse('INVALID_REQUEST: the login browser is disabled.'),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'LOGIN_BROWSER_CLOSED (the browser is open — close it before resetting).'
+            ),
           },
         },
       },
@@ -1600,9 +1601,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               }),
             },
             '400': errorResponse(
-              'A typed LOGIN_* refusal (a closed browser, or the read exceeding the cookie bound).'
+              'INVALID_REQUEST: the login browser is disabled, or the read exceeds the cookie-count bound.'
             ),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse('LOGIN_BROWSER_CLOSED (the read needs the open browser).'),
           },
         },
       },

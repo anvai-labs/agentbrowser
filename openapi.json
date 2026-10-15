@@ -5051,7 +5051,7 @@
             }
           },
           "400": {
-            "description": "A typed LOGIN_* refusal: profile mode, display, binary pin, or hosted deployment.",
+            "description": "INVALID_REQUEST: the login browser is disabled, or a typed LOGIN_PROFILE_MODE / LOGIN_BROWSER_DISPLAY refusal.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5071,7 +5071,7 @@
             }
           },
           "409": {
-            "description": "The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).",
+            "description": "LOGIN_PROFILE_IN_USE (another process owns the profile) or the binary pin (LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5113,7 +5113,7 @@
             }
           },
           "400": {
-            "description": "A typed LOGIN_* refusal (the browser is already closed).",
+            "description": "INVALID_REQUEST: the login browser is disabled.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5133,7 +5133,7 @@
             }
           },
           "409": {
-            "description": "The profile is in use, or the pinned browser binary changed (LOGIN_PROFILE_IN_USE / LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).",
+            "description": "LOGIN_BROWSER_CLOSED (nothing to close) or LOGIN_PROFILE_IN_USE.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5175,7 +5175,7 @@
             }
           },
           "400": {
-            "description": "A typed LOGIN_* refusal (the browser is open — close it before resetting).",
+            "description": "INVALID_REQUEST: the login browser is disabled.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5186,6 +5186,16 @@
           },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LOGIN_BROWSER_CLOSED (the browser is open — close it before resetting).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5241,7 +5251,7 @@
             }
           },
           "400": {
-            "description": "A typed LOGIN_* refusal (a closed browser, or the read exceeding the cookie bound).",
+            "description": "INVALID_REQUEST: the login browser is disabled, or the read exceeds the cookie-count bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5252,6 +5262,16 @@
           },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LOGIN_BROWSER_CLOSED (the read needs the open browser).",
             "content": {
               "application/json": {
                 "schema": {

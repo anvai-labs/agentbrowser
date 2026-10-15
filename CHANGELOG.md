@@ -29,6 +29,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   (the sentinel-domain ask); the per-domain answer is a conditional question — `POST
   /v1/policy/check` with `action: cookie.handoff` and the domain as `target` (never resolved;
   bare suffixes refuse exactly as the handoff floor does).
+- **Review round 1 (all fixed, test-pinned):** the `policy check` route's front door rejected
+  `cookie.handoff` — the engine branch existed but was unreachable from REST/CLI/MCP; the action
+  now passes the door (route test added), and the handoff POST joined `SELF_ADMITTING_ROUTE_SEGMENTS`
+  so the SDK mints no phantom operation id into the approval relay. The four login routes' OpenAPI
+  400/409 entries now attribute their codes correctly (closed-browser is a 409; binary pins are
+  open-only). The CLI `--lease` parse is total — stray tokens (an unquoted host list) and repeated
+  keys refuse loudly instead of silently under-granting; the CLI relay emits enumerated fields
+  like the MCP relay; and the schema-sync gate pins `cookie_handoff`'s hand-written schema.
 - **Docs**: the new guide **Use your login safely** (threat boundary first: the agent must not
   share the operator's OS user; the profile is file-permissions-only and must stay out of synced
   paths; session cookies drop at close — then the loop, leases, guarantees and residuals, one-time

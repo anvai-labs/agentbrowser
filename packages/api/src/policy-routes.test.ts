@@ -92,6 +92,30 @@ describe('GET /v1/policy', () => {
 });
 
 describe('POST /v1/policy/check', () => {
+  it('answers the per-domain cookie.handoff question (review F1: the route door)', async () => {
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/v1/policy/check',
+      payload: { action: 'cookie.handoff', target: 'example.com' },
+    });
+    expect(ok.statusCode).toBe(200);
+    const body = ok.json() as {
+      answers: Array<{ answer: { kind: string; decision?: { allowed: boolean } } }>;
+    };
+    expect(body.answers[0]?.answer.kind).toBe('decision');
+    expect(body.answers[0]?.answer.decision).toMatchObject({ allowed: true });
+
+    // A bare suffix refuses exactly as the handoff floor does.
+    const suffix = await app.inject({
+      method: 'POST',
+      url: '/v1/policy/check',
+      payload: { action: 'cookie.handoff', target: 'com' },
+    });
+    expect(suffix.statusCode).toBe(200);
+    const suffixBody = suffix.json() as { answers: Array<{ classSet: string }> };
+    expect(suffixBody.answers[0]?.classSet).toBe('invalid');
+  });
+
   it('never resolves: the resolver spy sees nothing', async () => {
     const spy = vi
       .spyOn(require('node:dns').promises, 'lookup')

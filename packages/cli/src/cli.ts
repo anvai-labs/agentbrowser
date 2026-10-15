@@ -856,15 +856,27 @@ export function buildCli(deps: CliDependencies): Cli {
                 .catch((error: { code?: string; details?: Record<string, unknown> }) => {
                   if (error.code === 'APPROVAL_REQUIRED' && error.details?.tokenId) {
                     const details = error.details;
-                    ctx.emit({ approvalRequired: true, ...details }, () => [
-                      'Approval required — relay to the operator:',
-                      `  token: ${String(details.tokenId)}`,
-                      `  domains: ${(details.domains as string[] | undefined)?.join(', ') ?? options.domain.join(', ')}`,
-                      `  counts: ${JSON.stringify(details.counts ?? {})}`,
-                      'They decide with: agentbrowser operator approve ' +
-                        `${sessionId} ${String(details.tokenId)}`,
-                      'Then retry with --approval-token.',
-                    ]);
+                    // Enumerated, like the MCP relay: any future
+                    // server-side detail flows nowhere silently (review F6).
+                    ctx.emit(
+                      {
+                        approvalRequired: true,
+                        tokenId: details.tokenId,
+                        kind: details.kind,
+                        sessionId,
+                        domains: details.domains,
+                        counts: details.counts,
+                      },
+                      () => [
+                        'Approval required — relay to the operator:',
+                        `  token: ${String(details.tokenId)}`,
+                        `  domains: ${(details.domains as string[] | undefined)?.join(', ') ?? options.domain.join(', ')}`,
+                        `  counts: ${JSON.stringify(details.counts ?? {})}`,
+                        'They decide with: agentbrowser operator approve ' +
+                          `${sessionId} ${String(details.tokenId)}`,
+                        'Then retry with --approval-token.',
+                      ]
+                    );
                     return undefined;
                   }
                   throw error;
@@ -2187,6 +2199,20 @@ export function buildCli(deps: CliDependencies): Cli {
               );
             let lease: { hosts: string[]; expiresInMs: number; maxActions: number } | undefined;
             if (options.lease !== undefined) {
+              // Total parse (review F3): a stray token (the shell splitting
+              // 'hosts=a, b') or a duplicated key refuses loudly — never a
+              // silent under-grant.
+              const leaseKeys = new Set<string>();
+              for (const part of options.lease) {
+                const key = part.includes('=') ? part.slice(0, part.indexOf('=')) : '';
+                if (key !== 'hosts' && key !== 'minutes' && key !== 'actions')
+                  throw new UsageError(
+                    `--lease has an unrecognized part '${part}'; expected hosts=<host,...> minutes=<n> actions=<n> (quote the list)`
+                  );
+                if (leaseKeys.has(key))
+                  throw new UsageError(`--lease repeats '${key}=' — give each key once`);
+                leaseKeys.add(key);
+              }
               const hosts = options.lease.find((part) => part.startsWith('hosts='));
               const minutes = options.lease.find((part) => part.startsWith('minutes='));
               const actions = options.lease.find((part) => part.startsWith('actions='));
