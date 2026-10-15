@@ -17,6 +17,64 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   and a path-filtered required check would strand unrelated ones (the T9 packet's invariant now
   says so).
 
+### Added — autofill qualified against the real react-select (T6 W1)
+
+- The `react-select` and `chip-multiselect` strategies are now tested against react-select 5.10.2
+  on React 19.3.0 in real Chromium, not only markup that imitates it. The app reports its own
+  committed state, which must show the exact option (`Chicago`, not `Chicago Heights`) and no form
+  submission. The qualification uses react-select's `classNamePrefix: 'select'`: the strategies
+  read the committed selection from `select__*` class names (see `docs/bulk-autofill.md`), and on
+  react-select's default generated class names they fail closed rather than verify. The libraries
+  are pinned test-only devDependencies of `@agentbrowser/api`; the shipped tarball and production
+  dependencies are unchanged.
+
+### Changed — `option.value` cannot contain a line break
+
+- An autofill `option.value` with `\n` or `\r` is refused (`INVALID_REQUEST`) before dispatch, for
+  every strategy: the custom strategies type the option text, and a typed line break is an Enter
+  keypress that could commit an unintended option or submit the form (native selects never type,
+  and no real option label contains one). It is refused rather than escaped; other control
+  characters are typed literally and stay allowed.
+
+### Added — a committed observation-overhead benchmark (F1)
+
+- `node packages/benchmarks/dist/run.js observe [n]` observes a 120-element fixture (40 text, 40
+  password, 40 buttons) through the service on real Chromium and prints latency (mean/p50/p95/max);
+  it fails unless all 40 password fields are observed redacted and no password value appears.
+  A baseline snapshot is recorded in `docs/spec/evidence/observation-120-baseline.md`; runs drift
+  ~18% between sessions on the same host, so comparisons (F2) must interleave both builds in one
+  session.
+
+### Added — journal time never moves backwards within a process (T5 J-c)
+
+- The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
+  and retention horizons) use `max(startWall + monotonicElapsed, wallNow, previousReading)`, so a
+  backward wall-clock step mid-process can no longer extend a horizon; they can only become
+  stricter. Everything that persists or deletes (the high-water, namespace retirement, the reopen
+  rollback check) still uses the plain wall reading, so no persisted value derives from the
+  monotonic source and restart behaviour is unchanged.
+
+### Added — output schemas for the last six MCP tools (T0 M2, part 2)
+
+- `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
+  schemas (`PolicyToolResultSchema`, `CookieListResultSchema`, `CookieHandoffToolResultSchema`,
+  `PageSnapshotSchema`, `PageHtmlResultSchema`, `SessionInspectionResultSchema`), and so does
+  the delegated `operation` tool (`OperationRecordResultSchema`): every MCP tool in every catalog
+  now does. `policy` and `cookie_handoff` keep an object root with their two result shapes as
+  alternatives. The nested session, control and operation views are relaxed for clients
+  (`relaxForClients`: open objects, closed enums widened to strings, required fields kept), so an
+  older MCP binary keeps accepting a newer server's results; the protocol schemas stay strict. Qualified end to end, including a real cookie handoff (approval relay, operator
+  decision over HTTP, completion) and a handed-off session's view; a test fails if any tool lacks
+  a schema.
+
+### Fixed — `html` honours its byte cap; `cookie_handoff` reports an unsupported server as an error
+
+- `html`'s `maxBytes` now bounds the returned UTF-8: it is taken in whole bytes, and a cut inside
+  a multibyte character backs off to the character boundary instead of emitting U+FFFD, which
+  overshot the cap by up to 2 bytes.
+- `cookie_handoff` against a client without the handoff surface returned an error envelope as a
+  successful result; it now fails as an error.
+
 ### Fixed — the T8 footprint gate measures the CLI's peak exactly
 
 - `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's

@@ -15,6 +15,7 @@ import type { FixtureServer } from './compare';
 import {
   comparativeReport,
   runCompactProjectionBenchmark,
+  runObservationOverheadBenchmark,
   runRealBenchmarks,
   startFixtureServer,
 } from './compare';
@@ -299,3 +300,28 @@ class FormLoopEngine extends FakeEngine {
     }) as EngineSession;
   }
 }
+
+describe('F1 observation overhead benchmark', () => {
+  it('serves 40 text, 40 password and 40 button elements and checks redaction on every run', async () => {
+    const server = await startFixtureServer(0);
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${server.port}/observe120`)).text();
+      expect((html.match(/<input type="text"/g) ?? []).length).toBe(40);
+      expect((html.match(/<input type="password"/g) ?? []).length).toBe(40);
+      expect((html.match(/<button/g) ?? []).length).toBe(40);
+      const result = await runObservationOverheadBenchmark({
+        engine: new FakeEngine(),
+        iterations: 3,
+        fixturePort: server.port,
+      });
+      expect(result).toMatchObject({
+        engineName: 'fake-engine',
+        iterations: 3,
+        secretLeaked: false,
+      });
+      expect(result.ms.max).toBeGreaterThanOrEqual(result.ms.p50);
+    } finally {
+      await server.stop();
+    }
+  });
+});
