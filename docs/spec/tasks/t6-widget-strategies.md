@@ -60,6 +60,12 @@ test start) in real Chromium; the
 app's own committed state is the oracle (exact option, no submission), and a line break in
 `option.value` is refused before dispatch (`autofill-react-select-real.test.ts`).
 
+**Removal and exact sets (2026-10-15, W2):** `chip-multiselect` accepts
+`options: { values, mode: 'exact' }`. It removes extra chips through engine-tied remove controls,
+adds missing values, verifies exact set equality, and reports partial `effects` without
+compensation. It is qualified on react-select 5.10.2
+([evidence](../evidence/t6-exact-chip-sets.md)). W3 remains open.
+
 
 The [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
 merged through PR #237 with eight PR and eight post-merge checks green. It extends
