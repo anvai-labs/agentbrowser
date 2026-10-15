@@ -312,7 +312,7 @@ under **one per-session lock**:
   approved with a lease, the agent completes a leased flow, and no agent-facing output contains a
   value.
 
-**Delivered (phase 6, #TBD-at-PR):** `POST /v1/sessions/{sessionId}/cookies/handoff` under a
+**Delivered (phase 6, #469):** `POST /v1/sessions/{sessionId}/cookies/handoff` under a
 per-session promise-chain lock, in the spec's order. Floors each carry their own `floor.handoff.*`
 rule id (login browser enabled+open via the new `LoginBrowserService.isOpen`; isolated
 non-delegated local launch recorded as per-session create facts; egress chain presence; service
