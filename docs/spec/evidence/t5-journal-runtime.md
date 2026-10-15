@@ -208,4 +208,3 @@ store's committed rows (read-only) and per-process effect counters.
   service generation, so there is no cross-process deduplication. The test pins that the two
   records carry two distinct service generations — two operations, not a replay. Idempotency
   across restarts is the application adapter's own responsibility; the journal never claims it.
-

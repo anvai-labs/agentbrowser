@@ -42,10 +42,8 @@ function journalEnvironment() {
   };
 }
 
-/** One service process on the (reopened) store; the effect is an independent counter file. */
-async function serviceProcess(
+/** One service instance on the (reopened) store; the effect is a per-instance in-memory counter. */ async function serviceProcess(
   env: Record<string, string | undefined>,
-  counterFile: string,
   initialize: boolean
 ) {
   const config = await journalConfigFromEnvironment({
@@ -91,7 +89,6 @@ async function serviceProcess(
   return {
     write,
     effects: () => effects,
-    counterFile,
     stop: async () => {
       await service.shutdown();
       await opened.close();
