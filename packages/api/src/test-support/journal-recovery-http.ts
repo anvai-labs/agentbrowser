@@ -28,7 +28,11 @@ const intentOf = (operationId: string) => ({
  * Seeds one record at an actionable state on a fresh store (the departed-process situation),
  * closes the seeding handle, then builds the REST server on the same store.
  */
-export async function seedAndBuild(state: 'undispatched' | 'in_doubt', operationId: string) {
+export async function seedAndBuild(
+  state: 'undispatched' | 'in_doubt',
+  operationId: string,
+  applicationAdapters?: import('@agentbrowser/control').ApplicationAdapter[]
+) {
   const base = mkdtempSync(join(realpathSync(tmpdir()), 'j3c-http-'));
   mkdirSync(join(base, 'store'), { mode: 0o700 });
   mkdirSync(join(base, 'anchor'), { mode: 0o700 });
@@ -72,6 +76,7 @@ export async function seedAndBuild(state: 'undispatched' | 'in_doubt', operation
     server = await buildServer({
       engine: new FakeEngine(),
       apiKeys: new Map([[createHash('sha256').update(API_KEY).digest('hex'), 'owner']]),
+      ...(applicationAdapters ? { applicationAdapters } : {}),
     });
   } catch (error) {
     for (const name of Object.keys(values)) delete process.env[name];

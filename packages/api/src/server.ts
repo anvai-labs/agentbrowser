@@ -1226,7 +1226,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       const recoveryOperation = async (
         request: FastifyRequest,
         reply: FastifyReply,
-        run: () => Promise<{ closed?: number; settled?: number }>
+        run: () => Promise<{ closed?: number; settled?: number; reconciled?: number }>
       ) => {
         if (recoveryWrite(request, reply)) return reply;
         const { operationId } = request.params as { operationId: string };
@@ -1236,7 +1236,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           return await run();
         } catch (error) {
           const code = (error as { code?: string }).code;
-          const status = code === 'NOT_FOUND' ? 404 : code === 'OPERATION_CONFLICT' ? 409 : 503;
+          // CONTROL_REQUIRED here is a state precondition (the adapter cannot reconcile), not an
+          // authorization failure, so it answers 409 like the other recovery conflicts.
+          const status =
+            code === 'NOT_FOUND'
+              ? 404
+              : code === 'OPERATION_CONFLICT' || code === 'CONTROL_REQUIRED'
+                ? 409
+                : 503;
           if (status !== 503 || code === 'JOURNAL_UNAVAILABLE')
             return journalRefusal(
               reply,
@@ -1267,6 +1274,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request, reply) =>
           recoveryOperation(request, reply, () =>
             service.journalSettleOperation(
+              (request.params as { operationId: string }).operationId,
+              principals.get(request) as { actor: string; tenant: string }
+            )
+          )
+      );
+
+      // T5 J3c part 2 (D3): ask the bound adapter what truly happened to in-doubt records.
+      v1.post(
+        '/journal/operations/:operationId/reconcile',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) =>
+          recoveryOperation(request, reply, () =>
+            service.journalReconcileOperation(
               (request.params as { operationId: string }).operationId,
               principals.get(request) as { actor: string; tenant: string }
             )

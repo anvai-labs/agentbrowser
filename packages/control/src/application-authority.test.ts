@@ -1119,3 +1119,79 @@ describe('application authority without a browser', () => {
     expect(sessions.authority.get(next.sessionId)).toBeUndefined();
   });
 });
+
+describe('supersedes link normalization (J3c part 2, review F1)', () => {
+  const good = () => ({ namespace: 'agentbrowser', operationId: 'closed-op' });
+  const hostile: Array<[string, () => unknown]> = [
+    ['a numeric operation ID', () => ({ namespace: 'agentbrowser', operationId: 12345 })],
+    [
+      'an object coercing to a valid ID',
+      () => ({ namespace: 'agentbrowser', operationId: { toString: () => 'closed-op' } }),
+    ],
+    ['a null-prototype object', () => Object.assign(Object.create(null), good())],
+    [
+      'a class instance',
+      () =>
+        new (class {
+          namespace = 'agentbrowser';
+          operationId = 'closed-op';
+        })(),
+    ],
+    [
+      'a proxy whose descriptor trap reports an accessor',
+      () =>
+        new Proxy(good(), {
+          getOwnPropertyDescriptor: (target, key) =>
+            key === 'namespace'
+              ? { configurable: true, enumerable: true, get: () => 'agentbrowser' }
+              : Reflect.getOwnPropertyDescriptor(target, key),
+        }),
+    ],
+    [
+      'a getter',
+      () =>
+        Object.defineProperty({ operationId: 'closed-op' }, 'namespace', {
+          enumerable: true,
+          get: () => 'agentbrowser',
+        }),
+    ],
+    ['an extra symbol key', () => ({ ...good(), [Symbol('x')]: 1 })],
+    [
+      'a hidden extra property',
+      () =>
+        Object.defineProperty(good(), 'padding', { enumerable: false, value: 'x'.repeat(10_240) }),
+    ],
+    [
+      'an inherited namespace with an extra own key',
+      () =>
+        Object.assign(Object.create({ namespace: 'agentbrowser' }), {
+          operationId: 'closed-op',
+          other: 1,
+        }),
+    ],
+  ];
+
+  it.each(hostile)('refuses %s before any effect', async (_name, make) => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    await expect(
+      s.port.execute('session', operator, { ...command, supersedes: make() } as never)
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(s.effect).not.toHaveBeenCalled();
+  });
+
+  it('detaches a valid link: later caller mutation cannot reach the recorded request', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    const link = good();
+    await expect(
+      s.port.execute('session', operator, { ...command, supersedes: link })
+    ).resolves.toMatchObject({ status: 'committed' });
+    link.operationId = 'tampered';
+    expect(s.effect).toHaveBeenCalledTimes(1);
+    // A replay of the same operation still matches the original (identity excludes the link).
+    await expect(
+      s.port.execute('session', operator, { ...command, supersedes: good() })
+    ).resolves.toMatchObject({ replay: true });
+  });
+});

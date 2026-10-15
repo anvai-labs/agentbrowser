@@ -10,8 +10,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ApplicationAdapter } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
 import { AgentBrowserService, type ServiceDependencies } from './service.js';
 
@@ -60,16 +61,28 @@ async function fixtureWithHorizon(acceptUntil: number) {
   };
 }
 
-async function fixture() {
+async function fixture(
+  applicationAdapters: ServiceDependencies['applicationAdapters'] = [],
+  extra: Partial<ServiceDependencies> = {}
+) {
   const { env } = journalEnvironment();
   const config = await journalConfigFromEnvironment(env);
   if (!config) throw new Error('expected configuration');
   const opened = await openServiceJournal(config);
   const journal = opened.journal;
-  const service = new AgentBrowserService({
-    engine: new FakeEngine(),
-    operationJournal: journal,
-  } satisfies Partial<ServiceDependencies> as ServiceDependencies);
+  let service: AgentBrowserService;
+  try {
+    service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      operationJournal: journal,
+      ...(applicationAdapters ? { applicationAdapters } : {}),
+      ...extra,
+    } satisfies Partial<ServiceDependencies> as ServiceDependencies);
+  } catch (error) {
+    // A service that never existed cannot close the journal it was given.
+    await opened.close();
+    throw error;
+  }
   return {
     service,
     journal,
@@ -334,4 +347,272 @@ describe('journal recovery writes, review round 1 (J3c part 1)', () => {
       code: 'NOT_FOUND',
     });
   }, 120_000);
+});
+
+describe('journal reconcile (T5 J3c part 2, D3, real store)', () => {
+  type Identity = Parameters<NonNullable<ApplicationAdapter['reconcile']>>[0];
+  /** An adapter whose reconcile answer is scripted; every call's identity is captured. */
+  const scripted = (
+    answer: 'committed' | 'rejected' | 'unknown' | 'throw',
+    calls: Identity[] = []
+  ): ApplicationAdapter => ({
+    id: 'any-adapter',
+    authorize: () => true,
+    operations: {},
+    receipt: async () => ({}),
+    reconcile: async (identity) => {
+      calls.push(identity);
+      if (answer === 'throw') throw new Error('adapter down');
+      return { status: answer };
+    },
+  });
+  const state = async (
+    journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
+    operationId: string
+  ) => {
+    const found = await journal.findByOperation({ tenantId: 'owner', operationId, limit: 16 });
+    if (found.kind !== 'found') throw new Error('expected records');
+    return found.records.map(
+      (record) => `${record.revision}:${record.dispatched}:${record.terminal?.status ?? 'none'}`
+    );
+  };
+
+  it('committed resolves an in-doubt record as completed, bound to the original identity', async () => {
+    const calls: Identity[] = [];
+    const f = await fixture([scripted('committed', calls)]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-commit', 'in_doubt');
+    await expect(f.service.journalReconcileOperation('rec-commit', humanOperator)).resolves.toEqual(
+      { reconciled: 1, unresolved: 0, truncated: false }
+    );
+    expect(await state(f.journal, 'rec-commit')).toEqual(['3:true:completed']);
+    // The adapter saw exactly the record's identity — and no fingerprint or digest.
+    expect(calls).toEqual([
+      {
+        tenant: 'owner',
+        adapter: 'any-adapter',
+        resource: 'any-resource',
+        bindingGeneration: 'binding-1',
+        sessionIncarnation: 'a'.repeat(22),
+        operationId: 'rec-commit',
+      },
+    ]);
+    expect(JSON.stringify(calls)).not.toMatch(/digest|fingerprint/i);
+  }, 60_000);
+
+  it('rejected resolves as failed', async () => {
+    const f = await fixture([scripted('rejected')]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-reject', 'in_doubt');
+    await expect(f.service.journalReconcileOperation('rec-reject', humanOperator)).resolves.toEqual(
+      { reconciled: 1, unresolved: 0, truncated: false }
+    );
+    expect(await state(f.journal, 'rec-reject')).toEqual(['3:true:failed']);
+  }, 60_000);
+
+  it.each(['unknown', 'throw'] as const)(
+    'an adapter answer of %s changes nothing: the record stays in doubt and can still be settled',
+    async (answer) => {
+      const f = await fixture([scripted(answer)]);
+      cleanup.push(f.stop);
+      await seed(f.journal, `rec-${answer}`, 'in_doubt');
+      await expect(
+        f.service.journalReconcileOperation(`rec-${answer}`, humanOperator)
+      ).resolves.toEqual({ reconciled: 0, unresolved: 1, truncated: false });
+      expect(await state(f.journal, `rec-${answer}`)).toEqual(['2:true:none']);
+      await expect(
+        f.service.journalSettleOperation(`rec-${answer}`, humanOperator)
+      ).resolves.toEqual({ settled: 1, truncated: false });
+    },
+    60_000
+  );
+
+  it('an adapter without reconcile refuses typed and writes nothing (settle instead)', async () => {
+    const f = await fixture([
+      { id: 'any-adapter', authorize: () => true, operations: {}, receipt: async () => ({}) },
+    ]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-none', 'in_doubt');
+    await expect(
+      f.service.journalReconcileOperation('rec-none', humanOperator)
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(await state(f.journal, 'rec-none')).toEqual(['2:true:none']);
+  }, 60_000);
+
+  it('is operator-only: a tenant API key principal is refused before the adapter is asked', async () => {
+    const calls: Identity[] = [];
+    const f = await fixture([scripted('committed', calls)]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-auth', 'in_doubt');
+    await expect(
+      f.service.journalReconcileOperation('rec-auth', tenantApiKeyPrincipal)
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(calls).toEqual([]);
+    expect(await state(f.journal, 'rec-auth')).toEqual(['2:true:none']);
+  }, 60_000);
+
+  it('touches only in-doubt records: an undispatched sibling is left for close', async () => {
+    const f = await fixture([scripted('committed')]);
+    cleanup.push(f.stop);
+    await seed(f.journal, 'rec-mixed', 'undispatched', 'a'.repeat(22));
+    await seed(f.journal, 'rec-mixed', 'in_doubt', 'b'.repeat(22));
+    await expect(f.service.journalReconcileOperation('rec-mixed', humanOperator)).resolves.toEqual({
+      reconciled: 1,
+      unresolved: 0,
+      truncated: false,
+    });
+    expect((await state(f.journal, 'rec-mixed')).sort()).toEqual([
+      '1:false:none',
+      '3:true:completed',
+    ]);
+    // With only the undispatched record actionable, reconcile has nothing to do.
+    await expect(
+      f.service.journalReconcileOperation('rec-mixed', humanOperator)
+    ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
+  }, 60_000);
+});
+
+describe('journal reconcile over HTTP (J3c part 2)', () => {
+  it('operator reconciles; a tenant API key is forbidden; an adapter without reconcile is 409', async () => {
+    const { seedAndBuild } = await import('./test-support/journal-recovery-http.js');
+    const adapter: ApplicationAdapter = {
+      id: 'a',
+      authorize: () => true,
+      operations: {},
+      receipt: async () => ({}),
+      reconcile: async () => ({ status: 'committed' }),
+    };
+    const {
+      server,
+      headers,
+      cleanup: done,
+    } = await seedAndBuild('in_doubt', 'http-rec', [adapter]);
+    try {
+      const url = '/v1/journal/operations/http-rec/reconcile';
+      const forbidden = await server.inject({ method: 'POST', url, headers: headers.apiKey });
+      expect(forbidden.statusCode).toBe(403);
+      const ok = await server.inject({ method: 'POST', url, headers: headers.operator });
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect(ok.json()).toEqual({ reconciled: 1, unresolved: 0, truncated: false });
+      // Resolved: the record left the actionable window.
+      const again = await server.inject({ method: 'POST', url, headers: headers.operator });
+      expect(again.statusCode).toBe(404);
+    } finally {
+      await done();
+    }
+
+    const bare = await seedAndBuild('in_doubt', 'http-rec-none', [
+      { id: 'a', authorize: () => true, operations: {}, receipt: async () => ({}) },
+    ]);
+    try {
+      const refused = await bare.server.inject({
+        method: 'POST',
+        url: '/v1/journal/operations/http-rec-none/reconcile',
+        headers: bare.headers.operator,
+      });
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().error.code).toBe('CONTROL_REQUIRED');
+    } finally {
+      await bare.cleanup();
+    }
+  }, 120_000);
+});
+
+describe('journal reconcile hardening (J3c part 2, review round 1)', () => {
+  const intentFor = (operationId: string, adapterId: string, incarnation: string) => {
+    const intent = intentOf(operationId, incarnation);
+    return { ...intent, application: { ...intent.application, adapterId } };
+  };
+  const seedInDoubt = async (
+    journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
+    operationId: string,
+    adapterId: string,
+    incarnation: string
+  ) => {
+    const reserved = await journal.reserveIntent(intentFor(operationId, adapterId, incarnation));
+    if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
+    await journal.markDispatch({ identity: reserved.record.identity, expectedRevision: 1 });
+  };
+  const records = async (
+    journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
+    operationId: string
+  ) => {
+    const found = await journal.findByOperation({ tenantId: 'owner', operationId, limit: 16 });
+    if (found.kind !== 'found') throw new Error('expected records');
+    return found.records.map((record) => record.terminal?.status ?? 'none').sort();
+  };
+  const plain = (id: string, reconcile?: ApplicationAdapter['reconcile']): ApplicationAdapter => ({
+    id,
+    authorize: () => true,
+    operations: {},
+    receipt: async () => ({}),
+    ...(reconcile ? { reconcile } : {}),
+  });
+
+  it('resolves every adapter before any write: one adapter lacking reconcile means nothing is written', async () => {
+    const asked = vi.fn(async () => ({ status: 'committed' as const }));
+    const f = await fixture([plain('capable', asked), plain('incapable')]);
+    cleanup.push(f.stop);
+    await seedInDoubt(f.journal, 'two-adapters', 'capable', 'a'.repeat(22));
+    await seedInDoubt(f.journal, 'two-adapters', 'incapable', 'b'.repeat(22));
+    await expect(
+      f.service.journalReconcileOperation('two-adapters', humanOperator)
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(asked).not.toHaveBeenCalled();
+    expect(await records(f.journal, 'two-adapters')).toEqual(['none', 'none']);
+  }, 60_000);
+
+  it('bounds a reconcile that never settles: it counts as unresolved and the record stays in doubt', async () => {
+    const f = await fixture([plain('any-adapter', () => new Promise(() => {}))], {
+      journalReconcileTimeoutMs: 200,
+    });
+    cleanup.push(f.stop);
+    await seed(f.journal, 'hangs', 'in_doubt');
+    await expect(f.service.journalReconcileOperation('hangs', humanOperator)).resolves.toEqual({
+      reconciled: 0,
+      unresolved: 1,
+      truncated: false,
+    });
+    expect(await records(f.journal, 'hangs')).toEqual(['none']);
+  }, 60_000);
+
+  it.each([
+    ['an extra key', () => ({ status: 'committed', evidence: ['x'] })],
+    ['an inherited status', () => Object.create({ status: 'committed' })],
+    [
+      'a getter status',
+      () => Object.defineProperty({}, 'status', { enumerable: true, get: () => 'committed' }),
+    ],
+    ['a wrong case', () => ({ status: 'COMMITTED' })],
+    ['null', () => null],
+  ] as const)(
+    'reads the adapter answer strictly: %s resolves nothing',
+    async (_name, answer) => {
+      const f = await fixture([plain('any-adapter', async () => answer() as never)]);
+      cleanup.push(f.stop);
+      await seed(f.journal, `strict-${_name.replace(/\W+/g, '-')}`, 'in_doubt');
+      await expect(
+        f.service.journalReconcileOperation(`strict-${_name.replace(/\W+/g, '-')}`, humanOperator)
+      ).resolves.toEqual({ reconciled: 0, unresolved: 1, truncated: false });
+    },
+    60_000
+  );
+
+  it('refuses an adapter whose reconcile is not a function at construction', async () => {
+    await expect(
+      fixture([{ ...plain('any-adapter'), reconcile: 'yes' } as unknown as ApplicationAdapter])
+    ).rejects.toThrow(/non-function reconcile/);
+  });
+
+  it('captures reconcile once: replacing it on the adapter object later changes nothing', async () => {
+    const original = vi.fn(async () => ({ status: 'committed' as const }));
+    const adapter = plain('any-adapter', original);
+    const f = await fixture([adapter]);
+    cleanup.push(f.stop);
+    (adapter as { reconcile?: unknown }).reconcile = async () => ({ status: 'rejected' });
+    await seed(f.journal, 'captured', 'in_doubt');
+    await f.service.journalReconcileOperation('captured', humanOperator);
+    expect(original).toHaveBeenCalledTimes(1);
+    expect(await records(f.journal, 'captured')).toEqual(['completed']);
+  }, 60_000);
 });

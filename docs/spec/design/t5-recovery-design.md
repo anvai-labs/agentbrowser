@@ -283,9 +283,10 @@ order: D6 **after** J3, reusing J3's read path.
    CLI parity, plus `GET /v1/journal` (D5). **Delivered 2026-10-15**
    ([evidence](../evidence/t5-journal-runtime.md#j3b-the-lookup-route-2026-10-15)).
 4. **J3c:** the recovery write path; close and continue (D2) with `supersedes`; operator
-   settlement; the opt-in adapter `reconcile` (D3). **Part 1 delivered 2026-10-15** (the write
-   path, close and settlement, operator-only with the API-key refusal pinned; continue with
-   `supersedes` and adapter `reconcile` follow).
+   settlement; the opt-in adapter `reconcile` (D3). **Delivered 2026-10-15:** part 1 (the write
+   path, close and settlement, operator-only with the API-key refusal pinned) and part 2
+   (continue with `supersedes`, and the opt-in adapter `reconcile`)
+   ([evidence](../evidence/t5-journal-runtime.md#j3c-part-2-continue-and-reconcile-2026-10-15)).
 5. **J3d:** history namespaces (D7) with full-descriptor entries and the retention-deadline
    warning.
 6. **J4:** the classification table in the docs, the cursor-after-restart test (D4), and

@@ -65,6 +65,15 @@ export const ApplicationDiscoverySchema = Type.Object(
   strict
 );
 
+/** T5 J3c part 2: the closed operation a continuation replaces (namespace + operation ID). */
+const SupersedesLinkSchema = Type.Object(
+  {
+    namespace: Type.String({ minLength: 1, maxLength: 128 }),
+    operationId: ID_SCHEMA,
+  },
+  strict
+);
+
 export const ApplicationExecuteRequestSchema = Type.Object(
   {
     operation: ID_SCHEMA,
@@ -76,6 +85,11 @@ export const ApplicationExecuteRequestSchema = Type.Object(
     // boundary; 'durable' is its own operation identity and is refused typed
     // (CONTROL_REQUIRED) until a durable journal is wired to execution.
     executionRequirement: Type.Optional(ExecutionRequirementSchema),
+    // T5 J3c part 2 (D2): provenance link for a continuation — the closed
+    // operation this new operation replaces. Metadata only: never authority,
+    // never part of the operation identity, and the closed record already
+    // carries the `superseded.<operationId>` marker from close.
+    supersedes: Type.Optional(SupersedesLinkSchema),
   },
   strict
 );
@@ -98,6 +112,7 @@ export const ApplicationReviewRequestSchema = Type.Object(
         operationId: ID_SCHEMA,
         expectedVersion: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
         executionRequirement: Type.Optional(ExecutionRequirementSchema),
+        supersedes: Type.Optional(SupersedesLinkSchema),
       },
       strict
     ),

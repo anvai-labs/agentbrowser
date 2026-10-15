@@ -5867,6 +5867,134 @@
         }
       }
     },
+    "/v1/journal/operations/{operationId}/reconcile": {
+      "post": {
+        "operationId": "reconcileJournalOperation",
+        "summary": "Resolve an operation's in-doubt records by asking the bound adapter",
+        "description": "T5 J3c part 2 (accepted design, D3). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). For each in-doubt (dispatched, terminal-less) record, asks the bound adapter's opt-in reconcile for that exact operation (tenant, application identity, session incarnation and operation ID; no fingerprint crosses). committed and rejected commit the matching terminal (completed, failed) with no evidence refs; unknown, or an adapter error, changes nothing and counts as unresolved. An adapter without reconcile refuses with 409 CONTROL_REQUIRED: settle instead. Never replays the effect. Rate limited per tenant.",
+        "tags": [
+          "journal"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many in-doubt records were resolved and how many stay unresolved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "reconciled",
+                    "unresolved",
+                    "truncated"
+                  ],
+                  "properties": {
+                    "reconciled": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "unresolved": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Records the adapter could not resolve; they stay in doubt."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "More than 16 records matched; act again for the rest."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid operation ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid bearer credential named a tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Journal recovery writes require the operator key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No actionable record of this operation in the searched namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No in-doubt record, a record changed mid-write, or the adapter cannot reconcile (CONTROL_REQUIRED).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Journal recovery rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No open durable journal, or the journal refused the write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/policy": {
       "get": {
         "operationId": "getPolicy",
@@ -7135,6 +7263,27 @@
                 "type": "string"
               }
             ]
+          },
+          "supersedes": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "namespace",
+              "operationId"
+            ],
+            "properties": {
+              "namespace": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "operationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -7227,6 +7376,27 @@
                     "type": "string"
                   }
                 ]
+              },
+              "supersedes": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "namespace",
+                  "operationId"
+                ],
+                "properties": {
+                  "namespace": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+                    "type": "string"
+                  }
+                }
               }
             }
           }

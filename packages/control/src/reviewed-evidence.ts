@@ -74,6 +74,8 @@ export interface ApplicationReviewSelector {
   readonly expectedVersion: number;
   /** C4b: present only for a durable review; it is part of the reviewed operation identity. */
   readonly executionRequirement?: 'durable';
+  /** T5 J3c part 2: the continuation's provenance link; consent covers it, identity does not. */
+  readonly supersedes?: { readonly namespace: string; readonly operationId: string };
 }
 
 export interface PrepareEvidenceReviewOptions {
@@ -194,9 +196,23 @@ export function selectApplicationReview(value: unknown): ApplicationReviewSelect
         'expectedVersion',
         'input',
       ],
-      // C4b: a durable review carries its requirement (J-b); nothing else is optional.
-      ['executionRequirement']
+      // C4b: a durable review carries its requirement (J-b); a continuation carries its
+      // supersedes link (J3c part 2); nothing else is optional.
+      ['executionRequirement', 'supersedes']
     );
+    let supersedes: { namespace: string; operationId: string } | undefined;
+    if (Object.hasOwn(action, 'supersedes')) {
+      const link = dataProperties(action.supersedes, ['namespace', 'operationId']);
+      if (
+        typeof link.namespace !== 'string' ||
+        link.namespace.length < 1 ||
+        link.namespace.length > 128 ||
+        typeof link.operationId !== 'string' ||
+        !CONTROL_OPERATION_ID.test(link.operationId)
+      )
+        throw unavailable();
+      supersedes = { namespace: link.namespace, operationId: link.operationId };
+    }
     if (
       (Object.hasOwn(action, 'executionRequirement') &&
         action.executionRequirement !== 'durable') ||
@@ -224,6 +240,7 @@ export function selectApplicationReview(value: unknown): ApplicationReviewSelect
       ...(action.executionRequirement === 'durable'
         ? { executionRequirement: 'durable' as const }
         : {}),
+      ...(supersedes !== undefined ? { supersedes } : {}),
     }) as ApplicationReviewSelector;
   } catch {
     throw unavailable();

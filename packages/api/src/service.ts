@@ -545,6 +545,8 @@ export interface ServiceDependencies {
    * objects, so an externally built authority could never see them.
    */
   applicationAdapters?: readonly ApplicationAdapter[];
+  /** J3c part 2: bound on one adapter reconcile call (default 10 s); slower counts unresolved. */
+  journalReconcileTimeoutMs?: number;
   /**
    * Synchronous trusted deployment composition for public evidence reviews.
    * The returned collector may use context.nativeForm within this admission only.
@@ -677,6 +679,13 @@ export class AgentBrowserService {
     | undefined;
   private readonly evidenceReviewProvider: ServiceDependencies['evidenceReviewProvider'];
   private readonly operationJournal: OperationJournal | undefined;
+  /**
+   * J3c part 2: each adapter's opt-in reconcile, captured ONCE at construction (never re-read
+   * from the caller's objects), keyed by adapter id.
+   */
+  private readonly reconcilers: ReadonlyMap<string, NonNullable<ApplicationAdapter['reconcile']>>;
+  /** J3c part 2: how long one adapter reconcile may take before it counts as unresolved. */
+  private readonly reconcileTimeoutMs: number;
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -754,6 +763,19 @@ export class AgentBrowserService {
     this.evidenceReviewProvider = evidenceReviewProvider;
     if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
       throw new Error('Evidence source registry and provider are mutually exclusive');
+    const reconcilers = new Map<string, NonNullable<ApplicationAdapter['reconcile']>>();
+    for (const adapter of deps.applicationAdapters ?? []) {
+      const reconcile = (adapter as { reconcile?: unknown }).reconcile;
+      if (reconcile === undefined) continue;
+      if (typeof reconcile !== 'function')
+        throw new Error(`Application adapter ${adapter.id} has a non-function reconcile`);
+      reconcilers.set(
+        adapter.id,
+        reconcile.bind(adapter) as NonNullable<ApplicationAdapter['reconcile']>
+      );
+    }
+    this.reconcilers = reconcilers;
+    this.reconcileTimeoutMs = deps.journalReconcileTimeoutMs ?? 10_000;
     this.applicationAuthority = new ApplicationAuthority(
       this.authority,
       deps.applicationAdapters ?? [],
@@ -2765,6 +2787,96 @@ export class AgentBrowserService {
       settled += 1;
     }
     return { settled, truncated };
+  }
+
+  /**
+   * T5 J3c part 2 (D3, accepted design): reconcile every in-doubt record of one operation ID by
+   * asking the bound adapter what truly happened. Operator-only (ADR-025 human-operator). An
+   * adapter without `reconcile` refuses typed (settle instead); an answer of 'unknown' (or a
+   * throwing adapter) resolves nothing and the record stays in doubt. 'committed'/'rejected'
+   * commit the matching terminal with no evidence refs. Never replays the effect.
+   */
+  async journalReconcileOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ reconciled: number; unresolved: number; truncated: boolean }> {
+    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+    const eligible = records.filter(
+      (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
+    );
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No in-doubt record to reconcile; undispatched work is closed, terminal work is final'
+      );
+    // Resolve every adapter BEFORE any write, so a missing reconcile refuses without a partial
+    // result.
+    const plans = eligible.map((record) => {
+      const adapterId = record.identity.application?.adapterId;
+      const reconcile = adapterId === undefined ? undefined : this.reconcilers.get(adapterId);
+      if (!reconcile)
+        throw new ServiceError(
+          'CONTROL_REQUIRED',
+          'The bound adapter cannot reconcile this operation; settle the record instead'
+        );
+      return { record, reconcile };
+    });
+    let reconciled = 0;
+    let unresolved = 0;
+    for (const { record, reconcile } of plans) {
+      // No fingerprint crosses: binding is by tenant, application identity, incarnation and ID.
+      let answer: unknown;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const bounded = new Promise<undefined>((settle) => {
+          timer = setTimeout(() => settle(undefined), this.reconcileTimeoutMs);
+        });
+        answer = await Promise.race([
+          bounded,
+          reconcile({
+            tenant: record.identity.key.tenantId,
+            adapter: record.identity.application?.adapterId ?? '',
+            resource: record.identity.application?.resourceId ?? '',
+            bindingGeneration: record.identity.application?.bindingGeneration ?? '',
+            sessionIncarnation: record.identity.key.sessionIncarnation,
+            operationId: record.identity.key.operationId,
+          }),
+        ]);
+      } catch {
+        answer = undefined;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      // Read strictly: a plain object whose only own key is a data property `status`.
+      let status: unknown;
+      if (
+        answer &&
+        typeof answer === 'object' &&
+        Object.getPrototypeOf(answer) === Object.prototype
+      ) {
+        const own = Object.getOwnPropertyDescriptors(answer);
+        const keys = Reflect.ownKeys(own);
+        if (keys.length === 1 && own.status && Object.hasOwn(own.status, 'value'))
+          status = own.status.value;
+      }
+      if (status !== 'committed' && status !== 'rejected') {
+        unresolved += 1;
+        continue;
+      }
+      const commit = await this.operationJournal?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 2,
+        dispatched: true,
+        terminal: { status: status === 'committed' ? 'completed' : 'failed', evidenceRefIds: [] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          `The record changed after ${reconciled} record(s) were reconciled; re-read before acting again`
+        );
+      reconciled += 1;
+    }
+    return { reconciled, unresolved, truncated };
   }
 
   /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
@@ -5042,6 +5154,9 @@ export class AgentBrowserService {
           input: action.input,
           ...(selector.application.executionRequirement === 'durable'
             ? { executionRequirement: 'durable' as const }
+            : {}),
+          ...(selector.application.supersedes !== undefined
+            ? { supersedes: { ...selector.application.supersedes } }
             : {}),
         });
         application.assertCurrent();

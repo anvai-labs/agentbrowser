@@ -74,3 +74,16 @@ describe('application operation fingerprint', () => {
     );
   });
 });
+
+it('a supersedes link never changes the operation identity (J3c part 2: metadata only)', () => {
+  const request = { operation: 'add', expectedVersion: 0 };
+  const plain = applicationOperationFingerprint(binding, request, canonicalJson(1), false);
+  const linked = applicationOperationFingerprint(
+    binding,
+    { ...request, supersedes: { namespace: 'agentbrowser', operationId: 'closed-op' } } as never,
+    canonicalJson(1),
+    false
+  );
+  expect(linked).toBe(plain);
+  expect(plain).toBe('a91c432af75363392f2c458455d113701c041c4534bd6ca05a458f6f8dab2439');
+});
