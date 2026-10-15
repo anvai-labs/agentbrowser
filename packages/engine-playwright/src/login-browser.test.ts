@@ -38,7 +38,7 @@ suite('the login browser', () => {
     await browser.open();
     try {
       expect(browser.isOpen).toBe(true);
-      const pid = await chromiumPid();
+      const pid = await chromiumPid(profile);
       if (pid > 0) expect(await tcpListenersOf(pid)).toEqual([]);
       else console.warn('login-browser test: chromium pid not found; listener assert skipped');
       const read = await browser.readCookies();
@@ -231,10 +231,12 @@ suite('the login browser', () => {
       const browser = mk({ profileDir: profile });
       await browser.open();
       try {
-        const pid = await chromiumPid();
+        const pid = await chromiumPid(profile);
         if (pid <= 0) throw new Error('chromium pid not found for the argv test');
         const { readFile } = await import('node:fs/promises');
-        const argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0');
+        const argv = cmdlineTokens(await readFile(`/proc/${pid}/cmdline`, 'utf8'));
+        // Non-vacuous: the tokens really are the browser's argv (its own profile is among them).
+        expect(argv).toContain(`--user-data-dir=${profile}`);
         for (const flag of [
           '--disable-client-side-phishing-detection',
           '--disable-component-update',
@@ -304,22 +306,34 @@ suite('the login browser', () => {
   }, 240_000);
 });
 
-async function chromiumPid(): Promise<number> {
-  // The login browser's chromium is a child of this process tree; find the
-  // newest chromium process we own.
+async function chromiumPid(profileDir: string): Promise<number> {
+  // Identify THIS login browser by its own profile: other suites launch Playwright Chromium in
+  // parallel (also with --remote-debugging-pipe, and with Playwright's --disable-* defaults), so
+  // "the newest chromium" can be someone else's. Match the exact --user-data-dir argument and take
+  // the browser process itself (child processes carry --type=).
   const { readdir, readFile } = await import('node:fs/promises');
-  const pids: Array<{ pid: number; start: number }> = [];
+  const matches: number[] = [];
   const entries = await readdir('/proc').catch(() => [] as string[]);
   for (const entry of entries) {
     if (!/^\d+$/.test(entry)) continue;
-    const cmdline = await readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => '');
-    if (cmdline.includes('chrome') && cmdline.includes('--remote-debugging-pipe')) {
-      const stat = await statSync(`/proc/${entry}`).mtimeMs;
-      pids.push({ pid: Number(entry), start: stat });
-    }
+    const argv = cmdlineTokens(await readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => ''));
+    if (
+      argv.includes(`--user-data-dir=${profileDir}`) &&
+      argv.includes('--remote-debugging-pipe') &&
+      !argv.some((arg) => arg.startsWith('--type='))
+    )
+      matches.push(Number(entry));
   }
-  pids.sort((a, b) => b.start - a.start);
-  return pids[0]?.pid ?? 0;
+  // Exactly one browser owns a profile (the profile lock enforces it); anything else is unknown.
+  return matches.length === 1 ? (matches[0] ?? 0) : 0;
 }
 
 void LoginBrowserError;
+
+/** Chromium rewrites its process title on Linux, so `/proc/<pid>/cmdline` is often ONE
+ * space-joined string rather than NUL-separated argv; splitting on NUL alone yields a single
+ * token and every `includes(flag)` check passes vacuously. Split on both. (Test profile paths
+ * contain no spaces.) */
+function cmdlineTokens(raw: string): string[] {
+  return raw.split(/[\0 ]+/).filter((token) => token !== '');
+}
