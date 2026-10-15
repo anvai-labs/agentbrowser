@@ -1,0 +1,55 @@
+name: Journal SQLite gates (macOS)
+
+# T5 J-f: the journal manager/child/adapter qualification and the packaging gate on Darwin,
+# nightly and on pull requests that touch journal code. Not a required context: a path-filtered
+# required check would strand unrelated pull requests (see the T9 packet's invariant).
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'packages/control/src/journal-*'
+      - 'packages/control/src/operation-journal*'
+      - 'packages/control/src/session-journal*'
+      - 'packages/control/src/application-journal*'
+      - 'packages/control/package.json'
+      - 'scripts/journal-sqlite-*'
+      - 'scripts/package-server.mjs'
+      - '.github/workflows/journal-darwin.yml'
+
+# Least privilege (T9 S1c): nothing here writes.
+permissions:
+  contents: read
+
+jobs:
+  journal-darwin:
+    name: Journal SQLite gates (macOS)
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.tool-versions'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace dependencies
+        run: pnpm -r build
+      - name: Journal SQLite manager/child qualification gates
+        run: node --test --test-reporter=tap --test-force-exit --test-timeout=60000 scripts/journal-sqlite-adapter-qualification.mjs
+      - name: Package the untagged server candidate
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          node scripts/package-server.mjs --output-dir out-journal-package --target "$TARGET" --expected-version "$VERSION"
+      - name: Qualify the extracted candidate resolves the storage child
+        run: |
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          JOURNAL_PACKAGE_TARBALL="out-journal-package/agentbrowser-server-$TARGET.tar.gz" \
+            node --test --test-reporter=tap --test-force-exit --test-timeout=120000 scripts/journal-sqlite-packaging-gate.mjs

@@ -106,8 +106,9 @@ smoke, Journal SQLite gates, `build`, `deploy`) are safe under both rules:
   (the docs workflow's `deploy` → `build` edge is covered below);
 - `deploy` (docs site) is required but skipped on every pull request by design, so it never
   blocks a PR; it is a publication step, not a test, and its `build` sibling runs on every PR;
-- pull requests run every workflow unfiltered (`paths-ignore`/`paths` apply to pushes only),
-  so a docs-only PR cannot strand a required context;
+- every workflow that produces a required context runs unfiltered on pull requests
+  (`paths-ignore`/`paths` apply to pushes only), so a docs-only PR cannot strand one; the
+  path-filtered macOS journal leg (`journal-darwin.yml`) is deliberately not required;
 - in `release.yml` every job `needs:` `tag-guard` and none uses `always()`/`!cancelled()`/
   `failure()` (pinned by `check-tag-ancestry.test.mjs`), so a failed or canceled
   prerequisite skips the publish jobs instead of running them.
