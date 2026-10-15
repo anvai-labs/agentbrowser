@@ -280,9 +280,14 @@ The operator-only recovery writes, on a real store, through the service and over
   the marker hashes for operation IDs longer than the evidence-ref bound (a 128-character ID
   closes, marker deterministic); the recovery gate is the OPEN journal, not the accept horizon
   (settle works after ACCEPT_UNTIL passes — the design's deadline is retainUntil, which the store
-  enforces); `truncated` is surfaced in both responses (17 matching records report
-  `{closed: 16, truncated: true}`); the HTTP seeding harness cleans its environment, store handle
-  and temp directory on failure paths.
+  enforces); `truncated` is surfaced in both responses AND the recovery window advances: the
+  recovery query asks for actionable records only (`actionableOnly` on the J3a port — terminal
+  records leave the SQL window), so 17 undispatched records close in two acts of 16+1 with none
+  stranded, and an exhausted operation then reads as absent (404), never re-acted. Recovery
+  writes keep their own per-tenant rate bucket with their own message (an API key's reads cannot
+  starve the operator's writes), the store's refusal reason is surfaced on 503s, and the HTTP
+  seeding harness cleans its environment, store handle and temp directory on failure paths
+  (finally-verified).
 - **Tests.** `journal-recovery.test.ts`: five service-level cases plus the HTTP case (operator
   closes, API key 403, re-close 409), seeding through the journal facade on a store the keyed
   server reopens. **Not in this part:** continue with `supersedes` and the adapter `reconcile`
