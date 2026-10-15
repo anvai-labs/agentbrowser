@@ -1,7 +1,8 @@
 # T4 Q0a application callback qualification
 
 Base: develop `e69317ac8521228e84c189f69608dd3144e234f5`, after released 1.9.1.
-Status: local qualification complete; PR/integration checks remain delivery gates.
+Status: **delivered** — merged to develop as PR #236 (`1d7f37b`, 2026-09-21), first released in
+1.10.0. (Status line corrected 2026-10-15; it previously still read as a local candidate.)
 Scope and invariants: [design](../design/t4-application-callback-contracts.md).
 
 ## Shared implementation
