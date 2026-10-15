@@ -3,8 +3,15 @@ import { UsageError } from './errors.js';
 import { PlanStepSchema } from './schemas.js';
 import { parseExecutionReport, validatePlanStep } from './validators.js';
 
+/**
+ * T0 aggregate input limit: a plan carries at most this many steps. Plans are legitimately longer
+ * than an `act` batch (MAX_BATCH_STEPS = 20), so the two caps are separate. Over the cap the
+ * request is refused before anything executes; split the work into several plans.
+ */
+export const MAX_PLAN_STEPS = 100;
+
 /** Existing wire semantics: an empty plan and additive step fields remain accepted. */
-export const PlanActionsSchema = Type.Array(PlanStepSchema);
+export const PlanActionsSchema = Type.Array(PlanStepSchema, { maxItems: MAX_PLAN_STEPS });
 export const PlanRequestSchema = Type.Object({ actions: PlanActionsSchema });
 
 export const PlanReportSchema = Type.Object(
@@ -32,6 +39,10 @@ export type PlanReport = Static<typeof PlanReportSchema>;
 
 export function parsePlanSteps(input: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(input)) throw new UsageError('actions must be an array of plan steps.');
+  if (input.length > MAX_PLAN_STEPS)
+    throw new UsageError(
+      `A plan accepts at most ${MAX_PLAN_STEPS} steps; got ${input.length}. Split it into several plans.`
+    );
   for (const [index, step] of input.entries()) {
     const validated = validatePlanStep(step);
     if (!validated.ok) {

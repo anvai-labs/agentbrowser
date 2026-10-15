@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — plans are capped at 100 steps (T0)
+
+- A plan now accepts at most **`MAX_PLAN_STEPS` = 100** steps (new protocol export, separate from the
+  20-step `act` batch cap). The cap is enforced in `AgentBrowserService.executePlan` itself, so no
+  caller bypasses it, and on every surface before dispatch: REST `/plan` answers
+  `400 INVALID_REQUEST` naming the limit; `/outcomes` (an outcome run's `actions` carry the same
+  `maxItems`) answers `400 INVALID_REQUEST` with its usual generic message; the MCP `plan` tool advertises `maxItems` and refuses locally; the CLI `plan` command refuses
+  locally; the SDK receives the server's refusal. Nothing executes for an over-limit plan. Split
+  longer work into several plans. Plan *reports* are unaffected.
+
 ### Added — confirmed vs suspected findings, and a role-access fixture (T7)
 
 - **Scanner alerts are labelled.** Every `ScannerFinding` now carries `status: 'suspected'`;

@@ -147,6 +147,9 @@ describe('AgentBrowser MCP server', () => {
           .label.maxLength
       ).toBe(512);
       expect(autofill.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+      const plan = tools.find((tool: { name: string }) => tool.name === 'plan');
+      expect(plan.inputSchema.properties.actions.maxItems).toBe(100);
+      expect(plan.description).toContain('at most 100 steps per plan');
     });
 
     it('preserves legacy text-only catalogs and successful calls', async () => {
@@ -508,6 +511,22 @@ describe('AgentBrowser MCP server', () => {
         })
       ).result;
       expect(result.isError).toBe(true);
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
+    it('refuses a plan over MAX_PLAN_STEPS locally, naming the limit, and never proxies it', async () => {
+      const result = JSON.parse(
+        await call('over-cap-plan', 'plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: Array.from({ length: 101 }, () => ({
+            action: 'hover',
+            target: { ref: 'e1_0' },
+          })),
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('A plan accepts at most 100 steps; got 101');
       expect(sessions.plan).not.toHaveBeenCalled();
     });
 

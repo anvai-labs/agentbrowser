@@ -3,6 +3,7 @@ import { OperationIdSchema } from './control.js';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import {
   createPlanReportParser,
+  MAX_PLAN_STEPS,
   type PlanReport,
   PlanReportSchema,
   parsePlanReport,
@@ -91,7 +92,7 @@ const evidenceCorrelationIdSchema: TString = {
 export const OutcomeRunRequestSchema = Type.Object(
   {
     // A UI outcome must exercise the UI seam; an empty plan cannot attest it.
-    actions: Type.Array(PlanStepSchema, { minItems: 1 }),
+    actions: Type.Array(PlanStepSchema, { minItems: 1, maxItems: MAX_PLAN_STEPS }),
     verification: Type.Object(
       {
         verifier: Type.Object({ id: identifier(), version: identifier() }, strict),
