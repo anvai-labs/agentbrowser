@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { AgentBrowserClient } from '@agentbrowser/sdk-typescript';
 import { describe, expect, it, vi } from 'vitest';
 import type { McpClient } from './mcp-server';
-import { buildMcpServer } from './mcp-server';
+import { buildMcpServer, INFLIGHT_COUNT } from './mcp-server';
 
 function harness() {
   let signalOf: (() => AbortSignal | undefined) | undefined;
@@ -51,7 +51,7 @@ function harness() {
     send({ id, method: 'tools/call', params: { name, arguments: args } });
   const cancel = (requestId: number | string) =>
     send({ method: 'notifications/cancelled', params: { requestId, reason: 'user stopped' } });
-  return { send, call, cancel, sessions, signalsSeen, blocking };
+  return { send, call, cancel, sessions, signalsSeen, blocking, server };
 }
 
 const tick = () => new Promise((settle) => setTimeout(settle, 10));
@@ -175,5 +175,96 @@ describe('MCP request cancellation', () => {
       service.closeAllConnections();
       await new Promise<void>((resolve) => service.close(() => resolve()));
     }
+  });
+
+  it('a cancelled create still frees the session it created (cleanup runs outside the cancel)', async () => {
+    let signalOf: (() => AbortSignal | undefined) | undefined;
+    const closeSignals: Array<AbortSignal | undefined> = [];
+    const sessions = {
+      create: vi.fn().mockResolvedValue({ sessionId: 'ses_new', status: 'ready' }),
+      createPage: vi.fn(async () => {
+        const signal = signalOf?.();
+        await new Promise<void>((_, reject) =>
+          signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('cancelled'), { code: 'CANCELLED' }))
+          )
+        );
+      }),
+      close: vi.fn(async () => {
+        closeSignals.push(signalOf?.());
+      }),
+    };
+    const server = buildMcpServer({
+      createClient: (options: { requestSignal?: () => AbortSignal | undefined }) => {
+        signalOf = options.requestSignal;
+        return { sessions } as unknown as McpClient;
+      },
+    } as never);
+    const pending = server.handle(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'create-1',
+        method: 'tools/call',
+        params: { name: 'create', arguments: { tenantId: 't' } },
+      })
+    );
+    await vi.waitFor(() => expect(sessions.createPage).toHaveBeenCalled());
+    await server.handle(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'notifications/cancelled',
+        params: { requestId: 'create-1' },
+      })
+    );
+    expect(await pending).toBeNull();
+    expect(sessions.close).toHaveBeenCalledWith('ses_new');
+    // The cleanup request carried no (cancelled) caller signal, so the SDK really sends it.
+    expect(closeSignals).toEqual([undefined]);
+  });
+
+  it('two in-flight calls reusing one id: the first finishing does not unregister the second', async () => {
+    const h = harness();
+    let release!: () => void;
+    h.sessions.snapshot.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              url: 'https://example.com',
+              title: 'x',
+              revision: 1,
+              mode: 'stable',
+              fields: [],
+            });
+        })
+    );
+    const first = h.call(5, 'snapshot', { sessionId: 'ses_1', pageId: 'pg_1' });
+    await tick();
+    const second = h.call(5, 'observe', { sessionId: 'ses_1', pageId: 'pg_1' });
+    await tick();
+    release();
+    expect(JSON.parse((await first) ?? 'null').result).toBeDefined();
+    // The cancel must still reach the live second call.
+    await h.cancel(5);
+    expect(await second).toBeNull();
+    expect(h.signalsSeen.at(-1)?.aborted).toBe(true);
+  });
+
+  it('the in-flight table drains after success, error and cancel', async () => {
+    const h = harness();
+    const server = h.server;
+    await h.call(1, 'snapshot', { sessionId: 'ses_1', pageId: 'pg_1' });
+    expect(server[INFLIGHT_COUNT]()).toBe(0);
+    h.sessions.snapshot.mockRejectedValueOnce(
+      Object.assign(new Error('boom'), { code: 'NOT_FOUND' })
+    );
+    await h.call(2, 'snapshot', { sessionId: 'ses_1', pageId: 'pg_1' });
+    expect(server[INFLIGHT_COUNT]()).toBe(0);
+    const pending = h.call(3, 'observe', { sessionId: 'ses_1', pageId: 'pg_1' });
+    await tick();
+    expect(server[INFLIGHT_COUNT]()).toBe(1);
+    await h.cancel(3);
+    await pending;
+    expect(server[INFLIGHT_COUNT]()).toBe(0);
   });
 });

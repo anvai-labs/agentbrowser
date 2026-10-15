@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AgentBrowserClient } from './client.js';
@@ -72,4 +73,21 @@ describe('caller cancellation (requestSignal)', () => {
     const client = new AgentBrowserClient({ baseUrl, requestSignal: () => undefined });
     await expect(client.sessions.get('ses_1')).resolves.toMatchObject({ status: 'success' });
   }, 10_000);
+
+  it('one long-lived signal across many requests leaves no abort listeners behind', async () => {
+    server = createServer((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end('{"status":"success"}');
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing address');
+    const controller = new AbortController();
+    const client = new AgentBrowserClient({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+      requestSignal: () => controller.signal,
+    });
+    for (let i = 0; i < 20; i += 1) await client.sessions.get('ses_1');
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+  });
 });

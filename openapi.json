@@ -2725,6 +2725,7 @@
                 ],
                 "properties": {
                   "actions": {
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/components/schemas/PlanStep"
@@ -7415,8 +7416,7 @@
             "type": "object",
             "required": [
               "name",
-              "version",
-              "capabilities"
+              "version"
             ],
             "properties": {
               "name": {
@@ -7616,8 +7616,7 @@
         "type": "object",
         "required": [
           "name",
-          "version",
-          "capabilities"
+          "version"
         ],
         "properties": {
           "name": {
@@ -9505,6 +9504,7 @@
         "properties": {
           "actions": {
             "minItems": 1,
+            "maxItems": 100,
             "type": "array",
             "items": {
               "type": "object",

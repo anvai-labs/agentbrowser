@@ -28,6 +28,8 @@ import {
   NavigationStatusSchema,
   navigationFailureDetail,
   ObservationRequestSchema,
+  PageListResultSchema,
+  PageResponseSchema,
   PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
@@ -38,6 +40,9 @@ import {
   parsePlanSteps,
   parseScreenshotRequest,
   ScreenshotRequestSchema,
+  SessionClosedResultSchema,
+  SessionCreatedResultSchema,
+  SessionEventsPageResultSchema,
   UsageError,
   validateWireAction,
   WireActionEnvelopeSchema,
@@ -100,6 +105,16 @@ export interface McpServer {
   /** Handle one JSON-RPC message. Returns null for notifications. */
   handle(line: string): Promise<string | null>;
 }
+
+/**
+ * MCP cancellation: each tools/call runs inside its own abort scope; the SDK reads the scope's
+ * signal at the start of every HTTP request it makes for that call. Cleanup that must outlive a
+ * cancel (freeing what the call created) runs outside it via `requestScope.exit`.
+ */
+const requestScope = new AsyncLocalStorage<AbortSignal>();
+
+/** Test-only introspection: the number of tracked in-flight tools/call requests. */
+export const INFLIGHT_COUNT: unique symbol = Symbol('agentbrowser.mcp.inflightCount');
 
 const LEGACY_PROTOCOL_VERSION = '2024-11-05';
 const STRUCTURED_PROTOCOL_VERSION = '2025-06-18';
@@ -294,6 +309,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['tenantId'],
       },
+      outputSchema: SessionCreatedResultSchema,
       handler: async (args) => {
         if (typeof args.tenantId !== 'string' || args.tenantId.length === 0) {
           throw new UsageError('tenantId is required and must be a non-empty string.');
@@ -334,8 +350,9 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           return { ...session, pageId: page.pageId };
         } catch (error) {
           // Provisioning owns this new session; do not strand its resources (or
-          // the exclusive operator attachment) when the first page fails.
-          await client.sessions.close(session.sessionId).catch(() => {});
+          // the exclusive operator attachment) when the first page fails — including when the
+          // call was cancelled: the close runs outside the cancelled call's abort scope.
+          await requestScope.exit(() => client.sessions.close(session.sessionId)).catch(() => {});
           throw error;
         }
       },
@@ -354,6 +371,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' }, url: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: PageResponseSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         const request = args.url === undefined ? undefined : { url: requireHttpUrl(args.url) };
@@ -407,6 +425,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: PageListResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (!client.sessions.listPages)
@@ -591,7 +610,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       outputSchema: PlanReportSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
       description:
-        'Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). Best paired with snapshot: address refs from its `fields` in one round trip. A step for a field that only appears after a prior step may declare waitForLabel (substring of the element name) instead of target — the executor waits (waitMs, default 5000) and resolves the ref; a miss aborts with PLAN_WAIT_TIMEOUT. On forms with repeated labels, keep a plan to one section and re-observe between sections: self-heal matches by role and label, so identical labels abort long plans even when every ref was valid at start. Inspect per-step results and partial effects; completion does not prove an application commit.',
+        'Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). Best paired with snapshot: address refs from its `fields` in one round trip. A step for a field that only appears after a prior step may declare waitForLabel (substring of the element name) instead of target — the executor waits (waitMs, default 5000) and resolves the ref; a miss aborts with PLAN_WAIT_TIMEOUT. On forms with repeated labels, keep a plan to one section and re-observe between sections: self-heal matches by role and label, so identical labels abort long plans even when every ref was valid at start. Inspect per-step results and partial effects; completion does not prove an application commit.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -621,6 +640,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: SessionClosedResultSchema,
       handler: async (args) => {
         if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
           throw new UsageError('sessionId is required and must be a non-empty string.');
@@ -897,6 +917,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId', 'pageId'],
       },
+      outputSchema: ArtifactRefSchema,
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         return await client.sessions.pdf(sessionId, pageId, {
@@ -995,6 +1016,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId'],
       },
+      outputSchema: SessionEventsPageResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (typeof client.sessions.events !== 'function')
@@ -1020,9 +1042,6 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
  * Build the MCP server with its tool catalog.
  */
 export function buildMcpServer(deps: McpDependencies): McpServer {
-  // MCP cancellation: each tools/call runs inside its own abort scope; the SDK reads the scope's
-  // signal at the start of every HTTP request it makes for that call.
-  const requestScope = new AsyncLocalStorage<AbortSignal>();
   const inflight = new Map<string, AbortController>();
   const client = deps.createClient({
     baseUrl: deps.baseUrl ?? 'http://localhost:5709',
@@ -1083,7 +1102,8 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   // Per connection; pre-initialization calls retain the historical text-only behavior.
   let protocolVersion: string | undefined;
 
-  return {
+  const server = {
+    [INFLIGHT_COUNT]: () => inflight.size,
     async handle(line: string): Promise<string | null> {
       let message: {
         id?: string | number | null;
@@ -1129,6 +1149,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       return respond({ ...message, id: message.id });
     },
   };
+  return server;
 
   async function respond(message: {
     id: string | number;
@@ -1162,7 +1183,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
               inputSchema,
               ...(protocolVersion === STRUCTURED_PROTOCOL_VERSION
                 ? {
-                    ...(outputSchema ? { outputSchema } : {}),
+                    ...(outputSchema ? { outputSchema: advertisedOutputSchema(outputSchema) } : {}),
                     ...(annotations ? { annotations } : {}),
                   }
                 : {}),
@@ -1320,4 +1341,40 @@ function ok(id: string | number, result: unknown): string {
 
 function error(id: string | number | null, code: number, message: string): string {
   return JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
+/**
+ * The structured-error envelope every tool error carries on the structured protocol
+ * (`{error: {code, message, operationId?}}`; navigation failures add their reason).
+ */
+const TOOL_ERROR_ENVELOPE = {
+  type: 'object',
+  required: ['error'],
+  properties: {
+    error: {
+      type: 'object',
+      properties: {
+        code: { type: 'string' },
+        message: { type: 'string' },
+        operationId: { type: 'string' },
+      },
+    },
+  },
+} as const;
+
+/**
+ * The outputSchema a tool advertises: its result schema OR the structured-error envelope.
+ * MCP clients (the official TypeScript SDK among them) validate structuredContent against
+ * outputSchema even on isError results, so a success-only schema turns every structured error
+ * into a client-side -32602 and the agent never sees the error. The root stays an object (the
+ * MCP tool contract) and keeps the result schema's $id; the nested copy drops it so no
+ * validator sees the same $id twice.
+ */
+export function advertisedOutputSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const { $id, ...result } = schema;
+  return {
+    ...($id !== undefined ? { $id } : {}),
+    type: 'object',
+    anyOf: [result, TOOL_ERROR_ENVELOPE],
+  };
 }
