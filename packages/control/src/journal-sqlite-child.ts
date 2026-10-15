@@ -184,7 +184,12 @@ try {
         | undefined;
       try {
         openOutcome = store.mutate((tx: JournalSqliteTransaction) => {
-          const result = openJournalSqliteRecords(tx, message.descriptor, clock.now(), clock.wall());
+          const result = openJournalSqliteRecords(
+            tx,
+            message.descriptor,
+            clock.now(),
+            clock.wall()
+          );
           return result.kind === 'opened'
             ? { kind: 'opened' as const, ownerFence: result.ownerFence }
             : { kind: 'refused' as const, reason: result.reason };
