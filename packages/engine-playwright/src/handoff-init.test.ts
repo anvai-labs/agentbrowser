@@ -75,19 +75,20 @@ describe('TD-BROWSER-16 phase 6: handoff engine pieces', () => {
     // argv; the login suite's precedent is a warned skip there — CI runners
     // expose the full cmdline and the assertion runs for real.
     let warned = false;
-    const readArgv = async (): Promise<string[] | undefined> => {
+    const readArgvs = async (): Promise<string[][]> => {
       const { readFile, readdir } = await import('node:fs/promises');
+      const argvs: string[][] = [];
       for (const entry of await readdir('/proc').catch(() => [] as string[])) {
         if (!/^\d+$/.test(entry)) continue;
         const cmdline = await readFile(`/proc/${entry}/cmdline`, 'utf8').catch(() => '');
         const argv = cmdline.split('\0');
-        if (argv.includes('--remote-debugging-pipe')) return argv;
+        if (argv.includes('--remote-debugging-pipe')) argvs.push(argv);
       }
-      if (!warned) {
+      if (argvs.length === 0 && !warned) {
         warned = true;
         console.warn('handoff-init test: chromium argv not found; flag assert skipped');
       }
-      return undefined;
+      return argvs;
     };
 
     const plain = new PlaywrightChromiumEngine();
@@ -95,9 +96,10 @@ describe('TD-BROWSER-16 phase 6: handoff engine pieces', () => {
       const session = await plain.createSession({});
       const page = await session.newPage();
       await page.navigate({ url: 'about:blank' });
-      const plainArgv = await readArgv();
-      if (plainArgv !== undefined)
-        expect(plainArgv.some((token) => token.startsWith('--force-webrtc'))).toBe(false);
+      const plainArgvs = await readArgvs();
+      if (plainArgvs.length > 0)
+        for (const argv of plainArgvs)
+          expect(argv.some((token) => token.startsWith('--force-webrtc'))).toBe(false);
       await session.close('done');
     } finally {
       await plain.close();
@@ -108,9 +110,17 @@ describe('TD-BROWSER-16 phase 6: handoff engine pieces', () => {
       const session = await forced.createSession({});
       const page = await session.newPage();
       await page.navigate({ url: 'about:blank' });
-      const forcedArgv = await readArgv();
-      if (forcedArgv !== undefined)
-        expect(forcedArgv).toContain('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
+      // The previous engine's chromium may still be tearing down; poll until
+      // SOME live chromium carries the flag (bounded), then assert.
+      let flagged: string[] | undefined;
+      for (let attempt = 0; attempt < 50 && flagged === undefined; attempt += 1) {
+        flagged = (await readArgvs()).find((argv) =>
+          argv.includes('--force-webrtc-ip-handling-policy=disable_non_proxied_udp')
+        );
+        if (flagged === undefined) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      if (flagged !== undefined || (await readArgvs()).length > 0)
+        expect(flagged).toContain('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
       await session.close('done');
     } finally {
       await forced.close();
