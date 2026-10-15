@@ -47,6 +47,9 @@ it('takes the true median for odd and even sample sizes', () => {
   assert.equal(median([]), 0);
   assert.equal(median([5, 1, 3]), 3);
   assert.equal(median([4, 1, 3, 2]), 2.5);
+  // Multi-digit values catch a lexicographic (default) sort.
+  assert.equal(median([10, 9, 2]), 9);
+  assert.equal(median([10, 9, 2, 100]), 9.5);
 });
 
 it('never reports negative minutes for clock-skewed timestamps', () => {

@@ -1,6 +1,6 @@
 # T9: CI runner minutes (measured baseline)
 
-**Measured:** 2026-10-15T17:43Z, by [`scripts/runner-minutes.mjs`](../../../scripts/runner-minutes.mjs)
+**Measured:** 2026-10-15T18:06Z, by [`scripts/runner-minutes.mjs`](../../../scripts/runner-minutes.mjs)
 (`node scripts/runner-minutes.mjs --runs 10`).
 
 The script samples the last 10 successful runs per workflow through the GitHub API (read-only,
@@ -14,19 +14,19 @@ self-hosted runner is listed outright, because a median would hide it.
 - no macOS or Windows minute multipliers;
 - figures are per CI round, so a pull request with several pushes uses a multiple.
 
-| Workflow | Runs | Jobs | Wall min | Hosted job min | Hosted billed min | Self-hosted job min | Triggers sampled |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `ci.yml` | 10 | 9 | 7.3 | 16.5 | 20.5 | 0 | pull_request, push |
-| `windows-ci.yml` | 10 | 1 | 4.1 | 4.0 | 4.5 | 0 | pull_request, push |
-| `journal-darwin.yml` | 8 | 1 | 1.7 | 1.5 | 2 | 0 | pull_request (journal paths) |
-| `docs.yml` | 10 | 1 | 0.6 | 0.5 | 1 | 0 | pull_request |
-| `release.yml` | 10 | 13 | 8.9 | 16.2 | 22.5 | 0 | push (tags) |
-| Dependabot updates | 10 | 1 | 1.3 | 1.2 | 2 | 0 | dynamic |
-| Dependabot update-graph | 2 | 1 | 0.8 | 0.7 | 1 | 0 | dynamic |
+| Workflow | Runs | Jobs | Wall min | Hosted job min | Hosted billed min | Self-hosted job min (median) | Runs with self-hosted jobs | Triggers sampled |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `ci.yml` | 10 | 9 | 7.1 | 16.6 | 21 | 0 | — | pull_request, push |
+| `windows-ci.yml` | 10 | 1 | 3.8 | 3.7 | 4 | 0 | — | pull_request, push |
+| `journal-darwin.yml` | 8 | 1 | 1.7 | 1.4 | 2 | 0 | — | pull_request (journal paths) |
+| `docs.yml` | 10 | 1 | 0.6 | 0.5 | 1 | 0 | — | pull_request |
+| `release.yml` | 10 | 13 | 8.9 | 16.2 | 22.5 | 0 | **37161202430** | push (tags) |
+| Dependabot updates | 10 | 1 | 1.3 | 1.2 | 2 | 0 | — | dynamic |
+| Dependabot update-graph | 2 | 1 | 0.8 | 0.7 | 1 | 0 | — | dynamic |
 
 ## Reading it
 
-- **Per CI round on a pull request:** about 26 billed hosted minutes (CI, Windows and `docs.yml`,
+- **Per CI round on a pull request:** about 26 billed hosted minutes (21 CI + 4 Windows + 1 `docs.yml`,
   which runs on every PR). Journal-path PRs add about 2 macOS minutes. Pull requests always run
   everything, because `paths-ignore` applies to pushes only.
 - **Runner type:** all sampled jobs ran on GitHub-hosted runners **except in one release run**,
