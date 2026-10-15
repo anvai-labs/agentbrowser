@@ -2659,22 +2659,38 @@ export class AgentBrowserService {
     principal: SessionPrincipal,
     publication?: Parameters<ApplicationAuthority['discover']>[2]
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
-    const discovery = (await this.applicationAuthority.discover(
-      sessionId,
-      principal,
-      publication
-    )) as Record<string, unknown>;
-    // C4b: surface the execution-requirement capability so callers can
-    // discover what the runtime supports before dispatching.
-    return {
-      ...discovery,
-      writeExecution: {
-        defaultRequirement: 'ephemeral',
-        supportedRequirements: this.durableJournalAvailable
-          ? ['ephemeral', 'durable']
-          : ['ephemeral'],
-      },
-    } as unknown as Awaited<ReturnType<ApplicationAuthority['discover']>>;
+    // C4b: surface the execution-requirement capability so callers can discover what the
+    // runtime supports before dispatching. It is added on the PUBLISHED value too (REST
+    // publishes, it does not use the return value), and never to "nothing bound" (null).
+    type Discovery = Awaited<ReturnType<ApplicationAuthority['discover']>>;
+    const withWriteExecution = <T extends Discovery>(discovery: T): T =>
+      discovery === null || 'replay' in discovery
+        ? discovery
+        : ({
+            ...discovery,
+            writeExecution: {
+              defaultRequirement: 'ephemeral',
+              // Durable is advertised only once it is part of the operation identity (J-b);
+              // until then execute refuses it even with a qualified store.
+              supportedRequirements: ['ephemeral'],
+            },
+          } as unknown as T);
+    // Snapshot first (validates and captures publish now, as every publication path does).
+    const options = publication === undefined ? undefined : snapshotPublication(publication);
+    const published =
+      options === undefined
+        ? undefined
+        : {
+            timeoutMs: options.timeoutMs,
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
+            publish: (
+              value: Parameters<typeof options.publish>[0],
+              context: Parameters<typeof options.publish>[1]
+            ) => options.publish(withWriteExecution(value), context),
+          };
+    return withWriteExecution(
+      await this.applicationAuthority.discover(sessionId, principal, published)
+    );
   }
 
   /** Allocate one pending review; no execution identity is reserved or dispatched. */
@@ -2791,6 +2807,8 @@ export class AgentBrowserService {
         false
       );
     }
+    // 'ephemeral' (explicit or omitted) passes through: the authority's request normalizer drops
+    // it behind its own caller-data checks, and refuses any other requirement.
     return this.applicationAuthority.execute(
       sessionId,
       principal,
