@@ -38,19 +38,32 @@ export const ApplicationOperationDescriptorSchema = Type.Object(
   strict
 );
 
+export const ExecutionRequirementSchema = Type.Union([
+  Type.Literal('ephemeral'),
+  Type.Literal('durable'),
+]);
+
 export const ApplicationDiscoverySchema = Type.Object(
   {
     adapter: Type.String(),
     resource: Type.String(),
     operations: Type.Array(ApplicationOperationDescriptorSchema, { maxItems: 256 }),
+    /** C4b: which write execution requirements this runtime supports (durable needs a store). */
+    writeExecution: Type.Optional(
+      Type.Object(
+        {
+          defaultRequirement: Type.Literal('ephemeral'),
+          supportedRequirements: Type.Array(ExecutionRequirementSchema, {
+            minItems: 1,
+            maxItems: 2,
+          }),
+        },
+        strict
+      )
+    ),
   },
   strict
 );
-
-export const ExecutionRequirementSchema = Type.Union([
-  Type.Literal('ephemeral'),
-  Type.Literal('durable'),
-]);
 
 export const ApplicationExecuteRequestSchema = Type.Object(
   {

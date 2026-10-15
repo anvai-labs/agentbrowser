@@ -75,5 +75,6 @@ dependency was added. Installed Codex AND Claude cursor consumption are qualifie
 (2026-10-03: the full delegate/takeover/resume/re-delegate choreography
 through both provider tool-call paths — see the T1 evidence record's
 dated sections); Victor's live loop stays blocked on the Sandhi TLS
-trust decision. The loader, cursor and
+trust decision. (Owner reconciliation 2026-10-15: the current blocker is aiserver1's gateway, which has no
+registered upstream, ahead of any TLS question.) The loader, cursor and
 catalog projection do not confer permissions.

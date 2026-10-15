@@ -74,24 +74,47 @@ export interface ApplicationOperation {
   prepare(input: unknown): (scope: ApplicationScope) => Promise<ApplicationResult>;
 }
 
-/** Type-check adapter input/output while keeping validation inside admission. */
+/**
+ * Type-check adapter input/output while keeping validation inside admission. An optional
+ * `parseOutput` validates (and may normalize) a read/committed value: a mismatch fails with a
+ * static `Invalid application output` and never reports success. For a write the effect has
+ * already run, so the operation stays dispatched; reconcile it by receipt, never by re-running.
+ */
 export function defineApplicationOperation<Input, Output>(operation: {
   mode: 'read' | 'write';
   review?: 'operator-submit';
   parse(input: unknown): Input;
   execute(input: Input, scope: ApplicationScope): Promise<ApplicationResult<Output>>;
+  parseOutput?(value: unknown): Output;
 }): ApplicationOperation {
   const mode = operation.mode;
   const review = operation.review;
   validateReviewDeclaration(mode, review);
   const parse = operation.parse.bind(operation);
   const execute = operation.execute.bind(operation);
+  const parseOutput = operation.parseOutput?.bind(operation);
   return Object.freeze({
     mode,
     ...(review !== undefined ? { review } : {}),
     prepare(input: unknown) {
       const parsed = parse(input);
-      return (scope: ApplicationScope) => execute(parsed, scope);
+      if (parseOutput === undefined) return (scope: ApplicationScope) => execute(parsed, scope);
+      return async (scope: ApplicationScope): Promise<ApplicationResult> => {
+        const result = await execute(parsed, scope);
+        if (result.status === 'rejected') return result;
+        let value: Output;
+        try {
+          value = parseOutput(result.value);
+        } catch {
+          // Static diagnostics: neither the adapter output nor the parser's message is echoed.
+          // A read is refused like any invalid read result. A write's effect has already run, so
+          // it is an internal adapter fault (HTTP 500, outcome unknown), never a 400 that invites
+          // the caller to "fix the request" and repeat the side effect.
+          if (mode === 'write') throw new Error('Invalid application output');
+          throw new ControlError('INVALID_REQUEST', 'Invalid application output');
+        }
+        return { status: result.status, value };
+      };
     },
   });
 }
@@ -149,7 +172,14 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
   try {
     if (!request || Object.getPrototypeOf(request) !== Object.prototype) throw new Error();
     const own = Object.getOwnPropertyDescriptors(request);
-    const allowed = ['operation', 'input', 'operationId', 'expectedVersion', 'approvalToken'];
+    const allowed = [
+      'operation',
+      'input',
+      'operationId',
+      'expectedVersion',
+      'approvalToken',
+      'executionRequirement',
+    ];
     if (
       Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !allowed.includes(key)) ||
       Object.values(own).some((field) => !field.enumerable || !Object.hasOwn(field, 'value')) ||
@@ -161,6 +191,11 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
     const operationId = own.operationId?.value;
     const expectedVersion = own.expectedVersion?.value;
     const approvalToken = own.approvalToken?.value;
+    // C4b: 'ephemeral' is the default made explicit and is dropped here, so explicit and omitted
+    // requests share one canonical identity. Any other requirement (including 'durable' until it
+    // is part of the operation identity) is refused, so nothing can silently run as ephemeral.
+    if (own.executionRequirement !== undefined && own.executionRequirement.value !== 'ephemeral')
+      throw new Error();
     if (
       typeof operation !== 'string' ||
       !CONTROL_OPERATION_ID.test(operation) ||

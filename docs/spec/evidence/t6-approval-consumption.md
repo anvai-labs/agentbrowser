@@ -2,7 +2,8 @@
 
 Base: develop `f12ac89fc17e86ff06222059fcf37acc60af4fb7` (PR #239).
 Scope: C0 of the [reviewed-payload design](../design/t6-reviewed-payload-consent.md).
-This is local candidate evidence; PR and post-merge results remain delivery gates.
+Status: **delivered** — merged to develop as PR #240 (`4b9b155`, 2026-09-21), first released in
+1.10.0. (Status line corrected 2026-10-15; it previously still read as local candidate evidence.)
 Published 1.9.1 and logged-in services are unchanged.
 
 ## Reproduction and repair

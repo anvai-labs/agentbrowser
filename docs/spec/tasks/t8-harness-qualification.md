@@ -97,7 +97,8 @@ qualified at the CLI/service level (slice 1); since 2026-10-15 the MCP server ho
 `packages/mcp-server/src/cancellation.test.ts`), but no provider-path run exists yet; MCP client-internal reply correlation is provider-client
 semantics qualified at the manager/bridge level. Still open: the same
 treatment on Victor (TLS trust operator call) and Claude (additional
-coverage).
+coverage). (Owner reconciliation 2026-10-15: the current blocker is aiserver1's gateway, which has no
+registered upstream, ahead of any TLS question.)
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 

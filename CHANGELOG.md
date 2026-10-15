@@ -16,6 +16,38 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   rollback check) still uses the plain wall reading, so no persisted value derives from the
   monotonic source and restart behaviour is unchanged.
 
+### Docs — release records and task-status reconciliation
+
+- Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).
+- The task table and manifest match the 2026-10-15 reconciliation: T1 is active, T7 complete, the
+  Victor gate is aiserver1's gateway (not TLS), and C4b is partial. Stale "candidate" status lines
+  on three delivered evidence records are corrected, C3b cites #254, the T9 checkpoint names the
+  current protections, and the release guide no longer claims the upload permits clobbering.
+
+### Fixed — the execution requirement as shipped (T5 C4b, part 1)
+
+- An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
+  invalid request; the authority's request normalizer now accepts it as the default made
+  explicit and drops it behind its existing caller-data checks, so explicit and omitted requests
+  share one operation identity (the second is a replay, not a conflict). `durable` is refused
+  before any identity is reserved, and stays refused even with a durable store configured until
+  it is part of the operation identity; discovery advertises only `ephemeral` until then.
+- REST discovery (`GET …/application`) now publishes `writeExecution` (it was added only to the
+  service's return value, which REST does not send), and "nothing bound" stays `null` instead of
+  becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
+
+### Added — declared adapter output (T4)
+
+- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not
+  match is never reported as success, and neither the adapter output nor the parser's message
+  is echoed; a matching value is replaced by the parsed one.
+  - A mismatched **read** is refused like any invalid read result (`400 INVALID_REQUEST`,
+    `Invalid application output`).
+  - A mismatched **write** has already run: it is an internal adapter fault (`500 INTERNAL`), its
+    operation stays dispatched with `outcome_unknown`, and the same operation ID never executes
+    again.
+  - Rejected results skip the parser; operations without `parseOutput` are unchanged.
+
 ### Added — MCP request cancellation (T0/T8)
 
 - The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is
