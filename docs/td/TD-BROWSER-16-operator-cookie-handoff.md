@@ -224,6 +224,31 @@ size bound unenforced (count only), and 400/409 undocumented in the OpenAPI for 
   - `application.execute` is refused;
   - the write-path checklist passes.
 
+**Delivered (phase 5, #466):** `credentialSource` enters the code as a **service-level** marking —
+a `ServiceSessionRequest` field plus an internal `markOperatorCredentialSource` (what phase 6's
+handoff calls); no agent-facing schema accepts it, and the session view reports it read-only. The
+override lives in `checkApproval` ahead of the allow early-return: a policy `deny` stands above
+everything; in a marked session an `unknown` effect first tries the lease (one count per action on
+a covered host), and otherwise high-risk AND unknown route to the delegated reviewed branch —
+whose request now stamps `kind: 'act.reviewed'`, overriding any per-rule/Cedar allow. That
+stamping exposed two latent phase-1 gaps, both fixed: `ApprovalGate.allocate` spread the binding
+after the storage `kind` (every kind-stamped reviewed approval threw `Invalid token kind`), and
+`getApprovalKind` treated `'act.reviewed'` as non-act — the simple decide-and-burn path would have
+burned it on decide (`useApprovalTokenWithOutcome` requires a confirmation record), making it
+unconsumable; `'act.reviewed'` is act-family and keeps the delegated decide path. The view schema
+gained the optional kind (strict parse had rejected it). The lease: `POST
+/v1/sessions/{sessionId}/lease`, human-operator key only (an API-key operator gets the FORBIDDEN
+floor), bounds `≤16 hosts / ≤4 h / ≤500 actions`, every host a usable host within the session's
+own allowlist (request + engagement scope; **no allowlist ⇒ no lease**, fail closed); coverage and
+validation use the phase-3 matcher (`covers`/`usableHost`); `lease.granted` / `lease.exhausted`
+audit events fire once per exhaustion actually observed; the view shows `actionLease` +
+`actionLeaseRemainingMs` (named to not collide with the pre-existing idle `lease`). Lease-shaped
+input on the agent create-route is inert (passes through, parses to nothing — asserted by view
+absence). `autofill` refuses at entry without a covering lease and its field writes spend leased
+counts through the normal act path; `application.execute` refuses outright; the checklist test
+enumerates mutating routes from the live fastify router so an undeclared page-writing route fails
+CI. 12 tests; workspace green.
+
 ### Phase 6: the handoff operation
 
 **Route:** `POST /v1/sessions/{sessionId}/cookies/handoff` `{ domains, approvalToken? }`. It runs

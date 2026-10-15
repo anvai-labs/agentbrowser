@@ -1504,6 +1504,49 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { operatorRoute: true }
       );
 
+      // TD-BROWSER-16 phase 5 (ADR-025 §5): the operator-granted action
+      // lease. Human operator only — an agent (or an API-key operator, which
+      // an agent may hold) can never request, extend or widen one; no
+      // agent-facing schema accepts lease fields.
+      on(
+        'POST',
+        '/sessions/:sessionId/lease',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          // The human operator only (inline form: the `on` wrapper passes a
+          // reduced request, like the approval routes above).
+          if (request.principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          const body = (request.body ?? {}) as {
+            hosts?: unknown;
+            expiresInMs?: unknown;
+            maxActions?: unknown;
+          };
+          if (
+            !Array.isArray(body.hosts) ||
+            body.hosts.length === 0 ||
+            body.hosts.length > 16 ||
+            !body.hosts.every((host) => typeof host === 'string') ||
+            typeof body.expiresInMs !== 'number' ||
+            typeof body.maxActions !== 'number'
+          )
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'A lease grant is { hosts: string[], expiresInMs, maxActions }'
+            );
+          return responseDraft(
+            await service.grantActionLease(sessionId, {
+              hosts: body.hosts as string[],
+              expiresInMs: body.expiresInMs,
+              maxActions: body.maxActions,
+            }),
+            201
+          );
+        },
+        { operatorRoute: true }
+      );
+
       // Application surface (shared-infra slice 2). Binding is operator-only
       // while the human owns the session; discovery/execution/receipts are
       // open to operators (ownership-checked) and to delegated grants whose

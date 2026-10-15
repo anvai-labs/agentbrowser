@@ -19,6 +19,12 @@ export const OperatorApprovalViewSchema = Type.Object(
     createdAt: Type.Integer({ minimum: 0 }),
     expiresAt: Type.Integer({ minimum: 0 }),
     approvedAt: Type.Optional(Type.Integer({ minimum: 0 })),
+    /**
+     * TD-BROWSER-16: reviewed act approvals carry their kind, so the operator
+     * surface tells an act.reviewed decision from a plain act token; absent
+     * on legacy reviewed tokens minted before the kind was stamped.
+     */
+    kind: Type.Optional(Type.Union([Type.Literal('act.reviewed'), Type.Literal('cookie.handoff')])),
     action: Type.Record(Type.String(), Type.Unknown()),
   },
   { additionalProperties: false }

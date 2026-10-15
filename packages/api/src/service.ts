@@ -71,6 +71,8 @@ import {
   ArtifactStore,
   budgetObservation,
   canonicalJson,
+  covers,
+  isHighRiskEffect,
   JsonLedger,
   ObservationNormalizer,
   projectionActive,
@@ -79,6 +81,7 @@ import {
   SessionCoordinator,
   SessionState,
   tightenApprovalMode,
+  usableHost,
 } from '@agentbrowser/core';
 import type {
   EngineSession,
@@ -216,6 +219,54 @@ export interface ServiceSessionRequest {
    * fallback. Raise it for a session known to navigate large/complex forms.
    */
   snapshotTimeoutMs?: number;
+  /**
+   * TD-BROWSER-16 (ADR-025 §5): mark this session as carrying operator
+   * credentials. Server-side only — the wire SessionRequestSchema does not
+   * accept it, and phase 6's handoff operation sets it on the session.
+   */
+  credentialSource?: 'operator';
+}
+
+/**
+ * The operator-granted action lease (ADR-025 §5): within it, unknown-effect
+ * actions on its hosts run without review — one count per action. High-risk
+ * effects are never admitted by a lease. Granted only on an operator route;
+ * an agent cannot request, extend or widen one.
+ */
+interface ActiveActionLease {
+  hosts: string[];
+  grantedAt: number;
+  expiresAt: number;
+  maxActions: number;
+  remainingActions: number;
+  /** The audit event fires once, at the exhaustion actually observed. */
+  exhaustedLogged: boolean;
+}
+
+/** Lease bounds from ADR-025 §5. */
+const ACTION_LEASE_MAX_HOSTS = 16;
+const ACTION_LEASE_MAX_DURATION_MS = 4 * 60 * 60 * 1000;
+const ACTION_LEASE_MAX_ACTIONS = 500;
+
+/** The count/time projection of a live lease (hosts stay with the lease). */
+function leaseProjection(
+  lease: ActiveActionLease
+): Omit<import('@agentbrowser/protocol').ActionLease, 'hosts'> {
+  return {
+    grantedAt: lease.grantedAt,
+    expiresAt: lease.expiresAt,
+    maxActions: lease.maxActions,
+    remainingActions: lease.remainingActions,
+  };
+}
+
+/** A page URL's hostname, or '' when unparseable (never covered — fail closed). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/\.$/, '');
+  } catch {
+    return '';
+  }
 }
 
 export type ServiceSessionView = import('@agentbrowser/protocol').SessionView;
@@ -594,6 +645,18 @@ export class AgentBrowserService {
     string,
     import('@agentbrowser/protocol').ApprovalPolicy
   >();
+  /**
+   * TD-BROWSER-16 phase 5 (ADR-025 §5): sessions carrying operator
+   * credentials. Set only server-side (the handoff marks it in phase 6;
+   * embedders may set it on ServiceSessionRequest) — no agent-facing schema
+   * accepts it. In a marked session high-risk and unknown effects need an
+   * act.reviewed decision, unless an active lease covers the host.
+   */
+  private readonly sessionCredentialSources = new Map<string, 'operator'>();
+  /** The session's own host allowlist (request + scope), for lease validation. */
+  private readonly sessionHostAllowlists = new Map<string, string[]>();
+  /** The operator-granted action lease per marked session; one at a time. */
+  private readonly actionLeases = new Map<string, ActiveActionLease>();
   private readonly actionRiskPolicy: ActionRiskPolicy;
   /** TD-BROWSER-15: operator decisions go through one seam; legacy until a policy file. */
   private readonly authorizer: Authorizer;
@@ -789,6 +852,9 @@ export class AgentBrowserService {
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
+    this.sessionCredentialSources.delete(sessionId);
+    this.sessionHostAllowlists.delete(sessionId);
+    this.actionLeases.delete(sessionId);
   }
 
   /**
@@ -1434,6 +1500,13 @@ export class AgentBrowserService {
         if (sessionDisposer !== undefined)
           this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
+        // TD-BROWSER-16 phase 5: the marking and the session's own allowlist
+        // (request + engagement scope), which bounds any lease the operator
+        // grants later.
+        if (request.credentialSource === 'operator')
+          this.sessionCredentialSources.set(session.sessionId, 'operator');
+        const allowlist = [...(request.allowedHosts ?? []), ...(request.scope?.allowedHosts ?? [])];
+        if (allowlist.length > 0) this.sessionHostAllowlists.set(session.sessionId, allowlist);
 
         const finalInspection = this.coordinator.inspect(session.sessionId);
         if (!finalInspection || finalInspection.context !== context || context.signal.aborted) {
@@ -1516,6 +1589,10 @@ export class AgentBrowserService {
           ? { leaseRemainingMs: 0 }
           : {}),
       ...(context.terminal ? { closeCause: context.terminal.closeCause } : {}),
+      ...(this.sessionCredentialSources.get(context.id) !== undefined
+        ? { credentialSource: 'operator' as const }
+        : {}),
+      ...(this.projectActionLease(context.id) ?? {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
       ...(context.engineSession.warnings?.length
@@ -1567,16 +1644,20 @@ export class AgentBrowserService {
   async getApprovalKind(
     sessionId: string,
     tokenId: string
-  ): Promise<{ kind: 'act.reviewed' | 'cookie.handoff'; status: string } | undefined> {
-    // getToken (unlike the session list) still returns expired tokens, so an
-    // expired non-act token reports its kind instead of falling through to
-    // the act path's misleading error.
+  ): Promise<{ kind: 'cookie.handoff'; status: string } | undefined> {
+    // Act-family kinds keep the delegated reviewed path: decideReviewedApproval
+    // sets approved without burning, and the act retry burns it. The simple
+    // decide-and-burn path is for the truly non-act kinds only — burning an
+    // act.reviewed token on decide would make it unconsumable. getToken
+    // (unlike the session list) still returns expired tokens, so an expired
+    // non-act token reports its kind instead of the act path's misleading error.
     const token = await this.approvalGate.getToken(tokenId);
     if (
       token === undefined ||
       token.sessionId !== sessionId ||
       token.kind === undefined ||
-      token.kind === 'act'
+      token.kind === 'act' ||
+      token.kind === 'act.reviewed'
     )
       return undefined;
     return { kind: token.kind, status: token.status };
@@ -1620,13 +1701,15 @@ export class AgentBrowserService {
   private async findNonActToken(sessionId: string, tokenId: string): Promise<ApprovalToken> {
     // getToken (unlike the session list) still returns expired tokens, so an
     // expired non-act token reports its kind instead of falling through to
-    // the act path's misleading error.
+    // the act path's misleading error. act.reviewed is act-family (decided
+    // on the delegated path) and is refused here too.
     const token = await this.approvalGate.getToken(tokenId);
     if (
       token === undefined ||
       token.sessionId !== sessionId ||
       token.kind === undefined ||
-      token.kind === 'act'
+      token.kind === 'act' ||
+      token.kind === 'act.reviewed'
     )
       throw new ServiceError('NOT_FOUND', 'Approval does not exist');
     return token;
@@ -1819,6 +1902,22 @@ export class AgentBrowserService {
   /** Structured, scoped native form filling under the caller’s existing admission. */
   async autofill(sessionId: string, pageId: string, input: unknown) {
     this.requirePage(sessionId, pageId);
+    // ADR-025 §5: autofill in a marked session runs only within an active
+    // lease covering the page's host — refused up front, before any field
+    // write; each write then spends one leased unknown action in the act path.
+    if (this.sessionCredentialSources.get(sessionId) === 'operator') {
+      const page = this.requirePage(sessionId, pageId);
+      const currentUrl = page.enginePage.getUrl
+        ? await page.enginePage.getUrl()
+        : (await page.enginePage.observe({})).url;
+      if (!this.leaseCoversHost(sessionId, hostOf(currentUrl)))
+        throw new ServiceError(
+          'POLICY_DENIED',
+          'autofill in a session holding operator credentials requires an active lease covering the page host',
+          false,
+          { credentialSource: 'operator' }
+        );
+    }
     try {
       const report = await runAutofill(input, {
         resolveValue: async (value) => {
@@ -2556,6 +2655,15 @@ export class AgentBrowserService {
           .join('; ')}`
       );
     }
+    // ADR-025 §5: application.execute is refused outright in a marked
+    // session — operator credentials never reach an application operation.
+    if (this.sessionCredentialSources.get(sessionId) === 'operator')
+      throw new ServiceError(
+        'POLICY_DENIED',
+        'application.execute is not available in a session holding operator credentials',
+        false,
+        { credentialSource: 'operator' }
+      );
     // C4b: normalize the execution requirement (missing → ephemeral) and
     // refuse 'durable' when the runtime has no qualified durable journal
     // store. The refusal is typed and must not reserve an identity or
@@ -3397,7 +3505,7 @@ export class AgentBrowserService {
     // Reviewed consent and dispatch must share one detached request across all
     // awaits, including nested target/values/paths. Legacy input semantics stay intact.
     let request = input;
-    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+    if (this.usesOperatorReview(sessionId)) {
       try {
         request = JSON.parse(canonicalJson(input)) as ServiceActRequest;
       } catch {
@@ -4562,7 +4670,7 @@ export class AgentBrowserService {
 
   /** Gate high-risk elements behind single-use approval tokens (ADR-007). */
   private reviewContext(sessionId: string) {
-    if (this.sessionApprovalPolicies.get(sessionId)?.review !== 'operator')
+    if (!this.usesOperatorReview(sessionId))
       throw new ServiceError('INVALID_REQUEST', 'Session does not use operator-reviewed approval');
     return this.authority.reviewBindingInScope(sessionId);
   }
@@ -4802,6 +4910,168 @@ export class AgentBrowserService {
     return disclosure;
   }
 
+  // --- TD-BROWSER-16 phase 5: reviewed actions and the lease (ADR-025 §5) ---
+
+  /** True in a session where operator review semantics apply to acts. */
+  private usesOperatorReview(sessionId: string): boolean {
+    return (
+      this.sessionCredentialSources.get(sessionId) === 'operator' ||
+      this.sessionApprovalPolicies.get(sessionId)?.review === 'operator'
+    );
+  }
+
+  /**
+   * TD-BROWSER-16: mark an existing session as carrying operator credentials.
+   * Called by the handoff operation (phase 6); server-internal only — no
+   * route exposes it, and an agent cannot mark a session.
+   */
+  markOperatorCredentialSource(sessionId: string): void {
+    if (this.coordinator.inspect(sessionId) === undefined)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    this.sessionCredentialSources.set(sessionId, 'operator');
+  }
+
+  /**
+   * Grant the session's action lease. Operator-route only (the server layer
+   * authenticates the human operator); every host must be a usable host lying
+   * within the session's exact allowlist — a session without one has nothing
+   * for a lease to lie within, so the grant is refused (fail closed).
+   */
+  async grantActionLease(
+    sessionId: string,
+    input: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): Promise<import('@agentbrowser/protocol').ActionLease> {
+    if (this.coordinator.inspect(sessionId) === undefined)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    if (this.sessionCredentialSources.get(sessionId) !== 'operator')
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'An action lease applies only to a session holding operator credentials'
+      );
+    const { hosts, expiresInMs, maxActions } = input;
+    if (
+      !Array.isArray(hosts) ||
+      hosts.length === 0 ||
+      hosts.length > ACTION_LEASE_MAX_HOSTS ||
+      hosts.some((host) => typeof host !== 'string')
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A lease needs 1-${ACTION_LEASE_MAX_HOSTS} host entries`
+      );
+    if (
+      !Number.isSafeInteger(expiresInMs) ||
+      expiresInMs <= 0 ||
+      expiresInMs > ACTION_LEASE_MAX_DURATION_MS
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A lease lasts at most ${ACTION_LEASE_MAX_DURATION_MS} ms`
+      );
+    if (
+      !Number.isSafeInteger(maxActions) ||
+      maxActions <= 0 ||
+      maxActions > ACTION_LEASE_MAX_ACTIONS
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A lease covers at most ${ACTION_LEASE_MAX_ACTIONS} actions`
+      );
+    const allowlist = this.sessionHostAllowlists.get(sessionId) ?? [];
+    if (allowlist.length === 0)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'The session has no host allowlist for a lease to lie within'
+      );
+    for (const host of hosts) {
+      const usable = usableHost(host);
+      if (!usable.ok)
+        throw new ServiceError('INVALID_REQUEST', `Lease host is not usable: ${usable.reason}`);
+      if (!allowlist.some((entry) => covers(entry, host).ok))
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Lease host '${host}' does not lie within the session's host allowlist`
+        );
+    }
+    const now = Date.now();
+    const lease: ActiveActionLease = {
+      hosts: [...hosts],
+      grantedAt: now,
+      expiresAt: now + expiresInMs,
+      maxActions,
+      remainingActions: maxActions,
+      exhaustedLogged: false,
+    };
+    this.actionLeases.set(sessionId, lease);
+    this.logger?.info('lease.granted', {
+      sessionId,
+      hosts: [...hosts],
+      expiresAt: lease.expiresAt,
+      maxActions,
+    });
+    return { hosts: [...lease.hosts], ...leaseProjection(lease) };
+  }
+
+  /** The lease if it is still live; expiry exhaustion is audited once, here. */
+  private activeLeaseFor(sessionId: string): ActiveActionLease | undefined {
+    const lease = this.actionLeases.get(sessionId);
+    if (lease === undefined) return undefined;
+    if (Date.now() >= lease.expiresAt) {
+      this.auditLeaseExhausted(sessionId, lease, 'expiry');
+      return undefined;
+    }
+    if (lease.remainingActions === 0) {
+      this.auditLeaseExhausted(sessionId, lease, 'count');
+      return undefined;
+    }
+    return lease;
+  }
+
+  private auditLeaseExhausted(
+    sessionId: string,
+    lease: ActiveActionLease,
+    reason: 'count' | 'expiry'
+  ): void {
+    if (lease.exhaustedLogged) return;
+    lease.exhaustedLogged = true;
+    this.logger?.info('lease.exhausted', { sessionId, reason, maxActions: lease.maxActions });
+  }
+
+  /** Whether the session's live lease covers this host. */
+  private leaseCoversHost(sessionId: string, host: string): boolean {
+    const lease = this.activeLeaseFor(sessionId);
+    return lease?.hosts.some((entry) => covers(entry, host).ok) === true;
+  }
+
+  /**
+   * Spend one leased action for an unknown-effect act on a covered host.
+   * Returns false when there is no live lease, the host is not covered, or
+   * the count is spent — the caller then falls back to review (fail closed,
+   * never to allow).
+   */
+  private consumeLeasedAction(sessionId: string, host: string): boolean {
+    const lease = this.activeLeaseFor(sessionId);
+    if (lease === undefined) return false;
+    if (!lease.hosts.some((entry) => covers(entry, host).ok)) return false;
+    lease.remainingActions -= 1;
+    if (lease.remainingActions === 0) this.auditLeaseExhausted(sessionId, lease, 'count');
+    return true;
+  }
+
+  /** The view projection of the session's live lease, with its derived remainder. */
+  private projectActionLease(
+    sessionId: string
+  ):
+    | { actionLease: import('@agentbrowser/protocol').ActionLease; actionLeaseRemainingMs: number }
+    | undefined {
+    const lease = this.activeLeaseFor(sessionId);
+    if (lease === undefined) return undefined;
+    return {
+      actionLease: { hosts: [...lease.hosts], ...leaseProjection(lease) },
+      actionLeaseRemainingMs: Math.max(0, lease.expiresAt - Date.now()),
+    };
+  }
+
   private async checkApproval(
     sessionId: string,
     pageId: string,
@@ -4830,7 +5100,7 @@ export class AgentBrowserService {
       approvalModeOf(this.approvalAuthorizerFor(sessionId), classification),
       this.sessionApprovalPolicies.get(sessionId)
     );
-    if (decision === 'allow') return;
+    // A policy deny stands above everything, leases included.
     if (decision === 'deny')
       throw new ServiceError(
         'POLICY_DENIED',
@@ -4838,6 +5108,29 @@ export class AgentBrowserService {
         false,
         { effect: risk }
       );
+    // ADR-025 §5: in a session holding operator credentials, high-risk
+    // effects always need an act.reviewed decision (a per-rule allow is
+    // overridden) and unknown effects do too, unless the session's live
+    // lease covers the page's host — one leased action per act, never
+    // enough for high-risk. read/write-local classification is untouched:
+    // an allowed routine control still runs; one a rule holds for decision
+    // takes the reviewed path, as in any operator-review session.
+    const marked = this.sessionCredentialSources.get(sessionId) === 'operator';
+    if (marked) {
+      const host = hostOf(currentUrl);
+      if (risk === 'unknown' && this.consumeLeasedAction(sessionId, host)) {
+        if (span)
+          this.tracer?.addEvent(span, 'lease.action', {
+            effect: risk,
+            ref,
+            remaining: this.actionLeases.get(sessionId)?.remainingActions,
+          });
+        return;
+      }
+      if (!(isHighRiskEffect(risk) || risk === 'unknown') && decision === 'allow') return;
+    } else if (decision === 'allow') {
+      return;
+    }
     const decoded = decodeWireAction(request);
     if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
 
@@ -4856,7 +5149,7 @@ export class AgentBrowserService {
       },
     };
 
-    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+    if (this.usesOperatorReview(sessionId)) {
       const context = this.reviewContext(sessionId);
       // A mutable vault reference is not a value witness, and review must not expose
       // vault plaintext. Qualify this separately before supporting reviewed secrets.
@@ -4865,7 +5158,13 @@ export class AgentBrowserService {
           'POLICY_DENIED',
           'Operator-reviewed vault references are not supported'
         );
-      const reviewedRequest = JSON.parse(canonicalJson(approvalRequest)) as typeof approvalRequest;
+      // TD-BROWSER-16 phase 5: reviewed act approvals carry their kind, so
+      // the operator surface tells an act.reviewed decision from a plain act
+      // token, and the token fingerprint covers the kind — one can never be
+      // replayed as the other.
+      const reviewedRequest = JSON.parse(
+        canonicalJson({ ...approvalRequest, kind: 'act.reviewed' })
+      ) as typeof approvalRequest & { kind: 'act.reviewed' };
       this.assertReviewDisclosureSafe(reviewedRequest);
       if (
         request.approvalToken !== undefined &&
