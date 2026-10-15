@@ -25,6 +25,8 @@ on:
       - 'scripts/prune-cedar-wasm.mjs'
       # Pins Node, and with it the node:sqlite / SQLite build under test.
       - '.tool-versions'
+      # Shapes what the packaged server ships (the packaging gate's input).
+      - 'pnpm-lock.yaml'
       - '.github/workflows/journal-darwin.yml'
 
 # Superseded runs on the same ref are cancelled (macOS minutes are the expensive ones).
