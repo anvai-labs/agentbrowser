@@ -140,6 +140,17 @@ restored backups must fail closed. Do not store credentials, form values, approv
 tokens, resumes or entire reports in journal metadata. Encryption and keyed hashes
 complement filesystem isolation; they do not grant authority.
 
+Delivered retention purge (SQLite adapter and memory oracle, conformance-pinned): a
+namespace that is released (no active fence) and past `retainUntil` — judged by the
+larger of the clock and its persisted high-water — has its records deleted and its
+reservation zeroed, in the same commit unit as a new-namespace open and again in the
+storage child's startup acquisition unit. Its namespace row remains as a tombstone: the
+same descriptor reopens as `expired`, any other descriptor as `configuration`, so purged
+IDs never become acceptable again, and the store-wide `maxNamespaces` ceiling still
+applies. Tombstones no longer count toward namespace capacity; a fenced namespace is
+never purged and always counts. Quarantine/reconciliation stays as specified in
+[t5-operator-reconciliation](t5-operator-reconciliation.md).
+
 ## J3: authorized historical lookup and explicit continuation
 
 Require current authentication and explicit authorization for the original tenant and

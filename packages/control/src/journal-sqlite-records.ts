@@ -83,6 +83,29 @@ const row = (reader: JournalSqliteReader, namespaceId: string): NamespaceRow | u
 };
 
 const recordKey = (key: JournalKey): string => canonicalJson(key);
+
+/** A namespace is reclaimable once released and past its retention horizon,
+ * judged by the larger of the caller's clock and its persisted high-water. */
+const RECLAIMABLE = `active_fence IS NULL
+  AND max(?, clock_high_water) > json_extract(descriptor, '$.retainUntil')`;
+
+/**
+ * Retention purge, inside the caller's commit unit. Deletes the records of every
+ * expired, released namespace and zeroes its reservation. The namespace row stays
+ * as a tombstone: its id keeps refusing reopen (`expired` for the same descriptor,
+ * `configuration` for any other), so purged operation identities can never be
+ * admitted again under a fresh descriptor. Fenced namespaces are never touched.
+ */
+export function purgeExpiredJournalSqliteRecords(
+  transaction: JournalSqliteTransaction,
+  now: number
+): void {
+  transaction.run(
+    `DELETE FROM journal_record WHERE namespace_id IN (SELECT namespace_id FROM journal_namespace WHERE ${RECLAIMABLE})`,
+    now
+  );
+  transaction.run(`UPDATE journal_namespace SET reserved_bytes = 0 WHERE ${RECLAIMABLE}`, now);
+}
 const same = (left: unknown, right: unknown): boolean =>
   canonicalJson(left) === canonicalJson(right);
 
@@ -123,15 +146,23 @@ export function openJournalSqliteRecords(
   }
   if (now > descriptor.acceptUntil || now > descriptor.retainUntil)
     return { kind: 'refused', reason: 'expired' };
-  const count = transaction.get('SELECT count(*) AS count FROM journal_namespace')?.count;
-  if (typeof count !== 'number') return { kind: 'refused', reason: 'capacity' };
-  if (count > 0) {
+  const total = transaction.get('SELECT count(*) AS count FROM journal_namespace')?.count;
+  if (typeof total !== 'number') return { kind: 'refused', reason: 'capacity' };
+  if (total > 0) {
+    // Tombstones keep the store-wide ceiling: a later namespace still cannot widen it.
     const mismatch = transaction.get(
       "SELECT count(*) AS count FROM journal_namespace WHERE json_extract(descriptor, '$.bounds.maxNamespaces') <> ?",
       descriptor.bounds.maxNamespaces
     )?.count;
     if (mismatch !== 0) return { kind: 'refused', reason: 'configuration' };
-    if (count >= descriptor.bounds.maxNamespaces) return { kind: 'refused', reason: 'capacity' };
+    // Expired, released namespaces are purged and no longer hold capacity.
+    purgeExpiredJournalSqliteRecords(transaction, now);
+    const live = transaction.get(
+      `SELECT count(*) AS count FROM journal_namespace WHERE NOT (${RECLAIMABLE})`,
+      now
+    )?.count;
+    if (typeof live !== 'number' || live >= descriptor.bounds.maxNamespaces)
+      return { kind: 'refused', reason: 'capacity' };
   }
   const fence = 'sqlite-fence-1';
   transaction.run(
@@ -257,6 +288,8 @@ export function reserveJournalSqliteIntent(
     canonicalJson(record)
   );
   // Intent admission reserves the maximum configured terminal-record slot.
+  // Diagnostic accounting only: it always equals records × maxRecordBytes
+  // (maxRecords is the enforced bound) and retention purge zeroes it.
   transaction.run(
     'UPDATE journal_namespace SET reserved_bytes = reserved_bytes + ? WHERE namespace_id = ?',
     ready.state.descriptor.bounds.maxRecordBytes,

@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — operation journal retention purge (not yet wired into the service)
+
+- **Expired namespaces release capacity and their records.** A released namespace past
+  `retainUntil` (judged by the larger of the clock and its persisted high-water) has its records
+  deleted and its reservation zeroed — in a new-namespace open's commit unit and in the storage
+  child's startup acquisition unit. Previously expired rows were kept forever and counted toward
+  `maxNamespaces`, so a store that had ever held `maxNamespaces` namespaces refused new ones
+  permanently. The namespace row stays as a tombstone: its id reopens only as `expired` (same
+  descriptor) or `configuration` (any other), so purged operation IDs never become acceptable
+  again (contract: [t5-journal-contract](docs/spec/design/t5-journal-contract.md)). Fenced
+  namespaces are never purged. Memory oracle and SQLite adapter share one conformance case; a new
+  manager/child qualification gate pins the startup purge. No DDL change (`formatVersion` 1).
+
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 
 - **Marked sessions** (`credentialSource: "operator"`): the marking is **server-side only** — a

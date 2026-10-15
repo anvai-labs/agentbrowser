@@ -102,7 +102,20 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
           return { kind: 'definitely_not_opened', reason: 'configuration' };
         }
         storeMaxNamespaces ??= request.bounds.maxNamespaces;
-        if (namespaces.size >= storeMaxNamespaces)
+        // Retention: an expired, released namespace keeps its descriptor as a
+        // tombstone (its id never reopens) but drops its records and no longer
+        // counts toward capacity. A fenced namespace is never purged.
+        let live = 0;
+        for (const existing of namespaces.values()) {
+          const expired =
+            existing.activeFence === undefined &&
+            Math.max(clock, highWaterOf(existing)) > existing.descriptor.retainUntil;
+          if (expired) {
+            existing.records.clear();
+            existing.reservedBytes = 0;
+          } else live += 1;
+        }
+        if (live >= storeMaxNamespaces)
           return { kind: 'definitely_not_opened', reason: 'capacity' };
         state = {
           descriptor: copy(request),
@@ -653,6 +666,54 @@ export function operationJournalAdapterConformance(
             { ...rawDescriptor, schemaVersion: 2 as 1 },
             new AbortController().signal
           )
+        )
+      ).toEqual({ kind: 'definitely_not_opened', reason: 'configuration' });
+    });
+
+    it('reclaims capacity from expired released namespaces without letting their ids back in', async () => {
+      const fixture = factory();
+      const a = await open(fixture, { ...namespace(), namespaceId: 'deployment-a' });
+      expect((await a.reserveIntent(intent('op-a'))).kind).toBe('acknowledged');
+      const b = await open(fixture, { ...namespace(), namespaceId: 'deployment-b' });
+      expect((await b.reserveIntent(intent('op-b'))).kind).toBe('acknowledged');
+      await a.close();
+      // Past retainUntil (5_000): a is expired and released, b is expired but still fenced.
+      fixture.advance(5_000);
+      const later = { acceptUntil: 8_000, retainUntil: 9_000 };
+      const c = await openOperationJournal(
+        fixture.adapter,
+        { ...namespace(), ...later, namespaceId: 'deployment-c' },
+        fixture.fingerprintKey
+      );
+      expect(c.kind).toBe('opened');
+      // a's records are purged and its reservation released; its descriptor stays as a tombstone.
+      expect(fixture.observe('deployment-a')).toMatchObject({ records: [], reservedBytes: 0 });
+      // A fenced namespace is never purged and still counts toward capacity.
+      // reservedBytes is diagnostic accounting: one maxRecordBytes slot per retained record.
+      expect(fixture.observe('deployment-b')).toMatchObject({
+        reservedBytes: namespace().bounds.maxRecordBytes,
+      });
+      expect(fixture.observe('deployment-b')?.records).toHaveLength(1);
+      expect(
+        await openOperationJournal(
+          fixture.adapter,
+          { ...namespace(), ...later, namespaceId: 'deployment-d' },
+          fixture.fingerprintKey
+        )
+      ).toEqual({ kind: 'definitely_not_opened', reason: 'capacity' });
+      // The tombstone keeps the id closed: same descriptor expired, any other refused.
+      expect(
+        await openOperationJournal(
+          fixture.adapter,
+          { ...namespace(), namespaceId: 'deployment-a' },
+          fixture.fingerprintKey
+        )
+      ).toEqual({ kind: 'definitely_not_opened', reason: 'expired' });
+      expect(
+        await openOperationJournal(
+          fixture.adapter,
+          { ...namespace(), ...later, namespaceId: 'deployment-a' },
+          fixture.fingerprintKey
         )
       ).toEqual({ kind: 'definitely_not_opened', reason: 'configuration' });
     });

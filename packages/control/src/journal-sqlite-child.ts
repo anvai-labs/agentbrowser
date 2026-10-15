@@ -22,6 +22,7 @@ import {
   lookupJournalSqliteRecord,
   markJournalSqliteDispatch,
   openJournalSqliteRecords,
+  purgeExpiredJournalSqliteRecords,
   reserveJournalSqliteIntent,
 } from './journal-sqlite-records.js';
 import type { JournalSqliteTransaction } from './journal-sqlite-store.js';
@@ -47,6 +48,9 @@ try {
   store.mutate((tx: JournalSqliteTransaction) => {
     ensureJournalSqliteRecordSchema(tx);
     tx.run('UPDATE journal_namespace SET active_fence = NULL');
+    // With every fence cleared, reclaim expired namespaces' records at startup
+    // even if no new namespace is ever opened.
+    purgeExpiredJournalSqliteRecords(tx, Date.now());
     return null;
   });
 
