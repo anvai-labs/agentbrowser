@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — the T8 footprint gate measures the CLI's peak exactly
+
+- `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's
+  `--version` can exit before the first sample lands ("no RSS sample collected", seen on #474,
+  #475 and #484), and polling can also understate a peak reached just before exit. The CLI
+  one-shot is now measured exactly — `ru_maxrss` of the reaped child (wait4 rusage, via a
+  python3 helper) — and must exit 0. The MCP bridge's idle-after-handshake peak is still polled,
+  now reading `VmRSS` from /proc on Linux instead of forking `ps`. A stand-in allocating 40 MB and
+  exiting at once reads 51.4–51.6 MB on every run.
+- The bridge harness read stdout with one listener per request, all appending to one buffer, so a
+  response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
+  uses one shared line reader with a pending-request map.
+
 ### Docs — release records and task-status reconciliation
 
 - Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).

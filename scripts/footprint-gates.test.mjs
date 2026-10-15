@@ -6,9 +6,14 @@
  *
  *   node --test scripts/footprint-gates.test.mjs
  *
- * Peak RSS is polled via `ps -o rss=` (KB, both macOS and Linux) at a 10 ms
- * interval while the process runs; polling can miss sub-10ms spikes, so the
- * limits carry headroom. First tightening pass 2026-10-02 (120 -> 75 MB),
+ * The CLI one-shot peak is measured EXACTLY: the kernel's `ru_maxrss` for the reaped child
+ * (wait4 rusage, via a python3 helper; KB on Linux, bytes on macOS), so a process that exits
+ * within one sampling interval can neither escape the gate nor pass on an understated number.
+ * Floor: on Linux, exec folds the parent's high-water mark into the child's ru_maxrss, so readings
+ * never go below the helper's own ~10-12 MB (a max, not a sum; irrelevant at the 75 MB gate).
+ * The MCP bridge's idle peak is polled every 10 ms while it idles after the handshake (current
+ * RSS: `VmRSS` from /proc on Linux, `ps -o rss=` elsewhere); polling can miss sub-10ms spikes,
+ * so the limits carry headroom. First tightening pass 2026-10-02 (120 -> 75 MB),
  * once Linux CI numbers existed: across 7 linux-x64 CI samples that day
  * (bun 1.4.0 pinned) the CLI one-shot (`--version`) spanned 37.4-51.9 MB
  * and the idle bridge 47.4-52.0 MB — worst observed 51.9/52.0, so 75 MB
@@ -20,7 +25,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -33,7 +38,18 @@ const MCP_BIN = `${root}packages/mcp-server/dist-bin/agentbrowser-mcp`;
  */
 const LIMITS = { cliOneShot: 75, mcpBridgeIdle: 75 };
 
+/** Linux: current RSS from /proc (a microsecond read, unlike forking `ps`). */
+const procRssKb = (pid) => {
+  try {
+    const match = /^VmRSS:\s+(\d+) kB$/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
+    return match ? Number(match[1]) : 0;
+  } catch {
+    return 0; // process gone
+  }
+};
+
 const rssKb = (pid) => {
+  if (process.platform === 'linux') return procRssKb(pid);
   try {
     const out = execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], { encoding: 'utf8' });
     const kb = Number(out.trim());
@@ -70,10 +86,34 @@ test('shipped artifacts exist after compile', () => {
   );
 });
 
-test('CLI one-shot peak RSS stays within the gate', async () => {
-  const child = spawn(CLI_BIN, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
-  const peak = await peakRssMb(child, () => new Promise((resolve) => child.on('close', resolve)));
-  assert.ok(peak > 0, 'no RSS sample collected');
+/** Exact peak RSS (MB) of a one-shot command: ru_maxrss of the reaped child (wait4 rusage). */
+function exactPeakMb(command, args) {
+  const out = execFileSync(
+    'python3',
+    [
+      '-I',
+      '-c',
+      [
+        'import resource, subprocess, sys',
+        'code = subprocess.run(sys.argv[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode',
+        'print(code, resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)',
+      ].join('\n'),
+      command,
+      ...args,
+    ],
+    // A hung --version must fail the gate, not stall the job.
+    { encoding: 'utf8', timeout: 30_000 }
+  );
+  const [code, maxrss] = out.trim().split(' ').map(Number);
+  // ru_maxrss is KB on Linux and bytes on macOS.
+  const kb = process.platform === 'darwin' ? maxrss / 1024 : maxrss;
+  return { code, peak: Math.round((kb / 1024) * 10) / 10 };
+}
+
+test('CLI one-shot peak RSS stays within the gate', () => {
+  const { code, peak } = exactPeakMb(CLI_BIN, ['--version']);
+  assert.equal(code, 0, 'CLI --version must exit 0');
+  assert.ok(peak > 0, 'no peak RSS reported');
   console.log(`footprint: CLI one-shot peak RSS ${peak} MB (gate ${LIMITS.cliOneShot})`);
   assert.ok(
     peak <= LIMITS.cliOneShot,
@@ -83,33 +123,43 @@ test('CLI one-shot peak RSS stays within the gate', async () => {
 
 test('MCP bridge idle peak RSS stays within the gate after handshake', async () => {
   const child = spawn(MCP_BIN, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  // One shared line reader: per-request listeners each appended every chunk to the shared
+  // buffer, so a response spanning two pipe chunks (tools/list > 64 KiB) never parsed.
   let sequence = 0;
+  let buffered = '';
+  const pending = new Map();
+  child.stdout.on('data', (chunk) => {
+    buffered += chunk.toString();
+    let newline;
+    while ((newline = buffered.indexOf('\n')) !== -1) {
+      const lineText = buffered.slice(0, newline);
+      buffered = buffered.slice(newline + 1);
+      let message;
+      try {
+        message = JSON.parse(lineText);
+      } catch {
+        continue; // not a JSON-RPC line
+      }
+      const waiter = pending.get(message.id);
+      if (waiter) {
+        pending.delete(message.id);
+        waiter(message);
+      }
+    }
+  });
   const request = (method, params) =>
     new Promise((resolve, reject) => {
       const id = ++sequence;
-      const timer = setTimeout(() => reject(new Error('MCP handshake timeout')), 15_000);
-      const onLine = (chunk) => {
-        buffered += chunk.toString();
-        let newline;
-        while ((newline = buffered.indexOf('\n')) !== -1) {
-          const lineText = buffered.slice(0, newline);
-          buffered = buffered.slice(newline + 1);
-          try {
-            const message = JSON.parse(lineText);
-            if (message.id === id) {
-              clearTimeout(timer);
-              resolve(message);
-              return;
-            }
-          } catch {
-            /* notifications */
-          }
-        }
-      };
-      child.stdout.on('data', onLine);
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error('MCP handshake timeout'));
+      }, 15_000);
+      pending.set(id, (message) => {
+        clearTimeout(timer);
+        resolve(message);
+      });
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
-  let buffered = '';
   try {
     await request('initialize', {
       protocolVersion: '2025-06-18',
