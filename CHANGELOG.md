@@ -17,6 +17,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   locally; the SDK receives the server's refusal. Nothing executes for an over-limit plan. Split
   longer work into several plans. Plan *reports* are unaffected.
 
+### Added — release tags must be cut from main (T9 S1a, R14)
+
+- The release workflow's `tag-guard` job now fetches `main` and runs
+  `scripts/check-tag-ancestry.mjs`: a tag whose commit is not reachable from `main` fails before
+  anything builds or publishes, and every other release job depends on `tag-guard` (a test walks
+  the whole `needs` graph). An unknown commit, a missing `main` ref or a missing `git` fails
+  closed. Checked against real history: all 47 existing `v*` tags pass; a develop-only commit is
+  refused.
+- **Limit, stated plainly:** GitHub runs the `release.yml` *of the tagged commit*. A tag on an
+  older commit (whose workflow predates this gate), or on a branch that removed the step, skips the
+  check. The gate catches honest mistakes; the **guarantee** needs repository settings the owner
+  applies — a tag ruleset restricting who may create `v*` tags, and protection on the `npm`
+  environment (see the PR for the exact commands). Admins keep the ruleset bypass, so an admin
+  tagging an older commit by mistake still skips the gate; the environment reviewer is the last
+  manual check there.
+
 ## [1.18.0] — 2026-10-15
 
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
