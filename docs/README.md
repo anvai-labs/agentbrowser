@@ -183,6 +183,16 @@ complete and remains in [technical-design.md](technical-design.md).
   [password observation handoff](AGENTBROWSER_PASSWORD_OBSERVATION_HANDOFF_2026-10-06.md)
   and the
   [WebAuthn TLS investigation](AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md)).
+- [TD-BROWSER-14](td/TD-BROWSER-14-compact-identifiers.md) - Compact identifiers
+  and explicit CLI context ([ADR-022](adr/022-compact-identifiers-and-cli-context.md)).
+  **Planned**, unscheduled.
+- [TD-BROWSER-15](td/TD-BROWSER-15-server-policy-engine.md) - Server policy engine:
+  a fixed floor plus opt-in embedded Cedar, per-tenant, queryable by agents
+  ([ADR-024](adr/024-server-policy-engine-cedar.md)). **Delivered** (#444–#458, #460).
+- [TD-BROWSER-16](td/TD-BROWSER-16-operator-cookie-handoff.md) - Operator login
+  browser and operator-approved cookie handoff
+  ([ADR-025](adr/025-operator-cookie-handoff.md)). **Delivered** (#461–#464, #466,
+  #470, #472).
 
 ## Audits
 
