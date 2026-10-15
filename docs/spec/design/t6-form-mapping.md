@@ -6,7 +6,10 @@ document may instead carry 1-12 `stages`, each exactly the single-stage shape (i
 scope URL and fields); `materializeAutofillMapping(mapping, values, stageId)` materializes the
 chosen stage, values must match the union of every stage's keys, and `form stages` lists the
 stages offline. Which stage applies is caller-observed — the scoped preflight refuses a stage
-whose fields are not all present — never inferred; business/job identity remains out of scope.
+whose fields are not all present — never inferred; business/job identity remains out of scope. Effective bounds (review-measured):
+the document snapshot bound (2,000 nodes / 128 KiB) governs over the schema maxima (6 x 50-field
+stages fit; 7 x 50 is refused), and the union of stage value keys is capped at 50 with a clear
+static refusal for wider unions.
 
 ## Owners and contract
 

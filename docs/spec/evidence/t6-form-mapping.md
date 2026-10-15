@@ -86,9 +86,16 @@ to the active affected field and retains uncertainty.
   documents are unchanged and reject a stage argument.
 - Conditionality is caller-observed: the existing scoped preflight refuses a stage whose fields
   are not all present on the page. The mapping describes pages, never business state.
-- `form stages <mapping>` lists id, URL and field count offline (no values read); `form prepare`
-  gained the optional `[stageId]`.
+- `form stages <mapping>` lists id, URL and field count offline (no values read) and advertises a
+  wire contract like every other JSON-input command; `form prepare` gained the optional
+  `[stageId]` (three inputs in total).
+- **Effective bounds (review round 1, measured):** the document snapshot bound (2,000 nodes /
+  128 KiB) governs over the schema maxima — 6 x 50-field stages fit; 7 x 50 is refused with the
+  bounded-input message. The union of stage value keys is capped at 50; a wider union is refused
+  with a clear static error before values can mislead.
+- Shape validation is shared by materialization and `form stages`: an invalid document is refused
+  by the lister, never reported as valid.
 - Tests: protocol (stage selection, union matching, single-stage unchanged, six refusal shapes —
   both fields and stages, empty/duplicate stages, bad id, shared URL, missing strategy) and CLI
-  (chosen stage, missing/unknown stage, listing). Suites: protocol 469, cli 322.
+  (chosen stage, missing/unknown stage, listing). Suites: protocol 475, cli 324.
 

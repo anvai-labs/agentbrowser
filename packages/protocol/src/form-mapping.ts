@@ -81,17 +81,40 @@ const inputKinds: Record<
 };
 
 /**
+ * T6 W3a shape validation, shared by materialization and offline listing: exactly one of
+ * scope+fields (the delivered single-stage shape) or stages; unique stage ids; distinct stage
+ * scope URLs. Returns whether the document is staged.
+ */
+function validateFormMappingShape(mapping: FormMapping): boolean {
+  const staged = mapping.stages !== undefined;
+  if ((mapping.fields !== undefined) === staged || (mapping.scope !== undefined) !== !staged)
+    throw new Error(
+      'Invalid form mapping: exactly one of scope+fields (single stage) or stages is required'
+    );
+  if (staged) {
+    const stages = mapping.stages as NonNullable<FormMapping['stages']>;
+    const ids = new Set(stages.map((stage) => stage.id));
+    if (ids.size !== stages.length)
+      throw new Error('Invalid form mapping: stage ids must be unique');
+    const urls = new Set(stages.map((stage) => stage.scope.url));
+    if (urls.size !== stages.length)
+      throw new Error('Invalid form mapping: each stage needs a distinct scope URL');
+  }
+  return staged;
+}
+
+/**
  * T6 W3a: the stages of a mapping, in document order, for offline listing. Returns undefined for
- * a single-stage mapping. Validates nothing beyond the document shape the schema already
- * checked; it reads no values.
+ * a single-stage mapping. Runs the same shape validation as materialization (an invalid
+ * document is refused here too, never reported as valid); reads no values.
  */
 export function listFormMappingStages(
   mappingInput: unknown
 ): Array<{ id: string; url: string; fieldCount: number }> | undefined {
   if (!Value.Check(FormMappingSchema, mappingInput)) throw new Error('Invalid form mapping');
   const mapping = mappingInput as FormMapping;
-  if (mapping.stages === undefined) return undefined;
-  return mapping.stages.map((stage) => ({
+  if (!validateFormMappingShape(mapping)) return undefined;
+  return (mapping.stages as NonNullable<FormMapping['stages']>).map((stage) => ({
     id: stage.id,
     url: stage.scope.url,
     fieldCount: stage.fields.length,
@@ -120,29 +143,17 @@ export function materializeAutofillMapping(
     (Object.getPrototypeOf(values) !== Object.prototype && Object.getPrototypeOf(values) !== null)
   )
     throw new Error('Invalid form values: a bounded own-key string record is required');
-  const copy = mapping;
-  // T6 W3a: exactly one of the single-stage shape or staged stages; a staged document carries
-  // no top-level scope, and stage scope URLs are distinct so one stage cannot be mistaken for
-  // another's page.
-  const staged = copy.stages !== undefined;
-  if ((copy.fields !== undefined) === staged || (copy.scope !== undefined) !== !staged)
-    throw new Error(
-      'Invalid form mapping: exactly one of scope+fields (single stage) or stages is required'
-    );
+  const staged = validateFormMappingShape(mapping);
   if (staged) {
-    const stages = copy.stages as NonNullable<FormMapping['stages']>;
-    const ids = new Set(stages.map((stage) => stage.id));
-    if (ids.size !== stages.length)
-      throw new Error('Invalid form mapping: stage ids must be unique');
-    const urls = new Set(stages.map((stage) => stage.scope.url));
-    if (urls.size !== stages.length)
-      throw new Error('Invalid form mapping: each stage needs a distinct scope URL');
     if (stageId === undefined)
       throw new Error('Staged form mapping requires a stage id; form stages lists them');
-    if (!ids.has(stageId)) throw new Error(`Unknown form mapping stage: ${stageId}`);
+    const stages = mapping.stages as NonNullable<FormMapping['stages']>;
+    if (!stages.some((stage) => stage.id === stageId))
+      throw new Error(`Unknown form mapping stage: ${stageId}`);
   } else if (stageId !== undefined) {
     throw new Error('Stage id given for a single-stage mapping');
   }
+  const copy = mapping;
   const chosenFields = staged
     ? (copy.stages as NonNullable<FormMapping['stages']>).find((stage) => stage.id === stageId)
         ?.fields
@@ -161,6 +172,10 @@ export function materializeAutofillMapping(
         )
       )
     : required;
+  if (union.size > 50)
+    throw new Error(
+      'Invalid form mapping: the union of stage value keys exceeds 50, which no values record can satisfy'
+    );
   const keys = Object.keys(values);
   if (
     keys.length !== union.size ||

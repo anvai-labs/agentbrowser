@@ -2497,14 +2497,14 @@ export function buildCli(deps: CliDependencies): Cli {
             deps.err(formatError(error));
           }
         });
-      form
+      const stagesCommand = form
         .command('stages <mappingJson>')
         .description(
           'list the stages of a mapping offline: id, scope URL and field count per stage (T6 W3a). Values are not needed and never read'
         )
         .action(async (mappingJson: string) => {
           try {
-            const mapping = await readJsonArgument(mappingJson, 'form mapping');
+            const mapping = await readCommandJson(stagesCommand, mappingJson, 'form mapping');
             const stages = listFormMappingStages(mapping);
             if (stages === undefined) {
               deps.out('single-stage mapping (no stages)');
@@ -2523,6 +2523,36 @@ export function buildCli(deps: CliDependencies): Cli {
             deps.err(formatError(new UsageError((error as Error).message)));
           }
         });
+
+      advertiseWireSchema(stagesCommand, {
+        input: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['mapping'],
+          properties: { mapping: FormMappingSchema },
+        },
+        output: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['stages'],
+          properties: {
+            stages: {
+              type: 'array',
+              maxItems: 12,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['id', 'url', 'fieldCount'],
+                properties: {
+                  id: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' },
+                  url: { type: 'string' },
+                  fieldCount: { type: 'integer', minimum: 1, maximum: 50 },
+                },
+              },
+            },
+          },
+        },
+      });
 
       advertiseWireSchema(prepareForm, {
         input: {
