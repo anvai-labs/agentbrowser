@@ -423,7 +423,8 @@ Every deny is logged at `warn` and every approval-required decision at `info`, t
   verified by integrity hash, as it already has for the bundled Node runtime.
 - **New failure modes:** an invalid policy file stops the server, and a WebAssembly trap
   fails closed until restart. Both are intended.
-- **Out of scope:** reloading policy without restart; policy over page content; replacing session
+- **Out of scope:** reloading policy without restart (proposed separately in
+  [ADR-026](026-policy-reload-without-restart.md)); policy over page content; replacing session
   narrowing or engagement scope; making the floor configurable; DNS pinning for browser traffic.
 
 ## Alternatives considered

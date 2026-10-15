@@ -481,9 +481,29 @@ keyed deployments are per tenant.
   - `@internal` exists for confidentiality.
 - **ADR-024 status → Accepted** when phase 5 ships.
 
+### Phase 8 (Proposed, awaiting ADR-026): reload without restart
+
+Not scheduled; implement only after [ADR-026](../adr/026-policy-reload-without-restart.md) is
+accepted.
+
+- **Trigger:** opt-in `AGENTBROWSER_POLICY_RELOAD=signal`; `SIGHUP` and an operator-only
+  `POST /v1/policy/reload` re-read `AGENTBROWSER_POLICY_FILE`. No file watcher.
+- **Swap:** full startup-grade validation into a new `CedarAuthorizer`; on any error keep the
+  running one and report. Atomic replacement of the "current" authorizer reference.
+- **Live sessions:** a session records its pinned version; the authorizer for a live session is
+  `allow iff pinned allows AND current allows` (a composite `Authorizer`); pinned authorizers are
+  reference-counted and released when their last session ends.
+- **Surfaces:** `GET /v1/policy` and session views report pinned/current versions and
+  dual-evaluation; the reload response reports counts; logs carry both versions.
+- **Tests first:** a tightening reload denies an in-flight session's next request; a loosening
+  reload does not reach it but does reach a new session; an invalid file is refused and the old
+  policy keeps deciding; an approval minted before the reload is refused after it; a second reload
+  composes; no policy file means reload is refused as not configured.
+
 ## Non-goals
 
-- Reloading policy without restart (a reload must never relax a live session).
+- Reloading policy without restart in phases 0–7 (proposed as phase 8 under ADR-026; a reload must
+  never relax a live session).
 - Policy over page content; Cedar in the CLI or MCP executables.
 - Replacing session narrowing or engagement scope.
 - Making the floor configurable; DNS pinning for browser traffic.
