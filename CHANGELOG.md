@@ -7,6 +7,34 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — output schemas for six more MCP tools (T0 M2, part 1)
+
+- `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` advertise an
+  `outputSchema` on the `2025-06-18` protocol, so structured-capable clients receive
+  `structuredContent` for them. New protocol schemas: `PageResponseSchema`,
+  `SessionCreatedResultSchema`, `PageListResultSchema`, `SessionClosedResultSchema` and
+  `SessionEventsPageResultSchema`; `pdf` shares `screenshot`'s `ArtifactRefSchema`. The schemas
+  stay open to additive fields. A full-stack test validates every tool's real result against its
+  schema.
+
+### Fixed — structured tool errors no longer break MCP clients that validate output
+
+- MCP clients (the official TypeScript SDK among them) validate `structuredContent` against a
+  tool's `outputSchema` even on `isError` results. Ours advertised the success shape only, so a
+  structured error (`{error: {code, message, operationId?}}`, shipped in 1.17) from `act`,
+  `navigate`, `extract`, `observe`, `autofill`, `plan`, `screenshot` and the tools above became a
+  client-side `-32602` and the agent never saw the error. Every advertised `outputSchema` is now
+  `{type: "object", anyOf: [<result schema>, <error envelope>]}`, keeping the result schema's
+  `$id` at the root. Protocol schemas, OpenAPI and discovery are unchanged. A client-view test
+  reads `tools/list` and validates every `structuredContent`, errors included, with a draft-07
+  validator.
+
+### Fixed — the documented session response no longer requires `engine.capabilities`
+
+- OpenAPI's `EngineInfo` (in every session response) marked `capabilities` required, but no
+  session response has ever carried it. It is now optional; capabilities come from
+  `GET /v1/engine`.
+
 ### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
 
 - Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository
