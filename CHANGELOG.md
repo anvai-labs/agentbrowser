@@ -16,6 +16,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   python3 helper) — and must exit 0. The MCP bridge's idle-after-handshake peak is still polled,
   now reading `VmRSS` from /proc on Linux instead of forking `ps`. A stand-in allocating 40 MB and
   exiting at once reads 51.4–51.6 MB on every run.
+- The bridge harness read stdout with one listener per request, all appending to one buffer, so a
+  response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
+  uses one shared line reader with a pending-request map.
 
 ### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
 

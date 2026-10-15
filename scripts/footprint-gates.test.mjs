@@ -123,33 +123,43 @@ test('CLI one-shot peak RSS stays within the gate', () => {
 
 test('MCP bridge idle peak RSS stays within the gate after handshake', async () => {
   const child = spawn(MCP_BIN, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  // One shared line reader: per-request listeners each appended every chunk to the shared
+  // buffer, so a response spanning two pipe chunks (tools/list > 64 KiB) never parsed.
   let sequence = 0;
+  let buffered = '';
+  const pending = new Map();
+  child.stdout.on('data', (chunk) => {
+    buffered += chunk.toString();
+    let newline;
+    while ((newline = buffered.indexOf('\n')) !== -1) {
+      const lineText = buffered.slice(0, newline);
+      buffered = buffered.slice(newline + 1);
+      let message;
+      try {
+        message = JSON.parse(lineText);
+      } catch {
+        continue; // not a JSON-RPC line
+      }
+      const waiter = pending.get(message.id);
+      if (waiter) {
+        pending.delete(message.id);
+        waiter(message);
+      }
+    }
+  });
   const request = (method, params) =>
     new Promise((resolve, reject) => {
       const id = ++sequence;
-      const timer = setTimeout(() => reject(new Error('MCP handshake timeout')), 15_000);
-      const onLine = (chunk) => {
-        buffered += chunk.toString();
-        let newline;
-        while ((newline = buffered.indexOf('\n')) !== -1) {
-          const lineText = buffered.slice(0, newline);
-          buffered = buffered.slice(newline + 1);
-          try {
-            const message = JSON.parse(lineText);
-            if (message.id === id) {
-              clearTimeout(timer);
-              resolve(message);
-              return;
-            }
-          } catch {
-            /* notifications */
-          }
-        }
-      };
-      child.stdout.on('data', onLine);
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error('MCP handshake timeout'));
+      }, 15_000);
+      pending.set(id, (message) => {
+        clearTimeout(timer);
+        resolve(message);
+      });
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
-  let buffered = '';
   try {
     await request('initialize', {
       protocolVersion: '2025-06-18',
