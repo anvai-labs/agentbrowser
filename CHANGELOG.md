@@ -17,6 +17,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   shared conformance suite.
 - It is the read path for the accepted J3 historical lookup.
 
+### Tests — widget strategies qualified on Firefox and WebKit (T6 W3b)
+
+- The real react-select qualification (add-only and exact chip sets, with the app's state as the
+  oracle) now runs on Chromium, Firefox and WebKit through the Playwright engine. All pass, with
+  no engine-specific code.
+
 ### Docs — T5 recovery design accepted (J-design sign-off)
 
 - The owner accepted `docs/spec/design/t5-recovery-design.md` on 2026-10-15. D1 is amended:

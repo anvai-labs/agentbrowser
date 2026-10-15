@@ -48,5 +48,13 @@ Still open: conditional and multi-stage mappings, and cross-engine qualification
   sensitive combobox's withheld membership would hide. Recorded, not changed: chip text is
   normally visible page content.
 - **Mapping.** `form-mapping` (`autofill-map`) still expresses only `value` and `option`, so exact
-  sets are request-only for now. W3 covers mappings.
+  sets are request-only for now. W3a covers mappings.
+
+## Cross-engine qualification (2026-10-15, W3b)
+
+The whole real-library qualification above — add-only and exact chip sets, partial effects, the
+single-select refusal — runs unchanged on **Firefox and WebKit** as well as Chromium (the test is
+parametrized over the three Playwright families; CI's Test job installs all three binaries; the
+session's reported engine name pins the family). No engine-specific code was needed: the widget
+evidence is captured in the page, so it holds on every engine the Playwright driver launches.
 
