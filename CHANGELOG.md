@@ -16,6 +16,36 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   ~18% between sessions on the same host, so comparisons (F2) must interleave both builds in one
   session.
 
+### Added — journal time never moves backwards within a process (T5 J-c)
+
+- The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
+  and retention horizons) use `max(startWall + monotonicElapsed, wallNow, previousReading)`, so a
+  backward wall-clock step mid-process can no longer extend a horizon; they can only become
+  stricter. Everything that persists or deletes (the high-water, namespace retirement, the reopen
+  rollback check) still uses the plain wall reading, so no persisted value derives from the
+  monotonic source and restart behaviour is unchanged.
+
+### Added — output schemas for the last six MCP tools (T0 M2, part 2)
+
+- `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
+  schemas (`PolicyToolResultSchema`, `CookieListResultSchema`, `CookieHandoffToolResultSchema`,
+  `PageSnapshotSchema`, `PageHtmlResultSchema`, `SessionInspectionResultSchema`), and so does
+  the delegated `operation` tool (`OperationRecordResultSchema`): every MCP tool in every catalog
+  now does. `policy` and `cookie_handoff` keep an object root with their two result shapes as
+  alternatives. The nested session, control and operation views are relaxed for clients
+  (`relaxForClients`: open objects, closed enums widened to strings, required fields kept), so an
+  older MCP binary keeps accepting a newer server's results; the protocol schemas stay strict. Qualified end to end, including a real cookie handoff (approval relay, operator
+  decision over HTTP, completion) and a handed-off session's view; a test fails if any tool lacks
+  a schema.
+
+### Fixed — `html` honours its byte cap; `cookie_handoff` reports an unsupported server as an error
+
+- `html`'s `maxBytes` now bounds the returned UTF-8: it is taken in whole bytes, and a cut inside
+  a multibyte character backs off to the character boundary instead of emitting U+FFFD, which
+  overshot the cap by up to 2 bytes.
+- `cookie_handoff` against a client without the handoff surface returned an error envelope as a
+  successful result; it now fails as an error.
+
 ### Fixed — the T8 footprint gate measures the CLI's peak exactly
 
 - `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's
