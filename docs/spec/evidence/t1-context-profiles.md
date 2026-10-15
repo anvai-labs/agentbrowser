@@ -183,3 +183,33 @@ service, binding and mode memory") and retires the old token ("binds a trusted m
 bearer grant…"). An account switch inside a
 live grant is page/document-revision state by the packet's own rule; across grants it is
 the takeover-then-re-delegate choreography above.
+
+## 2026-10-15 update: footprint re-measured after the output schemas (M2)
+
+`node scripts/mode-footprint.mjs --samples 3 --tokenizer-python python3`, run on Linux x64 (WSL2)
+with Node v24.21.0 from a built develop checkout:
+
+| Profile shape | Binding | Tools | Bytes | cl100k_base tokens | o200k_base tokens |
+| --- | --- | ---: | ---: | ---: | ---: |
+| qa/operations/appsec/bounty/forms | unbound | 19 | 67,945 | 15,704 | 16,566 |
+| qa/operations/appsec/bounty/forms | delegated | 16 | 57,368 | 13,348 | 14,115 |
+| audit | unbound | 18 | 62,868 | 14,540 | 15,333 |
+| audit | delegated | 15 | 52,289 | 12,183 | 12,882 |
+| application | unbound | 0 | 12 | 4 | 4 |
+| application | delegated | 1 | 838 | 193 | 203 |
+
+The full catalog grew about 2.7× since the 2026-09-16 row (24,964 bytes, 13 tools). Two causes:
+- **Six more tools.**
+- **Output schemas**, now on all 19 tools (T0 M2). They are 29,179 of the 67,945 bytes (43%);
+  input schemas are 27,488.
+- Output schemas are advertised only when a client negotiates the structured protocol. A
+  `2024-11-05` client receives a 38,342-byte catalog with the same 19 tools and no output schemas.
+
+The profile reduction still holds: the application profile is 4–203 tokens against about 16k for
+the full catalog.
+
+**RSS:** median cold import delta 13.9–14.6 MB; warm catalog projection 2.1–2.7 MB for full/audit
+profiles and 0.66 MB for application; absolute warm RSS 58.5–60.9 MB. The common import still
+dominates, so the earlier conclusion stands: a context-token benefit, no general memory-saving
+claim. These are not comparable byte-for-byte with the macOS arm64 rows above (different
+platform and Node).
