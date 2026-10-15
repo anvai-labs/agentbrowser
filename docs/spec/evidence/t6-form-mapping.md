@@ -74,3 +74,28 @@ Preflight field failures are attributed to that field's receipt; all other field
 `not_attempted`. Global URL/completeness failures use receipt 0 as the existing stage
 error carrier; no field write is implied. After dispatch, failure remains attributed
 to the active affected field and retains uncertainty.
+
+## Staged mappings (2026-10-15, W3a)
+
+- `FormMappingStageSchema` is exactly the delivered single-stage shape (own scope, 1-50 fields).
+- A document carries EITHER `scope`+`fields` (unchanged, byte-compatible) OR `stages` (1-12);
+  stage ids are unique and each stage's scope URL is distinct, so one stage cannot be mistaken
+  for another's page.
+- `materializeAutofillMapping(mapping, values, stageId?)` selects the stage; values must exactly
+  match the union of every stage's value keys (repeats across stages allowed). Single-stage
+  documents are unchanged and reject a stage argument.
+- Conditionality is caller-observed: the existing scoped preflight refuses a stage whose fields
+  are not all present on the page. The mapping describes pages, never business state.
+- `form stages <mapping>` lists id, URL and field count offline (no values read) and advertises a
+  wire contract like every other JSON-input command; `form prepare` gained the optional
+  `[stageId]` (three inputs in total).
+- **Effective bounds (review round 1, measured):** the document snapshot bound (2,000 nodes /
+  128 KiB) governs over the schema maxima — 6 x 50-field stages fit; 7 x 50 is refused with the
+  bounded-input message. The union of stage value keys is capped at 50; a wider union is refused
+  with a clear static error before values can mislead.
+- Shape validation is shared by materialization and `form stages`: an invalid document is refused
+  by the lister, never reported as valid.
+- Tests: protocol (stage selection, union matching, single-stage unchanged, six refusal shapes —
+  both fields and stages, empty/duplicate stages, bad id, shared URL, missing strategy) and CLI
+  (chosen stage, missing/unknown stage, listing). Suites: protocol 475, cli 324.
+

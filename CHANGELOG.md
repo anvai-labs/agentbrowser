@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — staged form mappings (T6 W3a)
+
+- A form mapping document may carry 1-12 stages, each exactly the single-stage shape with its own
+  distinct scope URL. `form prepare <mapping> <values> [stageId]` materializes the chosen stage;
+  values must match the union of every stage's keys; `form stages <mapping>` lists the stages
+  offline. Single-stage documents are unchanged. Which stage applies to the page in front of the
+  caller stays caller-observed — the scoped preflight refuses a stage whose fields are not all
+  present — never inferred from business state.
+
 ### Added — read-only journal lookup and status (T5 J3b)
 
 - `GET /v1/journal/operations/{operationId}` returns every historical record of one durable
