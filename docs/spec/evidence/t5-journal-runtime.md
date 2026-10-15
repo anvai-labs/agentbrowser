@@ -192,5 +192,5 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
   - The facade test uses a lying adapter.
   - The real compiled adapter and child are exercised through a durable write in the api tests.
   - Each guard was mutated away and fails a test.
-  - Suites: control 834, api 1,558 (CI reports the same on the PR head); journal qualification 32/32.
+  - Suites: control 834, api 1,562 (CI reports the same on the PR head); journal qualification 32/32.
 
