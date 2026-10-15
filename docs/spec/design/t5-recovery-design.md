@@ -51,8 +51,12 @@ and narrows R08's autofill part (see D6).
   the credential's tenant. This makes the surface reachable in multi-tenant keyed deployments,
   which have no operator key. Keyless deployments still get none, because no credential names a
   tenant there.
-- **Writes** (D2 close and continue, D3 reconcile and settle) accept **only** the operator key:
-  they change recorded outcomes, and settlement is irreversible.
+- **Writes** (D2 close and continue, D3 reconcile and settle) accept **only** the ADR-025 operator
+  key, which authenticates as the principal `actor: 'human-operator'`. They change recorded
+  outcomes, and settlement is irreversible.
+  - **Implementation hazard:** a tenant API key authenticates as `actor: 'operator'`. A write
+    check must therefore test for `human-operator` explicitly, never `operator`, and a test must
+    pin that an API key is refused.
 - **Delegated agent grants** (session-bound tokens) get no historical surface. Their sessions are
   gone after a restart, by design.
 
@@ -127,8 +131,8 @@ Recommended: opt-in history.
 ### New write path for recovery
 
 D2 and D3 need a trusted, non-session write path. It calls the facade's `commitTerminal` with
-the **full stored identity** returned by `findByOperation`, under the operator's authorization
-and the namespace fence. Nothing else gains access to another process's records.
+the **full stored identity** returned by `findByOperation`, authorized only for the ADR-025
+operator principal (`actor: 'human-operator'`), under the namespace fence. Nothing else gains access to another process's records.
 
 ### Closing and continuing undispatched records (D2)
 
@@ -230,7 +234,7 @@ bus is built.
 
 ### Advertising recovery (D5)
 
-**D5: report recovery to operators only, for the qualified matrix.** Recommended.
+**D5 (accepted): report recovery through a read-only status endpoint, for the qualified matrix.**
 
 - Delegated agent grants get no historical surface (D1), so there is no agent capability flag.
 - `GET /v1/journal` (operator or tenant API key, read-only) reports:
@@ -289,7 +293,8 @@ order: D6 **after** J3, reusing J3's read path.
 - Restoring browser sessions, callbacks, grants or consent from serialized state.
 - Automatic replay of any step.
 - Exactly-once external effects.
-- A historical surface for agents.
+- A historical surface for delegated agent grants (session-bound tokens).
+- Write access to history for tenant API keys.
 - Journal-backed events.
 - Record timestamps or indexes (a future `formatVersion`).
 - A durable evidence store.
