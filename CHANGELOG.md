@@ -7,6 +7,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — proposed: T5 recovery design (J3, J4, browser-operation durability)
+
+- `docs/spec/design/t5-recovery-design.md` (Proposed, awaiting the owner's sign-off) refines J3
+  and J4 on top of the wired journal. It has six decision points:
+  - D1: operator-only historical lookup;
+  - D2: continuation only of never-dispatched records, by first closing them as pre-dispatch
+    failures;
+  - D3: an unknown outcome is resolved only by the application adapter's receipt, never by
+    replay;
+  - D4: events and cursors are not recovered;
+  - D5: recovery is advertised only for the qualified matrix;
+  - D6: browser operations are journaled for classification and never recovered, with
+    revalidation after the storage wait.
+- It also includes the classification of non-business writes and a six-PR sequence. Nothing is
+  implemented.
+
 ### Added — a committed provider-CLI qualification driver (T8 Q1)
 
 - `scripts/t8-harness-qualification.mjs` re-qualifies the MCP bridge through the installed Codex
