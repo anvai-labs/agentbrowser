@@ -196,9 +196,12 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
 
 ## A2: durable restart claims (2026-10-15)
 
-`packages/api/src/application-durable-restart.test.ts` runs two service processes, one after the
-other, on the same real store (the second reopens the namespace J-d style). The oracles are the
-store's committed rows (read-only) and per-process effect counters.
+`packages/api/src/application-durable-restart.test.ts` runs two service instances — fresh
+authorities and storage children, the identity mechanics of fresh OS processes; J-e's
+child-process runs cover the OS-process case with SIGKILL — one after the other, on the same real
+store (the second reopens the namespace J-d style). The first stops GRACEFULLY (drained shutdown,
+then journal close), complementing the J-e SIGKILL table one section up. The oracles are the
+store's committed rows (read-only) and per-instance effect counters.
 
 - **Survival.** A completed durable write (rev 3) is still the store's only row after the restart,
   and the new process reads it through its own journal handle (`findByOperation`).
