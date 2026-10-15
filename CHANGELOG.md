@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Tests — process loss through the service with the durable journal (T5 J-e)
+
+- The compiled service, with the real SQLite journal, is SIGKILLed before the intent, after the
+  intent, after the marker, after the effect and after the terminal of a durable write.
+- Each case leaves the expected record (none / undispatched / in doubt / in doubt / completed),
+  proven by a store read inside the process before the kill. The independent effect counter never
+  exceeds 1.
+- The next process reopens the same namespace, with the full service, and replays nothing.
+- Key loss and in-place key rotation are refused at startup as a configuration mismatch, without
+  exposing key material.
+
 ### Added — a CI entrypoint for `test evaluate` (T3)
 
 - `.github/actions/test-evaluate` is a composite GitHub Action that other repositories can pin.
