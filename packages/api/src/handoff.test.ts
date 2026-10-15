@@ -488,3 +488,201 @@ describe('handoff input validation', () => {
     }
   });
 });
+
+describe('review round 1: domain matching, canonicalization, races, binding', () => {
+  it('requesting an apex takes the subtree: .github.com AND host-only gist.github.com both transfer, with per-domain evidence', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [
+      cookie({ name: 'site', value: 'site-login', domain: '.github.com' }),
+      cookie({ name: 'gist', value: 'gist-login', domain: 'gist.github.com' }),
+    ];
+    const first = await refused(f.service.handoffCookies(f.sessionId, { domains: ['github.com'] }));
+    expect(first.code).toBe('APPROVAL_REQUIRED');
+    // The operator's evidence names BOTH per-domain counts — nothing
+    // transfers invisibly.
+    expect(first.details).toMatchObject({
+      counts: { cookies: 2, 'github.com': 2 },
+    });
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    await f.service.decideNonActApproval(f.sessionId, tokenId, 'approve');
+    const result = await f.service.handoffCookies(f.sessionId, {
+      domains: ['github.com'],
+      approvalToken: tokenId,
+    });
+    expect(result.counts).toMatchObject({ cookies: 2 });
+    const fakeSession = f.engine.getSession(f.engine.getSessionIds()[0] ?? '');
+    const written = await fakeSession?.cookies();
+    expect(written?.map((c) => c.name).sort()).toEqual(['gist', 'site']);
+  });
+
+  it('requesting a deep host NEVER pulls the parent site-wide cookie (ADR s3 matching)', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [
+      cookie({ name: 'site', value: 'site-login', domain: '.github.com' }),
+      cookie({ name: 'gist', value: 'gist-login', domain: 'gist.github.com' }),
+    ];
+    const first = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['gist.github.com'] })
+    );
+    expect(first.code).toBe('APPROVAL_REQUIRED');
+    // Only the gist cookie is in scope; the parent is not in the evidence.
+    expect(first.details).toMatchObject({ counts: { cookies: 1, 'gist.github.com': 1 } });
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    await f.service.decideNonActApproval(f.sessionId, tokenId, 'approve');
+    await f.service.handoffCookies(f.sessionId, {
+      domains: ['gist.github.com'],
+      approvalToken: tokenId,
+    });
+    const fakeSession = f.engine.getSession(f.engine.getSessionIds()[0] ?? '');
+    const written = await fakeSession?.cookies();
+    expect(written?.map((c) => c.name)).toEqual(['gist']);
+  });
+
+  it('the existing-cookies floor covers subtree cookies: a seeded gist cookie refuses an apex handoff', async () => {
+    const f = await handoffFixture({
+      create: {
+        cookies: [
+          {
+            name: 'seed',
+            value: 'x',
+            domain: 'gist.github.com',
+            path: '/',
+            httpOnly: false,
+            secure: false,
+            sameSite: 'Lax',
+          },
+        ],
+      },
+    });
+    const refusal = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['github.com'] })
+    );
+    expect(ruleOf(refusal)).toBe('floor.handoff.existing-cookies');
+  });
+
+  it('operator input is canonicalized: case and a trailing dot do not fork identities (review F3)', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [cookie({ name: 'session', value: 'v1' })];
+    const first = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['Example.Com.'] })
+    );
+    expect(first.code).toBe('APPROVAL_REQUIRED');
+    expect(first.details).toMatchObject({
+      domains: ['example.com'],
+      counts: { cookies: 1, 'example.com': 1 },
+    });
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    await f.service.decideNonActApproval(f.sessionId, tokenId, 'approve');
+    // Every cookie disappears: the retry must refuse freshness — case must
+    // not defeat the some-to-none guard.
+    f.login.state.cookies = [];
+    const gone = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['example.com'], approvalToken: tokenId })
+    );
+    expect(gone.code).toBe('FORBIDDEN');
+    expect(ruleOf(gone)).toBe('floor.handoff.freshness');
+    expect(f.service.getSession(f.sessionId)?.credentialSource).toBeUndefined();
+  });
+
+  it('a racing cookie export DURING the write is refused — the mark precedes the write (review F5a)', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [cookie({ name: 'session', value: 'operator-secret-value' })];
+    const first = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['example.com'] })
+    );
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    await f.service.decideNonActApproval(f.sessionId, tokenId, 'approve');
+    const fakeSession = f.engine.getSession(f.engine.getSessionIds()[0] ?? '');
+    if (!fakeSession) throw new Error('Expected an engine session');
+    const original = fakeSession.addCookies.bind(fakeSession);
+    let raced = false;
+    fakeSession.addCookies = async (cookies) => {
+      // Mid-write: the mark must already be in force.
+      const mid = await refused(f.service.getSessionCookies(f.sessionId));
+      expect(mid.code).toBe('HANDOFF_COOKIES_NOT_EXPORTABLE');
+      raced = true;
+      return original(cookies);
+    };
+    const result = await f.service.handoffCookies(f.sessionId, {
+      domains: ['example.com'],
+      approvalToken: tokenId,
+    });
+    expect(raced).toBe(true);
+    expect(result.credentialSource).toBe('operator');
+  });
+
+  it('an approval minted under a different policy version is not consumed (review F5c)', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [cookie()];
+    // A token minted by a service running a DIFFERENT policy version, shared
+    // into this gate: the retry must refuse it and mint afresh.
+    const foreign = await f.gate.generateApprovalToken({
+      sessionId: f.sessionId,
+      kind: 'cookie.handoff',
+      action: { type: 'cookie.handoff' },
+      domains: ['example.com'],
+      counts: { cookies: 1, 'example.com': 1 },
+      policyVersion: 'v-other',
+    });
+    await f.service.decideNonActApproval(f.sessionId, foreign.tokenId, 'approve');
+    const refusal = await refused(
+      f.service.handoffCookies(f.sessionId, {
+        domains: ['example.com'],
+        approvalToken: foreign.tokenId,
+      })
+    );
+    expect(refusal.code).toBe('APPROVAL_REQUIRED');
+    expect((refusal.details as { tokenId: string }).tokenId).not.toBe(foreign.tokenId);
+    expect(f.service.getSession(f.sessionId)?.credentialSource).toBeUndefined();
+  });
+
+  it('a lease the session allowlist refuses aborts BEFORE the mark (review F2)', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [cookie()];
+    const first = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['example.com'] })
+    );
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    // The session has NO allowlist: the lease cannot lie within it.
+    await f.service.decideNonActApproval(f.sessionId, tokenId, 'approve', {
+      hosts: ['example.com'],
+      expiresInMs: 1000,
+      maxActions: 1,
+    });
+    const refusal = await refused(
+      f.service.handoffCookies(f.sessionId, {
+        domains: ['example.com'],
+        approvalToken: tokenId,
+      })
+    );
+    expect(refusal.code).toBe('INVALID_REQUEST');
+    expect(f.service.getSession(f.sessionId)?.credentialSource).toBeUndefined();
+    const fakeSession = f.engine.getSession(f.engine.getSessionIds()[0] ?? '');
+    expect(await fakeSession?.cookies()).toEqual([]);
+  });
+
+  it('an engine without the live cookie API refuses BEFORE the mark (review F2)', async () => {
+    const f = await handoffFixture();
+    f.login.state.cookies = [cookie()];
+    const first = await refused(
+      f.service.handoffCookies(f.sessionId, { domains: ['example.com'] })
+    );
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    await f.service.decideNonActApproval(f.sessionId, tokenId, 'approve');
+    const fakeSession = f.engine.getSession(f.engine.getSessionIds()[0] ?? '');
+    if (!fakeSession) throw new Error('Expected an engine session');
+    // Strip the optional methods, as an engine like safari would be.
+    const session = fakeSession as unknown as Record<string, unknown>;
+    // Shadow the prototype methods (delete would be a no-op on them).
+    session.addCookies = undefined;
+    session.addInitScript = undefined;
+    const refusal = await refused(
+      f.service.handoffCookies(f.sessionId, {
+        domains: ['example.com'],
+        approvalToken: tokenId,
+      })
+    );
+    expect(refusal.code).toBe('ENGINE_UNSUPPORTED');
+    expect(f.service.getSession(f.sessionId)?.credentialSource).toBeUndefined();
+  });
+});

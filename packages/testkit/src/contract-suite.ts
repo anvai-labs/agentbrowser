@@ -137,15 +137,16 @@ export async function runEngineContractSuite(
     );
   }
   if (session.addInitScript !== undefined) {
-    // Applied to future documents: a fresh page must see the effect.
+    // Contract-smoke only: the method accepts a script and a subsequent
+    // page lifecycle stays healthy. BEHAVIORAL coverage (the script running
+    // in every frame) lives in the engine suites (handoff-init.test.ts
+    // drives the exact shipped script through a real browser) — an
+    // observation cannot see window properties, and fake engines execute
+    // nothing, so asserting more here would be theater.
     await session.addInitScript('window.__contractInit = true;');
     const initPage = await session.newPage();
-    try {
-      const observed = await initPage.observe({ mode: 'interactive' });
-      void observed;
-    } finally {
-      await initPage.close();
-    }
+    await initPage.observe({ mode: 'interactive' });
+    await initPage.close();
   }
 
   // --- session close ---------------------------------------------------------

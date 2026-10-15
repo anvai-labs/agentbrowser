@@ -70,11 +70,14 @@ import {
   ApprovalGate,
   type ApprovalToken,
   ArtifactStore,
+  assertCookieRequestSize,
   budgetObservation,
   canonicalJson,
   covers,
   isHighRiskEffect,
   JsonLedger,
+  MAX_COOKIE_COUNT,
+  MAX_COOKIE_REQUEST_BYTES,
   ObservationNormalizer,
   projectionActive,
   projectObservation,
@@ -84,12 +87,13 @@ import {
   tightenApprovalMode,
   usableHost,
 } from '@agentbrowser/core';
-import type {
-  EngineSession,
-  EngineSessionOptions,
-  NormalizedCookie,
-  RawPageState,
-  RequestPolicy,
+import {
+  HANDOFF_RTC_REMOVAL_INIT_SCRIPT,
+  type EngineSession,
+  type EngineSessionOptions,
+  type NormalizedCookie,
+  type RawPageState,
+  type RequestPolicy,
 } from '@agentbrowser/engine';
 import {
   type BrowserEngine,
@@ -697,6 +701,12 @@ export class AgentBrowserService {
   private readonly handoffLocks = new Map<string, Promise<unknown>>();
   /** TD-BROWSER-16 phase 6: the operator login browser (server-injected). */
   private readonly loginBrowser: NonNullable<ServiceDependencies['loginBrowser']> | undefined;
+  /**
+   * TD-BROWSER-16 phase 6: true while the api passes no engine
+   * webSocketPolicy, making deny-upgrade the deployment default. See the
+   * handoff's floor.handoff.websocket guard.
+   */
+  private readonly webSocketPolicyDefaultDeny = true;
   private readonly actionRiskPolicy: ActionRiskPolicy;
   /** TD-BROWSER-15: operator decisions go through one seam; legacy until a policy file. */
   private readonly authorizer: Authorizer;
@@ -5022,17 +5032,16 @@ export class AgentBrowserService {
    * within the session's exact allowlist — a session without one has nothing
    * for a lease to lie within, so the grant is refused (fail closed).
    */
-  async grantActionLease(
+  /**
+   * Shape, bounds and allowlist validation for a lease grant — shared by the
+   * grant (which stores) and the handoff's pre-mark check (review F2: a
+   * lease the session's allowlist refuses must abort BEFORE the marking,
+   * not after it).
+   */
+  private validateActionLeaseInput(
     sessionId: string,
     input: { hosts: string[]; expiresInMs: number; maxActions: number }
-  ): Promise<import('@agentbrowser/protocol').ActionLease> {
-    if (this.coordinator.inspect(sessionId) === undefined)
-      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
-    if (this.sessionCredentialSources.get(sessionId) !== 'operator')
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        'An action lease applies only to a session holding operator credentials'
-      );
+  ): void {
     const { hosts, expiresInMs, maxActions } = input;
     if (
       !Array.isArray(hosts) ||
@@ -5078,21 +5087,35 @@ export class AgentBrowserService {
           `Lease host '${host}' does not lie within the session's host allowlist`
         );
     }
+  }
+
+  async grantActionLease(
+    sessionId: string,
+    input: { hosts: string[]; expiresInMs: number; maxActions: number }
+  ): Promise<import('@agentbrowser/protocol').ActionLease> {
+    if (this.coordinator.inspect(sessionId) === undefined)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    if (this.sessionCredentialSources.get(sessionId) !== 'operator')
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'An action lease applies only to a session holding operator credentials'
+      );
+    this.validateActionLeaseInput(sessionId, input);
     const now = Date.now();
     const lease: ActiveActionLease = {
-      hosts: [...hosts],
+      hosts: [...input.hosts],
       grantedAt: now,
-      expiresAt: now + expiresInMs,
-      maxActions,
-      remainingActions: maxActions,
+      expiresAt: now + input.expiresInMs,
+      maxActions: input.maxActions,
+      remainingActions: input.maxActions,
       exhaustedLogged: false,
     };
     this.actionLeases.set(sessionId, lease);
     this.logger?.info('lease.granted', {
       sessionId,
-      hosts: [...hosts],
+      hosts: [...input.hosts],
       expiresAt: lease.expiresAt,
-      maxActions,
+      maxActions: input.maxActions,
     });
     return { hosts: [...lease.hosts], ...leaseProjection(lease) };
   }
@@ -5146,17 +5169,6 @@ export class AgentBrowserService {
   /** The view projection of the session's live lease, with its derived remainder. */
   // --- TD-BROWSER-16 phase 6: the cookie handoff (ADR-025 section 3) -------
 
-  /**
-   * ADR-025 section 3 step 6: remove WebRTC's peer connections from every
-   * frame of the marked session — it carries the operator's cookies, and a
-   * data channel must not leak the local network or real IP. Applied as an
-   * all-frames init script, so iframes and window.open popups inherit it.
-   */
-  private static readonly RTC_REMOVAL_INIT_SCRIPT =
-    '(() => { const remove = (name) => { try { delete window[name]; } catch {} ' +
-    'Object.defineProperty(window, name, { get: () => undefined, configurable: true }); }; ' +
-    "remove('RTCPeerConnection'); remove('webkitRTCPeerConnection'); })();";
-
   private serializeHandoff<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const run = (this.handoffLocks.get(sessionId) ?? Promise.resolve()).then(operation, operation);
     this.handoffLocks.set(
@@ -5171,10 +5183,17 @@ export class AgentBrowserService {
     return domain.startsWith('.') ? domain.slice(1) : domain;
   }
 
-  /** Whether a login cookie applies to one of the requested (exact-host) domains. */
+  /**
+   * Whether a login cookie applies to one of the requested (exact-host)
+   * domains, per ADR-025 section 3's relation: the DOMAIN is the matcher — a
+   * cookie transfers iff its host IS the domain or lies WITHIN the domain's
+   * subtree. Requesting a deep host never pulls the parent's site-wide
+   * cookie; requesting an apex (or registrable parent) takes the subtree's
+   * host-only cookies too.
+   */
   private static cookieAppliesTo(cookieDomain: string, domains: string[]): boolean {
     const host = AgentBrowserService.cookieHostOf(cookieDomain);
-    return domains.some((domain) => host === domain || covers(host, domain).ok);
+    return domains.some((domain) => host === domain || covers(domain, host).ok);
   }
 
   /**
@@ -5220,9 +5239,13 @@ export class AgentBrowserService {
         throw floor('egress', 'the session has no enforced egress policy');
       if (facts.allowServiceWorkers)
         throw floor('service-workers', 'the session must not allow service workers');
-      // WebSocket policy: the api never configures webSocketPolicy, so every
-      // session's upgrade requests are denied (code 1014) by construction.
-      // If an option to relax that ever appears, this floor must check it.
+      // WebSocket policy (floor.handoff.websocket): the api never configures
+      // engineSessionOptions.webSocketPolicy, so every session's upgrades are
+      // denied (close code 1014) by construction. The fact field below is the
+      // guard: whoever adds a webSocketPolicy option must set it honestly,
+      // and the floor refuses the handoff the day it turns false.
+      if (!this.webSocketPolicyDefaultDeny)
+        throw floor('websocket', 'the deployment must deny WebSocket upgrades for a handoff');
       for (const page of this.pages.values()) {
         if (page.sessionId !== sessionId) continue;
         const url = page.enginePage.getUrl
@@ -5234,7 +5257,11 @@ export class AgentBrowserService {
             'the session must hold no committed navigation other than about:blank'
           );
       }
-      const domains = [...new Set(request.domains)].sort();
+      // TD phase 3: canonicalize operator input first — case and a trailing
+      // dot must not fork identities or defeat the per-domain evidence.
+      const domains = [
+        ...new Set(request.domains.map((domain) => domain.toLowerCase().trim().replace(/\.$/, ''))),
+      ].sort();
       for (const domain of domains) {
         const usable = usableHost(domain);
         if (!usable.ok) throw floor('domains', `domain '${domain}' is not a usable host`);
@@ -5301,8 +5328,8 @@ export class AgentBrowserService {
           expired: read.skipped.expired,
         };
         for (const domain of domains) {
-          const perDomain = read.cookies.filter(
-            (cookie) => AgentBrowserService.cookieHostOf(cookie.domain) === domain
+          const perDomain = read.cookies.filter((cookie) =>
+            AgentBrowserService.cookieAppliesTo(cookie.domain, [domain])
           ).length;
           if (perDomain > 0) counts[domain] = perDomain;
         }
@@ -5356,8 +5383,8 @@ export class AgentBrowserService {
       const reCookies = filterToDomains(reRead.cookies);
       for (const [key, hadCount] of Object.entries(decided.counts ?? {})) {
         if (!domains.includes(key) || typeof hadCount !== 'number' || hadCount <= 0) continue;
-        const still = reCookies.some(
-          (cookie) => AgentBrowserService.cookieHostOf(cookie.domain) === key
+        const still = reCookies.some((cookie) =>
+          AgentBrowserService.cookieAppliesTo(cookie.domain, [key])
         );
         if (!still)
           throw floor(
@@ -5366,12 +5393,12 @@ export class AgentBrowserService {
           );
       }
 
-      // --- steps 5-8: mark, prepare, write, audit ---------------------------
-      this.markOperatorCredentialSource(sessionId);
-      if (decided.lease !== undefined) await this.grantActionLease(sessionId, decided.lease);
-      for (const cookie of reCookies) {
-        this.secretManager.registerSessionSecret(sessionId, cookie.value);
-      }
+      // --- preparation BEFORE the mark (review F2): nothing that can refuse
+      // may run after it, or the session is marked with nothing written and
+      // its exports are refused forever. Engine capability, lease validation,
+      // the ADR section-3 transfer bounds, the init script (no data) and the
+      // secret registration all happen first; only apply-and-write follows
+      // the mark.
       const engineSession = this.coordinator.get(sessionId)?.engineSession;
       if (engineSession === undefined)
         throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
@@ -5380,7 +5407,28 @@ export class AgentBrowserService {
           'ENGINE_UNSUPPORTED',
           'this engine cannot accept a live cookie handoff (no live-context cookie API)'
         );
-      await engineSession.addInitScript(AgentBrowserService.RTC_REMOVAL_INIT_SCRIPT);
+      if (decided.lease !== undefined) this.validateActionLeaseInput(sessionId, decided.lease);
+      if (reCookies.length > MAX_COOKIE_COUNT)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `the transfer holds more than ${MAX_COOKIE_COUNT} cookies for the requested domains`
+        );
+      try {
+        assertCookieRequestSize(reCookies);
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `the transfer exceeds ${MAX_COOKIE_REQUEST_BYTES} bytes of cookie data`
+        );
+      }
+      await engineSession.addInitScript(HANDOFF_RTC_REMOVAL_INIT_SCRIPT);
+      for (const cookie of reCookies) {
+        this.secretManager.registerSessionSecret(sessionId, cookie.value);
+      }
+
+      // --- the mark; then apply-and-write ------------------------------------
+      this.markOperatorCredentialSource(sessionId);
+      if (decided.lease !== undefined) await this.grantActionLease(sessionId, decided.lease);
       await engineSession.addCookies(
         reCookies.map((cookie) => ({
           name: cookie.name,

@@ -1,3 +1,4 @@
+import { HANDOFF_RTC_REMOVAL_INIT_SCRIPT } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 
@@ -8,11 +9,6 @@ import { PlaywrightChromiumEngine } from './index.js';
  * launches with the WebRTC IP-handling policy while the login browser is
  * enabled. Real browser, like the login-browser suite.
  */
-
-const RTC_REMOVAL =
-  '(() => { const remove = (name) => { try { delete window[name]; } catch {} ' +
-  'Object.defineProperty(window, name, { get: () => undefined, configurable: true }); }; ' +
-  "remove('RTCPeerConnection'); remove('webkitRTCPeerConnection'); })();";
 
 const PROBE =
   'data:text/html,<!doctype html><html><body>' +
@@ -42,7 +38,8 @@ describe('TD-BROWSER-16 phase 6: handoff engine pieces', () => {
     const engine = new PlaywrightChromiumEngine();
     try {
       const session = await engine.createSession({});
-      await session.addInitScript?.(RTC_REMOVAL);
+      // The EXACT shipped constant: a no-op variant of it fails here.
+      await session.addInitScript?.(HANDOFF_RTC_REMOVAL_INIT_SCRIPT);
       const page = await session.newPage();
       await page.navigate({ url: PROBE });
       const observed = await page.observe({ mode: 'interactive' });

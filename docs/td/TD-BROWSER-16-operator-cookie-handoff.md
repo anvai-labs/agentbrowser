@@ -312,7 +312,18 @@ under **one per-session lock**:
   approved with a lease, the agent completes a leased flow, and no agent-facing output contains a
   value.
 
-**Delivered (phase 6, #470):** `POST /v1/sessions/{sessionId}/cookies/handoff` under a
+**Delivered (phase 6, #470):**
+*(Review round 1 corrected four things, all test-pinned: the cookie applies relation had
+`covers()` inverted — deep-host requests pulled parent cookies, apex requests refused subtree
+cookies — the per-domain evidence and freshness guard now use the fixed relation; every
+pre-mark-abortable check (engine capability, lease validation, the previously-unenforced ADR §3
+transfer bounds, init script, secret registration) moved BEFORE the mark so no refusal can brick
+a marked-but-empty session; operator domain input is canonicalized (case/whitespace/trailing
+dot); and the RTC-removal script became a shared core constant (`HANDOFF_RTC_REMOVAL_INIT_SCRIPT`)
+so the real-browser behavioral tests exercise the exact shipped text. ADR §4's baseline sentence
+now states the shipped Cedar default; floor.handoff.websocket guards a recorded construction
+fact.)*
+ `POST /v1/sessions/{sessionId}/cookies/handoff` under a
 per-session promise-chain lock, in the spec's order. Floors each carry their own `floor.handoff.*`
 rule id (login browser enabled+open via the new `LoginBrowserService.isOpen`; isolated
 non-delegated local launch recorded as per-session create facts; egress chain presence; service

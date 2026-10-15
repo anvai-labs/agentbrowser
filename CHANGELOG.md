@@ -46,6 +46,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   shared Chromium launches with `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
   (engine option wired from `AGENTBROWSER_LOGIN_BROWSER`, asserted in the real-browser suite).
 - `openapi.json` regenerated; the write-path checklist declares the handoff route.
+- **Review round 1 (all fixed, each pinned by a new test):** the cookie-domain matching was
+  INVERTED vs ADR-025 §3 (`covers(cookieHost, domain)` instead of `covers(domain, cookieHost)`) —
+  a deep-host request pulled the parent's site-wide cookie without operator evidence, and an apex
+  request refused the subtree's host-only cookies; the arguments are swapped and the applies
+  relation now also drives the per-domain evidence and the freshness guard. Post-mark aborts
+  (a lease the allowlist refuses; an engine without the live cookie API) bricked the destination
+  session — engine capability, lease validation, the ADR §3 transfer bounds (≤1000 cookies,
+  ≤1 MiB — previously unenforced), the init script and the secret registration all now run BEFORE
+  the mark. Operator input is canonicalized (case, whitespace, trailing dot). The RTC-removal
+  script moved to a shared core constant so the injector and the real-browser behavioral tests
+  assert the same text. ADR §4's "baseline grants it to no one" corrected to the shipped default
+  (capability grant covers it; the approval step is the unconditional part). floor.handoff.websocket
+  is a real guard on a recorded fact. A racing mid-write export test, a foreign-policy-version
+  token test, and both pre-mark abort tests pin the new behavior.
 
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)

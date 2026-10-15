@@ -233,7 +233,10 @@ are `kind: "act"`, unchanged.
   reviewed-approval context (`reviewContext`), which requires a delegated session. The view shows
   the kind, domains and counts, or the act description, and never cookie names.
 - **Cedar:** action `cookie.handoff`, resource `Host`, one decision per domain. The ADR-024
-  baseline grants it to no one. No policy can remove the approval step.
+  baseline grants it by default (the generated env document's capability grant covers it, mirroring
+  the other capabilities; `policy check` reports it, and a policy file may deny per domain — any
+  deny fails the whole handoff). What the baseline never does is grant the APPROVAL: the
+  human-operator decision is unconditional, and no policy can remove that step.
 
 ### 5. Actions in a marked session: fail closed, with the operator's lease
 
