@@ -41,6 +41,7 @@ export {
   INTERACTION_GUIDANCE,
   isAgentMode,
   isPassingOutcome,
+  listFormMappingStages,
   materializeAutofillMapping,
   ObservationRequestSchema,
   OperationReplaySchema,

@@ -60,6 +60,7 @@ describe('offline form preparation', () => {
     expect(descriptor.arguments.map((argument: { name: string }) => argument.name)).toEqual([
       'mappingJson',
       'valuesJson',
+      'stageId',
     ]);
     expect(descriptor.schemas.input).toMatchObject({
       type: 'object',
@@ -253,4 +254,71 @@ describe('offline form preparation', () => {
       expect(createClient).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('staged mappings (T6 W3a)', () => {
+  const stageField = (label: string, valueKey: string) => ({
+    match: { label },
+    strategy: 'native-input',
+    input: 'value',
+    valueKey,
+  });
+  const stagedMapping = JSON.stringify({
+    schemaVersion: 1,
+    id: 'onboarding',
+    revision: 'r1',
+    stages: [
+      {
+        id: 'account',
+        scope: { url: 'https://example.test/signup/1' },
+        fields: [stageField('Full name', 'name'), stageField('Email', 'email')],
+      },
+      {
+        id: 'profile',
+        scope: { url: 'https://example.test/signup/2' },
+        fields: [stageField('Full name', 'name'), stageField('Bio', 'bio')],
+      },
+    ],
+  });
+  const unionValues = JSON.stringify({
+    name: 'Ada',
+    email: 'ada@example.test',
+    bio: 'Engineer',
+  });
+
+  it('materializes the chosen stage', async () => {
+    const { cli, out } = harness();
+    expect(await cli.run(['form', 'prepare', stagedMapping, unionValues, 'profile'])).toBe(0);
+    const prepared = JSON.parse(out.join('\n'));
+    expect(prepared.scope).toEqual({ url: 'https://example.test/signup/2' });
+    expect(prepared.fields).toHaveLength(2);
+  });
+
+  it('refuses a staged mapping without a stage, and an unknown stage', async () => {
+    const missing = harness();
+    expect(await missing.cli.run(['form', 'prepare', stagedMapping, unionValues])).toBe(1);
+    expect(missing.err.join('\n')).toMatch(/stage id/);
+    const unknown = harness();
+    expect(await unknown.cli.run(['form', 'prepare', stagedMapping, unionValues, 'nope'])).toBe(1);
+    expect(unknown.err.join('\n')).toMatch(/Unknown form mapping stage/);
+  });
+
+  it('lists stages offline without values, and honors --json with the advertised shape', async () => {
+    const { cli, out } = harness();
+    expect(await cli.run(['form', 'stages', stagedMapping])).toBe(0);
+    expect(out.join('\n')).toBe(
+      [
+        'account  https://example.test/signup/1  2 field(s)',
+        'profile  https://example.test/signup/2  2 field(s)',
+      ].join('\n')
+    );
+    const json = harness();
+    expect(await json.cli.run(['--json', 'form', 'stages', stagedMapping])).toBe(0);
+    expect(JSON.parse(json.out.join('\n'))).toEqual({
+      stages: [
+        { id: 'account', url: 'https://example.test/signup/1', fieldCount: 2 },
+        { id: 'profile', url: 'https://example.test/signup/2', fieldCount: 2 },
+      ],
+    });
+  });
 });

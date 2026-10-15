@@ -66,6 +66,13 @@ adds missing values, verifies exact set equality, and reports partial `effects` 
 compensation. It is qualified on react-select 5.10.2
 ([evidence](../evidence/t6-exact-chip-sets.md)).
 
+**Staged mappings (2026-10-15, W3a):** a mapping document may carry 1-12 stages (each the
+single-stage shape with its own distinct scope URL); materialization selects a stage and values
+match the union of all stages' keys; `form stages` lists them offline; conditionality stays
+caller-observed through the existing scoped preflight
+([design](../design/t6-form-mapping.md)). Business/job identity and live workflow qualification
+remain open.
+
 **Cross-engine (2026-10-15, W3b):** the same real react-select qualification (add-only and
 exact chip sets) runs on Chromium, Firefox and WebKit through the Playwright engine, in CI (the
 Test job installs all three binaries), with the session's engine name pinning the family; no
