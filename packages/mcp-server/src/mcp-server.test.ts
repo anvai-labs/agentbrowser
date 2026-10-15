@@ -1207,6 +1207,44 @@ describe('AgentBrowser MCP server', () => {
         expect(result.warning).toContain('NOT secret-redacted');
       });
 
+      it('maxBytes bounds the returned UTF-8 even when the cut tears a multibyte character', async () => {
+        // "a" + "€" (3 bytes) + "😀" (4 bytes) + "b": cuts at 2, 3, 5, 6 and 7 land inside a character.
+        const page = 'a€😀b';
+        sessions.html.mockResolvedValue({
+          artifactId: 'html_mb',
+          type: 'html',
+          contentType: 'text/html; charset=utf-8',
+          sizeBytes: Buffer.byteLength(page),
+          inline: { contentBase64: Buffer.from(page).toString('base64') },
+        });
+        const expected: Record<number, string> = {
+          1: 'a',
+          2: 'a',
+          3: 'a',
+          4: 'a€',
+          5: 'a€',
+          6: 'a€',
+          7: 'a€',
+          8: 'a€😀',
+          9: 'a€😀b',
+        };
+        for (const [maxBytes, html] of Object.entries(expected)) {
+          const result = textOf(
+            JSON.parse(
+              await call(`html-mb-${maxBytes}`, 'html', {
+                sessionId: 'ses_1',
+                pageId: 'pg_1',
+                maxBytes: Number(maxBytes),
+              })
+            )
+          );
+          expect(result.html).toBe(html);
+          expect(Buffer.byteLength(result.html)).toBeLessThanOrEqual(Number(maxBytes));
+          expect(result.html).not.toContain('\uFFFD');
+          expect(result.truncated).toBe(Number(maxBytes) < 9);
+        }
+      });
+
       it('falls back to the artifact surface when the export is not inlined', async () => {
         sessions.html.mockResolvedValueOnce({
           artifactId: 'html_2',

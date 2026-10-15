@@ -22,6 +22,40 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Known for J-d: the journal intent still labels every live fingerprint
   `application-operation:v1`; it must carry the durable domain once durable writes run.
 
+### Added — output schemas for the last six MCP tools (T0 M2, part 2)
+
+- `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
+  schemas (`PolicyToolResultSchema`, `CookieListResultSchema`, `CookieHandoffToolResultSchema`,
+  `PageSnapshotSchema`, `PageHtmlResultSchema`, `SessionInspectionResultSchema`), and so does
+  the delegated `operation` tool (`OperationRecordResultSchema`): every MCP tool in every catalog
+  now does. `policy` and `cookie_handoff` keep an object root with their two result shapes as
+  alternatives. The nested session, control and operation views are relaxed for clients
+  (`relaxForClients`: open objects, closed enums widened to strings, required fields kept), so an
+  older MCP binary keeps accepting a newer server's results; the protocol schemas stay strict. Qualified end to end, including a real cookie handoff (approval relay, operator
+  decision over HTTP, completion) and a handed-off session's view; a test fails if any tool lacks
+  a schema.
+
+### Fixed — `html` honours its byte cap; `cookie_handoff` reports an unsupported server as an error
+
+- `html`'s `maxBytes` now bounds the returned UTF-8: it is taken in whole bytes, and a cut inside
+  a multibyte character backs off to the character boundary instead of emitting U+FFFD, which
+  overshot the cap by up to 2 bytes.
+- `cookie_handoff` against a client without the handoff surface returned an error envelope as a
+  successful result; it now fails as an error.
+
+### Fixed — the T8 footprint gate measures the CLI's peak exactly
+
+- `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's
+  `--version` can exit before the first sample lands ("no RSS sample collected", seen on #474,
+  #475 and #484), and polling can also understate a peak reached just before exit. The CLI
+  one-shot is now measured exactly — `ru_maxrss` of the reaped child (wait4 rusage, via a
+  python3 helper) — and must exit 0. The MCP bridge's idle-after-handshake peak is still polled,
+  now reading `VmRSS` from /proc on Linux instead of forking `ps`. A stand-in allocating 40 MB and
+  exiting at once reads 51.4–51.6 MB on every run.
+- The bridge harness read stdout with one listener per request, all appending to one buffer, so a
+  response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
+  uses one shared line reader with a pending-request map.
+
 ### Docs — release records and task-status reconciliation
 
 - Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).
