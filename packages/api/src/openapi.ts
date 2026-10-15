@@ -27,6 +27,7 @@ import {
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
+  EVENT_REPLAY_MIN_SINCE,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
   NonActApprovalDecisionSchema,
@@ -45,6 +46,7 @@ import {
   PlanStepSchema,
   ScreenshotRequestSchema,
   SessionDiagnosticsSchema,
+  SessionEventsPageSchema,
   SessionRequestSchema,
   SessionResponseSchema,
   SessionViewSchema,
@@ -727,10 +729,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'filter with ?type=request.finished etc. Unfiltered returns both ' +
             'ledgers (console first; cross-ledger ordering not preserved). ' +
             'Paging: since/limit require a type filter (cursors are per-ledger ' +
-            'entry sequences; the cursor is returned as nextCursor). A cursor ' +
-            'older than the retained window re-reads from the oldest kept ' +
-            'entry - entries evicted before it are silently skipped. limit ' +
-            'defaults to 200 and is capped at 1000.',
+            'entry sequences; the cursor is returned as nextCursor and advances ' +
+            'past entries of other types). Paged rows match the type exactly. A ' +
+            'cursor older than the retained window re-reads from the oldest kept ' +
+            'entry; a paged response with since then reports gap: true and oldestSeq, the ' +
+            'lowest retained sequence, so evicted entries are never silently ' +
+            'skipped. limit defaults to 200 and is capped at 1000.',
           tags: ['sessions'],
           parameters: [
             sessionIdParam,
@@ -743,8 +747,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             {
               name: 'since',
               in: 'query',
-              schema: { type: 'integer', minimum: 0 },
-              description: 'Paging cursor: return ledger entries with a sequence above this.',
+              schema: { type: 'integer', minimum: EVENT_REPLAY_MIN_SINCE },
+              description:
+                'Paging cursor: return ledger entries with a sequence above this ' +
+                '(-1 = from the start).',
             },
             {
               name: 'limit',
@@ -758,14 +764,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description:
                 'The retained events. Paged responses carry per-entry sequence ' +
                 'numbers and nextCursor (the cursor for the next page).',
-              content: json({
-                type: 'object',
-                required: ['events', 'nextCursor'],
-                properties: {
-                  events: { type: 'array', items: { type: 'object' } },
-                  nextCursor: { type: 'integer' },
-                },
-              }),
+              content: json(SessionEventsPageSchema),
             },
             '400': INVALID_REQUEST,
             '404': NOT_FOUND,

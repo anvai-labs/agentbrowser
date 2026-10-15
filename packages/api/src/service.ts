@@ -131,6 +131,7 @@ import type {
   PlanReport,
   PolicyDecision,
   ScreenshotRequest,
+  SessionEventsPage,
 } from '@agentbrowser/protocol';
 import {
   createOutcomeRunReportParser,
@@ -398,6 +399,9 @@ export interface ServiceEvidenceReviewRequest {
 export interface ServiceEvidenceReviewContext {
   readonly nativeForm: PreparedNativeFormRead;
 }
+
+/** Event replay envelope: the protocol's SessionEventsPage with engine events. */
+export type SessionEventPage = Omit<SessionEventsPage, 'events'> & { events: EngineEvent[] };
 
 export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
@@ -1017,12 +1021,38 @@ export class AgentBrowserService {
   getSessionEvents(
     sessionId: string,
     options: { type?: string; since?: number; limit?: number }
-  ): { events: EngineEvent[]; nextCursor: number };
+  ): SessionEventPage;
   getSessionEvents(
     sessionId: string,
     selector?: string | { type?: string; since?: number; limit?: number }
-  ): EngineEvent[] | { events: EngineEvent[]; nextCursor: number } {
+  ): EngineEvent[] | SessionEventPage {
     this.requireSession(sessionId);
+    // Paging (N1 G2) applies to one stream at a time — the cursors are
+    // per-stream ledger sequences. Served before materializing either ledger.
+    if (
+      selector !== undefined &&
+      typeof selector !== 'string' &&
+      (selector.since !== undefined || selector.limit !== undefined)
+    ) {
+      const typeFilter = selector.type;
+      if (typeFilter === undefined) throw new Error('since/limit require a type filter');
+      const limit = selector.limit ?? 200;
+      const since = selector.since ?? -1;
+      const ledger = typeFilter.startsWith('request.')
+        ? this.requestHistory.get(sessionId)
+        : this.eventHistory.get(sessionId);
+      // Filter by the exact type while scanning: the cursor advances past
+      // other types in the same ledger instead of returning them.
+      const page = ledger?.page(since, limit, (event) => event.type === typeFilter);
+      return {
+        events: (page?.rows ?? []).map(({ seq, value }) => ({ ...value, seq })),
+        nextCursor: page?.lastScanned ?? since,
+        oldestSeq: page?.oldestSeq ?? 0,
+        // A gap is relative to a cursor the caller held; a first read without
+        // since asked for whatever is retained.
+        gap: selector.since !== undefined && (page?.gap ?? false),
+      };
+    }
     const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
     const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
     // Legacy positional form: an array, exactly as callers have always seen.
@@ -1036,24 +1066,9 @@ export class AgentBrowserService {
       }
       return others.filter((event) => event.type === selector);
     }
-    // Paging (N1 G2) applies to one stream at a time — the cursors are
-    // per-stream ledger sequences. The filtered-no-paging form returns an
-    // envelope with a sentinel cursor for existing shape-agnostic callers.
+    // The filtered-no-paging form returns an envelope with a sentinel cursor
+    // for existing shape-agnostic callers.
     const typeFilter = selector.type;
-    if (selector.since !== undefined || selector.limit !== undefined) {
-      if (typeFilter === undefined) throw new Error('since/limit require a type filter');
-      const limit = selector.limit ?? 200;
-      const since = selector.since ?? -1;
-      const ledger = typeFilter.startsWith('request.')
-        ? this.requestHistory.get(sessionId)
-        : this.eventHistory.get(sessionId);
-      const rows = (ledger?.entriesAfter(since, limit) ?? []).map(({ seq, value }) => ({
-        ...value,
-        seq,
-      }));
-      const last = rows.at(-1)?.seq ?? since;
-      return { events: rows, nextCursor: last };
-    }
     if (typeFilter === undefined) {
       // Over HTTP the route always builds an object selector, so `{}` is the
       // "no selector" merged view — not a filter for events with an undefined

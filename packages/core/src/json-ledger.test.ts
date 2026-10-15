@@ -198,10 +198,10 @@ describe('paging', () => {
   it('returns entries after the cursor, capped by limit', () => {
     const ledger = make();
     for (const value of ['a', 'b', 'c', 'd']) ledger.push(value);
-    expect(ledger.entriesAfter(-1, 10).map((entry) => entry.value)).toEqual(['a', 'b', 'c', 'd']);
-    expect(ledger.entriesAfter(1, 10).map((entry) => entry.value)).toEqual(['c', 'd']);
-    expect(ledger.entriesAfter(1, 1).map((entry) => entry.value)).toEqual(['c']);
-    const page = ledger.entriesAfter(1, 10);
+    expect(ledger.page(-1, 10).rows.map((entry) => entry.value)).toEqual(['a', 'b', 'c', 'd']);
+    expect(ledger.page(1, 10).rows.map((entry) => entry.value)).toEqual(['c', 'd']);
+    expect(ledger.page(1, 1).rows.map((entry) => entry.value)).toEqual(['c']);
+    const page = ledger.page(1, 10).rows;
     expect(page.map((entry) => entry.seq)).toEqual([2, 3]);
   });
 
@@ -210,19 +210,92 @@ describe('paging', () => {
     for (const value of ['a', 'b', 'c', 'd']) ledger.push(value);
     ledger.push('e');
     ledger.push('f');
-    expect(ledger.entriesAfter(0, 10).map((entry) => entry.value)).toEqual([
-      'b',
-      'c',
-      'd',
-      'e',
-      'f',
-    ]);
-    expect(ledger.entriesAfter(5, 10)).toEqual([]);
+    expect(ledger.page(0, 10).rows.map((entry) => entry.value)).toEqual(['b', 'c', 'd', 'e', 'f']);
+    expect(ledger.page(5, 10).rows).toEqual([]);
   });
 
   it('rejects invalid paging arguments', () => {
     const ledger = make();
-    expect(() => ledger.entriesAfter(Number.NaN, 5)).toThrow();
-    expect(() => ledger.entriesAfter(0, 0)).toThrow();
+    expect(() => ledger.page(Number.NaN, 5)).toThrow();
+    expect(() => ledger.page(0, 0)).toThrow();
+  });
+});
+
+describe('filtered paging with gap reporting', () => {
+  type Event = { type: string; n: number };
+  const make = (maxEntries = 100) =>
+    new JsonLedger<Event>({ maxEntries, maxBytes: 100_000, maxEntryBytes: 1_000 });
+
+  it('returns only matching rows and advances the cursor past skipped rows', () => {
+    const ledger = make();
+    for (let n = 0; n < 10; n++) ledger.push({ type: n % 5 === 0 ? 'rare' : 'common', n });
+    const isRare = (event: Event) => event.type === 'rare';
+
+    const first = ledger.page(-1, 1, isRare);
+    expect(first.rows.map((row) => row.value.n)).toEqual([0]);
+    expect(first.lastScanned).toBe(0);
+
+    const second = ledger.page(first.lastScanned, 1, isRare);
+    expect(second.rows.map((row) => row.value.n)).toEqual([5]);
+    expect(second.lastScanned).toBe(5);
+
+    // No further matches: the cursor still moves to the end of the scanned window.
+    const third = ledger.page(second.lastScanned, 1, isRare);
+    expect(third.rows).toEqual([]);
+    expect(third.lastScanned).toBe(9);
+  });
+
+  it('concatenated pages equal the unpaged filtered list', () => {
+    const ledger = make();
+    for (let n = 0; n < 37; n++) ledger.push({ type: n % 3 === 0 ? 'a' : 'b', n });
+    const isA = (event: Event) => event.type === 'a';
+    const seen: number[] = [];
+    let cursor = -1;
+    for (let guard = 0; guard < 100; guard++) {
+      const page = ledger.page(cursor, 4, isA);
+      seen.push(...page.rows.map((row) => row.value.n));
+      if (page.lastScanned === cursor) break;
+      cursor = page.lastScanned;
+    }
+    expect(seen).toEqual(
+      ledger
+        .toArray()
+        .filter(isA)
+        .map((event) => event.n)
+    );
+  });
+
+  it('keeps the cursor unchanged when nothing lies after it', () => {
+    const ledger = make();
+    ledger.push({ type: 'a', n: 0 });
+    expect(ledger.page(0, 5)).toMatchObject({ rows: [], lastScanned: 0 });
+  });
+
+  it('reports the oldest retained sequence and a gap after eviction', () => {
+    const ledger = make(3);
+    for (let n = 0; n < 3; n++) ledger.push({ type: 'a', n });
+    const before = ledger.page(-1, 10);
+    expect(before.oldestSeq).toBe(0);
+    expect(before.gap).toBe(false);
+
+    for (let n = 3; n < 8; n++) ledger.push({ type: 'a', n });
+    // Retained: 5, 6, 7. A reader whose cursor is 2 lost 3 and 4.
+    const after = ledger.page(2, 10);
+    expect(after.oldestSeq).toBe(5);
+    expect(after.gap).toBe(true);
+    expect(after.rows.map((row) => row.seq)).toEqual([5, 6, 7]);
+    // A cursor exactly one below the window lost nothing.
+    expect(ledger.page(4, 10).gap).toBe(false);
+    // Reading from the start after eviction is also a gap.
+    expect(ledger.page(-1, 10).gap).toBe(true);
+  });
+
+  it('reports no gap on an empty ledger', () => {
+    expect(make().page(-1, 10)).toEqual({ rows: [], lastScanned: -1, oldestSeq: 0, gap: false });
+  });
+
+  it('rejects invalid paging arguments', () => {
+    expect(() => make().page(Number.NaN, 5)).toThrow();
+    expect(() => make().page(0, 0)).toThrow();
   });
 });

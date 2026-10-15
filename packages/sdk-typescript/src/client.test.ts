@@ -1474,6 +1474,32 @@ describe('SessionsClient.extract schema passthrough', () => {
       );
     });
 
+    it('passes the paged gap facts through, and omits them for older servers', async () => {
+      const fetchMock = global.fetch as unknown as {
+        mockResolvedValueOnce(value: unknown): unknown;
+      };
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], nextCursor: 9, oldestSeq: 7, gap: true }),
+      });
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], nextCursor: 9 }),
+      });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
+      const selector = { type: 'console.log', since: 2, limit: 5 };
+      expect(await localClient.sessions.events('ses_1', selector)).toEqual({
+        events: [],
+        nextCursor: 9,
+        oldestSeq: 7,
+        gap: true,
+      });
+      expect(await localClient.sessions.events('ses_1', selector)).toEqual({
+        events: [],
+        nextCursor: 9,
+      });
+    });
+
     it('returns the paging envelope for limit-only queries, not a bare array', async () => {
       // Regression: `--limit` without `--since` used to return the inner
       // array, crashing formatted callers on `envelope.events.map`.

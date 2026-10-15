@@ -33,6 +33,7 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
+  EVENT_REPLAY_MIN_SINCE,
   isAgentMode,
   parseExtractMaxBytes,
   parsePlanSteps,
@@ -46,6 +47,7 @@ import websocket from '@fastify/websocket';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
+import { artifactStoreFromEnvironment } from './artifact-config.js';
 import {
   createHttpPublication,
   type HttpResponseDraft,
@@ -540,10 +542,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     policyLimiter === undefined
       ? undefined
       : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
+  // Validated before the service exists: an invalid ceiling aborts startup.
+  const artifactStore = artifactStoreFromEnvironment(process.env);
   const service = new AgentBrowserService({
     cdpAttachAdmission: attachAdmission,
     extractMaxBytes,
     engine,
+    ...(artifactStore !== undefined ? { artifactStore } : {}),
     ...(options.evidenceReviewProvider !== undefined
       ? { evidenceReviewProvider: options.evidenceReviewProvider }
       : {}),
@@ -1134,7 +1139,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (terminal?.ownerTenant === tenant) return;
           throw new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
         }
-        if (session.tenantId !== undefined && session.tenantId !== tenant)
+        // Fail closed: an authenticated tenant never reaches an ownerless
+        // session. (Agent credentials need operator authority, i.e. keys, so
+        // every delegated session is tenant-stamped.)
+        if (session.tenantId !== tenant)
           throw new ServiceError('FORBIDDEN', `Session ${sessionId} belongs to another tenant.`);
       };
 
@@ -1738,8 +1746,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (options.type === undefined)
             return responseDraft({ error: 'since requires a type filter' }, 400);
           const since = Number(query.since);
-          if (!Number.isSafeInteger(since) || since < 0)
-            return responseDraft({ error: 'since must be a non-negative integer' }, 400);
+          // -1 (from the start) is the cursor an empty page hands back.
+          if (!Number.isSafeInteger(since) || since < EVENT_REPLAY_MIN_SINCE)
+            return responseDraft({ error: 'since must be an integer >= -1' }, 400);
           options.since = since;
         }
         if (query.limit !== undefined) {
