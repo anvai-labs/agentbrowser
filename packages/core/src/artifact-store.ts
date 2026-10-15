@@ -3,10 +3,12 @@
  *
  * Bounded, TTL-expiring storage for artifacts (downloads, evidence).
  * Oversize payloads are refused rather than truncated. When the store is
- * full (by count or aggregate bytes) the writing tenant's own oldest entry
- * is evicted first, so one tenant cannot flush another's evidence; only a
- * writer holding nothing evicts the global oldest. MVP storage is in-memory,
- * matching ephemeral sessions.
+ * full the oldest artifact of the tenant holding the most is evicted (most
+ * artifacts under count pressure, most bytes under byte pressure; a tie
+ * evicts the writer's own). Max-min fair: no tenant can be pushed below an
+ * equal share of the store (within one artifact) by others' writes, however
+ * they are sized or ordered. MVP storage is in-memory, matching ephemeral
+ * sessions.
  */
 
 /** Artifact metadata safe to hand to clients. */
@@ -55,12 +57,15 @@ export interface ArtifactStoreOptions {
 }
 
 const DEFAULT_TTL_MS = 15 * 60_000;
-const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+/** Per-artifact payload ceiling. */
+export const DEFAULT_MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_ARTIFACTS = 100;
 const DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 
 export class ArtifactStore {
   private readonly entries = new Map<string, StoredArtifact>();
+  /** Per-owner index (insertion-ordered ids and byte total); '' is unowned. */
+  private readonly owners = new Map<string, { ids: Set<string>; bytes: number }>();
   private readonly ttlMs: number;
   private readonly maxBytes: number;
   private readonly maxArtifacts: number;
@@ -71,7 +76,7 @@ export class ArtifactStore {
 
   constructor(options: ArtifactStoreOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
     this.maxArtifacts = options.maxArtifacts ?? DEFAULT_MAX_ARTIFACTS;
     this.maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
     if (this.maxBytes > this.maxTotalBytes) {
@@ -97,15 +102,14 @@ export class ArtifactStore {
       );
     }
 
-    // Evict expired entries first, then the oldest (own tenant first) until
+    // Evict expired entries first, then the largest holder's oldest until
     // both the count and the aggregate byte cap leave room.
     this.sweep();
-    while (
-      this.entries.size > 0 &&
-      (this.entries.size >= this.maxArtifacts ||
-        this.storedBytes + bytes.length > this.maxTotalBytes)
-    ) {
-      const victim = this.oldestOf(labels.tenantId) ?? this.entries.keys().next().value;
+    const writer = labels.tenantId ?? '';
+    while (this.entries.size > 0) {
+      const byCount = this.entries.size >= this.maxArtifacts;
+      if (!byCount && this.storedBytes + bytes.length <= this.maxTotalBytes) break;
+      const victim = this.largestHolder(writer, byCount)?.ids.values().next().value;
       if (victim === undefined) break;
       this.remove(victim);
     }
@@ -126,6 +130,10 @@ export class ArtifactStore {
 
     this.entries.set(metadata.artifactId, { metadata, bytes });
     this.storedBytes += bytes.length;
+    const owner = this.owners.get(writer) ?? { ids: new Set<string>(), bytes: 0 };
+    owner.ids.add(metadata.artifactId);
+    owner.bytes += bytes.length;
+    this.owners.set(writer, owner);
     return metadata;
   }
 
@@ -166,16 +174,22 @@ export class ArtifactStore {
 
   clear(): void {
     this.entries.clear();
+    this.owners.clear();
     this.storedBytes = 0;
   }
 
-  /** Oldest artifact owned by the tenant (insertion order is age order). */
-  private oldestOf(tenantId: string | undefined): string | undefined {
-    if (tenantId === undefined) return undefined;
-    for (const [id, entry] of this.entries) {
-      if (entry.metadata.tenantId === tenantId) return id;
+  /** The owner holding the most artifacts (count) or bytes; ties pick the writer. */
+  private largestHolder(writer: string, byCount: boolean) {
+    let largest: { ids: Set<string>; bytes: number } | undefined;
+    let largestSize = -1;
+    for (const [key, owner] of this.owners) {
+      const size = byCount ? owner.ids.size : owner.bytes;
+      if (size > largestSize || (size === largestSize && key === writer)) {
+        largest = owner;
+        largestSize = size;
+      }
     }
-    return undefined;
+    return largest;
   }
 
   private remove(artifactId: string): void {
@@ -183,5 +197,11 @@ export class ArtifactStore {
     if (!entry) return;
     this.entries.delete(artifactId);
     this.storedBytes -= entry.bytes.length;
+    const key = entry.metadata.tenantId ?? '';
+    const owner = this.owners.get(key);
+    if (!owner) return;
+    owner.ids.delete(artifactId);
+    owner.bytes -= entry.bytes.length;
+    if (owner.ids.size === 0) this.owners.delete(key);
   }
 }

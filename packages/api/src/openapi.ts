@@ -27,6 +27,7 @@ import {
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
+  EVENT_REPLAY_MIN_SINCE,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
   NonActApprovalDecisionSchema,
@@ -45,6 +46,7 @@ import {
   PlanStepSchema,
   ScreenshotRequestSchema,
   SessionDiagnosticsSchema,
+  SessionEventsPageSchema,
   SessionRequestSchema,
   SessionResponseSchema,
   SessionViewSchema,
@@ -730,7 +732,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'entry sequences; the cursor is returned as nextCursor and advances ' +
             'past entries of other types). Paged rows match the type exactly. A ' +
             'cursor older than the retained window re-reads from the oldest kept ' +
-            'entry; the paged response then reports gap: true and oldestSeq, the ' +
+            'entry; a paged response with since then reports gap: true and oldestSeq, the ' +
             'lowest retained sequence, so evicted entries are never silently ' +
             'skipped. limit defaults to 200 and is capped at 1000.',
           tags: ['sessions'],
@@ -745,8 +747,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             {
               name: 'since',
               in: 'query',
-              schema: { type: 'integer', minimum: 0 },
-              description: 'Paging cursor: return ledger entries with a sequence above this.',
+              schema: { type: 'integer', minimum: EVENT_REPLAY_MIN_SINCE },
+              description:
+                'Paging cursor: return ledger entries with a sequence above this ' +
+                '(-1 = from the start).',
             },
             {
               name: 'limit',
@@ -760,26 +764,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description:
                 'The retained events. Paged responses carry per-entry sequence ' +
                 'numbers and nextCursor (the cursor for the next page).',
-              content: json({
-                type: 'object',
-                required: ['events', 'nextCursor'],
-                properties: {
-                  events: { type: 'array', items: { type: 'object' } },
-                  nextCursor: { type: 'integer' },
-                  oldestSeq: {
-                    type: 'integer',
-                    description:
-                      'Paged responses: the lowest retained ledger sequence ' +
-                      '(the next sequence to be written when the ledger is empty).',
-                  },
-                  gap: {
-                    type: 'boolean',
-                    description:
-                      'Paged responses: true when entries after the cursor were ' +
-                      'evicted before this read.',
-                  },
-                },
-              }),
+              content: json(SessionEventsPageSchema),
             },
             '400': INVALID_REQUEST,
             '404': NOT_FOUND,

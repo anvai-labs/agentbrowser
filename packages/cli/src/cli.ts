@@ -868,7 +868,11 @@ export function buildCli(deps: CliDependencies): Cli {
                   throw new UsageError('--since/--limit require --type (cursors are per-ledger)');
               }
               const since =
-                options.since !== undefined ? captureInteger(options.since, '--since') : undefined;
+                options.since === undefined
+                  ? undefined
+                  : options.since === '-1'
+                    ? -1 // the from-the-start cursor an empty page returns
+                    : captureInteger(options.since, '--since');
               const limit =
                 options.limit !== undefined ? captureInteger(options.limit, '--limit') : undefined;
               // One call shape for every flag combination: the object selector

@@ -1888,7 +1888,7 @@
       "get": {
         "operationId": "getSessionEvents",
         "summary": "Replay the session event ledger",
-        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved). Paging: since/limit require a type filter (cursors are per-ledger entry sequences; the cursor is returned as nextCursor and advances past entries of other types). Paged rows match the type exactly. A cursor older than the retained window re-reads from the oldest kept entry; the paged response then reports gap: true and oldestSeq, the lowest retained sequence, so evicted entries are never silently skipped. limit defaults to 200 and is capped at 1000.",
+        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved). Paging: since/limit require a type filter (cursors are per-ledger entry sequences; the cursor is returned as nextCursor and advances past entries of other types). Paged rows match the type exactly. A cursor older than the retained window re-reads from the oldest kept entry; a paged response with since then reports gap: true and oldestSeq, the lowest retained sequence, so evicted entries are never silently skipped. limit defaults to 200 and is capped at 1000.",
         "tags": [
           "sessions"
         ],
@@ -1915,9 +1915,9 @@
             "in": "query",
             "schema": {
               "type": "integer",
-              "minimum": 0
+              "minimum": -1
             },
-            "description": "Paging cursor: return ledger entries with a sequence above this."
+            "description": "Paging cursor: return ledger entries with a sequence above this (-1 = from the start)."
           },
           {
             "name": "limit",
@@ -1949,15 +1949,18 @@
                       }
                     },
                     "nextCursor": {
+                      "minimum": -1,
+                      "description": "Cursor for the next page (-1 = from the start); advances past entries of other types.",
                       "type": "integer"
                     },
                     "oldestSeq": {
-                      "type": "integer",
-                      "description": "Paged responses: the lowest retained ledger sequence (the next sequence to be written when the ledger is empty)."
+                      "minimum": 0,
+                      "description": "Paged responses: the lowest retained ledger sequence (the next sequence to be written when the ledger is empty).",
+                      "type": "integer"
                     },
                     "gap": {
-                      "type": "boolean",
-                      "description": "Paged responses: true when entries after the cursor were evicted before this read."
+                      "description": "Paged responses with since: true when entries after the cursor were evicted before this read.",
+                      "type": "boolean"
                     }
                   }
                 }

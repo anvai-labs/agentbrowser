@@ -407,6 +407,23 @@ describe('server edge branches', () => {
       expect(limitOnly.statusCode).toBe(400);
       expect(limitOnly.json().error).toContain('type filter');
 
+      // Review regression: an empty ledger hands back nextCursor -1, and that
+      // cursor must be accepted as since on the next poll.
+      const empty = await inject(
+        'GET',
+        `/v1/sessions/${sessionId}/events/replay?type=no.such.type&limit=5`
+      );
+      expect(empty.statusCode).toBe(200);
+      const cursor = empty.json().nextCursor as number;
+      const next = await inject(
+        'GET',
+        `/v1/sessions/${sessionId}/events/replay?type=no.such.type&since=${cursor}&limit=5`
+      );
+      expect(next.statusCode).toBe(200);
+      expect(
+        (await inject('GET', `/v1/sessions/${sessionId}/events/replay?type=x&since=-2`)).statusCode
+      ).toBe(400);
+
       const snapshot = await inject('GET', `/v1/sessions/${sessionId}/pages/${pageId}/snapshot`);
       expect(snapshot.statusCode).toBe(200);
       expect(snapshot.json()).toMatchObject({ url: 'https://example.com/' });

@@ -2786,6 +2786,14 @@ describe('session event ledger paging and redaction (N1)', () => {
     });
     expect(after.gap).toBe(true);
     expect(after.oldestSeq).toBeGreaterThan(first.nextCursor + 1);
+    // Review regression: a first read without since held no cursor, so no gap;
+    // an explicit since=-1 (from the start) did lose the evicted entries.
+    expect(paged.getSessionEvents(session.sessionId, { type: 'console.log', limit: 1 }).gap).toBe(
+      false
+    );
+    expect(
+      paged.getSessionEvents(session.sessionId, { type: 'console.log', since: -1, limit: 1 }).gap
+    ).toBe(true);
   });
 
   it('stores page-derived text redacted (pump-level redaction pin)', async () => {

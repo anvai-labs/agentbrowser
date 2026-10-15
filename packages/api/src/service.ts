@@ -131,6 +131,7 @@ import type {
   PlanReport,
   PolicyDecision,
   ScreenshotRequest,
+  SessionEventsPage,
 } from '@agentbrowser/protocol';
 import {
   createOutcomeRunReportParser,
@@ -399,14 +400,8 @@ export interface ServiceEvidenceReviewContext {
   readonly nativeForm: PreparedNativeFormRead;
 }
 
-/** Event replay envelope. Paged responses also carry the ledger's oldest
- * retained sequence and whether entries behind the cursor were evicted. */
-export interface SessionEventPage {
-  events: EngineEvent[];
-  nextCursor: number;
-  oldestSeq?: number;
-  gap?: boolean;
-}
+/** Event replay envelope: the protocol's SessionEventsPage with engine events. */
+export type SessionEventPage = Omit<SessionEventsPage, 'events'> & { events: EngineEvent[] };
 
 export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
@@ -1032,24 +1027,14 @@ export class AgentBrowserService {
     selector?: string | { type?: string; since?: number; limit?: number }
   ): EngineEvent[] | SessionEventPage {
     this.requireSession(sessionId);
-    const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
-    const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
-    // Legacy positional form: an array, exactly as callers have always seen.
-    // No selector at all is the merged view.
-    if (selector === undefined) {
-      return [...others, ...requests];
-    }
-    if (typeof selector === 'string') {
-      if (selector.startsWith('request.')) {
-        return requests.filter((event) => event.type === selector);
-      }
-      return others.filter((event) => event.type === selector);
-    }
     // Paging (N1 G2) applies to one stream at a time — the cursors are
-    // per-stream ledger sequences. The filtered-no-paging form returns an
-    // envelope with a sentinel cursor for existing shape-agnostic callers.
-    const typeFilter = selector.type;
-    if (selector.since !== undefined || selector.limit !== undefined) {
+    // per-stream ledger sequences. Served before materializing either ledger.
+    if (
+      selector !== undefined &&
+      typeof selector !== 'string' &&
+      (selector.since !== undefined || selector.limit !== undefined)
+    ) {
+      const typeFilter = selector.type;
       if (typeFilter === undefined) throw new Error('since/limit require a type filter');
       const limit = selector.limit ?? 200;
       const since = selector.since ?? -1;
@@ -1063,9 +1048,27 @@ export class AgentBrowserService {
         events: (page?.rows ?? []).map(({ seq, value }) => ({ ...value, seq })),
         nextCursor: page?.lastScanned ?? since,
         oldestSeq: page?.oldestSeq ?? 0,
-        gap: page?.gap ?? false,
+        // A gap is relative to a cursor the caller held; a first read without
+        // since asked for whatever is retained.
+        gap: selector.since !== undefined && (page?.gap ?? false),
       };
     }
+    const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
+    const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
+    // Legacy positional form: an array, exactly as callers have always seen.
+    // No selector at all is the merged view.
+    if (selector === undefined) {
+      return [...others, ...requests];
+    }
+    if (typeof selector === 'string') {
+      if (selector.startsWith('request.')) {
+        return requests.filter((event) => event.type === selector);
+      }
+      return others.filter((event) => event.type === selector);
+    }
+    // The filtered-no-paging form returns an envelope with a sentinel cursor
+    // for existing shape-agnostic callers.
+    const typeFilter = selector.type;
     if (typeFilter === undefined) {
       // Over HTTP the route always builds an object selector, so `{}` is the
       // "no selector" merged view — not a filter for events with an undefined

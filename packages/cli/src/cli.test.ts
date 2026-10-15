@@ -475,6 +475,11 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('seq 10');
     });
 
+    it('accepts the -1 from-the-start cursor for --since', async () => {
+      await run('session', 'events', 'ses_1', '--type', 'console.log', '--since', '-1');
+      expect(sessions.events).toHaveBeenLastCalledWith('ses_1', { type: 'console.log', since: -1 });
+    });
+
     it('prints HTML inline by default and pulls stored bytes when not inlined', async () => {
       await run('page', 'html', 'ses_1', 'pg_1');
       expect(sessions.artifact).not.toHaveBeenCalled();

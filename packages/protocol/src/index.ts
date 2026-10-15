@@ -11,6 +11,7 @@ export * from './contracts.js';
 export * from './control.js';
 export * from './display.js';
 export * from './errors.js';
+export * from './event-replay.js';
 export * from './extraction.js';
 export * from './form-mapping.js';
 export * from './interaction-guidance.js';

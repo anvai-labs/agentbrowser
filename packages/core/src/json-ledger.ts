@@ -44,16 +44,9 @@ export class JsonLedger<T> {
     return [...this.entries.values()].map(({ json }) => JSON.parse(json) as T);
   }
 
-  /** Entries with sequence > since, oldest first, capped at limit. Cursors
-   * are the entry sequence numbers; eviction simply removes low sequences,
-   * so a cursor below the retained window re-reads from the oldest kept
-   * entry rather than failing; `page` reports that as a gap.
-   */
-  entriesAfter(since: number, limit: number): { seq: number; value: T }[] {
-    return this.page(since, limit).rows;
-  }
-
-  /** Filtered paging. Up to `limit` matching entries with sequence > since.
+  /** Paging, oldest first. Up to `limit` (matching) entries with sequence >
+   * since. Cursors are entry sequence numbers; eviction removes low sequences,
+   * so a cursor below the retained window re-reads from the oldest kept entry.
    * `lastScanned` is the sequence of the last entry examined, matched or not,
    * so the next cursor moves past skipped entries; it is `since` when nothing
    * lies after the cursor. `oldestSeq` is the lowest retained sequence (the

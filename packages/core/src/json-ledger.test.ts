@@ -198,10 +198,10 @@ describe('paging', () => {
   it('returns entries after the cursor, capped by limit', () => {
     const ledger = make();
     for (const value of ['a', 'b', 'c', 'd']) ledger.push(value);
-    expect(ledger.entriesAfter(-1, 10).map((entry) => entry.value)).toEqual(['a', 'b', 'c', 'd']);
-    expect(ledger.entriesAfter(1, 10).map((entry) => entry.value)).toEqual(['c', 'd']);
-    expect(ledger.entriesAfter(1, 1).map((entry) => entry.value)).toEqual(['c']);
-    const page = ledger.entriesAfter(1, 10);
+    expect(ledger.page(-1, 10).rows.map((entry) => entry.value)).toEqual(['a', 'b', 'c', 'd']);
+    expect(ledger.page(1, 10).rows.map((entry) => entry.value)).toEqual(['c', 'd']);
+    expect(ledger.page(1, 1).rows.map((entry) => entry.value)).toEqual(['c']);
+    const page = ledger.page(1, 10).rows;
     expect(page.map((entry) => entry.seq)).toEqual([2, 3]);
   });
 
@@ -210,20 +210,14 @@ describe('paging', () => {
     for (const value of ['a', 'b', 'c', 'd']) ledger.push(value);
     ledger.push('e');
     ledger.push('f');
-    expect(ledger.entriesAfter(0, 10).map((entry) => entry.value)).toEqual([
-      'b',
-      'c',
-      'd',
-      'e',
-      'f',
-    ]);
-    expect(ledger.entriesAfter(5, 10)).toEqual([]);
+    expect(ledger.page(0, 10).rows.map((entry) => entry.value)).toEqual(['b', 'c', 'd', 'e', 'f']);
+    expect(ledger.page(5, 10).rows).toEqual([]);
   });
 
   it('rejects invalid paging arguments', () => {
     const ledger = make();
-    expect(() => ledger.entriesAfter(Number.NaN, 5)).toThrow();
-    expect(() => ledger.entriesAfter(0, 0)).toThrow();
+    expect(() => ledger.page(Number.NaN, 5)).toThrow();
+    expect(() => ledger.page(0, 0)).toThrow();
   });
 });
 

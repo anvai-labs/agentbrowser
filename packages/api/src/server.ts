@@ -33,6 +33,7 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
+  EVENT_REPLAY_MIN_SINCE,
   isAgentMode,
   parseExtractMaxBytes,
   parsePlanSteps,
@@ -1745,8 +1746,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (options.type === undefined)
             return responseDraft({ error: 'since requires a type filter' }, 400);
           const since = Number(query.since);
-          if (!Number.isSafeInteger(since) || since < 0)
-            return responseDraft({ error: 'since must be a non-negative integer' }, 400);
+          // -1 (from the start) is the cursor an empty page hands back.
+          if (!Number.isSafeInteger(since) || since < EVENT_REPLAY_MIN_SINCE)
+            return responseDraft({ error: 'since must be an integer >= -1' }, 400);
           options.since = since;
         }
         if (query.limit !== undefined) {

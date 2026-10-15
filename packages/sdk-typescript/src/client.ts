@@ -39,6 +39,8 @@ import type {
   SessionRequest,
 } from '@agentbrowser/protocol';
 
+/** Event replay envelope (protocol single source, ADR-015). `oldestSeq`/`gap`
+ * are present on paged responses from servers that report eviction gaps. */
 export type {
   ApplicationBinding,
   ApplicationDiscovery,
@@ -52,15 +54,8 @@ export type {
   OutcomeRunReport,
   OutcomeRunRequest,
   RunCursor,
+  SessionEventsPage,
 } from '@agentbrowser/protocol';
-/** Event replay envelope. `oldestSeq`/`gap` are present on paged responses:
- * `gap` is true when entries after the cursor were evicted before the read. */
-export interface SessionEventsPage {
-  events: Array<Record<string, unknown>>;
-  nextCursor: number;
-  oldestSeq?: number;
-  gap?: boolean;
-}
 
 export interface MutationOptions {
   operationId?: string;
@@ -108,7 +103,11 @@ export interface NavigationResponse {
 
 export type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
 
-import type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
+import type {
+  ObservationRequest,
+  ScreenshotRequest,
+  SessionEventsPage,
+} from '@agentbrowser/protocol';
 import { validateObservationRequest, validateScreenshotRequest } from '@agentbrowser/protocol';
 
 /** Canonical observation response, shared with REST and MCP output schemas. */

@@ -903,7 +903,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'events_replay',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
-        "Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). Cursor paging via since/limit requires a type filter — cursors are per-ledger entry sequences, paged rows match the type exactly, and a cursor older than the retained window re-reads from the oldest kept entry with gap: true in the result.",
+        "Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). Cursor paging via since/limit requires a type filter — cursors are per-ledger entry sequences, paged rows match the type exactly, and a cursor older than the retained window re-reads from the oldest kept entry with gap: true in the result; pass nextCursor back as since.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -914,8 +914,9 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           },
           since: {
             type: 'integer',
-            minimum: 0,
-            description: 'Paging cursor: return entries with a sequence above this.',
+            minimum: -1,
+            description:
+              'Paging cursor: return entries with a sequence above this (-1 = from the start).',
           },
           limit: {
             type: 'integer',

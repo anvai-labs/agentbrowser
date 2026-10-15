@@ -1,12 +1,13 @@
 /**
  * Time-boxed artifact authorization (spec 13.1)
  *
- * Mints short-lived signed tokens: GET /v1/sessions/{sessionId}/artifacts/{id}
- * ?token=... grants access until exp without a tenant credential.
- * HMAC-SHA256 over artifactId|exp with the server key; constant-time compare.
- * The token does not sign the session: session scoping comes from the route,
- * whose getArtifact refuses an artifact that belongs to a different session
- * than the one in the path.
+ * Verification seam for short-lived signed tokens on
+ * GET /v1/sessions/{sessionId}/artifacts/{id}?token=... — HMAC-SHA256 over
+ * artifactId|exp with the server key; constant-time compare. The token does not
+ * sign the session: getArtifact refuses an artifact from another session than
+ * the path's. No route mints tokens today, and with API keys configured the v1
+ * auth hook requires a bearer credential before the token is consulted, so
+ * access is in practice session ownership.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';

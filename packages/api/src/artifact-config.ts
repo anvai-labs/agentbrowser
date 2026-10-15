@@ -1,6 +1,4 @@
-import { ArtifactStore } from '@agentbrowser/core';
-
-const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
+import { ArtifactStore, DEFAULT_MAX_ARTIFACT_BYTES } from '@agentbrowser/core';
 
 /** Startup-only aggregate artifact ceiling; invalid values abort before service creation.
  * Undefined keeps the store default (256 MiB). */
@@ -11,9 +9,9 @@ export function artifactStoreFromEnvironment(env: {
   if (raw === undefined) return undefined;
   const text = raw.trim();
   const value = /^[1-9][0-9]*$/.test(text) ? Number(text) : Number.NaN;
-  if (!Number.isSafeInteger(value) || value < MAX_ARTIFACT_BYTES)
+  if (!Number.isSafeInteger(value) || value < DEFAULT_MAX_ARTIFACT_BYTES)
     throw new Error(
-      `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES must be a decimal safe integer of at least ${MAX_ARTIFACT_BYTES} (the per-artifact ceiling)`
+      `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES must be a decimal safe integer of at least ${DEFAULT_MAX_ARTIFACT_BYTES} (the per-artifact ceiling)`
     );
-  return new ArtifactStore({ maxBytes: MAX_ARTIFACT_BYTES, maxTotalBytes: value });
+  return new ArtifactStore({ maxTotalBytes: value });
 }

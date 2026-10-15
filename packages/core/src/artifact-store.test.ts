@@ -111,31 +111,50 @@ describe('ArtifactStore', () => {
   describe('tenant-aware eviction and the aggregate byte cap', () => {
     const bytes = (size: number) => new Uint8Array(size);
 
-    it("evicts the writing tenant's own oldest artifact before another tenant's", () => {
-      const artifacts = store({ maxArtifacts: 3 });
-      const victim = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
-      const a1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
-      const a2 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
-      // Tenant a floods: its own oldest goes, tenant b's evidence stays.
-      const a3 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
-      const a4 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+    const owned = (artifacts: ArtifactStore, ids: string[]) =>
+      ids.filter((id) => artifacts.get(id) !== undefined).length;
 
-      expect(artifacts.get(victim.artifactId)).toBeDefined();
-      expect(artifacts.get(a1.artifactId)).toBeUndefined();
-      expect(artifacts.get(a2.artifactId)).toBeUndefined();
-      expect(artifacts.get(a3.artifactId)).toBeDefined();
-      expect(artifacts.get(a4.artifactId)).toBeDefined();
+    it('lets a late tenant reach an equal share by evicting the largest holder', () => {
+      const artifacts = store({ maxArtifacts: 4 });
+      const b = [1, 2, 3, 4].map(
+        () => artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' }).artifactId
+      );
+      // Review regression: own-tenant-first eviction let a late tenant keep one artifact.
+      const a = [1, 2].map(
+        () => artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' }).artifactId
+      );
+      expect(owned(artifacts, a)).toBe(2);
+      expect(owned(artifacts, b)).toBe(2);
+      expect(artifacts.get(b[0] as string)).toBeUndefined(); // b's oldest went first
+      // At an equal share, a tie evicts the writer's own oldest.
+      artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      expect(owned(artifacts, a)).toBe(1);
+      expect(owned(artifacts, b)).toBe(2);
     });
 
-    it('falls back to the global oldest when the writer holds nothing', () => {
-      const artifacts = store({ maxArtifacts: 2 });
-      const b1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
-      const b2 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
-      const a1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+    it('cannot flush another tenant below an equal byte share by alternating sizes', () => {
+      const artifacts = store({ maxBytes: 10, maxTotalBytes: 40 });
+      const b = [1, 2, 3, 4].map(
+        () => artifacts.put('pdf', 'application/pdf', bytes(10), { tenantId: 'b' }).artifactId
+      );
+      // Review regression: small/large alternation used to evict ~10 bytes of b per pair.
+      for (let round = 0; round < 20; round += 1) {
+        artifacts.put('pdf', 'application/pdf', bytes(1), { tenantId: 'a' });
+        artifacts.put('pdf', 'application/pdf', bytes(10), { tenantId: 'a' });
+      }
+      const bHeld = b.filter((id) => artifacts.get(id) !== undefined).length * 10;
+      expect(bHeld).toBeGreaterThanOrEqual(20 - 10); // equal share of 40, within one artifact
+      expect(artifacts.totalBytes()).toBeLessThanOrEqual(40);
+    });
 
-      expect(artifacts.get(b1.artifactId)).toBeUndefined();
-      expect(artifacts.get(b2.artifactId)).toBeDefined();
-      expect(artifacts.get(a1.artifactId)).toBeDefined();
+    it('evicts the heaviest writer from itself', () => {
+      const artifacts = store({ maxArtifacts: 3 });
+      const b = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'b' });
+      const a1 = artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      artifacts.put('screenshot', 'image/png', bytes(1), { tenantId: 'a' });
+      expect(artifacts.get(b.artifactId)).toBeDefined();
+      expect(artifacts.get(a1.artifactId)).toBeUndefined();
     });
 
     it('evicts until the new payload fits under maxTotalBytes', () => {

@@ -42,7 +42,7 @@ describe('events_replay', () => {
     expect(tool?.inputSchema.properties).toMatchObject({
       sessionId: { type: 'string', minLength: 1 },
       type: { type: 'string' },
-      since: { type: 'integer', minimum: 0 },
+      since: { type: 'integer', minimum: -1 },
       limit: { type: 'integer', minimum: 1, maximum: 1000 },
     });
     expect(tool?.inputSchema.required).toEqual(['sessionId']);
