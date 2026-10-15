@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createPlanReportParser,
+  MAX_PLAN_STEPS,
   PlanActionsSchema,
   PlanReportSchema,
   parsePlanReport,
@@ -16,6 +17,18 @@ describe('canonical plan contracts', () => {
       { action: 'fill', waitForLabel: 'Name', waitMs: 100, value: 'value', futureField: true },
     ];
     expect(parsePlanSteps(steps)).toEqual(steps);
+  });
+
+  it('caps a plan at MAX_PLAN_STEPS (T0 aggregate input limit), separate from the batch cap', () => {
+    expect(MAX_PLAN_STEPS).toBe(100);
+    expect(PlanActionsSchema.maxItems).toBe(MAX_PLAN_STEPS);
+    const step = { action: 'hover', target: { ref: 'e1_0' } };
+    const atLimit = Array.from({ length: MAX_PLAN_STEPS }, () => ({ ...step }));
+    expect(parsePlanSteps(atLimit)).toHaveLength(MAX_PLAN_STEPS);
+    const over = [...atLimit, { ...step }];
+    expect(() => parsePlanSteps(over)).toThrow(
+      `A plan accepts at most ${MAX_PLAN_STEPS} steps; got ${MAX_PLAN_STEPS + 1}`
+    );
   });
 
   it.each([

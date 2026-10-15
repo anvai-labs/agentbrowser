@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — plans are capped at 100 steps (T0)
+
+- A plan now accepts at most **`MAX_PLAN_STEPS` = 100** steps (new protocol export, separate from the
+  20-step `act` batch cap). A longer plan is refused **before anything executes** with
+  `INVALID_REQUEST` naming the limit, on REST and in the MCP `plan` tool (which also advertises
+  `maxItems` and says so in its description). Split longer work into several plans. Plan
+  *reports* are unaffected.
+
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
 
 - **Protocol**: the `session.credential` capability joins the closed vocabulary and flows into

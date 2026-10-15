@@ -511,6 +511,22 @@ describe('AgentBrowser MCP server', () => {
       expect(sessions.plan).not.toHaveBeenCalled();
     });
 
+    it('refuses a plan over MAX_PLAN_STEPS locally, naming the limit, and never proxies it', async () => {
+      const result = JSON.parse(
+        await call('over-cap-plan', 'plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: Array.from({ length: 101 }, () => ({
+            action: 'hover',
+            target: { ref: 'e1_0' },
+          })),
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('A plan accepts at most 100 steps; got 101');
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
     it('rejects malformed plan reports after a single dispatch without exposing their contents', async () => {
       sessions.plan.mockResolvedValue({ ok: true, completed: 'PRIVATE-REPORT', results: [] });
       const result = JSON.parse(
