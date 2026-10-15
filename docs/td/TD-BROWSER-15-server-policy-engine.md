@@ -486,22 +486,36 @@ keyed deployments are per tenant.
 Not scheduled; implement only after [ADR-026](../adr/026-policy-reload-without-restart.md) is
 accepted.
 
-- **Trigger:** opt-in `AGENTBROWSER_POLICY_RELOAD=signal`; `SIGHUP` and an operator-only
-  `POST /v1/policy/reload` re-read `AGENTBROWSER_POLICY_FILE`. No file watcher.
-- **Swap:** full startup-grade validation into a new `CedarAuthorizer`; on any error keep the
-  running one and report. Atomic replacement of the "current" authorizer reference.
-- **Live sessions:** a session records its pinned version and every version loaded since; the
-  authorizer for a live session allows only if **every** version in its chain allows (a composite
-  `Authorizer`). Never collapse the chain to "pinned AND current" — that relaxes when a later
-  reload drops an intermediate restriction. Version authorizers are reference-counted and released
-  when their last session ends.
-- **Surfaces:** `GET /v1/policy` reports the current version and session views report their
-  version chain; the reload response reports counts; logs carry the previous and new versions.
-- **Tests first:** a tightening reload denies an in-flight session's next request; a loosening
-  reload does not reach it but does reach a new session; an invalid file is refused and the old
-  policy keeps deciding; an approval minted before the reload is refused after it; a second reload
-  composes (A → B → C where B blocks and C does not: a session pinned at A stays blocked); no
-  policy file means reload is refused as not configured.
+- **Trigger and credential:** `POST /v1/admin/policy/reload`, enabled only when
+  `AGENTBROWSER_POLICY_ADMIN_KEY_FILE` is configured, accepting only that server-scope admin key
+  (distinct from API and operator keys; overlap aborts startup). No signal (`SIGHUP` stays
+  shutdown); no file watcher. Optional CLI wrapper.
+- **Swap:** startup-grade validation into a new authorizer; on any error keep the running one and
+  report. Serialized. Document identity = SHA-256 over the whole document including `limits`; an
+  unchanged identity is a no-op.
+- **Per-session state (new):** each session stores its pinned document and its chain (every
+  document loaded since, deduplicated). A composite `Authorizer` allows only if every document in
+  the chain allows; approval modes follow from the same two questions. Never collapse the chain
+  to "pinned AND current".
+- **Limits:** per-session effective limits = minimum over the chain; `maxResponseBytes` becomes a
+  live per-session value and `extractMaxBytes` per-session.
+- **Cache:** `MemoizedAuthorizer` keys on the chain identity (or clears on chain growth).
+- **Approvals:** `act` and `cookie.handoff` tokens bind to the chain identity at mint and are
+  refused on use after the chain grows.
+- **Not reached (reported, not enforced):** creation-time grants (`cdp.attach`, `downloads`,
+  `serviceWorkers`, `cookie.seed`, `session.headed`) — the reload response counts live sessions
+  holding a grant the new document would deny; established connections continue.
+- **Surfaces:** session views keep `policyVersion` as the pinned version and add `policyChain`
+  (additive schema/OpenAPI change); `GET /v1/policy` reports the current document; logs carry the
+  previous and new identities.
+- **Tests first:** a tightening reload denies an in-flight session's next request; a request
+  allowed and cached before the reload is denied after it; a loosening reload does not reach a
+  live session but does reach a new one; A → B → C where B blocks and C does not leaves a session
+  pinned at A blocked; A → B → A keeps B for live sessions; a limits-only change is not a no-op
+  and lowers a live session's limit; an invalid file is refused and the old policy keeps
+  deciding; `act` and handoff tokens minted before a reload are refused after it; a key in two
+  roles aborts startup; an API or operator key cannot reload; the creation-time-grant count is
+  reported; without the admin key file the endpoint does not exist.
 
 ## Non-goals
 
