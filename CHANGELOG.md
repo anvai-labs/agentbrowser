@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — journal time never moves backwards within a process (T5 J-c)
+
+- The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
+  and retention horizons) use `max(startWall + monotonicElapsed, wallNow, previousReading)`, so a
+  backward wall-clock step mid-process can no longer extend a horizon; they can only become
+  stricter. Everything that persists or deletes (the high-water, namespace retirement, the reopen
+  rollback check) still uses the plain wall reading, so no persisted value derives from the
+  monotonic source and restart behaviour is unchanged.
+
 ### Added — output schemas for the last six MCP tools (T0 M2, part 2)
 
 - `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
