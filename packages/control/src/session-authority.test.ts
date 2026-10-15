@@ -451,6 +451,54 @@ it('rejects altered and unknown principals without changing the original grant',
   expect(authority.authenticate(original.token)).toEqual(original.principal);
 });
 
+it('same tenant, different principal: an agent grant admits only its own session and only while current', async () => {
+  // T1 acceptance: stale context must not leak across principals of ONE tenant. Two sessions of
+  // tenant "owner", each delegated, and a session re-delegated to a new grant.
+  const authority = new SessionAuthority();
+  authority.register('session-a', 'owner', new AbortController().signal);
+  authority.register('session-b', 'owner', new AbortController().signal);
+  const a = grant(authority, 'session-a');
+  const b = grant(authority, 'session-b');
+  expect(a.principal.tenant).toBe(b.principal.tenant);
+  const effect = vi.fn(async () => undefined);
+
+  // Each agent principal is refused on the other session of the same tenant.
+  await expect(authority.run('session-a', b.principal, {}, effect)).rejects.toThrow();
+  await expect(authority.run('session-b', a.principal, {}, effect)).rejects.toThrow();
+  expect(effect).not.toHaveBeenCalled();
+
+  // A human takeover of session-a revokes its agent principal at once; re-delegating then mints a
+  // NEW principal of the same tenant and session. The earlier token never authenticates again and
+  // its principal is refused; the new grant is admitted.
+  authority.takeover('session-a');
+  await expect(authority.run('session-a', a.principal, {}, effect)).rejects.toThrow();
+  expect(() => grant(authority, 'session-b')).toThrow(); // b's live grant also needs a takeover first
+  const replacement = grant(authority, 'session-a');
+  expect(authority.authenticate(a.token)).toBeUndefined();
+  await expect(authority.run('session-a', a.principal, {}, effect)).rejects.toThrow();
+  expect(effect).not.toHaveBeenCalled();
+  await authority.run('session-a', replacement.principal, {}, effect);
+  expect(effect).toHaveBeenCalledTimes(1);
+  // The other session's grant is untouched by session-a's re-delegation.
+  expect(authority.authenticate(b.token)).toEqual(b.principal);
+});
+
+it('operators are admitted by tenant alone: same-tenant operators are one principal, other tenants are refused', async () => {
+  // Pinned behaviour, not a gap: an operator acts for its tenant, so admission keys on the tenant
+  // (session-authority.ts admit()). Two operator principals of one tenant are indistinguishable;
+  // a different tenant's operator is refused.
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const effect = vi.fn(async () => undefined);
+  await authority.run('session', { actor: 'operator', tenant: 'owner' }, {}, effect);
+  await authority.run('session', { actor: 'operator', tenant: 'owner' }, {}, effect);
+  expect(effect).toHaveBeenCalledTimes(2);
+  await expect(
+    authority.run('session', { actor: 'operator', tenant: 'other-account' }, {}, effect)
+  ).rejects.toThrow();
+  expect(effect).toHaveBeenCalledTimes(2);
+});
+
 it('snapshots caller principal properties once before reading authority state', async () => {
   const authority = new SessionAuthority();
   authority.register('session', 'owner', new AbortController().signal);

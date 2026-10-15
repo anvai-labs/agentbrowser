@@ -154,3 +154,17 @@ installed-harness cursor consumption/retirement coverage is complete
 for every available provider. The only remaining residue is Victor's
 live loop (blocked on the Sandhi TLS trust decision, an operator
 call).
+
+## Same tenant, different principal (2026-10-15)
+
+The acceptance row "test same tenant/different principal … for stale-memory leakage" is
+now pinned in `packages/control/src/session-authority.test.ts`:
+
+- **Agents.** Two delegated sessions of one tenant: each agent principal is refused on
+  the other session. A human takeover revokes the session's agent principal at once;
+  re-delegation mints a new principal, the earlier token never authenticates again and
+  its principal is refused, while the other session's grant is untouched. Re-delegating
+  a session whose grant is still live is refused until a takeover.
+- **Operators.** Admission keys on the tenant alone (`admit()`): two operator
+  principals of one tenant are one principal by design, and another tenant's operator
+  is refused. This is pinned as intended behaviour, not a gap.
