@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
-import { summarizeRun } from './runner-minutes.mjs';
+import { hosted, median, summarizeRun } from './runner-minutes.mjs';
 
 const job = (runner, start, end, conclusion = 'success') => ({
   runner_name: runner,
@@ -33,4 +33,37 @@ it('splits hosted and self-hosted jobs and rounds each job up for billed minutes
   assert.ok(Math.abs(summary.hosted.minutes - (1.5 + 10 / 60)) < 1e-9);
   assert.equal(summary.hosted.billed, 3); // 1.5 -> 2, 0.17 -> 1
   assert.deepEqual(summary.selfHosted, { minutes: 3, billed: 3, jobs: 1 });
+});
+
+it('recognises only exact GitHub-hosted runner names', () => {
+  assert.equal(hosted({ runner_name: 'GitHub Actions 1000012345' }), true);
+  assert.equal(hosted({ runner_name: 'anvai-wsl-1' }), false);
+  assert.equal(hosted({ runner_name: 'my GitHub Actions 7' }), false);
+  assert.equal(hosted({ runner_name: 'GitHub Actions 7 (copy)' }), false);
+  assert.equal(hosted({}), false);
+});
+
+it('takes the true median for odd and even sample sizes', () => {
+  assert.equal(median([]), 0);
+  assert.equal(median([5, 1, 3]), 3);
+  assert.equal(median([4, 1, 3, 2]), 2.5);
+});
+
+it('never reports negative minutes for clock-skewed timestamps', () => {
+  const run = {
+    id: 2,
+    event: 'push',
+    run_started_at: '2026-10-15T00:00:10Z',
+    updated_at: '2026-10-15T00:00:00Z',
+  };
+  const summary = summarizeRun(run, [
+    {
+      runner_name: 'GitHub Actions 1',
+      started_at: '2026-10-15T00:00:10Z',
+      completed_at: '2026-10-15T00:00:00Z',
+      conclusion: 'success',
+    },
+  ]);
+  assert.equal(summary.wallMinutes, 0);
+  assert.equal(summary.hosted.minutes, 0);
 });

@@ -9,7 +9,10 @@
  * count, total job minutes (sum of job durations) and billed-style minutes (each job rounded up
  * to a whole minute, the way GitHub meters hosted runners), split by runner type
  * (GitHub-hosted vs self-hosted, from each job's runner name), plus wall-clock duration.
- * Medians are reported because single runs vary with queueing. Read-only; needs `gh` auth.
+ * Medians are reported because single runs vary with queueing; any run that used a self-hosted
+ * runner is listed outright, since a median would hide it. Scope: successful runs only (cancelled
+ * and failed runs are excluded) and each run's latest attempt only; billed-style minutes apply no
+ * macOS/Windows multipliers. Read-only; needs `gh` auth.
  */
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -30,7 +33,7 @@ function gh(path) {
   return JSON.parse(result.stdout);
 }
 
-const median = (values) => {
+export const median = (values) => {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -38,7 +41,7 @@ const median = (values) => {
 };
 const minutes = (start, end) => Math.max(0, (Date.parse(end) - Date.parse(start)) / 60_000);
 /** GitHub-hosted runners are named "GitHub Actions <n>"; anything else is self-hosted. */
-const hosted = (job) => /^GitHub Actions \d+$/.test(job.runner_name ?? '');
+export const hosted = (job) => /^GitHub Actions \d+$/.test(job.runner_name ?? '');
 
 export function summarizeRun(run, jobs) {
   const finished = jobs.filter(
@@ -93,6 +96,9 @@ async function main() {
         selfHostedJobMinutes: median(sampled.map((r) => r.selfHosted.minutes)),
         jobs: median(sampled.map((r) => r.hosted.jobs + r.selfHosted.jobs)),
       },
+      // A median hides rare runs: report any self-hosted use outright.
+      runsWithSelfHostedJobs: sampled.filter((r) => r.selfHosted.jobs > 0).map((r) => r.id),
+      selfHostedJobMinutesTotal: sampled.reduce((sum, r) => sum + r.selfHosted.minutes, 0),
       events: [...new Set(sampled.map((r) => r.event))].sort(),
     });
   }
@@ -105,11 +111,11 @@ async function main() {
       `${repo}, last ${runs} successful runs per workflow (medians), ${report.measuredAt}`
     );
     console.log(
-      'workflow | runs | jobs | wall min | hosted job min | hosted billed min | self-hosted job min'
+      'workflow | runs | jobs | wall min | hosted job min | hosted billed min | self-hosted job min | runs with self-hosted jobs'
     );
     for (const w of report.workflows)
       console.log(
-        `${w.path} | ${w.runs} | ${w.median.jobs} | ${f(w.median.wallMinutes)} | ${f(w.median.hostedJobMinutes)} | ${w.median.hostedBilledMinutes} | ${f(w.median.selfHostedJobMinutes)}`
+        `${w.path} | ${w.runs} | ${w.median.jobs} | ${f(w.median.wallMinutes)} | ${f(w.median.hostedJobMinutes)} | ${w.median.hostedBilledMinutes} | ${f(w.median.selfHostedJobMinutes)} | ${w.runsWithSelfHostedJobs.length ? w.runsWithSelfHostedJobs.join(' ') : '-'}`
       );
   }
 }
