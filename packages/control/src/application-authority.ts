@@ -172,7 +172,14 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
   try {
     if (!request || Object.getPrototypeOf(request) !== Object.prototype) throw new Error();
     const own = Object.getOwnPropertyDescriptors(request);
-    const allowed = ['operation', 'input', 'operationId', 'expectedVersion', 'approvalToken'];
+    const allowed = [
+      'operation',
+      'input',
+      'operationId',
+      'expectedVersion',
+      'approvalToken',
+      'executionRequirement',
+    ];
     if (
       Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !allowed.includes(key)) ||
       Object.values(own).some((field) => !field.enumerable || !Object.hasOwn(field, 'value')) ||
@@ -184,6 +191,11 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
     const operationId = own.operationId?.value;
     const expectedVersion = own.expectedVersion?.value;
     const approvalToken = own.approvalToken?.value;
+    // C4b: 'ephemeral' is the default made explicit and is dropped here, so explicit and omitted
+    // requests share one canonical identity. Any other requirement (including 'durable' until it
+    // is part of the operation identity) is refused, so nothing can silently run as ephemeral.
+    if (own.executionRequirement !== undefined && own.executionRequirement.value !== 'ephemeral')
+      throw new Error();
     if (
       typeof operation !== 'string' ||
       !CONTROL_OPERATION_ID.test(operation) ||

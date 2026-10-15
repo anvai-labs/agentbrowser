@@ -15,6 +15,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   on three delivered evidence records are corrected, C3b cites #254, the T9 checkpoint names the
   current protections, and the release guide no longer claims the upload permits clobbering.
 
+### Fixed — the execution requirement as shipped (T5 C4b, part 1)
+
+- An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
+  invalid request; the authority's request normalizer now accepts it as the default made
+  explicit and drops it behind its existing caller-data checks, so explicit and omitted requests
+  share one operation identity (the second is a replay, not a conflict). `durable` is refused
+  before any identity is reserved, and stays refused even with a durable store configured until
+  it is part of the operation identity; discovery advertises only `ephemeral` until then.
+- REST discovery (`GET …/application`) now publishes `writeExecution` (it was added only to the
+  service's return value, which REST does not send), and "nothing bound" stays `null` instead of
+  becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
+
 ### Added — declared adapter output (T4)
 
 - `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not

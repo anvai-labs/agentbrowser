@@ -77,12 +77,11 @@ Delivered this session (2026-10-02..05, 14 merged PRs #356–#372):
 
 - **F3 authorization** — every technical precondition passed (the C4b
   precondition audit confirmed all five delivery gates; the operator
-  reconciliation procedure is delivered). Implementation of C4b execution-
-  requirement selection is on develop (protocol field + normalization +
-  capability check + discovery). Enabling the durable store at runtime
-  requires: (1) deploying a durable journal store (the Sandhi/inferflux
-  services on aiserver1), (2) setting `durableJournalAvailable: true` on
-  the service.
+  reconciliation procedure is delivered). C4b execution-requirement selection
+  is partial: explicit `ephemeral` and discovery work, but `durable` is refused
+  until the requirement is part of the operation identity (J-b) and a journal
+  store is wired into the service (J-d); the `durableJournalAvailable` flag
+  alone does not enable it.
 - **T4 live-target evidence** — requires named authorized targets and the
   consuming workflow to drive the gates.
 - **Victor TLS trust** — the Sandhi gateway CA must be trusted in Victor's
@@ -148,9 +147,8 @@ only with explicit authorization.
 
 F1 all-hop egress enforcement: DELIVERED 2026-09-30.
 F2 clock-movement conformance rows: DELIVERED 2026-09-30.
-F3 durable-journal runtime enablement: **user authorized**; the C4b
-execution-requirement protocol field + capability check are on develop;
-deployment of the durable store remains.
+F3 durable-journal runtime enablement: **user authorized**; C4b is partial
+(J-b identity, J-d runtime wiring and deployment of the durable store remain).
 N1 bounded network-error observation: DELIVERED (slice 1 in 1.15.0; G4
 events replay in 1.15.0).
 N2 OS-enforced egress pairing: prerequisite documented
