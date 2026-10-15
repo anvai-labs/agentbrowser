@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — journal review follow-ups (T5)
+
+- `journalReconcileTimeoutMs` outside 1..2147483647 (or not an integer) is refused at service
+  construction; before, `setTimeout` fired at once and every reconcile counted as unresolved.
+- Adapter `reconcile` functions are captured only after the application authority has validated
+  the adapters, so a null or duplicate entry gets the authority's typed refusal.
+- The lookup route's documented `operationId` pattern now matches the route's check exactly.
+- A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
+  its leftover debug logger is gone.
+
 ### Added — continue and reconcile for journaled operations (T5 J3c part 2)
 
 - A new operation may carry `supersedes: {namespace, operationId}` naming the closed operation it

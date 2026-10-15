@@ -1679,7 +1679,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               name: 'operationId',
               in: 'path',
               required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$' },
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
             },
           ],
           responses: {
