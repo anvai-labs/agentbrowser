@@ -257,3 +257,41 @@ describe('policyCheck: round-2 residues', () => {
     }
   });
 });
+
+describe('cookie.handoff checks (TD-BROWSER-16 phase 7)', () => {
+  it('answers the default decision for a usable domain', () => {
+    const entry = single(
+      policyCheck(new LegacyAuthorizer({}), {
+        action: 'cookie.handoff',
+        target: 'example.com',
+      })
+    );
+    expect(entry).toMatchObject({ classSet: 'capability' });
+    expect(
+      (entry as { answer: { decision?: { allowed?: boolean } } }).answer.decision
+    ).toMatchObject({ allowed: true });
+  });
+
+  it('refuses a bare suffix exactly as the handoff floor does', () => {
+    const answer = policyCheck(new LegacyAuthorizer({}), {
+      action: 'cookie.handoff',
+      target: 'com',
+    });
+    expect(JSON.stringify(answer)).toMatch(/invalid/);
+  });
+
+  it('answers a per-domain deny through the authorizer', () => {
+    const denyHandoff = {
+      version: 'test-deny',
+      decide: (request: { action: string; context: { domain?: string } }) =>
+        request.action === 'cookie.handoff' && request.context.domain === 'evil.org'
+          ? { allowed: false, reason: 'denied', rulesMatched: ['rule.evil'] }
+          : { allowed: true, reason: 'allowed', rulesMatched: [] },
+    };
+    const answer = policyCheck(denyHandoff, {
+      action: 'cookie.handoff',
+      target: 'evil.org',
+    });
+    expect(JSON.stringify(answer)).toMatch(/rule.evil|denied/);
+  });
+});

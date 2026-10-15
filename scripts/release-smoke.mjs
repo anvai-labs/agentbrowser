@@ -9,11 +9,15 @@ export const EXPECTED_TOOLS = Object.freeze([
   'create', 'page_create', 'pages', 'close', 'cookies', 'snapshot',
   'plan', 'autofill', 'navigate', 'observe', 'act',
   'extract', 'html', 'pdf', 'screenshot', 'session',
-  'events_replay', 'policy',
+  'events_replay', 'policy', 'cookie_handoff',
 ]);
 
 export const EXPECTED_DELEGATED_TOOLS = Object.freeze([
-  ...EXPECTED_TOOLS.filter((name) => !['create', 'close', 'cookies'].includes(name)),
+  // cookie_handoff is unbound-only too: a bound delegated session can never
+  // be a handoff target (the floor refuses delegated sessions).
+  ...EXPECTED_TOOLS.filter(
+    (name) => !['create', 'close', 'cookies', 'cookie_handoff'].includes(name)
+  ),
   'operation',
 ]);
 

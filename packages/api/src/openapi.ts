@@ -1524,7 +1524,15 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description: 'The login browser opened.',
               content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
             },
-            '403': errorResponse('A human-operator key is required.'),
+            '400': errorResponse(
+              'INVALID_REQUEST: the login browser is disabled (LOGIN_BROWSER_DISPLAY maps here only when a display is required and absent).'
+            ),
+            '403': errorResponse(
+              'A human-operator key is required, or LOGIN_PROFILE_MODE (the profile directory is not owner-only).'
+            ),
+            '409': errorResponse(
+              'LOGIN_PROFILE_IN_USE (another process owns the profile) or the binary pin (LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).'
+            ),
           },
         },
       },
@@ -1540,7 +1548,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               description: 'The login browser closed.',
               content: json({ type: 'object', properties: { open: { type: 'boolean' } } }),
             },
+            '400': errorResponse('INVALID_REQUEST: the login browser is disabled.'),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'LOGIN_BROWSER_CLOSED (nothing to close) or LOGIN_PROFILE_IN_USE.'
+            ),
           },
         },
       },
@@ -1554,10 +1566,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           security: [{ bearerAuth: [] }],
           responses: {
             '200': {
-              description: 'The profile was deleted.',
+              description: 'The login profile deleted.',
               content: json({ type: 'object', properties: { reset: { type: 'boolean' } } }),
             },
+            '400': errorResponse('INVALID_REQUEST: the login browser is disabled.'),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse(
+              'LOGIN_BROWSER_CLOSED (the browser is open — close it before resetting).'
+            ),
           },
         },
       },
@@ -1586,7 +1602,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 },
               }),
             },
+            '400': errorResponse(
+              'INVALID_REQUEST: the login browser is disabled, or the read exceeds the cookie-count bound.'
+            ),
             '403': errorResponse('A human-operator key is required.'),
+            '409': errorResponse('LOGIN_BROWSER_CLOSED (the read needs the open browser).'),
           },
         },
       },
@@ -1649,7 +1669,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 action: {
                   type: 'string',
                   description:
-                    'One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed.',
+                    'One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed, cookie.handoff (whose context carries the domain).',
                 },
                 target: {
                   type: 'string',

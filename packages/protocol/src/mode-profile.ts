@@ -18,6 +18,14 @@ export const AgentModeSchema = Type.Union(AGENT_MODE_IDS.map((mode) => Type.Lite
 export const AGENT_CAPABILITIES = Object.freeze([
   'session.control',
   'session.manage',
+  /**
+   * TD-BROWSER-16 phase 7 (ADR-025 §6): the cookie-handoff surface. Flows
+   * into every browser profile automatically (profiles are derived by
+   * filtering this vocabulary) and stays OUT of the application profile.
+   * Profile revision stays 1: capabilities only grew, so existing control
+   * grants' profileRevision cursors remain comparable.
+   */
+  'session.credential',
   'page.navigate',
   'page.observe',
   'page.interact',

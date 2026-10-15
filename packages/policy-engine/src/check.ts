@@ -1,3 +1,4 @@
+import { usableHost } from '@agentbrowser/core';
 import { classifyIPAddress, isMetadataHostname } from '@agentbrowser/policy';
 import type { PolicyDecision } from '@agentbrowser/protocol';
 import type { Authorizer, CapabilityAction } from './authorizer.js';
@@ -21,6 +22,7 @@ export type CheckAction =
   | 'request.private'
   | 'act'
   | 'act.unattended'
+  | 'cookie.handoff'
   | CapabilityAction;
 
 export interface PolicyCheckRequest {
@@ -79,6 +81,31 @@ export function policyCheck(
         answer: {
           kind: 'decision',
           decision: authorizer.decide({ action: request.action, context: classification }),
+        },
+      },
+    ];
+  }
+
+  // TD-BROWSER-16 phase 7: the per-domain handoff question. The domain
+  // rides `target` (an exact host, never resolved); a bare suffix or an IP
+  // refuses exactly as the handoff floor refuses it.
+  if (request.action === 'cookie.handoff') {
+    const domain = request.target ?? '';
+    if (!usableHost(domain).ok) {
+      return [{ classSet: 'invalid', answer: { kind: 'decision', decision: FLOOR_INVALID_IP } }];
+    }
+    return [
+      {
+        classSet: 'capability',
+        answer: {
+          kind: 'decision',
+          decision: authorizer.decide({
+            action: 'cookie.handoff',
+            context: {
+              domain,
+              ...(request.tenantId === undefined ? {} : { tenantId: request.tenantId }),
+            },
+          }),
         },
       },
     ];

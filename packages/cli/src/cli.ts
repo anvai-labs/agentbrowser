@@ -183,6 +183,7 @@ export interface CliClient
     | 'pdf'
     | 'download'
     | 'collectDownload'
+    | 'cookieHandoff'
   > &
     Partial<
       Pick<
@@ -825,6 +826,72 @@ export function buildCli(deps: CliDependencies): Cli {
               `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,
             ]);
           })
+        );
+
+      // TD-BROWSER-16 phase 7 (ADR-025 s3): the agent-side handoff. The first
+      // call surfaces the approval request (token id + counts — never
+      // values); the operator decides with their key, then --approval-token
+      // retries.
+      withUsage(session.command('cookie-handoff'), COOKIE_USAGE)
+        .description(
+          'hand the operator login cookies into a session; first call returns the approval to relay'
+        )
+        .argument('<sessionId>')
+        .requiredOption('--domain <domain...>', 'exact host(s) to hand over')
+        .option('--approval-token <token>', 'retry with the operator-decided approval token')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: { domain: string[]; approvalToken?: string }
+            ) => {
+              const result = await ctx.client.sessions
+                .cookieHandoff(sessionId, {
+                  domains: options.domain,
+                  ...(options.approvalToken !== undefined
+                    ? { approvalToken: options.approvalToken }
+                    : {}),
+                })
+                .catch((error: { code?: string; details?: Record<string, unknown> }) => {
+                  if (error.code === 'APPROVAL_REQUIRED' && error.details?.tokenId) {
+                    const details = error.details;
+                    // Enumerated, like the MCP relay: any future
+                    // server-side detail flows nowhere silently (review F6).
+                    ctx.emit(
+                      {
+                        approvalRequired: true,
+                        tokenId: details.tokenId,
+                        kind: details.kind,
+                        sessionId,
+                        domains: details.domains,
+                        counts: details.counts,
+                      },
+                      () => [
+                        'Approval required — relay to the operator:',
+                        `  token: ${String(details.tokenId)}`,
+                        `  domains: ${(details.domains as string[] | undefined)?.join(', ') ?? options.domain.join(', ')}`,
+                        `  counts: ${JSON.stringify(details.counts ?? {})}`,
+                        'They decide with: agentbrowser operator approve ' +
+                          `${sessionId} ${String(details.tokenId)}`,
+                        'Then retry with --approval-token.',
+                      ]
+                    );
+                    return undefined;
+                  }
+                  throw error;
+                });
+              if (result !== undefined)
+                ctx.emit(result, () => [
+                  `Handed over ${result.domains.join(', ')} — ${result.counts.cookies ?? 0} cookie(s), session marked credentialSource:operator`,
+                  ...(result.lease !== undefined
+                    ? [
+                        `lease: ${result.lease.remainingActions}/${result.lease.maxActions} actions on ${result.lease.hosts.join(', ')}`,
+                      ]
+                    : []),
+                ]);
+            }
+          )
         );
 
       // A3 evidence: export the session's completed spans as an artifact.
@@ -2072,6 +2139,134 @@ export function buildCli(deps: CliDependencies): Cli {
               }
             }
           )
+        );
+
+      // TD-BROWSER-16 phase 7: the human operator's own commands. The key
+      // resolves from --operator-key-file or a no-echo prompt, never env —
+      // the phase-1 rule, applied to every command in this group.
+      const operator = program
+        .command('operator')
+        .description('human-operator commands (operator key from --operator-key-file or prompt)');
+      const loginBrowser = operator
+        .command('login-browser')
+        .description('the operator login browser (headed, your own persistent profile)');
+      for (const [verb, description] of [
+        ['open', 'open the login browser (headed, your own profile)'],
+        ['close', 'close the login browser; session cookies are dropped'],
+        ['reset', 'delete the login profile (close first)'],
+      ] as const) {
+        loginBrowser
+          .command(verb)
+          .description(description)
+          .action(
+            action(async (ctx) => {
+              const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+              if (!operatorKey)
+                throw new UsageError(
+                  'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
+                );
+              const res = await fetch(`${ctx.baseUrl}/v1/operator/login/${verb}`, {
+                method: 'POST',
+                headers: { authorization: `Bearer ${operatorKey}` },
+                signal: AbortSignal.timeout(60_000),
+              });
+              if (!res.ok) {
+                const body = (await res.json().catch(() => ({}))) as {
+                  error?: { code?: string; message?: string };
+                };
+                throw new UsageError(
+                  `operator login-browser ${verb} failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+                );
+              }
+              const body = (await res.json()) as unknown;
+              ctx.emit(body, () => [`login browser: ${JSON.stringify(body)}`]);
+            })
+          );
+      }
+      operator
+        .command('approve <sessionId> <tokenId>')
+        .description('approve a pending approval as the human operator; may attach a lease')
+        .option(
+          '--lease <spec...>',
+          'lease to attach: hosts=<host,...> minutes=<n> actions=<n> (cookie.handoff approvals)'
+        )
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string, options: { lease?: string[] }) => {
+            const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+            if (!operatorKey)
+              throw new UsageError(
+                'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
+              );
+            let lease: { hosts: string[]; expiresInMs: number; maxActions: number } | undefined;
+            if (options.lease !== undefined) {
+              // Total parse (review F3): a stray token (the shell splitting
+              // 'hosts=a, b') or a duplicated key refuses loudly — never a
+              // silent under-grant.
+              const leaseKeys = new Set<string>();
+              for (const part of options.lease) {
+                const key = part.includes('=') ? part.slice(0, part.indexOf('=')) : '';
+                if (key !== 'hosts' && key !== 'minutes' && key !== 'actions')
+                  throw new UsageError(
+                    `--lease has an unrecognized part '${part}'; expected hosts=<host,...> minutes=<n> actions=<n> (quote the list)`
+                  );
+                if (leaseKeys.has(key))
+                  throw new UsageError(`--lease repeats '${key}=' — give each key once`);
+                leaseKeys.add(key);
+              }
+              const hosts = options.lease.find((part) => part.startsWith('hosts='));
+              const minutes = options.lease.find((part) => part.startsWith('minutes='));
+              const actions = options.lease.find((part) => part.startsWith('actions='));
+              const hostList = hosts
+                ?.slice('hosts='.length)
+                .split(',')
+                .map((h) => h.trim())
+                .filter(Boolean);
+              const minutesValue =
+                minutes !== undefined ? Number(minutes.slice('minutes='.length)) : Number.NaN;
+              const actionsValue =
+                actions !== undefined ? Number(actions.slice('actions='.length)) : Number.NaN;
+              if (
+                !hostList?.length ||
+                !Number.isFinite(minutesValue) ||
+                minutesValue <= 0 ||
+                !Number.isFinite(actionsValue) ||
+                actionsValue <= 0
+              )
+                throw new UsageError(
+                  '--lease needs hosts=<host,...> minutes=<n> actions=<n> (all positive)'
+                );
+              lease = {
+                hosts: hostList,
+                expiresInMs: Math.round(minutesValue * 60_000),
+                maxActions: Math.round(actionsValue),
+              };
+            }
+            const res = await fetch(
+              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              {
+                method: 'POST',
+                headers: {
+                  authorization: `Bearer ${operatorKey}`,
+                  'content-type': 'application/json',
+                },
+                body: JSON.stringify({
+                  decision: 'approve',
+                  ...(lease !== undefined ? { lease } : {}),
+                }),
+                signal: AbortSignal.timeout(30_000),
+              }
+            );
+            if (!res.ok) {
+              const body = (await res.json().catch(() => ({}))) as {
+                error?: { code?: string; message?: string };
+              };
+              throw new UsageError(
+                `operator approve failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+              );
+            }
+            const body = (await res.json()) as unknown;
+            ctx.emit(body, () => [`decided: ${JSON.stringify(body)}`]);
+          })
         );
 
       program

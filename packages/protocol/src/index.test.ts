@@ -64,6 +64,7 @@ describe('protocol barrel exports', () => {
       '/control',
       '/operations/',
       '/application',
+      '/cookies/handoff',
     ]);
     expect(Object.isFrozen(protocol.SELF_ADMITTING_ROUTE_SEGMENTS)).toBe(true);
   });

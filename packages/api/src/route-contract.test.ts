@@ -148,6 +148,11 @@ describe('route contract metadata', () => {
     // behavior is covered by the HTTP suites (application-http, control
     // flows); this pins the declared shape against silent widening.
     const SELF_ADMITTED = new Set([
+      // TD-BROWSER-16 phase 7: the handoff is safe-registered server-side and
+      // self-admitting (the SDK mints no operation id for it — a phantom id
+      // in the approval relay would look reconcilable when it is recorded
+      // nowhere).
+      'POST /v1/sessions/:sessionId/cookies/handoff',
       'GET /v1/sessions/:sessionId/control',
       'POST /v1/sessions/:sessionId/control/takeover',
       'POST /v1/sessions/:sessionId/control/prepare-resume',

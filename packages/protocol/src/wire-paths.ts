@@ -11,4 +11,9 @@ export const SELF_ADMITTING_ROUTE_SEGMENTS = Object.freeze([
   '/control',
   '/operations/',
   '/application',
+  // TD-BROWSER-16: the cookie handoff is registered safe server-side; its
+  // pre-approval call only mints an approval (quota-bounded), and a phantom
+  // operation id in the APPROVAL_REQUIRED relay would look reconcilable when
+  // it is recorded nowhere.
+  '/cookies/handoff',
 ] as const);

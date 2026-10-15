@@ -58,8 +58,16 @@ proves the control works. Residual risks are named, not hidden.
 | Download bombs | Downloads denied by default; per-session byte cap; `ArtifactStore` refuses oversize payloads | `artifact-store.test.ts`; download suite |
 | Excessive resource retention | TTL-expiring artifacts; session expiry sweeps reconcile service state; bounded histories and span buffers | `artifact-store.test.ts`; expiry-cleanup test; soak |
 | Process leaks | Engine close ends event iterators (browser-level close wakes waiters); soak audit reports zero leaked sessions/engine sessions | `soak.test.ts` |
+| Operator cookie handoff / login browser (TD-BROWSER-16, ADR-025) | The agent never receives a value or name (counts only); the marking is server-assigned and refused on the wire; every transfer is a single-use human decision bound to session+domains+policy version; marked sessions refuse cookie/HTML/download export; WebRTC removed from every frame; the login browser is pipe-driven with an owner-only profile | handoff.test.ts (20), handoff-init.test.ts (real browser), reviewed-actions.test.ts, login-browser.test.ts (Windows CI) |
 
 ## Open gaps and residual risks
+
+- **ADR-025 residuals (accepted):** the login profile is protected by file permissions only and
+  must stay out of synced/backed-up paths; the login-browser read route returns raw cookie values
+  over the transport to the human operator (operator-only route, ADR-025 s2 tension, carried);
+  the F12 reset confirmation is not implemented (reset needs no confirmation body); a policy
+  version change invalidates outstanding handoff approvals by record comparison (the non-act
+  fingerprint half is unverified on consumption).
 
 - **Browser request guard residuals (ACCEPTED)**: keyed wide binds skip the
   `Host` check unless `AGENTBROWSER_ALLOWED_HOSTS` is set — a rebound page can

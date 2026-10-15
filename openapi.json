@@ -5050,8 +5050,28 @@
               }
             }
           },
+          "400": {
+            "description": "INVALID_REQUEST: the login browser is disabled (LOGIN_BROWSER_DISPLAY maps here only when a display is required and absent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "A human-operator key is required.",
+            "description": "A human-operator key is required, or LOGIN_PROFILE_MODE (the profile directory is not owner-only).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LOGIN_PROFILE_IN_USE (another process owns the profile) or the binary pin (LOGIN_BINARY_CHANGED / LOGIN_BINARY_DOWNGRADED).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5092,8 +5112,28 @@
               }
             }
           },
+          "400": {
+            "description": "INVALID_REQUEST: the login browser is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LOGIN_BROWSER_CLOSED (nothing to close) or LOGIN_PROFILE_IN_USE.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5120,7 +5160,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The profile was deleted.",
+            "description": "The login profile deleted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5134,8 +5174,28 @@
               }
             }
           },
+          "400": {
+            "description": "INVALID_REQUEST: the login browser is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LOGIN_BROWSER_CLOSED (the browser is open — close it before resetting).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5190,8 +5250,28 @@
               }
             }
           },
+          "400": {
+            "description": "INVALID_REQUEST: the login browser is disabled, or the read exceeds the cookie-count bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "403": {
             "description": "A human-operator key is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "LOGIN_BROWSER_CLOSED (the read needs the open browser).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5287,7 +5367,7 @@
                 "properties": {
                   "action": {
                     "type": "string",
-                    "description": "One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed."
+                    "description": "One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed, cookie.handoff (whose context carries the domain)."
                   },
                   "target": {
                     "type": "string",

@@ -403,3 +403,19 @@ guide, and the threat-model entry.
 - **The persistent profile holds real credentials on disk.** Owner-only permissions, a documented
   location, and `reset`.
 - **Public Suffix List freshness.** `tldts` is pinned and updated by Dependabot.
+
+**Delivered (phase 7, #472):** `session.credential` in the closed capability vocabulary
+(flows into every browser profile by derivation; application stays fenced; revision stays 1 —
+capabilities only grew). MCP `cookie_handoff` gated on it, dropped when bound, with the handler
+catching APPROVAL_REQUIRED itself so the relay payload (token/domains/counts) reaches the agent
+structured — the global error-details allowlist is untouched; catalog regenerated and
+release-smoke pins the tool unbound-only. SDK `client.sessions.cookieHandoff()` with the typed
+result. CLI `session cookie-handoff` (relay printout, never values), `operator login-browser
+open|close|reset`, and `operator approve <session> <token> [--lease hosts=…,minutes=…,actions=…]`
+(lease parsed client-side, validated server-side). `GET /v1/policy` carries the cookie.handoff
+DEFAULT entry; per-domain answers are `policy check` with the domain as target (bare suffixes
+refuse like the floor). Docs: the "Use your login safely" guide (threat boundary first), a
+threat-model row + the accepted ADR-025 residuals, the three login-browser env vars in
+operations.md as trusted operator configuration, and the four login routes' OpenAPI 400/409
+(a phase-4 carried item closed). No MCP tools exist for operator routes. ADR-025 stands
+Accepted; **TD-BROWSER-16 is complete.**

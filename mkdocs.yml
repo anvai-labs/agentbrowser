@@ -127,6 +127,7 @@ nav:
     - 'MCP tool catalog': mcp-tool-catalog.md
     - 'Delegated (headed) sessions': delegated-sessions.md
     - 'Human handoff': human-handoff.md
+    - 'Use your login safely': use-your-login-safely.md
     - 'Bulk autofill': bulk-autofill.md
     - 'Recipe: interactive forms': recipes/interactive-forms.md
     - 'Recipe: EDGAR filings': recipes/edgar-filings.md

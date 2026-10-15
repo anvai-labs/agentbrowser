@@ -941,6 +941,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         'cookie.seed',
         'cookie.export',
         'session.headed',
+        // TD-BROWSER-16 phase 7: the per-domain handoff question — the
+        // domain rides `target` (never resolved; the engine branch refuses
+        // bare suffixes exactly as the handoff floor does).
+        'cookie.handoff',
       ]);
       const queryLimiter = new TokenBucketLimiter({
         capacity: 30,

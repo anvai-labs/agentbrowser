@@ -1824,6 +1824,17 @@ export class AgentBrowserService {
         context: tenantId === undefined ? {} : { tenantId },
       });
     }
+    // TD-BROWSER-16 phase 7: the handoff entry answers the DEFAULT decision
+    // (no per-domain rule engaged — the ask uses the sentinel domain '*').
+    // Per-domain answers are conditional questions: policy check carries the
+    // real domain, and the handoff itself decides per domain at transfer
+    // time. A policy file's per-domain rules are raw Cedar text; enumerating
+    // grants from arbitrary text is not sound, so the default + check pair
+    // IS the per-domain surface.
+    summary['cookie.handoff'] = this.authorizer.decide({
+      action: 'cookie.handoff',
+      context: { domain: '*', ...(tenantId !== undefined ? { tenantId } : {}) },
+    });
     return summary;
   }
 
