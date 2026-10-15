@@ -308,7 +308,8 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
             const matches = [...state.records.values()].filter(
               (record) =>
                 record.identity.key.tenantId === query.tenantId &&
-                record.identity.key.operationId === query.operationId
+                record.identity.key.operationId === query.operationId &&
+                (query.actionableOnly !== true || record.terminal === undefined)
             );
             return mutationEnvelope({
               kind: 'found',

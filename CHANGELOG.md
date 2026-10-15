@@ -16,6 +16,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   application-write portion and R10's durable-receipt portion are marked delivered (the
   browser/autofill portion stays open for B-dur).
 
+### Added — operator-only journal recovery writes: close and settle (T5 J3c part 1)
+
+- `POST /v1/journal/operations/{operationId}/close` closes every never-dispatched record of the
+  operation as a failed pre-dispatch terminal carrying a supersession marker. Dispatched work
+  refuses: it is settled or reconciled, never closed.
+- `POST /v1/journal/operations/{operationId}/settle` settles every in-doubt record as terminal
+  `outcome_unknown`, claiming nothing about the effect. Irreversible.
+- Both are OPERATOR KEY ONLY per the accepted design (D1 as amended): a tenant API key may read
+  history and is refused here with 403 — pinned at the service and HTTP layers. Tenant-scoped;
+  another tenant's operation is not found, never writable. Rate-limited per tenant.
+
 ### Added — staged form mappings (T6 W3a)
 
 - A form mapping document may carry 1-12 stages, each exactly the single-stage shape with its own
