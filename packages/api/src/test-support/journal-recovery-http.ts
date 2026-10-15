@@ -44,16 +44,19 @@ export async function seedAndBuild(state: 'undispatched' | 'in_doubt', operation
   });
   if (!config) throw new Error('expected configuration');
   const opened = await openServiceJournal(config);
-  const reserved = await opened.journal.reserveIntent(intentOf(operationId));
-  if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
-  if (state === 'in_doubt') {
-    const dispatched = await opened.journal.markDispatch({
-      identity: reserved.record.identity,
-      expectedRevision: 1,
-    });
-    if (dispatched.kind !== 'acknowledged') throw new Error('seed dispatch failed');
+  try {
+    const reserved = await opened.journal.reserveIntent(intentOf(operationId));
+    if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
+    if (state === 'in_doubt') {
+      const dispatched = await opened.journal.markDispatch({
+        identity: reserved.record.identity,
+        expectedRevision: 1,
+      });
+      if (dispatched.kind !== 'acknowledged') throw new Error('seed dispatch failed');
+    }
+  } finally {
+    await opened.close().catch(() => undefined);
   }
-  await opened.close();
 
   const values = {
     AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),

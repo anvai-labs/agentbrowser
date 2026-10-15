@@ -2784,6 +2784,7 @@ export class AgentBrowserService {
       tenantId: principal.tenant,
       operationId,
       limit: 16,
+      actionableOnly: true,
     });
     if (found.kind !== 'found')
       throw new ServiceError(

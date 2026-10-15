@@ -1812,8 +1812,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       '/v1/journal/operations/{operationId}/settle': {
         post: {
           operationId: 'settleJournalOperation',
-          summary:
-            'Settle the in-doubt records of an operation as terminal unknown (irreversible)',
+          summary: 'Settle the in-doubt records of an operation as terminal unknown (irreversible)',
           description:
             'T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Settles ONLY the in-doubt (dispatched, terminal-less) records; undispatched siblings are closed, terminal ones are final. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.',
           tags: ['journal'],
@@ -1845,9 +1844,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             '401': errorResponse('No valid bearer credential named a tenant.'),
             '403': errorResponse('Journal recovery writes require the operator key.'),
             '404': errorResponse('No record of this operation in the searched namespace.'),
-            '409': errorResponse(
-              'No eligible record, or a record changed mid-write.'
-            ),
+            '409': errorResponse('No eligible record, or a record changed mid-write.'),
             '429': errorResponse('Journal recovery rate limit exceeded.'),
             '503': errorResponse('No open durable journal, or the journal refused the write.'),
           },

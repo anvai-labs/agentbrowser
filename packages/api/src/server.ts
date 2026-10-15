@@ -1185,10 +1185,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       // T5 J3c part 1: the operator-only recovery WRITES (D2 close, D3 settle),
       // sharing J3b's journal refusal helper and rate limiter.
       // ------------------------------------------------------------------
+      // Recovery writes keep their OWN per-tenant bucket: a tenant API key's reads share the
+      // tenant with the operator in single-tenant deployments, and the credential class that may
+      // never write must not starve the only one that may.
+      const recoveryLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
       const recoveryWrite = (request: FastifyRequest, reply: FastifyReply) => {
         const principal = principals.get(request);
         if (!principal)
-          return journalRefusal(reply, 'UNAUTHORIZED', 'A valid bearer credential is required', 401);
+          return journalRefusal(
+            reply,
+            'UNAUTHORIZED',
+            'A valid bearer credential is required',
+            401
+          );
         // D1 as amended: writes are the ADR-025 operator principal only. A tenant API key
         // authenticates as actor 'operator' and the /v1 hook admits it on any route; the
         // service refuses it — the accepted design's named implementation hazard.
@@ -1199,8 +1213,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             'Journal recovery writes require the operator key; a tenant API key may only read',
             403
           );
-        if (!journalLimiter.take(principal.tenant))
-          return journalRefusal(reply, 'RATE_LIMITED', 'Journal lookup rate limit exceeded', 429, true);
+        if (!recoveryLimiter.take(principal.tenant))
+          return journalRefusal(
+            reply,
+            'RATE_LIMITED',
+            'Journal recovery rate limit exceeded',
+            429,
+            true
+          );
         return undefined;
       };
       const recoveryOperation = async (

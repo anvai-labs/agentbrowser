@@ -450,7 +450,12 @@ export function findJournalSqliteRecordsByOperation(
   },
   namespaceId: string,
   ownerFence: string,
-  query: { readonly tenantId: string; readonly operationId: string; readonly limit: number },
+  query: {
+    readonly tenantId: string;
+    readonly operationId: string;
+    readonly limit: number;
+    readonly actionableOnly?: boolean;
+  },
   now: number
 ): JournalSqliteFindOutcome {
   const refused = fenceRefusal(reader, namespaceId, ownerFence, now);
@@ -460,6 +465,7 @@ export function findJournalSqliteRecordsByOperation(
      WHERE namespace_id = ?
        AND json_extract(identity, '$.key.tenantId') = ?
        AND json_extract(identity, '$.key.operationId') = ?
+       ${query.actionableOnly === true ? "AND json_extract(record, '$.terminal') IS NULL" : ''}
      ORDER BY rowid LIMIT ?`,
     namespaceId,
     query.tenantId,

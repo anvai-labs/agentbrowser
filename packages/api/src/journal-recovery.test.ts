@@ -142,9 +142,10 @@ describe('journal recovery writes (T5 J3c part 1, real store)', () => {
     if (after.kind === 'found') {
       expect(after.records[0]?.terminal?.evidenceRefIds[0]).toMatch(/^superseded\.close-me$/);
     }
-    // Closing again is refused: the record is terminal now, not actionable.
+    // Closing again: the terminal record left the actionable window, so the operation reads
+    // as absent for recovery — never re-closed, never a conflict to untangle.
     await expect(f.service.journalCloseOperation('close-me', humanOperator)).rejects.toMatchObject({
-      code: 'OPERATION_CONFLICT',
+      code: 'NOT_FOUND',
     });
   }, 60_000);
 
@@ -183,10 +184,10 @@ describe('journal recovery writes (T5 J3c part 1, real store)', () => {
         },
       ],
     });
-    // Irreversible: settling again (or closing) refuses on the terminal record.
+    // Irreversible: settling again reads as absent (the terminal left the actionable window).
     await expect(
       f.service.journalSettleOperation('settle-me', humanOperator)
-    ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   }, 60_000);
 
   it('refuses to settle an undispatched record or a missing one', async () => {
@@ -239,13 +240,13 @@ describe('journal recovery writes over HTTP (J3c part 1)', () => {
       expect(closed.statusCode, closed.body).toBe(200);
       expect(closed.json()).toEqual({ closed: 1, truncated: false });
 
-      // Terminal now: closing again conflicts.
+      // Terminal now: closing again reads as absent (404), never a re-close.
       const again = await server.inject({
         method: 'POST',
         url: '/v1/journal/operations/http-close/close',
         headers: headers.operator,
       });
-      expect(again.statusCode).toBe(409);
+      expect(again.statusCode).toBe(404);
     } finally {
       await cleanup();
     }
@@ -277,9 +278,9 @@ describe('journal recovery writes, review round 1 (J3c part 1)', () => {
       )
       .sort();
     expect(states).toEqual(['2:false:failed', '3:true:outcome_unknown']);
-    // Both exhausted: every write now refuses with the no-eligible conflict.
+    // Both exhausted: the actionable window is empty, so writes read as absent.
     await expect(f.service.journalCloseOperation('mixed-op', humanOperator)).rejects.toMatchObject({
-      code: 'OPERATION_CONFLICT',
+      code: 'NOT_FOUND',
     });
   }, 60_000);
 
@@ -314,7 +315,7 @@ describe('journal recovery writes, review round 1 (J3c part 1)', () => {
     expect(settled).toEqual({ settled: 1, truncated: false });
   }, 60_000);
 
-  it('reports truncation when more than 16 records match', async () => {
+  it('the recovery window ADVANCES: 17 undispatched records close in two acts, none stranded', async () => {
     const f = await fixture();
     cleanup.push(f.stop);
     for (let index = 0; index < 17; index += 1) {
@@ -323,7 +324,14 @@ describe('journal recovery writes, review round 1 (J3c part 1)', () => {
       );
       if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
     }
-    const result = await f.service.journalCloseOperation('many-op', humanOperator);
-    expect(result).toEqual({ closed: 16, truncated: true });
+    const first = await f.service.journalCloseOperation('many-op', humanOperator);
+    expect(first).toEqual({ closed: 16, truncated: true });
+    // Terminal records leave the actionable window (the recovery query filters them out), so
+    // the second act reaches the 17th instead of re-reading the same first sixteen.
+    const second = await f.service.journalCloseOperation('many-op', humanOperator);
+    expect(second).toEqual({ closed: 1, truncated: false });
+    await expect(f.service.journalCloseOperation('many-op', humanOperator)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   }, 120_000);
 });

@@ -143,10 +143,15 @@ export function parseJournalNamespace(input: unknown): JournalNamespace {
 /** J3a: the most records one historical lookup returns. */
 export const MAX_JOURNAL_FIND_LIMIT = 16;
 export function parseJournalOperationQuery(input: unknown): JournalOperationQuery {
-  const v = journalObject(journalData(input), ['tenantId', 'operationId', 'limit']);
+  const v = journalObject(
+    journalData(input),
+    ['tenantId', 'operationId', 'limit'],
+    ['actionableOnly']
+  );
   text(v.tenantId);
   identifier(v.operationId);
   integer(v.limit, 1, MAX_JOURNAL_FIND_LIMIT);
+  if (v.actionableOnly !== undefined && typeof v.actionableOnly !== 'boolean') invalid();
   return deeplyFreezeSnapshot(v) as unknown as JournalOperationQuery;
 }
 export function parseJournalKey(input: unknown): JournalKey {
