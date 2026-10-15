@@ -293,3 +293,34 @@ The operator-only recovery writes, on a real store, through the service and over
   facade on a store the keyed server reopens; round 2 adds mixed-state composition, the
   128-character-ID marker, settle-after-horizon, and the two-act 17-record close.
   **Not in this part:** continue with `supersedes` and the adapter `reconcile` (J3c part 2).
+
+## J4: recovery gates for application writes (2026-10-15)
+
+- **Non-business write classification (the design's table, now the delivered rule):**
+
+| Write | Classification | Durable? |
+| --- | --- | --- |
+| Session provisioning, seeded cookies | service-owned setup; a restart ends the session | no |
+| Lifecycle teardown, spontaneous popup cleanup | service-owned cleanup | no |
+| Artifact publication | artifact-store durability, separate from business commitment | no |
+| `takeDownload` consumption | ephemeral, per session | no |
+| Application writes requesting `durable` | qualified durable work (J-d) | **yes** |
+
+- **Events and cursors are not recovered (D4).** `journal-recovery-gates.test.ts` seeds ONE
+  durable journaled write in instance A (so "no replay" is falsifiable — the journal holds
+  something a wrong implementation could replay), restarts on the same real store, asserts the
+  row survived (positive baseline), then asks for the departed session's events with a
+  pre-restart cursor: the session no longer exists, so the request fails as session-not-found —
+  never a silent reset to zero — and the row set is unchanged by the attempt (read directly from
+  `journal_record`, independent of the service), with the surviving record still readable through
+  the new process's journal handle. The event ledger stays per process and per session; there is
+  no second event bus. Scope: the cursor-carrying REST replay path (the service-level
+  `getSessionEvents` the route shares); the WS stream's 4404 close is the same D4 rule on a
+  different code path and is not separately gated.
+- **`recoveryQualified` (D5)** shipped with J3b's `GET /v1/journal`: configured-and-open on the
+  qualified matrix (Node 24 on Linux or macOS), advisory only, no exactly-once promise. The
+  macOS journal leg qualifies the runtime nightly and on journal-path pull requests; Windows
+  remains unqualified.
+- **R08/R10 status:** R08's application-write portion is delivered (records survive, are
+  classifiable, closeable and settleable; the browser/autofill portion is explicitly B-dur and
+  NOT claimed). R10's durable-application-receipt portion is delivered by J-d/J3a/J3b/J3c-part-1.

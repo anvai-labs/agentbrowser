@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Tests — recovery gates for application writes (T5 J4)
+
+- A service restarted on the same real store refuses a pre-restart event cursor as
+  session-not-found: events and cursors are not recovered, never silently reset, never replayed
+  from the journal.
+- The non-business write classification is recorded as the delivered rule, and R08's
+  application-write portion and R10's durable-receipt portion are marked delivered (the
+  browser/autofill portion stays open for B-dur).
+
 ### Added — operator-only journal recovery writes: close and settle (T5 J3c part 1)
 
 - `POST /v1/journal/operations/{operationId}/close` closes every never-dispatched record of the
