@@ -26,6 +26,33 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - New docs page "Observation gotchas" catalogues where `observe` differs from the browser's
   accessibility tree, starting with this case.
 
+### Fixed — a policy file's approval rules classify actions
+
+- With `AGENTBROWSER_POLICY_FILE`, the document's `approvalRules` were never applied: they fed
+  only the document version, and the environment approval policy is refused alongside a file.
+  So no rule could mark a control as a transaction and require approval. The file's rules now
+  classify every action before Cedar decides (pinned by `policy-file-approval-rules.test.ts`).
+- Compatibility: a policy file now refuses startup when an approval rule's id is invalid,
+  reserved or duplicated (it was never checked before), or when a rule carries a `decision` that
+  no policy reads through `context.matchedRule` (it was silently ignored).
+
+### Docs — a secure starter policy and how to configure policy
+
+- `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy to copy.
+  - Loopback and private networks denied; public web via the floor.
+  - Reads, local writes and unclassified actions allowed; actions your `approvalRules`
+    classify as high risk need owner approval.
+  - Cookie export, cookie handoff, service workers, downloads and CDP attach denied; headed
+    sessions and cookie seeding allowed.
+- `docs/policy.md` opens with "Start here": a decision-flow diagram (egress and actions), a
+  table of each decision and why, how to classify risky controls, per-tenant loosening
+  recipes, and how to verify.
+- A test loads the starter through the real loader, pins its decisions and rule ids, and
+  proves the documented recipes.
+- Release recovery (operations guide): when only the final publish fails, publish the draft by
+  hand and do not rerun; generate the winget manifests with `scripts/winget-manifests.mjs`. The
+  `release.yml` comment says immutability applies once the repository setting is on.
+
 ### Changed — release hardening R14 closed
 
 - `v*` tags: only repository admins can create, move or delete them (ruleset).
