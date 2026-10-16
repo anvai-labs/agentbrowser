@@ -10,8 +10,8 @@ import {
   FLOOR_ATTACH_OPTIONS,
   FLOOR_OPERATOR_REQUIRED,
   handoffFloor,
-  SCOPE_SERVICE_WORKERS,
   requireCdpAttachAdmission,
+  SCOPE_SERVICE_WORKERS,
   withMetadataFloor,
 } from './floor.js';
 import { SessionAuthority } from './session-authority.js';
