@@ -462,8 +462,13 @@ green with no expectation changed).
   passing inside a dispatch can never re-authorize the raw snapshot the dispatch revoked (pinned:
   a passing recheck inside a failed dispatch leaves the snapshot uncaptured; the old
   state-writing form fails that test). With a scope it compares a fresh, complete observation
-  with the preflight's pins (URL, node and block identities, readiness) and refuses before any
-  pins exist; without a scope it re-resolves every mapped field. Pinned: passes on the pinned page
-  without dispatching, `STALE_TARGET` for a replaced control or a recheck before preflight,
-  `FORM_SCOPE_MISMATCH` when the page left the stage.
+  with the preflight's pins (URL, node and block identities, readiness — resolving against a
+  COPY of the block pins, so it never pins a block) and refuses before any pins exist. Without a
+  scope it checks only the fields the run has already committed to (their node identity still
+  present, visible and enabled); fields the run has not reached stay its own business, so a form
+  that reveals fields after earlier writes is not refused. Pinned: passes on the pinned page
+  without dispatching; `STALE_TARGET` for a replaced control or a recheck before preflight (the
+  outcome asserted outside the run); `FORM_SCOPE_MISMATCH` when the page left the stage; unscoped,
+  passing at the first dispatch while a later field is not yet revealed, and `STALE_TARGET` when
+  the committed field's node is replaced during the wait.
 

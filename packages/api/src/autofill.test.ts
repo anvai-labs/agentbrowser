@@ -1240,6 +1240,75 @@ describe('multi-step widget strategies', () => {
   });
 });
 
+describe('unscoped recheck (B-dur, review round 2)', () => {
+  const title = (token: string): PageElement => ({ ...field(token, 'two'), name: 'Title' });
+  const request = () => ({
+    fields: [
+      { match: { label: 'Company name' }, value: 'First', strategy: 'native-input' as const },
+      { match: { label: 'Title' }, value: 'Lead', strategy: 'native-input' as const },
+    ],
+    policy: { settleMs: 0, maxReobserve: 3 },
+  });
+
+  it('checks only fields the run committed to: a later field not yet revealed is fine', async () => {
+    const f = fixture([field('a', 'one')]);
+    let recheck: (() => Promise<void>) | undefined;
+    let atFirstDispatch: unknown = 'not called';
+    const act = f.act;
+    let first = true;
+    await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+      act: async (wire, onDispatch) => {
+        if (first) {
+          first = false;
+          // B-dur-2's placement: before the first effect. 'Title' is not on the page yet.
+          atFirstDispatch = await recheck?.().then(
+            () => 'passed',
+            (error: unknown) => error
+          );
+          const result = await act(wire, onDispatch);
+          // The write reveals the next field, as conditional forms do.
+          f.replace([field('a', 'one', 'First'), title('t')]);
+          return result;
+        }
+        return act(wire, onDispatch);
+      },
+    });
+    expect(atFirstDispatch).toBe('passed');
+  });
+
+  it('refuses when a committed field was replaced by another node during the wait', async () => {
+    const f = fixture([field('a', 'one'), title('t')]);
+    let recheck: (() => Promise<void>) | undefined;
+    let atFirstDispatch: unknown = 'not called';
+    const act = f.act;
+    let first = true;
+    await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+      act: async (wire, onDispatch) => {
+        if (first) {
+          first = false;
+          // During the wait the committed control is re-rendered as a different node.
+          f.replace([field('a2', 'one'), title('t')]);
+          atFirstDispatch = await recheck?.().then(
+            () => 'passed',
+            (error: unknown) => error
+          );
+          throw new Error('stop');
+        }
+        return act(wire, onDispatch);
+      },
+    });
+    expect(atFirstDispatch).toMatchObject({ code: 'STALE_TARGET' });
+  });
+});
+
 describe('mapped stage scope and preflight', () => {
   const url = 'https://example.test/apply?id=123';
   const request = () => ({
@@ -1317,9 +1386,16 @@ describe('mapped stage scope and preflight', () => {
   it('refuses a recheck before preflight recorded any pins (review M2)', async () => {
     const f = scopedFixture();
     let recheck: (() => Promise<void>) | undefined;
+    let early: unknown = 'not called';
+    const read = f.observe.getMockImplementation()!;
     f.observe.mockImplementationOnce(async () => {
-      await expect(recheck?.()).rejects.toMatchObject({ code: 'STALE_TARGET' });
-      return { elements: [field('a', 'one'), field('b', 'two')], url };
+      // Inside the preflight's first observation, before any pin exists: capture the outcome
+      // here and assert it OUTSIDE the run (the run would swallow an assertion error).
+      early = await recheck?.().then(
+        () => 'passed',
+        (error: unknown) => error
+      );
+      return read();
     });
     await runAutofill(request(), {
       ...f,
@@ -1327,7 +1403,7 @@ describe('mapped stage scope and preflight', () => {
         recheck = offered;
       },
     });
-    expect(recheck).toBeDefined();
+    expect(early).toMatchObject({ code: 'STALE_TARGET' });
   });
   it('preflights repeated labels in separate blocks and runs the existing executor', async () => {
     const f = scopedFixture();

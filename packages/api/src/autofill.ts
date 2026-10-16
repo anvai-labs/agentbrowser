@@ -441,12 +441,14 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     }
     return view.elements;
   };
-  // T5 B-dur (B6): a READ-ONLY recheck. It never writes the run's state (scope validity, pins,
-  // preflight index): a recheck passing inside a dispatch must never re-authorize anything the
-  // dispatch deliberately revoked (raw artifact capture needs a complete observation AFTER the
-  // dispatch). It compares a fresh, complete observation with the pins the preflight recorded;
-  // before preflight there is nothing to compare, which is refused. Without a scope it re-resolves
-  // every mapped field.
+  // T5 B-dur (B6): a READ-ONLY recheck. It never writes the run's state (scope validity, scope or
+  // block pins, preflight index): a recheck passing inside a dispatch must never re-authorize
+  // anything the dispatch deliberately revoked (raw artifact capture needs a complete observation
+  // AFTER the dispatch), and must never pin a block the run has not reached. With a scope it
+  // compares a fresh, complete observation with the pins the preflight recorded (before preflight
+  // there is nothing to compare, which is refused). Without a scope it checks only the fields the
+  // run has ALREADY committed to (their node identity still present, visible and enabled); later
+  // fields stay the run's own business, so forms that reveal fields after earlier writes work.
   ports.onRecheck?.(async () => {
     guard();
     const view = await ports.observe();
@@ -457,7 +459,13 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         'Autofill requires complete, non-degraded observations'
       );
     if (!request.scope) {
-      for (const field of request.fields) resolve(view.elements, field.match, blocks);
+      for (const identity of identities.values()) {
+        const element = view.elements.find(
+          (candidate) => candidate.attributes?.['autofill-node'] === identity
+        );
+        if (!element || !element.visible || !element.enabled)
+          throw new AutofillFailure('STALE_TARGET', 'A field the run committed to has changed');
+      }
       return;
     }
     if (view.url !== request.scope.url)
@@ -465,7 +473,8 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     for (const [index, field] of request.fields.entries()) {
       const pin = scopePins.get(index);
       if (!pin) throw new AutofillFailure('STALE_TARGET', 'Mapped stage was not preflighted');
-      const element = resolve(view.elements, field.match, blocks);
+      // A copy: resolving must never pin a block in the run's own map.
+      const element = resolve(view.elements, field.match, new Map(blocks));
       if (
         element.attributes?.['autofill-node'] !== pin.node ||
         element.attributes?.['autofill-block'] !== pin.block ||
