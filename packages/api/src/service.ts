@@ -42,6 +42,7 @@ import {
   defineApplicationReceiptEvidenceSource,
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
+  type JournalRecord,
   NATIVE_FORM_REVIEW_TYPE,
   type OperationJournal,
   type OperationPublication,
@@ -170,6 +171,7 @@ import {
   DownloadTransport,
   type DownloadTransportOptions,
 } from './download-transport.js';
+import { searchJournalNamespaces } from './journal-config.js';
 import {
   createDefaultNetworkPolicy,
   networkPolicyFromEnvironment,
@@ -450,6 +452,13 @@ export interface ServiceDependencies {
    * accepting. The caller owns its lifetime and closes it after `shutdown()`.
    */
   operationJournal?: OperationJournal;
+  /**
+   * T5 J3d (D7): namespaces rotated away from, opened read-and-recover on the same store. They
+   * are searched by recovery and never take a new intent (the store refuses past the horizon).
+   */
+  historyJournals?: readonly { readonly namespaceId: string; readonly journal: OperationJournal }[];
+  /** J3d: configured history namespaces the store refused; recovery treats them as unread. */
+  refusedHistoryNamespaces?: readonly string[];
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
@@ -686,6 +695,10 @@ export class AgentBrowserService {
   private readonly reconcilers: ReadonlyMap<string, NonNullable<ApplicationAdapter['reconcile']>>;
   /** J3c part 2: how long one adapter reconcile may take before it counts as unresolved. */
   private readonly reconcileTimeoutMs: number;
+  private readonly historyJournals: readonly OperationJournal[];
+  private readonly refusedHistoryNamespaces: readonly string[];
+  /** J3d: which journal returned each recovery record, so a write commits to its owner. */
+  private readonly recordJournals = new WeakMap<object, OperationJournal>();
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -751,6 +764,8 @@ export class AgentBrowserService {
 
   constructor(deps: ServiceDependencies) {
     this.operationJournal = deps.operationJournal;
+    this.historyJournals = (deps.historyJournals ?? []).map((entry) => entry.journal);
+    this.refusedHistoryNamespaces = [...(deps.refusedHistoryNamespaces ?? [])];
     this.authority = new SessionAuthority(
       this.operationJournal !== undefined ? { journal: this.operationJournal } : {}
     );
@@ -2734,8 +2749,11 @@ export class AgentBrowserService {
   async journalCloseOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ closed: number; truncated: boolean }> {
-    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+  ): Promise<{ closed: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
     // Actionability is PER RECORD (accepted design): close touches only the never-dispatched
     // records of the ID; dispatched or terminal siblings are other actions' business, never a
     // refusal here — a blanket refusal would deadlock mixed-state operations forever. Zero
@@ -2748,7 +2766,7 @@ export class AgentBrowserService {
       );
     let closed = 0;
     for (const record of eligible) {
-      const commit = await this.operationJournal?.commitTerminal({
+      const commit = await this.recordJournals.get(record)?.commitTerminal({
         identity: record.identity,
         expectedRevision: 1,
         dispatched: false,
@@ -2757,11 +2775,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          `The record changed after ${closed} record(s) were closed; re-read before acting again`
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${closed} record(s) were closed; re-read before acting again`
         );
       closed += 1;
     }
-    return { closed, truncated };
+    return { closed, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
   /**
@@ -2772,8 +2790,11 @@ export class AgentBrowserService {
   async journalSettleOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ settled: number; truncated: boolean }> {
-    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+  ): Promise<{ settled: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
     const eligible = records.filter(
       (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
     );
@@ -2784,7 +2805,7 @@ export class AgentBrowserService {
       );
     let settled = 0;
     for (const record of eligible) {
-      const commit = await this.operationJournal?.commitTerminal({
+      const commit = await this.recordJournals.get(record)?.commitTerminal({
         identity: record.identity,
         expectedRevision: 2,
         dispatched: true,
@@ -2793,11 +2814,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          `The record changed after ${settled} record(s) were settled; re-read before acting again`
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${settled} record(s) were settled; re-read before acting again`
         );
       settled += 1;
     }
-    return { settled, truncated };
+    return { settled, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
   /**
@@ -2810,8 +2831,16 @@ export class AgentBrowserService {
   async journalReconcileOperation(
     operationId: string,
     principal: { actor: string; tenant: string }
-  ): Promise<{ reconciled: number; unresolved: number; truncated: boolean }> {
-    const { records, truncated } = await this.recoveryTargets(operationId, principal);
+  ): Promise<{
+    reconciled: number;
+    unresolved: number;
+    truncated: boolean;
+    unreadNamespaces?: string[];
+  }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
     const eligible = records.filter(
       (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
     );
@@ -2874,7 +2903,8 @@ export class AgentBrowserService {
         unresolved += 1;
         continue;
       }
-      const commit = await this.operationJournal?.commitTerminal({
+      // J3d: commit in the namespace that OWNS the record (current or history).
+      const commit = await this.recordJournals.get(record)?.commitTerminal({
         identity: record.identity,
         expectedRevision: 2,
         dispatched: true,
@@ -2883,11 +2913,11 @@ export class AgentBrowserService {
       if (commit?.kind !== 'acknowledged')
         throw new ServiceError(
           'OPERATION_CONFLICT',
-          `The record changed after ${reconciled} record(s) were reconciled; re-read before acting again`
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${reconciled} record(s) were reconciled; re-read before acting again`
         );
       reconciled += 1;
     }
-    return { reconciled, unresolved, truncated };
+    return { reconciled, unresolved, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
   /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
@@ -2897,33 +2927,40 @@ export class AgentBrowserService {
         'FORBIDDEN',
         'Journal recovery writes require the operator key; a tenant API key may only read'
       );
-    // The recovery gate is the OPEN journal, not the accept horizon: the design's deadline for
+    // The recovery gate is an OPEN journal, not the accept horizon: the design's deadline for
     // these writes is retainUntil (30 days past ACCEPT_UNTIL), which the store enforces itself.
-    // Reusing durableAvailable() would kill the fallback exactly when its deadline begins.
-    const recoveryJournal = this.operationJournal;
-    if (recoveryJournal?.health !== 'open')
+    // Reusing durableAvailable() would kill the fallback exactly when its deadline begins. J3d:
+    // the current namespace and every open history namespace are searched; each record keeps the
+    // journal it came from, and absence is claimed only when every namespace answered.
+    const configured = [
+      ...(this.operationJournal ? [this.operationJournal] : []),
+      ...this.historyJournals,
+    ];
+    if (!configured.some((journal) => journal.health === 'open'))
       throw new ServiceError('JOURNAL_UNAVAILABLE', 'No open durable journal');
-    const found = await recoveryJournal.findByOperation({
-      tenantId: principal.tenant,
-      operationId,
-      limit: 16,
-      actionableOnly: true,
-    });
-    if (found.kind !== 'found')
+    const { entries, truncated, unreadNamespaces, lastReason } = await searchJournalNamespaces(
+      configured,
+      { tenantId: principal.tenant, operationId, actionableOnly: true }
+    );
+    if (entries.length === 0 && unreadNamespaces.length + this.refusedHistoryNamespaces.length > 0)
       throw new ServiceError(
         'JOURNAL_UNAVAILABLE',
-        `The journal refused this write (${
-          found.kind === 'definitely_not_read' || found.kind === 'uncertain'
-            ? found.reason
-            : 'unavailable'
-        }); history is unread, not absent`
+        `The journal refused this write (${lastReason}); history is unread, not absent`
       );
-    if (found.records.length === 0)
+    if (entries.length === 0)
       throw new ServiceError(
         'NOT_FOUND',
-        'No actionable record of this operation in the searched namespace'
+        'No actionable record of this operation in the searched namespaces'
       );
-    return { records: found.records, truncated: found.truncated };
+    for (const entry of entries) this.recordJournals.set(entry.record, entry.journal);
+    // Partial recovery is allowed (records found act), but never silent about what it could not
+    // read: the response names those namespaces.
+    const unread = [...unreadNamespaces, ...this.refusedHistoryNamespaces];
+    return {
+      records: entries.map((entry) => entry.record),
+      truncated,
+      ...(unread.length > 0 ? { unreadNamespaces: unread } : {}),
+    };
   }
 
   /**

@@ -966,6 +966,14 @@ export class AgentBrowserClient {
     retainUntil?: string;
     runtime: { platform: string; node: string; qualified: boolean };
     recoveryQualified: boolean;
+    /** T5 J3d: namespaces rotated away from (and a past-horizon current one), recover-only. */
+    history?: Array<{
+      namespace: string;
+      state: 'open' | 'refused' | 'unavailable';
+      reason?: string;
+      acceptUntil: string;
+      retainUntil: string;
+    }>;
   }> {
     return this.http.requestJson('/v1/journal');
   }
@@ -981,6 +989,8 @@ export class AgentBrowserClient {
     operationId: string;
     absent: boolean;
     truncated: boolean;
+    /** T5 J3d: namespaces that could not be read; `absent` is then false (history unread). */
+    unreadNamespaces?: string[];
     records: Array<{
       namespace: string;
       classification:

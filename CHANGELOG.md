@@ -18,6 +18,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Docs — browser-operation durability, the settled choices (T5 B-dur, accepted)
+
+- A design addendum settles the implementation choices D6 left open, accepted by the owner:
+  browser operations are journaled only on request (`executionRequirement: 'durable'`, controlled
+  sessions only), as one record per operation with the marker at the first page action, after an
+  asynchronous owner-level recheck whose remaining window is disclosed (the approval token is
+  consumed only after the marker), sharing the namespace's capacity, under a reserved `browser`
+  application identity (no store-format change). Known step or field failures stay `failed` with
+  their report returned, never `JOURNAL_UNAVAILABLE`.
+
 ### Added — continue and reconcile for journaled operations (T5 J3c part 2)
 
 - A new operation may carry `supersedes: {namespace, operationId}` naming the closed operation it
@@ -31,6 +41,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `rejected` commit the matching terminal; `unknown`, a malformed answer, or a call slower than
   10 s changes nothing. An adapter without `reconcile` is refused with 409 `CONTROL_REQUIRED`
   before anything is written — settle instead. Nothing is ever replayed.
+
+### Added — journal history namespaces after rotation (T5 J3d)
+
+- `AGENTBROWSER_JOURNAL_HISTORY_FILE` lists namespaces you rotated away from, each with its
+  original descriptor inputs and key file. They open on the same store, stay searchable by
+  lookup and recoverable by the operator (close, settle, reconcile commit in the namespace that
+  owns the record) until `retainUntil`, and never accept new writes.
+- `GET /v1/journal` lists them (`history`, with `refused` and the store's reason for a wrong
+  entry, which never stops the current namespace). Lookups report any namespace they could not
+  read in `unreadNamespaces`, and are never `absent` while one is unread.
+- The server warns at startup within 7 days of a history namespace's `retainUntil`.
+- A namespace past its `ACCEPT_UNTIL` is opened recover-only: no durable writes, but its records
+  stay readable and recoverable until retention ends. History entries are opened only once their
+  horizon has passed (an early or typo'd entry is reported and never creates a namespace).
+- `agentbrowser journal status` lists history namespaces; `journal operations` names each
+  record's namespace and any namespace it could not read.
 
 ### Tests — recovery gates for application writes (T5 J4)
 
