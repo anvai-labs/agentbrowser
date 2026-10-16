@@ -211,6 +211,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-10-16 (v1.20.0: release provenance, policy-file approval rules, native disclosures)
+**Last Updated**: 2026-10-16 (v1.21.0: engagement scopes without holes — checked POST redirects, refused unchecked lanes)
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.

@@ -47,5 +47,5 @@ automatic submission or outside communication of findings.
 | --- | --- |
 | M1: redirects after POST/PUT/PATCH checked in scoped sessions | #540 |
 | M1: a scope refuses `cdpAttach`, service workers and a top-level (unvalidated) scope | #541 |
-| M1: workers | dedicated-worker POST redirects are checked (`body-redirect-guard.test.ts`); service workers are refused with a scope (#541); shared workers and worker WebSockets stay a stated residual (not qualified) |
+| M1: workers | dedicated-worker POST redirects are checked (`body-redirect-guard.test.ts`; observed coverage, not a guarantee); service workers are refused with a scope (#541); shared workers and worker WebSockets stay a stated residual (not qualified) |
 | M1: release smoke | `scripts/scope-consumer-smoke.mjs`: lane refusals (REST rule ids; CLI/MCP service workers), out-of-scope navigation on all four surfaces, POST redirect blocked and recorded; local fixtures, run against the extracted release candidate |
