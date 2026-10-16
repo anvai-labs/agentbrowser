@@ -14,6 +14,21 @@ landed in slices, so an older (lower) entry's "not yet" or "proposed" (C4b's ref
 "proposed", B-dur-1/2a "not yet used") is resolved by a newer (higher) entry in this same
 release — 1.19.0 ships the wired journal, lookup and recovery (J3, J4) and browser durability.
 
+### Docs — the site matches the release
+
+- Every page under `docs/` is now in the site navigation (37 were unreachable, including the T5
+  recovery and browser-durability designs, the journal runtime evidence, ADR-026 and the
+  1.15.0–1.18.0 release records). Internal handoff notes, the ADR template and the agent skill
+  file are excluded instead, and the strict build now **fails** when a page is missing from
+  the nav, so the site cannot drift again.
+- Operations gains a visual "Durable operations and recovery" overview: a record-lifecycle
+  diagram and tables for application versus browser durability and for who can read or recover.
+- Stale claims fixed: the CLI guide's "durable recovery: planned", the delegated-sessions,
+  bulk-autofill and comparison pages' "records disappear on restart" / "journal under
+  construction", the home page's status line, the quality spec's "future journal contract", and
+  the execution spec's event sync (now a table: what is built, no recovery across a restart by
+  decision D4, and the not-yet-built target cursor contract).
+
 ### Fixed — journal review follow-ups (T5)
 
 - `journalReconcileTimeoutMs` outside 1..2147483647 (or not an integer) is refused at service

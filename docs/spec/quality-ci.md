@@ -24,7 +24,7 @@ dependency closure could omit required instructions or include unrelated data.
 | --- | --- | --- |
 | INV-01/02 authority | Revoke between admission/dispatch/output; old cleanup callback targets replacement; two pages race | Core/control suites and delegated fixtures |
 | INV-03 identity | Same-URL reload, moved block, recycled node, repeated labels, truncated candidates | Engine conformance and autofill fixtures |
-| INV-04 replay | Response lost after commit; same ID/different input; bridge death; late response; service restart | Existing continuity harness, future journal contract |
+| INV-04 replay | Response lost after commit; same ID/different input; bridge death; late response; service restart | Continuity harness; journal process-loss rows (T5) |
 | INV-05 truth | UI reports success but server rejects; model fabricates success; redacted values collide | Testkit independent application oracle |
 | INV-06 privacy | Wrong tenant fetches artifact; revoke buffered event; HTML includes secret; profile switch leaks memory | Artifact/control/transport suites |
 | INV-07 bounds | Oversized nested values, disk full, slow subscriber, hung adapter, expired monotonic deadline | Existing resource-budget suites plus journal adapter |
