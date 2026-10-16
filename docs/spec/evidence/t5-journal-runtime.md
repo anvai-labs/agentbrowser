@@ -487,8 +487,18 @@ real journal facade (`browser-journal.test.ts`). Nothing in the service uses it 
   the marker, then the guard — so the guard runs exactly once, after the marker's storage wait,
   before the first effect; later dispatches write nothing new. Pinned: three dispatches give one
   record (rev 3, `completed`), with the order `guard (record already at rev 2) → effect 1 → 2 → 3`.
-  A dispatch before the guard is captured, a second capture, and a capture outside a browser
-  scope are refused. No dispatch may run inside the guard.
+  A dispatch before the guard is captured is refused before the marker (the record stays at
+  rev 2, undispatched); a second capture, and a capture outside a browser scope, are refused. No
+  dispatch may run inside the guard: "inside" is the guard's own async context (its own
+  `AsyncLocalStorage`), so a dispatch from the guard is refused and seals the operation instead
+  of deadlocking on the guard it runs in, while the operation's OTHER dispatches issued during
+  the guard's await simply wait for it and run (review finding 1; each pinned). The guard is
+  awaited without its own deadline: it is the owner's recheck, bounded by the operation's own
+  reads (disclosed; B-dur-2b's guards are a re-resolve, an approval read and a re-observe).
+- **Reserved identity (B5, review finding 2).** A selection naming the reserved `browser`
+  adapter without `browser: true` (durable or not) is refused, so no application write can be
+  recorded under the browser identity even through `run()` directly; an application dispatch
+  qualification cannot be captured in a browser scope.
 - **Terminal mapping (B2).** A guard failure crosses no effect and seals the operation: the
   terminal is `failed` with `dispatched: true` (the marker was crossed), and the caller gets the
   guard's own typed error. A known failure the work returns (`failed()` → `rejected`) is `failed`

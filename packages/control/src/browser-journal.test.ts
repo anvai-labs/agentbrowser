@@ -164,10 +164,97 @@ describe('durable browser operations in the journal (B-dur-2a)', () => {
         await f.authority.dispatchInScope('session', () => undefined);
       })
     ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    // Refused before any journal I/O past the intent: no marker was written.
+    expect(f.stored()[0]).toMatchObject({ revision: 2, dispatched: false });
     await expect(
       run(f, 'twice', async () => {
         f.authority.captureBrowserDispatchInScope('session', async () => {});
         f.authority.captureBrowserDispatchInScope('session', async () => {});
+      })
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+  });
+
+  it('a dispatch from inside the guard is refused (not deadlocked); the operation is sealed', async () => {
+    const f = await sessionFixture();
+    const effect = vi.fn();
+    let inner: unknown;
+    await expect(
+      run(f, 'reentrant', async () => {
+        f.authority.captureBrowserDispatchInScope('session', async () => {
+          inner = await Promise.resolve()
+            .then(() => f.authority.dispatchInScope('session', effect))
+            .then(
+              () => 'ran',
+              (error: { code?: string }) => error.code
+            );
+        });
+        await f.authority.dispatchInScope('session', effect);
+      })
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(inner).toBe('CONTROL_REQUIRED');
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('other work of the operation during the guard await is not poisoned (review finding 1)', async () => {
+    const f = await sessionFixture();
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const result = await run(f, 'overlap', async () => {
+      f.authority.captureBrowserDispatchInScope('session', async () => {
+        order.push('guard-start');
+        await gate;
+        order.push('guard-end');
+      });
+      const first = f.authority.dispatchInScope('session', () => {
+        order.push('effect-a');
+      });
+      // A second dispatch issued from the operation (not the guard) while the guard awaits.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      const second = f.authority.dispatchInScope('session', () => {
+        order.push('effect-b');
+      });
+      release();
+      await Promise.all([first, second]);
+      return 'both';
+    });
+    expect(result).toBe('both');
+    expect(order).toEqual(['guard-start', 'guard-end', 'effect-a', 'effect-b']);
+    expect(f.stored()[0]).toMatchObject({ terminal: { status: 'completed' } });
+  });
+
+  it('a guard failure seals the operation: a later dispatch is refused without re-running it', async () => {
+    const f = await sessionFixture();
+    const guard = vi.fn(async () => {
+      throw Object.assign(new Error('stale'), { code: 'STALE_TARGET' });
+    });
+    const effect = vi.fn();
+    let later: unknown;
+    await expect(
+      run(f, 'sealed', async () => {
+        f.authority.captureBrowserDispatchInScope('session', guard);
+        await f.authority.dispatchInScope('session', effect).catch(() => undefined);
+        later = await Promise.resolve()
+          .then(() => f.authority.dispatchInScope('session', effect))
+          .then(
+            () => 'ran',
+            (error: { code?: string }) => error.code
+          );
+      })
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(later).toBe('CONTROL_REQUIRED');
+    expect(guard).toHaveBeenCalledOnce();
+    expect(effect).not.toHaveBeenCalled();
+  });
+
+  it('an application qualification cannot be captured in a browser scope', async () => {
+    const f = await sessionFixture();
+    await expect(
+      run(f, 'app-in-browser', async () => {
+        f.authority.captureApplicationDispatchInScope('session', () => undefined);
       })
     ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
   });
@@ -191,6 +278,12 @@ describe('durable browser operations in the journal (B-dur-2a)', () => {
       },
     ],
     ['with browser: false', { ...browserSelection(), browser: false }],
+    // The reserved identity without the browser flag: an application write may never use it.
+    ['as a durable application write', { ...browserSelection(), browser: undefined }],
+    [
+      'as an ephemeral application write',
+      { ...browserSelection(), browser: undefined, durable: undefined },
+    ],
   ])('refuses a browser selection %s before any journal I/O', async (_name, selection) => {
     const f = await sessionFixture();
     const work = vi.fn(async () => 'never');

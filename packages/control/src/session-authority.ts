@@ -162,6 +162,12 @@ export class SessionAuthority {
   private readonly entries = new Map<string, Entry>();
   private readonly grants = new Map<string, Extract<SessionPrincipal, { actor: 'agent' }>>();
   private readonly scope = new AsyncLocalStorage<Scope>();
+  /**
+   * T5 B-dur (B6): the async context of a running browser guard. "Inside the guard" is the guard's
+   * own call chain, not the whole scope: a dispatch issued from it is refused (it would otherwise
+   * wait on the guard it runs in), while the operation's other work is not poisoned by the await.
+   */
+  private readonly insideBrowserGuard = new AsyncLocalStorage<Scope>();
   private readonly now: () => number;
   private readonly journal: OperationJournal | undefined;
   /** Journaled runs admitted and not yet settled; drained before shutdown closes the journal. */
@@ -396,6 +402,12 @@ export class SessionAuthority {
           )
             throw journalUnavailable();
           browser = true;
+        } else if (
+          (descriptor.application as { adapterId?: unknown } | undefined)?.adapterId ===
+          RESERVED_BROWSER_ADAPTER_ID
+        ) {
+          // The reserved identity is never an application write's (B5).
+          throw journalUnavailable();
         }
         // J-d: the live fingerprint's domain is labeled, never caller-selected: a durable
         // operation's fingerprint is computed in the v2-durable domain (J-b), and the label is
@@ -733,7 +745,11 @@ export class SessionAuthority {
   ): ApplicationDispatchQualification {
     this.assert(sessionId);
     const scope = this.scope.getStore();
-    if (!scope?.journal?.intent.application || typeof assertCurrent !== 'function')
+    if (
+      !scope?.journal?.intent.application ||
+      scope.journal.browser ||
+      typeof assertCurrent !== 'function'
+    )
       throw journalUnavailable();
     this.checkJournalScope(scope);
     return new CapturedApplicationDispatch(scope, assertCurrent);
@@ -776,7 +792,8 @@ export class SessionAuthority {
   }
 
   private checkDispatchGuardBoundary(scope: Scope): void {
-    if (scope.guardingDispatch) scope.dispatchGuardViolated = true;
+    if (scope.guardingDispatch || this.insideBrowserGuard.getStore() === scope)
+      scope.dispatchGuardViolated = true;
     if (scope.dispatchGuardViolated) throw journalUnavailable();
   }
 
@@ -832,13 +849,8 @@ export class SessionAuthority {
               journal.guarded = marker.then(async () => {
                 const guard = journal.browserGuard;
                 if (!guard) throw journalUnavailable();
-                // No dispatch may run inside the owner's recheck.
-                scope.guardingDispatch = true;
-                try {
-                  await guard();
-                } finally {
-                  scope.guardingDispatch = false;
-                }
+                // No dispatch may run inside the owner's recheck (its own async context only).
+                await this.insideBrowserGuard.run(scope, guard);
               });
             const ready: Promise<void> = journal.guarded ?? marker;
             resolve(
