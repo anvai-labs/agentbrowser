@@ -506,3 +506,52 @@ real journal facade (`browser-journal.test.ts`). Nothing in the service uses it 
   its normal result and is `failed_before_dispatch` (an application write that never dispatches
   stays an error, unchanged). Pinned for each.
 
+## B-dur-2b: durable act, plan and autofill through the service (2026-10-15)
+
+`act`, `plan` and `autofill` accept `executionRequirement` over REST, and `durable` journals the
+call as ONE browser operation. Tested on a real SQLite store through the service
+(`browser-durable.test.ts`, a marker hook that changes the page during the storage wait) and over
+HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
+
+- **The field (B1).** The HTTP wrapper peels `executionRequirement` off the body before the
+  route validates it: `ephemeral` is dropped (an explicit and an omitted request share one
+  identity and replay each other, pinned), `durable` is folded into the fingerprint, any other
+  value is a 400. Durable on an uncontrolled session, or with no open journal, is
+  `CONTROL_REQUIRED` before anything runs (pinned for all three routes). OpenAPI documents the
+  field on the three bodies; the protocol body schemas the service and MCP validate are unchanged
+  (B-dur-2c brings SDK, CLI and MCP parity).
+- **The record (B5).** Adapter `browser`, resource `act` / `plan` / `autofill`, binding
+  generation the page id; the lookup route shows it (pinned end to end).
+- **act and plan (B6).** The FIRST dispatch's `beforeAction` decides the approval (a round trip
+  still throws there: `failed_before_dispatch`, no marker, pinned), then captures the guard:
+  `revalidateTarget` (revision, resolve, visibility, fingerprint), the approval's currency
+  without consuming it, and only then its consumption. Pinned on the real store: the order is
+  marker → consume → effect; a target re-rendered during the marker wait gives `STALE_TARGET`
+  with no effect and a `failed`, dispatched record; a token spent during the wait gives
+  `APPROVAL_REQUIRED` with no effect. Later plan steps and act-batch steps ride the same marker
+  (three steps, one marker, one record, pinned). Every act kind and the act batch work durably.
+- **autofill (B6).** Its guard is its own read-only stage recheck (B-dur-1's `onRecheck`), run
+  once after the marker before the first field's effect. A committed field re-rendered during
+  the wait gives no effect, a `failed` dispatched record, and the autofill report is returned —
+  the refusal becomes a field receipt, so the work returns; the control layer keeps a returned
+  report after a guard refusal (`guardRefused`, pinned at both layers) while any other seal still
+  refuses. Residual, disclosed: the first field's approval or lease action is decided and spent
+  before its dispatch, as for every field, so a refused marker has spent that one approval with
+  no effect (fail-closed).
+- **Terminal mapping (B2).** A known failure — an error response with a typed code, or a report
+  with `ok: false` — is `failed` with the response returned. An unknown one — `ACTION_TIMEOUT`,
+  `ENGINE_CRASHED`, `INTERNAL`, `CONTROL_REVOKED`, a plan or batch report whose failed step lost
+  its result (an untyped or outcome-unknown error; the service remembers this beside the report
+  object, the wire report is unchanged), or an autofill receipt `uncertain` — is
+  `outcome_unknown` (classified `settled_unknown`), and **the report is still returned**: it is
+  the caller's only account of what was attempted, and the record is the authority on the
+  outcome. An in-doubt application write is still a refusal (unchanged). Pinned over HTTP: a plan
+  whose second step lost its result is `settled_unknown` with its report; a plan whose only step
+  was refused before dispatch is `failed_before_dispatch` with its report.
+- **Capacity (B4)** is in the operations guide: shared with application writes, one record per
+  durable call including approval round trips, no operator switch.
+- **Residual (from the B-dur-2a review), disclosed.** A callback registered outside the guard
+  that runs *synchronously* inside the guard's call chain (an event listener the guard's reads
+  happen to fire) inherits the guard's context, so a dispatch it makes is refused and seals the
+  operation. That fails closed (never an unsafe effect). The guards here are a re-resolve, an
+  approval read and a re-observe; none of them fires a dispatching listener today.

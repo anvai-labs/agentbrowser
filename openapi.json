@@ -2474,6 +2474,19 @@
                         "type": "integer"
                       }
                     }
+                  },
+                  "executionRequirement": {
+                    "anyOf": [
+                      {
+                        "const": "ephemeral",
+                        "type": "string"
+                      },
+                      {
+                        "const": "durable",
+                        "type": "string"
+                      }
+                    ],
+                    "description": "'ephemeral' (the default; identical to omitting it) or 'durable'. Durable journals the call as ONE browser operation (adapter `browser`, resource act|plan|autofill) for classification only, never replay: it needs a controlled session, an operation ID and an open journal, and is refused with CONTROL_REQUIRED otherwise. Each durable call uses one record of the journal's shared capacity."
                   }
                 }
               }
@@ -2779,6 +2792,19 @@
                     "items": {
                       "$ref": "#/components/schemas/PlanStep"
                     }
+                  },
+                  "executionRequirement": {
+                    "anyOf": [
+                      {
+                        "const": "ephemeral",
+                        "type": "string"
+                      },
+                      {
+                        "const": "durable",
+                        "type": "string"
+                      }
+                    ],
+                    "description": "'ephemeral' (the default; identical to omitting it) or 'durable'. Durable journals the call as ONE browser operation (adapter `browser`, resource act|plan|autofill) for classification only, never replay: it needs a controlled session, an operation ID and an open journal, and is refused with CONTROL_REQUIRED otherwise. Each durable call uses one record of the journal's shared capacity."
                   }
                 }
               }
@@ -4251,6 +4277,19 @@
                   },
                   "remap": {
                     "type": "boolean"
+                  },
+                  "executionRequirement": {
+                    "anyOf": [
+                      {
+                        "const": "ephemeral",
+                        "type": "string"
+                      },
+                      {
+                        "const": "durable",
+                        "type": "string"
+                      }
+                    ],
+                    "description": "'ephemeral' (the default; identical to omitting it) or 'durable'. Durable journals the call as ONE browser operation (adapter `browser`, resource act|plan|autofill) for classification only, never replay: it needs a controlled session, an operation ID and an open journal, and is refused with CONTROL_REQUIRED otherwise. Each durable call uses one record of the journal's shared capacity."
                   }
                 }
               }

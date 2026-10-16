@@ -650,6 +650,50 @@ const SHUTDOWN_DRAIN_MS = 30_000;
 
 const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
+/** T5 B-dur (B2): failures after which a browser effect may or may not have happened. */
+export const BROWSER_OUTCOME_UNKNOWN_CODES: ReadonlySet<string> = new Set([
+  'ACTION_TIMEOUT',
+  'ENGINE_CRASHED',
+  'INTERNAL',
+  'CONTROL_REVOKED',
+]);
+
+/** An untyped failure (no string code) is as unknown as a lost result. */
+const outcomeUnknownFailure = (error: unknown): boolean => {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code !== 'string' || BROWSER_OUTCOME_UNKNOWN_CODES.has(code);
+};
+
+/**
+ * Plan and batch reports whose failing step's effect is unknown. The wire report keeps only the
+ * step's message, so the service remembers the fact beside the object instead of changing it.
+ */
+const outcomeUnknownReports = new WeakSet<object>();
+const markOutcomeUnknown = <T extends object>(report: T, unknown: boolean): T => {
+  if (unknown) outcomeUnknownReports.add(report);
+  return report;
+};
+
+/**
+ * T5 B-dur (B2): does a durable browser operation's 200 report hide an effect whose outcome is
+ * unknown (a plan or batch step lost its result, or an autofill receipt is `uncertain`)? Such a
+ * report is journaled in doubt, never as a known `failed`.
+ */
+/** A copy of a report (e.g. with warnings added) keeps the original's outcome-unknown fact. */
+export function copyBrowserReport<T extends object>(source: object, copy: T): T {
+  return markOutcomeUnknown(copy, outcomeUnknownReports.has(source));
+}
+
+export function browserReportOutcomeUnknown(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) return false;
+  if (outcomeUnknownReports.has(body)) return true;
+  const receipts = (body as { receipts?: unknown }).receipts;
+  return (
+    Array.isArray(receipts) &&
+    receipts.some((receipt) => (receipt as { status?: unknown } | null)?.status === 'uncertain')
+  );
+}
+
 export class AgentBrowserService {
   readonly authority: SessionAuthority;
   /**
@@ -2092,6 +2136,16 @@ export class AgentBrowserService {
     }
     try {
       const report = await runAutofill(input, {
+        // T5 B-dur (B6): a durable autofill's guard is its own read-only stage recheck, run once
+        // after the marker's storage wait, before the first field's effect. (Its first field's
+        // approval or lease action is decided and spent before that dispatch, as for every field:
+        // a refused marker then has spent that one approval without any effect — fail-closed.)
+        ...(this.authority.browserGuardPendingInScope(sessionId)
+          ? {
+              onRecheck: (recheck: () => Promise<void>) =>
+                this.authority.captureBrowserDispatchInScope(sessionId, recheck),
+            }
+          : {}),
         resolveValue: async (value) => {
           try {
             return this.secretManager.isReference(value)
@@ -2319,14 +2373,17 @@ export class AgentBrowserService {
               const retryMessage =
                 retryError instanceof Error ? retryError.message : String(retryError);
               results.push({ step: index, ok: false, error: retryMessage });
-              return {
-                ok: false,
-                completed: index,
-                results,
-                mode: this.churnMode(churnKey),
-                newRevision: finalRevision(),
-                error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
-              };
+              return markOutcomeUnknown(
+                {
+                  ok: false,
+                  completed: index,
+                  results,
+                  mode: this.churnMode(churnKey),
+                  newRevision: finalRevision(),
+                  error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
+                },
+                outcomeUnknownFailure(retryError)
+              );
             }
           }
           if (ambiguous) {
@@ -2343,14 +2400,17 @@ export class AgentBrowserService {
           }
         }
         results.push({ step: index, ok: false, error: message });
-        return {
-          ok: false,
-          completed: index,
-          results,
-          mode: this.churnMode(churnKey),
-          newRevision: finalRevision(),
-          error: { code: 'PLAN_STEP_FAILED', message },
-        };
+        return markOutcomeUnknown(
+          {
+            ok: false,
+            completed: index,
+            results,
+            mode: this.churnMode(churnKey),
+            newRevision: finalRevision(),
+            error: { code: 'PLAN_STEP_FAILED', message },
+          },
+          outcomeUnknownFailure(error)
+        );
       }
     }
     return {
@@ -4078,7 +4138,52 @@ export class AgentBrowserService {
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
           beforeAction: async (resolved) => {
-            await this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span);
+            if (this.authority.browserGuardPendingInScope(sessionId)) {
+              // T5 B-dur (B6): the FIRST dispatch of a durable browser operation. Decide now (an
+              // approval round trip still throws here, before any marker); re-validate the
+              // target and the approval after the marker's storage wait; consume only then.
+              const approval = await this.prepareApproval(
+                sessionId,
+                pageId,
+                page,
+                request,
+                resolved?.fingerprint,
+                span
+              );
+              const recheckRequest = {
+                pageId,
+                expectedRevision: actRequest.expectedRevision ?? page.revision,
+                action: actionValidation.value,
+              };
+              this.authority.captureBrowserDispatchInScope(sessionId, async () => {
+                const failure = await this.executor.revalidateTarget(recheckRequest, {
+                  enginePage: adapter,
+                  observation: this.lastObservationOf(page),
+                  currentRevision: page.revision,
+                  ...(page.lastObservation !== undefined
+                    ? { elementIndex: page.lastObservation.byRef }
+                    : {}),
+                });
+                if (failure)
+                  throw new ServiceError(
+                    failure.code,
+                    failure.message,
+                    failure.retryable ?? false,
+                    failure.details
+                  );
+                await approval.revalidate();
+                await approval.commit();
+              });
+            } else {
+              await this.checkApproval(
+                sessionId,
+                pageId,
+                page,
+                request,
+                resolved?.fingerprint,
+                span
+              );
+            }
             onDispatch?.();
           },
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
@@ -4234,17 +4339,20 @@ export class AgentBrowserService {
       observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
     }
 
-    return {
-      status: plan.ok ? 'success' : 'failed',
-      completed: plan.completed,
-      results: plan.results,
-      oldRevision,
-      newRevision: observation?.revision ?? plan.newRevision,
-      mode: plan.mode,
-      ...(waitReason !== undefined ? { waitReason } : {}),
-      ...(observation !== undefined ? { observation } : {}),
-      ...(plan.error !== undefined ? { error: plan.error } : {}),
-    };
+    return markOutcomeUnknown(
+      {
+        status: plan.ok ? 'success' : 'failed',
+        completed: plan.completed,
+        results: plan.results,
+        oldRevision,
+        newRevision: observation?.revision ?? plan.newRevision,
+        mode: plan.mode,
+        ...(waitReason !== undefined ? { waitReason } : {}),
+        ...(observation !== undefined ? { observation } : {}),
+        ...(plan.error !== undefined ? { error: plan.error } : {}),
+      },
+      browserReportOutcomeUnknown(plan)
+    );
   }
 
   /**

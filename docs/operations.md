@@ -146,7 +146,11 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   being advertised, and it keeps its records 30 days beyond that. It holds at most
   `AGENTBROWSER_JOURNAL_MAX_RECORDS` durable writes over its lifetime (a total, not a concurrency
   limit), and a store holds at most 64 namespaces.
-  Full means refused, never evicted. Its key, horizon, restore generation and capacity are
+  Full means refused, never evicted. Durable **browser** operations (`act`, `plan` or `autofill`
+  sent with `executionRequirement: 'durable'`, journaled for classification only) use the same
+  capacity: the agent opts in per call, there is no operator switch to refuse it, one tenant's
+  durable browser traffic can use up what every tenant's durable application writes also need,
+  and each `APPROVAL_REQUIRED` round trip costs one record. Its key, horizon, restore generation and capacity are
   immutable: rotate by configuring a new namespace name.
 - **Reading and recovering records.** `GET /v1/journal/operations/{operationId}` (operator key or
   a tenant API key, read-only) lists an operation's records with a classification;

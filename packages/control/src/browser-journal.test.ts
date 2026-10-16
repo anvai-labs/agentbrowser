@@ -127,6 +127,45 @@ describe('durable browser operations in the journal (B-dur-2a)', () => {
     });
   });
 
+  it('a guard refusal the work absorbs (into its own report) keeps that report; terminal failed', async () => {
+    const f = await sessionFixture();
+    const effect = vi.fn();
+    const result = await run(f, 'absorbed', async () => {
+      f.authority.captureBrowserDispatchInScope('session', async () => {
+        throw Object.assign(new Error('Mapped stage identity changed'), { code: 'STALE_TARGET' });
+      });
+      // An autofill-like owner records the refusal as a field receipt and returns its report.
+      const outcome = await f.authority.dispatchInScope('session', effect).then(
+        () => 'written',
+        (error: { code?: string }) => error.code
+      );
+      return { ok: false, receipts: [outcome] };
+    });
+    expect(result).toEqual({ ok: false, receipts: ['STALE_TARGET'] });
+    expect(effect).not.toHaveBeenCalled();
+    expect(f.stored()[0]).toMatchObject({
+      revision: 3,
+      dispatched: true,
+      terminal: { status: 'failed' },
+    });
+  });
+
+  it('any OTHER seal still refuses the operation (unchanged for non-guard failures)', async () => {
+    const f = await sessionFixture();
+    await expect(
+      run(f, 'unguarded-absorbed', async () => {
+        // No guard captured: the dispatch is refused (a seal that is not a guard refusal).
+        const outcome = await f.authority
+          .dispatchInScope('session', () => undefined)
+          .then(
+            () => 'written',
+            () => 'refused'
+          );
+        return { outcome };
+      })
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+  });
+
   it('an operation that never dispatches keeps its result and is failed_before_dispatch', async () => {
     const f = await sessionFixture();
     const result = await run(f, 'nothing-to-do', async () => {
@@ -155,6 +194,27 @@ describe('durable browser operations in the journal (B-dur-2a)', () => {
     );
     expect(result).toEqual({ ok: false, failedStep: 2 });
     expect(f.stored()[0]).toMatchObject({ dispatched: true, terminal: { status: 'failed' } });
+  });
+
+  it('an in-doubt browser operation keeps its report; the record is settled unknown', async () => {
+    const f = await sessionFixture();
+    const result = await f.authority.run(
+      'session',
+      operator,
+      { id: 'lost', fingerprint: 'digest-lost', journal: browserSelection() as never },
+      async () => {
+        f.authority.captureBrowserDispatchInScope('session', async () => {});
+        await f.authority.dispatchInScope('session', () => undefined);
+        return { ok: false, lost: true };
+      },
+      () => true
+    );
+    expect(result).toEqual({ ok: false, lost: true });
+    expect(f.stored()[0]).toMatchObject({
+      revision: 3,
+      dispatched: true,
+      terminal: { status: 'outcome_unknown' },
+    });
   });
 
   it('refuses a dispatch before the guard is captured, and a second capture', async () => {
@@ -233,18 +293,21 @@ describe('durable browser operations in the journal (B-dur-2a)', () => {
     });
     const effect = vi.fn();
     let later: unknown;
-    await expect(
-      run(f, 'sealed', async () => {
-        f.authority.captureBrowserDispatchInScope('session', guard);
-        await f.authority.dispatchInScope('session', effect).catch(() => undefined);
-        later = await Promise.resolve()
-          .then(() => f.authority.dispatchInScope('session', effect))
-          .then(
-            () => 'ran',
-            (error: { code?: string }) => error.code
-          );
-      })
-    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    // B-dur-2b: the work absorbs both refusals and returns, so its report is kept (terminal
+    // failed); the seal still refuses the later dispatch without re-running the guard.
+    const result = await run(f, 'sealed', async () => {
+      f.authority.captureBrowserDispatchInScope('session', guard);
+      await f.authority.dispatchInScope('session', effect).catch(() => undefined);
+      later = await Promise.resolve()
+        .then(() => f.authority.dispatchInScope('session', effect))
+        .then(
+          () => 'ran',
+          (error: { code?: string }) => error.code
+        );
+      return 'report';
+    });
+    expect(result).toBe('report');
+    expect(f.stored()[0]).toMatchObject({ dispatched: true, terminal: { status: 'failed' } });
     expect(later).toBe('CONTROL_REQUIRED');
     expect(guard).toHaveBeenCalledOnce();
     expect(effect).not.toHaveBeenCalled();

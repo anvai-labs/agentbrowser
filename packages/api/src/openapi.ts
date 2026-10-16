@@ -28,6 +28,7 @@ import {
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   EVENT_REPLAY_MIN_SINCE,
+  ExecutionRequirementSchema,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
   NonActApprovalDecisionSchema,
@@ -60,6 +61,27 @@ const API_VERSION = '1.0.0';
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 
 const json = (schema: object) => ({ 'application/json': { schema } });
+
+/**
+ * T5 B-dur (B1): the browser routes (act, plan, autofill) accept `executionRequirement`. The
+ * server peels it off before the body is validated, so it is documented here, not in the protocol
+ * body schemas the service and MCP validate against.
+ */
+const withExecutionRequirement = <T extends { properties: object }>(schema: T): T => ({
+  ...schema,
+  properties: {
+    ...schema.properties,
+    executionRequirement: {
+      ...ExecutionRequirementSchema,
+      description:
+        "'ephemeral' (the default; identical to omitting it) or 'durable'. Durable journals the " +
+        'call as ONE browser operation (adapter `browser`, resource act|plan|autofill) for ' +
+        'classification only, never replay: it needs a controlled session, an operation ID and ' +
+        'an open journal, and is refused with CONTROL_REQUIRED otherwise. Each durable call ' +
+        "uses one record of the journal's shared capacity.",
+    },
+  },
+});
 
 /** An error response, always shaped as the protocol's ApiError envelope. */
 const errorResponse = (description: string) => ({
@@ -897,7 +919,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.',
           tags: ['pages'],
           parameters: [sessionIdParam, pageIdParam],
-          requestBody: { required: true, content: json(AutofillRequestSchema) },
+          requestBody: {
+            required: true,
+            content: json(withExecutionRequirement(AutofillRequestSchema)),
+          },
           responses: {
             '200': {
               description: 'Per-field report; inspect ok and receipts even on HTTP 200.',
@@ -925,12 +950,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
             required: true,
-            content: json({
-              ...PlanRequestSchema,
-              properties: {
-                actions: { ...PlanRequestSchema.properties.actions, items: ref('PlanStep') },
-              },
-            }),
+            content: json(
+              withExecutionRequirement({
+                ...PlanRequestSchema,
+                properties: {
+                  actions: { ...PlanRequestSchema.properties.actions, items: ref('PlanStep') },
+                },
+              })
+            ),
           },
           responses: {
             '200': {
@@ -1227,7 +1254,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
             required: true,
-            content: json(WireActionEnvelopeSchema),
+            content: json(withExecutionRequirement(WireActionEnvelopeSchema)),
           },
           responses: {
             '200': { description: 'The action result.', content: json(ref('ActionOutcome')) },
