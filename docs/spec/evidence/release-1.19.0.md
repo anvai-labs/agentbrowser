@@ -18,19 +18,20 @@ develop ──#524 sync──#525 docs──▶ #526 promote ──▶ main c963
 | Versions inside the artifacts | ✔ 1.19.0 | CLI `--version`; MCP `initialize` → `serverInfo.version`; server tarball and Windows zip `package.json` |
 | npm `@anvailabs/agentbrowser-mcp` | ✔ `1.19.0`, `latest` | `sha512-rAYGLuYalBelfoY0A2PlhSO+UxY9RS+VO3mmckK1R+qVgKsUx8LEASsOebhv73ial3+GM4uHwvFoQg06tl1CQw==`; SLSA provenance attestation present |
 | Docs site | ✔ live | Deploy Documentation green on `c963d4f`; new pages (T5 designs, journal evidence, release records) return 200; the durability diagram and status table render |
-| Homebrew tap | ✔ formula on 1.19.0 | tap PR #106 (`afaf38a`): all 12 hashes match `sha256sums.txt`; tap CI green (formula validation, `brew audit` + install tests, cask smoke) |
+| Homebrew tap | ✔ formula on 1.19.0 | tap PR #106 (`afaf38a`): all 12 hashes match `sha256sums.txt`; tap CI run 38860802464 green (formula validation, `brew audit` + install tests, cask smoke) after an earlier run on the same SHA failed with no jobs (workflow file issue); post-merge tap CI green |
 | winget | ✖ not submitted | no winget credential configured, so the job uploaded manifests as the `winget-manifests` artifact only; the first submission (1.17.1, winget-pkgs #451456) is still open |
 
 ## What shipped
 
 | Area | PRs |
 | --- | --- |
-| Durable journal: runtime wiring, lookup/status, close/settle/continue/reconcile, history namespaces, recovery gates | C4b/J-a…J-f, J3a–J3d, J4 (#486–#515) |
+| Durable journal: runtime wiring, lookup/status, close/settle/continue/reconcile, history namespaces, recovery gates | #488, #490, #492, #494, #498, #503, #506, #509, #512–#515, #517 |
 | Browser durability: durable `act`/`plan`/`autofill`, parity, crash and recovery rows per owner | #516–#522 |
 | MCP: output schemas for every tool, `notifications/cancelled`; 100-step plan cap | #478, #482, #485, #489 |
 | Widgets: real react-select, exact chip sets, staged mappings, Firefox/WebKit | #491, #502, #507, #511 |
 | CI/release: least privilege, SHA pins, test-evaluate action, runner minutes | #481, #500, #504 |
-| Faster observation (F2); plan no longer re-runs a step whose follow-up read failed | #496, #521 |
+| Faster observation (F1 bench, F2); plan no longer re-runs a step whose follow-up read failed | #493, #496, #521 |
+| Audit labels and real-ZAP run (T7); T4 parseOutput and restart claims; ADR-026; Q1 re-qualification | #477, #501, #486, #510, #495, #497 |
 | Docs site: complete nav with drift validation, visual durability overview | #525 |
 
 Full notes: CHANGELOG `[1.19.0]`.

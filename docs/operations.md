@@ -134,7 +134,7 @@ stateDiagram-v2
     undispatched --> failed_before_dispatch: operator close (rev 2, not dispatched)
     in_doubt --> settled_unknown: operator settle
     in_doubt --> completed: operator reconcile (application writes only)
-    in_doubt --> failed: operator reconcile (rejected)
+    in_doubt --> failed: operator reconcile, rejected (application writes only)
 ```
 
 | What | Application write | Browser `act` / `plan` / `autofill` |
