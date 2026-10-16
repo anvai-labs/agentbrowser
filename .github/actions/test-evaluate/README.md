@@ -6,13 +6,13 @@ no browser and fetches no evidence: your test job observes the run and produces 
 ([bundle contract](../../../docs/spec/design/t3-cli-evaluation.md)); this step judges them with the
 canonical contract and fails the job unless every bundle passed.
 
-The action first ships with the release after 1.18.0. Pin it by commit, like any third-party
+The action first ships with 1.19.0. Pin it by commit, like any third-party
 action; `version` separately pins the CLI it installs.
 
 ```yaml
 - uses: anvai-labs/agentbrowser/.github/actions/test-evaluate@<commit-sha> # release that ships it
   with:
-    version: v1.18.0            # the CLI release to install (verified against sha256sums.txt)
+    version: v1.19.0            # the CLI release to install (verified against sha256sums.txt)
     bundles: |
       test-results/agentbrowser  # a directory: every *.json in it
     junit: agentbrowser-evaluate.xml
