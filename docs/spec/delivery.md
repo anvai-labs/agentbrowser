@@ -26,7 +26,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Bounded mapping/preflight now available on develop; multi-stage/live and cross-engine qualification remain |
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
 | QA and durable runs | T3 complete through #231: 13-case foundation, offline CLI evaluation, native JUnit/private links and standalone application-owned recipe; Node 24 qualification with Node 22 compatibility | General provisioning and justified report adapters remain separate; durable recovery stays under T5 |
-| Audit, appsec and bounty | T7 complete: scope enforcement, audit/ZAP/SARIF adapters (library), suspected/confirmed labelling; T10 turns them into engagements | T3 now permits audit task context; appsec/bounty still require T4 and qualified scope enforcement |
+| Audit, appsec and bounty | T7 complete: scope enforcement, audit/ZAP/SARIF adapters (library), suspected/confirmed labelling; T10 turns them into engagements | Scope enforcement is qualified (T7); application-security parity claims still require T4, and live targets explicit authorization |
 | MCP | Generated catalogs cover 16 unbound/14 delegated tools per profile (qa, operations, audit, appsec, bounty), with page provisioning, session/lease inspection and operator attachment exposed over MCP since 1.12.0 | Add only if measured harness demand justifies another optional projection |
 
 ## Dependency order
