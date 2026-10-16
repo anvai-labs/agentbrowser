@@ -663,3 +663,42 @@ describe('scope projection metadata (depth/block)', () => {
     expect(observation.elements[0]).not.toHaveProperty('block');
   });
 });
+
+describe('native disclosures (html-summary)', () => {
+  it('ranks html-summary as interactive under truncation and keeps its expanded state', () => {
+    const normalizer = new ObservationNormalizer();
+    const raw = {
+      revision: 3,
+      url: 'https://example.test/',
+      title: 't',
+      status: 'interactive' as const,
+      content: '',
+      elements: [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          ref: `e3_${i}`,
+          role: 'heading',
+          name: `Heading ${i}`,
+          visible: true,
+          enabled: true,
+        })),
+        {
+          ref: 'e3_5',
+          role: 'html-summary',
+          name: 'Details',
+          visible: true,
+          enabled: true,
+          expanded: false,
+        },
+      ],
+    };
+    const normalized = normalizer.normalize(raw as unknown as RawPageState, {
+      mode: 'interactive',
+      revision: 3,
+      maxElements: 2,
+    });
+    expect(normalized.elements.find((el) => el.role === 'html-summary')).toMatchObject({
+      name: 'Details',
+      expanded: false,
+    });
+  });
+});

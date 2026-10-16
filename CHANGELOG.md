@@ -7,6 +7,95 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-10-16
+
+Entries are newest first. **Upgrading from 1.19.x:**
+
+| Who | What changes |
+| --- | --- |
+| Agents | Pages with `<details>` now return `html-summary` rows on every `observe`. Element counts change. Rows from `include:["fileInputs"]` / `include:["formControls"]` get new ref numbers (they follow the new rows). Under a tight `maxElements`, the new interactive rows can displace rows 1.19.0 returned. Re-observe; never reuse refs across versions. |
+| Operators with a policy file | Its `approvalRules` now take effect: rules classifying a control as high risk now require approval. Startup now **refuses** a rule id that is invalid, reserved or duplicated, and a rule `decision` that no policy reads. |
+| Release consumers | Releases are drafted, then published. Every asset carries a signed build-provenance attestation (`gh attestation verify`). Releases are immutable from 1.20.0. npm publication pauses for the owner's approval. |
+
+### Fixed — a disclosure whose state cannot be read refuses fast
+
+- The act-time `open` re-check is bounded to one second. An engine that cannot resolve the
+  parent (Obscura) refuses with `STALE_TARGET` instead of waiting 30 seconds for the action
+  timeout. The cap coverage entry no longer claims the frame snapshot is complete.
+
+### Fixed — disclosure scan follow-ups
+
+- When a CDP accessibility call fails, the disclosure scan now falls back to the validated page
+  scan instead of minting nothing. This happens on CDP engines without those domains (Obscura)
+  and on a Chromium page whose DOM changed mid-scan.
+- Coverage entries about the main frame are labelled `main`, not by URL. The cap entry says the
+  frame snapshot itself is complete.
+
+### Fixed — native disclosures are targetable controls
+
+- `observe` now reports each `<details>` element's first `<summary>` as role `html-summary`
+  (HTML-AAM's computed role; never forced to `button`). It carries its accessible name and an
+  `expanded` state from `details.open`, and binds a ref that `click` or `press Enter` / `Space`
+  toggles.
+  - Before, Playwright's snapshot dropped the summary, so only `{role:"group", value:"…"}`
+    remained.
+  - Not a regression: Playwright 1.62.1 and 1.64.0 behave the same.
+- On Chromium, name, role and state come from the browser's own accessibility tree, so they
+  match what Chromium exposes and page scripts cannot change them. Other engines and frames use a
+  DOM scan validated in Node.
+- A disclosure toggled by page script since the observation is refused (`STALE_TARGET`).
+- The scan never fails `observe`; more than 200 per frame is reported. The CLI shows
+  `[expanded]` / `[collapsed]`.
+- Protocol: page elements gain an optional `expanded` boolean (also in `sinceRevision` diffs).
+- New docs page "Observation gotchas" catalogues where `observe` differs from the browser's
+  accessibility tree, starting with this case.
+
+### Fixed — a policy file's approval rules classify actions
+
+- With `AGENTBROWSER_POLICY_FILE`, the document's `approvalRules` were never applied: they fed
+  only the document version, and the environment approval policy is refused alongside a file.
+  So no rule could mark a control as a transaction and require approval. The file's rules now
+  classify every action before Cedar decides (pinned by `policy-file-approval-rules.test.ts`).
+- Compatibility: a policy file now refuses startup when an approval rule's id is invalid,
+  reserved or duplicated (it was never checked before), or when a rule carries a `decision` that
+  no policy reads through `context.matchedRule` (it was silently ignored).
+
+### Docs — a secure starter policy and how to configure policy
+
+- `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy to copy.
+  - Loopback and private networks denied; public web via the floor.
+  - Reads, local writes and unclassified actions allowed; actions your `approvalRules`
+    classify as high risk need owner approval.
+  - Cookie export, cookie handoff, service workers, downloads and CDP attach denied; headed
+    sessions and cookie seeding allowed.
+- `docs/policy.md` opens with "Start here": a decision-flow diagram (egress and actions), a
+  table of each decision and why, how to classify risky controls, per-tenant loosening
+  recipes, and how to verify.
+- A test loads the starter through the real loader, pins its decisions and rule ids, and
+  proves the documented recipes.
+- Release recovery (operations guide): when only the final publish fails, publish the draft by
+  hand and do not rerun; generate the winget manifests with `scripts/winget-manifests.mjs`. The
+  `release.yml` comment says immutability applies once the repository setting is on.
+
+### Changed — release hardening R14 closed
+
+- `v*` tags: only repository admins can create, move or delete them (ruleset).
+- npm publish: pauses for the owner's approval; deploys only from a `v*` tag.
+- Every release asset gets a signed build-provenance attestation
+  (`gh attestation verify <file> -R anvai-labs/agentbrowser`).
+- Releases are drafted, filled, then published; repository immutable releases are on from
+  1.20.0.
+- With the main-ancestry tag guard this closes R14; the operations guide's release section has
+  the table of gates.
+
+### Docs — the 1.19.0 release record
+
+- `docs/spec/evidence/release-1.19.0.md` records the release and the post-run verification of
+  every channel (assets against `sha256sums.txt`, versions inside the artifacts, npm, the docs
+  site, the Homebrew tap); winget was not submitted (no credential configured). The task
+  README and T9 packet now name 1.19.0 as the published baseline; the operations diagram gains
+  reconcile → `failed`, and the execution spec labels its normative rules as such.
+
 ## [1.19.0] — 2026-10-16
 
 Entries are newest first, and an entry supersedes the entries below it: the durable journal

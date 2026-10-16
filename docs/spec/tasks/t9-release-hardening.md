@@ -40,15 +40,15 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The published baseline is **1.18.0** (released 2026-10-15 from main `9406045`, release run
-38741154969, all 14 jobs green; see [release-1.18.0](../evidence/release-1.18.0.md)). Records for
-1.16.0, 1.16.1, 1.17.0 and 1.17.1 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
+The published baseline is **1.19.0** (released 2026-10-16 from main `c963d4f`, release run
+38859766439, all 14 jobs green; see [release-1.19.0](../evidence/release-1.19.0.md)). Records for
+1.16.0 through 1.18.0 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
 and earlier per-release records remain historical references. Both `main` and `develop` are
 protected with the same 11 strict required contexts and require a pull request (zero approving
 reviews); `main` also enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
 remain required. Label acceptance phases and measure their timing before changing
-budgets. No durable recovery, installed external-harness qualification or production
-use-case completion is implied.
+budgets. Durable recovery is opt-in and classification-only (never replay); installed
+external-harness qualification and production use-case completion are not implied.
 
 ## Current implementation state
 
@@ -76,8 +76,16 @@ The 1.9.1 candidate's tag ancestry and delivery are verified. The reusable ances
 gate now exists (2026-10-15): `scripts/check-tag-ancestry.mjs` runs in the release
 `tag-guard` job, which every other release job depends on, and refuses a tag whose commit
 is not reachable from `main`. Because GitHub runs the workflow *of the tagged commit*, the
-gate does not bind a tag on an older or modified commit; R14 closes only once the owner
-applies the tag-creation ruleset and `npm` environment protection.
+gate does not bind a tag on an older or modified commit. **R14 closed 2026-10-16:**
+
+| Gate | Setting |
+| --- | --- |
+| Release ancestry | `tag-guard` refuses a commit not reachable from `main` (#475) |
+| Tag ruleset `release tags` (25241502) | `refs/tags/v*`: creation, deletion, update, non-fast-forward restricted; admin role bypasses |
+| `npm` environment | owner is a required reviewer (self-review allowed; admins can bypass); deploys only from `v*` tags |
+| Provenance | `actions/attest-build-provenance` signs every release asset; npm keeps `--provenance` |
+| Immutability | the Release is drafted, filled, then published. **Pending:** switch on repository immutable releases after the next develop→main promotion, before tagging 1.20.0 (main's current flow uploads after publishing) |
+| First exercised | the `v*` deployment policy, attestations and immutability: on the next release (1.20.0) |
 
 **Least privilege and pinning (2026-10-15, S1c).** Every workflow now defaults to
 `contents: read` at the top level (`ci.yml` previously inherited the repository default);

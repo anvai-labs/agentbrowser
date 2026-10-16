@@ -152,6 +152,12 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
     version: string;
     /** Limits replacing extractMaxBytes / maxResponseBytes (files only). */
     limits: import('@agentbrowser/protocol').PolicyLimits;
+    /**
+     * The document's `approvalRules` and `unknownRisk` (files only): its rules classify each
+     * action's effect before the authorizer decides. The environment approval policy is
+     * refused alongside a file, so without this a file's rules would never classify anything.
+     */
+    approval?: import('@agentbrowser/core').ActionRiskPolicyOptions;
   };
   /** Trusted embedding source selection for private evidence-backed approval records. */
   evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
@@ -653,7 +659,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               options.approvalPolicy ??
               JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
           }
-        : {}),
+        : policyIsFile && policyLimiter?.approval !== undefined
+          ? { approvalPolicy: policyLimiter.approval }
+          : {}),
       ...(options.engines ? { engines: options.engines } : {}),
       metrics,
       tracer,

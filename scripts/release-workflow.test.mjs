@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { readdir, readFile } from 'node:fs/promises';
+import { test } from 'node:test';
 
 // Structural guards on the release workflow: the Windows service ships only
 // as the bundled-Node zip. v1.17.0's single-file server exe (Bun froze
 // Playwright's __dirname to the CI checkout) must not come back.
-const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+const workflow = await readFile(
+  new URL('../.github/workflows/release.yml', import.meta.url),
+  'utf8'
+);
 
 /** The text of one top-level job (from its key to the next job key). */
 function job(name) {
@@ -16,10 +19,14 @@ function job(name) {
   return next < 0 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
 }
 
-const needs = (name) => (job(name).match(/^ {4}needs: \[([^\]]*)\]/m)?.[1] ?? '').split(',').map((n) => n.trim());
+const needs = (name) =>
+  (job(name).match(/^ {4}needs: \[([^\]]*)\]/m)?.[1] ?? '').split(',').map((n) => n.trim());
 
 test('no single-file server executable is built or published', () => {
-  assert.doesNotMatch(workflow, /server_artifact|packages\/api\/scripts\/compile\.mjs|agentbrowser-server-windows-x64\.exe/);
+  assert.doesNotMatch(
+    workflow,
+    /server_artifact|packages\/api\/scripts\/compile\.mjs|agentbrowser-server-windows-x64\.exe/
+  );
 });
 
 test('a windows-bundle job assembles and clean-room smokes the zip on Windows', () => {
@@ -77,7 +84,7 @@ test('every action is pinned to a full commit SHA with its version as a comment'
       // Only the plain line form is accepted (no flow maps, quotes, docker:// or short SHAs).
       assert.match(
         line,
-        /^\s*(?:-\s+)?uses: [A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/,
+        /^\s*(?:-\s+)?uses: [A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/,
         `${name}: unpinned or uncommented action reference: ${line.trim()}`
       );
     }
@@ -113,7 +120,7 @@ function permissionsAt(text, indent) {
 
 // The only grants beyond read anywhere: exact sets, so an added scope or level is refused.
 const JOB_PERMISSIONS = {
-  'release.yml/release': ['contents: write'],
+  'release.yml/release': ['attestations: write', 'contents: write', 'id-token: write'],
   'release.yml/npm-publish': ['contents: read', 'id-token: write'],
   'docs.yml/deploy': ['id-token: write', 'pages: write'],
 };
@@ -121,7 +128,11 @@ const JOB_PERMISSIONS = {
 test('every workflow defaults to read-only contents and grants no write at the top level', () => {
   for (const [name, text] of Object.entries(workflows)) {
     const top = permissionsAt(text.slice(0, text.search(/^jobs:$/m)), 0);
-    assert.deepEqual(top, ['contents: read'], `${name}: top-level permissions must be exactly contents: read`);
+    assert.deepEqual(
+      top,
+      ['contents: read'],
+      `${name}: top-level permissions must be exactly contents: read`
+    );
   }
 });
 
@@ -148,8 +159,51 @@ test('job-level permissions grant exactly the allowlisted scopes and nothing els
       const key = `${name}/${id}`;
       if (granted === undefined) continue;
       seen.push(key);
-      assert.deepEqual(granted, JOB_PERMISSIONS[key], `${key}: unexpected job permissions ${JSON.stringify(granted)}`);
+      assert.deepEqual(
+        granted,
+        JOB_PERMISSIONS[key],
+        `${key}: unexpected job permissions ${JSON.stringify(granted)}`
+      );
     }
   }
   assert.deepEqual(seen.sort(), Object.keys(JOB_PERMISSIONS).sort());
+});
+
+// R14 provenance: every published asset carries a signed build-provenance attestation, and the
+// Release is assembled as a draft so it can be immutable once published.
+const releaseJob = () => {
+  const text = workflows['release.yml'];
+  const start = text.search(/^ {2}release:$/m);
+  const rest = text.slice(start + 1);
+  const next = rest.search(/^ {2}[A-Za-z0-9_-]+:$/m);
+  return next === -1 ? rest : rest.slice(0, next);
+};
+
+test('the release job attests build provenance for every asset before publishing', () => {
+  const job = releaseJob();
+  const attest = job.search(/uses:\s*actions\/attest-build-provenance@[0-9a-f]{40}/);
+  assert.ok(attest !== -1, 'release job must run actions/attest-build-provenance (SHA-pinned)');
+  assert.match(
+    job.slice(attest),
+    /subject-path:\s*['"]?release-assets\/\*['"]?/,
+    'attest every asset in release-assets/'
+  );
+  const checksums = job.indexOf('sha256sum');
+  const publish = job.search(/--draft=false/);
+  assert.ok(
+    checksums !== -1 && checksums < attest,
+    'attest after the checksum file exists, so it is covered'
+  );
+  assert.ok(publish !== -1 && attest < publish, 'attest before the release is published');
+});
+
+test('the release is created as a draft, filled, then published (immutable-release safe)', () => {
+  const job = releaseJob();
+  const create = job.search(/gh release create[^\n]*--draft(?!=false)/);
+  const upload = job.indexOf('gh release upload');
+  const publish = job.search(/gh release edit[^\n]*--draft=false/);
+  assert.ok(create !== -1, 'gh release create must use --draft');
+  assert.ok(upload > create, 'assets upload into the draft');
+  assert.ok(publish > upload, 'the draft is published only after every asset is uploaded');
+  assert.doesNotMatch(job, /--clobber/, 'never replace a published asset');
 });

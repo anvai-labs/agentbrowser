@@ -237,6 +237,8 @@ export interface RawElement {
   hrefTruncated?: boolean;
   /** Checked state for checkbox/radio/switch roles; absent when unknowable (e.g. tri-state mixed). */
   checked?: boolean | undefined;
+  /** Expanded state of a disclosure control (html-summary: whether its details is open). */
+  expanded?: boolean | undefined;
   /**
    * 0-based nesting depth within the element's snapshot block (the a11y tree
    * flattened in document order). Absent means 0 (top level of the block).

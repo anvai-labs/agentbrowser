@@ -97,6 +97,26 @@ export async function loadPolicyFile(
     }
   }
 
+  // With a file, Cedar alone decides: an approval rule's own `decision` only acts through a
+  // policy keyed on `context.matchedRule`. A rule carrying a decision nothing reads would be
+  // silently ignored, so it is a startup refusal (exported documents always reference theirs).
+  const unread = (document.approvalRules ?? [])
+    .map((rule, index) => ({ rule, id: rule.id ?? `rule-${index}` }))
+    .filter(
+      ({ rule, id }) =>
+        rule.decision !== undefined &&
+        !document.policies.some(
+          (policy) =>
+            policy.cedar.includes('matchedRule') && policy.cedar.includes(JSON.stringify(id))
+        )
+    )
+    .map(({ id }) => id);
+  if (unread.length > 0) {
+    throw new PolicyFileError(
+      `approval rules ${unread.map((id) => JSON.stringify(id)).join(', ')} carry a decision but no policy reads context.matchedRule for them; with a policy file only Cedar decides — add a policy keyed on that id, or drop the decision`
+    );
+  }
+
   const authorizer = new CedarAuthorizer({ document });
   return { authorizer, document, limits: document.limits ?? {} };
 }

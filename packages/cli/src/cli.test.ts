@@ -819,6 +819,41 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('[checked]');
     });
 
+    it('renders [collapsed] / [expanded] for native disclosures', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'html-summary',
+            name: 'More',
+            visible: true,
+            enabled: true,
+            expanded: false,
+          },
+          {
+            ref: 'e1_1',
+            role: 'html-summary',
+            name: 'Open',
+            visible: true,
+            enabled: true,
+            expanded: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+      const text = out.join('\n');
+      expect(text).toMatch(/More.*\[collapsed\]/);
+      expect(text).toMatch(/Open.*\[expanded\]/);
+    });
+
     it('renders a [redacted] marker so withheld reads as withheld, not empty', async () => {
       sessions.observe.mockResolvedValueOnce({
         sessionId: 'ses_1',

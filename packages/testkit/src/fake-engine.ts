@@ -496,6 +496,9 @@ class FakePage implements EnginePage {
           element.attributes = el.attributes;
         }
 
+        if (el.expanded !== undefined) {
+          element.expanded = el.expanded;
+        }
         if (el.checked !== undefined) {
           element.checked = el.checked;
         }
@@ -1003,6 +1006,7 @@ class FakePage implements EnginePage {
       ...(el.block !== undefined ? { block: el.block } : {}),
       ...(el.context !== undefined ? { context: el.context } : {}),
       ...(el.minted !== undefined ? { minted: el.minted } : {}),
+      ...(el.expanded !== undefined ? { expanded: el.expanded } : {}),
       attributes: el.attributes ?? {},
     }));
     // Keep the ref index in sync: resolve() and act() read the Map.
@@ -1029,6 +1033,8 @@ class FakePage implements EnginePage {
 interface FakeElement {
   /** Toggled state for check/uncheck semantics. */
   checked?: boolean;
+  /** Disclosure state (role html-summary). */
+  expanded?: boolean;
   ref: string;
   role: string;
   name: string;

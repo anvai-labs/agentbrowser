@@ -134,6 +134,7 @@ stateDiagram-v2
     undispatched --> failed_before_dispatch: operator close (rev 2, not dispatched)
     in_doubt --> settled_unknown: operator settle
     in_doubt --> completed: operator reconcile (application writes only)
+    in_doubt --> failed: operator reconcile, rejected (application writes only)
 ```
 
 | What | Application write | Browser `act` / `plan` / `autofill` |
@@ -247,6 +248,16 @@ and generated stamps together. `pnpm release:check` is read-only; after building
 `pnpm release:artifacts` exercises API health, CLI `--version`, and MCP initialize.
 CI rejects drift and release tags must equal `v<product-version>`. Matching package
 versions identify one shipped product; they do not claim every package changed.
+
+| Release gate (R14) | What it means for the person releasing |
+| --- | --- |
+| Tag on `main` | tag the promotion merge commit; `tag-guard` refuses a commit not reachable from `main` |
+| `release tags` ruleset | only a repository admin can create, move or delete a `v*` tag |
+| `npm` environment | the npm publish job pauses for the owner's approval (Review deployments; an admin can bypass); deploys only from a `v*` tag |
+| Draft, then publish | the Release is filled as a draft and published once every asset is uploaded |
+| Provenance | every asset has a signed build-provenance attestation: `gh attestation verify <file> -R anvai-labs/agentbrowser` |
+| Immutable releases (switched on before 1.20.0) | once published, assets and the tag cannot be changed; a bad release gets a new version |
+| Rerun after a failed publish | a partial draft is never overwritten. Upload failed: delete the draft, then rerun. Only the final publish failed: publish the draft by hand and **do not rerun** (the upload would refuse existing assets); winget never ran, so generate its manifests with `node scripts/winget-manifests.mjs --version <x.y.z> --zip-sha256 <hash>` and submit them |
 
 ### Upgrading from 1.8.4 to the 1.8.5 candidate
 
@@ -392,7 +403,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | Variable | Who reads it | Meaning |
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. An explicitly empty, malformed or conflicting key list aborts startup; unset the variable for intentional trusted-local mode. |
-| `AGENTBROWSER_POLICY_FILE` | service entrypoint | **Policy-bearing**: load a Cedar policy document and make it every operator decision (approvals, egress exceptions, capabilities, limits). Combining it with any policy-bearing variable (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`) or embedder option is a startup refusal naming every conflict. See [policy](policy.md). |
+| `AGENTBROWSER_POLICY_FILE` | service entrypoint | **Policy-bearing**: load a Cedar policy document and make it every operator decision (approvals, egress exceptions, capabilities, limits). Start from the [secure starter policy](policy.md#start-here-the-secure-starter-policy). Combining it with any policy-bearing variable (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`) or embedder option is a startup refusal naming every conflict. See [policy](policy.md). |
 | `AGENTBROWSER_POLICY_SHADOW` | service entrypoint | **Policy-bearing**: `1` evaluates the document this environment would generate alongside the legacy decisions — legacy decides, divergences warn with both rule ids. Preview a migration without changing behavior. See [policy — shadow mode](policy.md#shadow-mode). |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |

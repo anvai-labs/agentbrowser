@@ -108,6 +108,18 @@ interface StoredElement {
    * binds by ordinal over the formControls candidate selector.
    */
   formControlIndex?: number;
+  /**
+   * Set on role:"html-summary" elements (a details' first summary, which the ARIA snapshot
+   * cannot emit): binds by ordinal over SUMMARY_SELECTOR.
+   */
+  summaryIndex?: number;
+  /**
+   * An aria-haspopup summary: include:["formControls"] mints it as `control` instead, so it
+   * never counts toward the base rows (switching the include must not bump the revision).
+   */
+  menuSummary?: boolean;
+  /** Expanded state of a disclosure control (html-summary: its details' `open`). */
+  expanded?: boolean;
   attributes?: Record<string, string>;
   /** Block-local nesting depth from the aria snapshot (absent = 0). */
   depth?: number;
@@ -117,6 +129,169 @@ interface StoredElement {
   context?: string;
   /** Enrichment-minted marker (protocol, round-15/F2). */
   minted?: boolean;
+}
+
+/** One details' first summary, as the disclosure scan reports it. */
+interface SummaryInfo {
+  /** Position within the SUMMARY_SELECTOR match list (document order). */
+  index: number;
+  name: string;
+  expanded: boolean;
+  visible: boolean;
+  /** A valid explicit ARIA role: the snapshot already reports it under that role. */
+  explicitRole: boolean;
+  hasPopup: boolean;
+}
+
+/** The DOM surface the page function touches (the engine compiles without the DOM lib). */
+interface SummaryDomNode {
+  nodeType: number;
+  tagName?: string;
+  textContent: string | null;
+  childNodes: ArrayLike<SummaryDomNode>;
+  getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
+  getBoundingClientRect(): { width: number; height: number };
+  parentElement: { open?: boolean } | null;
+  ownerDocument: {
+    getElementById(id: string): SummaryDomNode | null;
+    defaultView: {
+      getComputedStyle(
+        node: unknown,
+        pseudo?: string
+      ): { visibility: string; display: string; content: string };
+    } | null;
+  };
+}
+
+/**
+ * Self-contained (serialized into the page by evaluateAll). The accessible name follows the
+ * browser's name computation for a summary, pinned against Chromium's own AX names: valid
+ * aria-labelledby targets (each by its aria-label, else its text), then aria-label, then the
+ * rendered subtree (display:none, visibility:hidden, aria-hidden and script/style/template
+ * excluded; a nested element's aria-label replaces its text; img alt; <br> as a space; ::before
+ * and ::after content), then title.
+ */
+function summaryInfoPageFunction(nodes: SummaryDomNode[]): SummaryInfo[] {
+  const ROLES = new Set(
+    (
+      'alert alertdialog application article banner blockquote button caption cell checkbox code ' +
+      'columnheader combobox complementary contentinfo definition deletion dialog directory ' +
+      'document emphasis feed figure form generic grid gridcell group heading img insertion link ' +
+      'list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox ' +
+      'menuitemradio meter navigation none note option paragraph presentation progressbar radio ' +
+      'radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider ' +
+      'spinbutton status strong subscript superscript switch tab table tablist tabpanel term ' +
+      'textbox time timer toolbar tooltip tree treegrid treeitem'
+    ).split(' ')
+  );
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
+  const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const styleOf = (node: SummaryDomNode, pseudo?: string) =>
+    node.ownerDocument.defaultView?.getComputedStyle(node, pseudo);
+  const pseudoText = (node: SummaryDomNode, pseudo: string): string => {
+    const content = styleOf(node, pseudo)?.content ?? 'none';
+    return /^"(.*)"$/.test(content) ? content.slice(1, -1) : '';
+  };
+  const hidden = (el: SummaryDomNode): boolean => {
+    const style = styleOf(el);
+    return (
+      el.getAttribute('aria-hidden') === 'true' ||
+      style?.display === 'none' ||
+      style?.visibility === 'hidden'
+    );
+  };
+  const subtreeText = (node: SummaryDomNode): string => {
+    let text = pseudoText(node, '::before');
+    for (const child of Array.prototype.slice.call(node.childNodes) as SummaryDomNode[]) {
+      if (child.nodeType === 3) {
+        text += child.textContent ?? '';
+        continue;
+      }
+      if (child.nodeType !== 1 || SKIP_TAGS.has(child.tagName ?? '') || hidden(child)) continue;
+      if (child.tagName === 'BR') {
+        text += ' ';
+        continue;
+      }
+      if (child.tagName === 'IMG') {
+        text += ` ${child.getAttribute('alt') ?? ''} `;
+        continue;
+      }
+      const label = collapse(child.getAttribute('aria-label') ?? '');
+      text += label ? ` ${label} ` : subtreeText(child);
+    }
+    return text + pseudoText(node, '::after');
+  };
+  return Array.prototype.map.call(nodes, (node: SummaryDomNode, index: number): SummaryInfo => {
+    const labelledBy = (node.getAttribute('aria-labelledby') ?? '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((id) => {
+        const target = node.ownerDocument.getElementById(id);
+        if (!target) return '';
+        return collapse(target.getAttribute('aria-label') ?? '') || collapse(subtreeText(target));
+      })
+      .join(' ');
+    const name =
+      collapse(labelledBy) ||
+      collapse(node.getAttribute('aria-label') ?? '') ||
+      collapse(subtreeText(node)) ||
+      collapse(node.getAttribute('title') ?? '');
+    const rect = node.getBoundingClientRect();
+    const role = (node.getAttribute('role') ?? '').trim().split(/\s+/)[0] ?? '';
+    return {
+      index,
+      name,
+      expanded: node.parentElement?.open === true,
+      visible: rect.width > 0 && rect.height > 0 && styleOf(node)?.visibility !== 'hidden',
+      explicitRole: ROLES.has(role.toLowerCase()),
+      hasPopup: node.hasAttribute('aria-haspopup'),
+    };
+  }) as SummaryInfo[];
+}
+
+/**
+ * The page function runs in the page's world, so its output is untrusted: a page that patches
+ * built-ins can return anything. Rows are kept only when every field has the right type and the
+ * index is a real position among the `count` matches; names are clamped like any element name.
+ */
+export function validateSummaryInfos(
+  raw: unknown,
+  count: number
+): { valid: SummaryInfo[]; dropped: number } {
+  if (!Array.isArray(raw)) return { valid: [], dropped: count };
+  const valid: SummaryInfo[] = [];
+  const seen = new Set<number>();
+  let dropped = 0;
+  for (const row of raw.slice(0, count)) {
+    const candidate = row as Partial<Record<keyof SummaryInfo, unknown>> | null;
+    const ok =
+      candidate !== null &&
+      typeof candidate === 'object' &&
+      Number.isInteger(candidate.index) &&
+      (candidate.index as number) >= 0 &&
+      (candidate.index as number) < count &&
+      !seen.has(candidate.index as number) &&
+      typeof candidate.name === 'string' &&
+      typeof candidate.expanded === 'boolean' &&
+      typeof candidate.visible === 'boolean' &&
+      typeof candidate.explicitRole === 'boolean' &&
+      typeof candidate.hasPopup === 'boolean';
+    if (!ok) {
+      dropped += 1;
+      continue;
+    }
+    seen.add(candidate.index as number);
+    valid.push({
+      index: candidate.index as number,
+      name: (candidate.name as string).slice(0, 512),
+      expanded: candidate.expanded as boolean,
+      visible: candidate.visible as boolean,
+      explicitRole: candidate.explicitRole as boolean,
+      hasPopup: candidate.hasPopup as boolean,
+    });
+  }
+  return { valid, dropped: dropped + Math.max(0, raw.length - count) };
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -152,6 +327,11 @@ interface FormControlInfo {
 interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
+  /**
+   * A disclosure's observed state: its own snapshot omits it, so an act re-reads the parent
+   * details' `open` attribute (in Playwright's isolated world) and refuses on a change.
+   */
+  expectedOpen?: boolean;
   formEvidence?: Record<string, string>;
   /** Owning child frame for frame-scoped form-identity evidence (T6). */
   frame?: import('playwright').Frame;
@@ -638,6 +818,19 @@ const FORM_CONTROL_SELECTOR = [
   'span[onclick]:not([role])',
 ].join(', ');
 
+/**
+ * A native disclosure's control: HTML-AAM maps only a details element's FIRST summary child,
+ * with no ARIA role (computed role `html-summary`), so Playwright's aria snapshot folds its text
+ * into the parent group and mints no control. A summary with a valid explicit role is already in
+ * the snapshot under that role, so the scan skips it (an empty or unknown role is ignored by the
+ * browser, which still exposes the disclosure, so that one is minted).
+ */
+const SUMMARY_SELECTOR = 'details > summary:first-of-type';
+/** Light DOM only: matches CDP DOM.querySelectorAll's document order exactly. */
+const SUMMARY_LOCATOR = `css:light=${SUMMARY_SELECTOR}`;
+/** Longest an act waits to re-read a disclosure's `open` state before refusing. */
+const DISCLOSURE_STATE_READ_MS = 1000;
+
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
 
@@ -793,6 +986,8 @@ function canonicalFingerprint(element: StoredElement): string {
     `visible_${element.visible}`,
     `enabled_${element.enabled}`,
     element.value !== undefined && element.value !== '' ? `value_${element.value}` : '',
+    // A disclosure's state is part of what was observed (only html-summary carries it).
+    element.expanded !== undefined ? `expanded_${element.expanded}` : '',
   ]
     .filter(Boolean)
     .join('_');
@@ -2953,6 +3148,84 @@ class PlaywrightPage implements EnginePage {
         this.page,
         ...this.page.frames().filter((frame) => frame !== mainFrame),
       ];
+      // Native disclosures (always on, like the snapshot itself): each rendered first summary
+      // becomes role "html-summary" with its accessible name and expanded state. A closed
+      // details does not render its content, so a nested summary appears once its parent opens.
+      // Only roots the snapshot actually captured are scanned: a frame still loading (or never
+      // snapshotted) has no document to read, and evaluating in it would wait on its context.
+      const summaryRoots = scanRoots.filter(
+        (root) => root === this.page || blockOfFrame.has(root as import('playwright').Frame)
+      );
+      const formControlsRequested = request.include?.includes('formControls') === true;
+      for (const root of summaryRoots) {
+        const block = root === this.page ? undefined : blockOfFrame.get(root);
+        // The main frame is labelled 'main' (as the formControls scan does), never by URL, so a
+        // coverage entry about it cannot be mistaken for a child frame at the same address.
+        const identity =
+          root === this.page
+            ? 'main'
+            : frameIdentity(root as import('playwright').Frame, scanRoots.indexOf(root));
+        let found: SummaryInfo[];
+        try {
+          // Chromium main frame: the browser's own accessibility tree (exact names, roles and
+          // state; unaffected by page scripts). Elsewhere: the page function, whose output is
+          // untrusted page data and is validated in Node. A failure never fails the observation:
+          // it degrades to a disclosed coverage entry.
+          const viaBrowser = root === this.page ? await this.disclosuresFromBrowser() : undefined;
+          if (viaBrowser !== undefined) found = viaBrowser;
+          else {
+            const raw: unknown = await root
+              .locator(SUMMARY_LOCATOR)
+              .evaluateAll(summaryInfoPageFunction);
+            const count = await root.locator(SUMMARY_LOCATOR).count();
+            const checked = validateSummaryInfos(raw, count);
+            found = checked.valid;
+            if (checked.dropped > 0)
+              frameCoverage.push({
+                frame: identity,
+                status: 'unavailable',
+                reason: `disclosure scan returned ${checked.dropped} invalid rows`,
+              });
+          }
+        } catch {
+          frameCoverage.push({
+            frame: identity,
+            status: 'unavailable',
+            reason: 'disclosure scan failed',
+          });
+          continue;
+        }
+        const eligible = found.filter(
+          (info) =>
+            info.visible &&
+            !info.explicitRole &&
+            // include:["formControls"] already mints an aria-haspopup summary (with row context).
+            !(formControlsRequested && info.hasPopup)
+        );
+        if (eligible.length > MAX_FORM_CONTROLS) {
+          frameCoverage.push({
+            frame: identity,
+            status: 'budget_exceeded',
+            reason: `disclosure rows capped at ${MAX_FORM_CONTROLS} of ${eligible.length}`,
+          });
+        }
+        for (const info of eligible.slice(0, MAX_FORM_CONTROLS)) {
+          elements.push({
+            ref: `e${this.revision}_${elements.length}`,
+            role: 'html-summary',
+            name: info.name,
+            visible: true,
+            enabled: true,
+            expanded: info.expanded,
+            summaryIndex: info.index,
+            ...(info.hasPopup ? { menuSummary: true } : {}),
+            ...(block !== undefined ? { block } : {}),
+            attributes: { tag: 'summary' },
+          });
+          const merged = elements.at(-1);
+          if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+        }
+      }
       if (request.include?.includes('fileInputs') === true) {
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
@@ -3137,7 +3410,10 @@ class PlaywrightPage implements EnginePage {
       role: string;
       formControlIndex?: number;
       fileInputIndex?: number;
-    }): boolean => row.formControlIndex !== undefined || row.fileInputIndex !== undefined;
+    }): boolean =>
+      row.formControlIndex !== undefined ||
+      row.fileInputIndex !== undefined ||
+      (row as { menuSummary?: boolean }).menuSummary === true;
     const countEnrichment = (
       rows: Array<{ role: string; formControlIndex?: number; fileInputIndex?: number }>,
       kind: 'formControl' | 'fileInput'
@@ -3227,9 +3503,11 @@ class PlaywrightPage implements EnginePage {
             ? scanRoot.locator('input[type=file]').nth(element.fileInputIndex)
             : element.formControlIndex !== undefined
               ? scanRoot.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
-              : locatorRoot
-                  .getByRole(element.role as never, { name: element.name ?? '', exact: true })
-                  .nth(ordinal));
+              : element.summaryIndex !== undefined
+                ? scanRoot.locator(SUMMARY_LOCATOR).nth(element.summaryIndex)
+                : locatorRoot
+                    .getByRole(element.role as never, { name: element.name ?? '', exact: true })
+                    .nth(ordinal));
         return { element, ref, ownerFrame, fallback, locator };
       });
       // F2: binding is one round trip per step per element (resolve, aria snapshot, identity
@@ -3261,6 +3539,7 @@ class PlaywrightPage implements EnginePage {
         const binding: NodeBinding = {
           handle,
           locator,
+          ...(element.expanded !== undefined ? { expectedOpen: element.expanded } : {}),
           snapshot: undefined,
           documentSnapshot,
           // frameOfElement tags only non-page scan roots, so the cast is
@@ -3278,7 +3557,9 @@ class PlaywrightPage implements EnginePage {
         // Bounded to a short slice, it degrades to document evidence like any capture miss,
         // and the evidence comparison below then reports the page change.
         const captured =
-          element.fileInputIndex !== undefined || element.formControlIndex !== undefined
+          element.fileInputIndex !== undefined ||
+          element.formControlIndex !== undefined ||
+          element.summaryIndex !== undefined
             ? await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS).catch(() => undefined)
             : await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS);
         binding.snapshot = snapshotDigest(captured);
@@ -3802,6 +4083,59 @@ class PlaywrightPage implements EnginePage {
   }
 
   /**
+   * A details' first summaries as Chromium's accessibility tree sees them, in light-DOM document
+   * order (the order of SUMMARY_LOCATOR). Undefined when the engine has no CDP (Firefox, WebKit),
+   * so the caller falls back to the page function. A row is minted only where Chromium exposes a
+   * disclosure (role DisclosureTriangle, not ignored): an explicit valid role, an unrendered
+   * summary or one inside a closed details is skipped exactly as the browser decides.
+   */
+  private async disclosuresFromBrowser(): Promise<SummaryInfo[] | undefined> {
+    let cdp: import('playwright').CDPSession;
+    try {
+      cdp = await this.page.context().newCDPSession(this.page);
+    } catch {
+      return undefined;
+    }
+    try {
+      const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+      const { nodeIds } = await cdp.send('DOM.querySelectorAll', {
+        nodeId: root.nodeId,
+        selector: SUMMARY_SELECTOR,
+      });
+      return await Promise.all(
+        nodeIds.map(async (nodeId, index): Promise<SummaryInfo> => {
+          const { node } = await cdp.send('DOM.describeNode', { nodeId });
+          const { nodes } = await cdp.send('Accessibility.getPartialAXTree', {
+            backendNodeId: node.backendNodeId,
+            fetchRelatives: false,
+          });
+          const ax = nodes[0];
+          const property = (name: string) =>
+            ax?.properties?.find((candidate) => candidate.name === name)?.value?.value;
+          const attributes = node.attributes ?? [];
+          const hasPopup = attributes.some((value, i) => i % 2 === 0 && value === 'aria-haspopup');
+          const disclosure =
+            ax !== undefined && !ax.ignored && ax.role?.value === 'DisclosureTriangle';
+          return {
+            index,
+            name: String(ax?.name?.value ?? ''),
+            expanded: property('expanded') === true,
+            visible: disclosure,
+            explicitRole: !disclosure,
+            hasPopup,
+          };
+        })
+      );
+    } catch {
+      // A CDP engine that lacks these domains (Obscura), or a DOM that changed between the
+      // calls: fall back to the validated page-function scan rather than minting nothing.
+      return undefined;
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
+  }
+
+  /**
    * One batched round-trip describing interactive controls that carry no ARIA
    * role (div/span widget triggers, automation-attributed containers) - the
    * elements locator.ariaSnapshot() cannot emit, so observe would otherwise
@@ -3926,6 +4260,25 @@ class PlaywrightPage implements EnginePage {
       }
       // Evidence provenance is fixed at observation. A failed fresh element check
       // cannot switch to document evidence or substitute the old value.
+      if (binding.expectedOpen !== undefined) {
+        // Bounded: an engine that cannot resolve the parent (Obscura) refuses fast instead of
+        // waiting out the action timeout. An unreadable state is treated as a changed one.
+        const open = await binding.locator
+          .locator('xpath=..')
+          .getAttribute('open', { timeout: DISCLOSURE_STATE_READ_MS })
+          .then(
+            (value) => value !== null,
+            () => undefined
+          );
+        if (open !== binding.expectedOpen) {
+          throw new EngineError(
+            'STALE_TARGET',
+            'Observed disclosure state changed; observe again.',
+            true,
+            this.refusalDetails(target.ref, stored)
+          );
+        }
+      }
       const semanticLocator =
         binding.snapshot !== undefined ? binding.locator : this.page.locator('body');
       const liveSnapshot = snapshotDigest(
