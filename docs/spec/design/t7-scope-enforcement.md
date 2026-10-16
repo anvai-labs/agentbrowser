@@ -51,11 +51,10 @@ so each hop is a first-class scope check, never a free ride):
   (`SCOPE_IDENTITY_DENIED`). This is the enforceable form of "identities
   do not leak" at the transport layer: the credential-marking request is
   denied before the browser sends it. Scope of the guarantee: it holds
-  on every walker-checked lane (initial requests and redirect hops);
-  the body-bearing redirect residual below is the recorded exception —
-  an allowed identity-marked POST whose redirect target is unbound is
-  followed natively without a hop check, so identity binding is only as
-  strong as that residual allows.
+  on every walker-checked lane (initial requests and redirect hops),
+  and since T10 M1 on the redirect hops of body-bearing requests in
+  scoped sessions (see the residuals below: a request whose redirects the
+  guard cannot watch is refused before the wire).
 - **Time** (`expiresAt`, injected `now`): a scope is expired AT OR AFTER
   the boundary; an expired scope denies every
   check with `SCOPE_EXPIRED`. The clock is injected (default `Date.now`)

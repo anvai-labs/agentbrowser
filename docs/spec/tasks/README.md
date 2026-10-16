@@ -53,7 +53,8 @@ prerequisite, and a docs consistency sweep.
   the consuming workflow).
 - **Operator:** per-host journal deployment (`AGENTBROWSER_JOURNAL_*`, operations guide).
 - **Owner decisions:** the credential broker (TD-BROWSER-13 §5, SentinelPass), axe in a browser
-  context, MCP registry publication, the HTML report, brew service env durability, N2 enforcement, Safari widgets, the required `build`/`deploy` docs contexts, and
+  context, MCP registry publication, the HTML report, brew service env durability, N2
+  enforcement, Safari widgets, the required `build`/`deploy` docs contexts, and
   T8's inline-screenshot question.
 - **Open, unscheduled:** constrained-mount journal depth, measured runner-use improvements (T9).
 - **Decided 2026-10-16:** the bounty use case → [T10](t10-engagements.md) (fixtures until a live
