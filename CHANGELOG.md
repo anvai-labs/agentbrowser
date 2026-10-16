@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-10-16
+
 ### Fixed — journal review follow-ups (T5)
 
 - `journalReconcileTimeoutMs` outside 1..2147483647 (or not an integer) is refused at service
