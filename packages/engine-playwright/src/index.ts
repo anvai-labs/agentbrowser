@@ -828,6 +828,8 @@ const FORM_CONTROL_SELECTOR = [
 const SUMMARY_SELECTOR = 'details > summary:first-of-type';
 /** Light DOM only: matches CDP DOM.querySelectorAll's document order exactly. */
 const SUMMARY_LOCATOR = `css:light=${SUMMARY_SELECTOR}`;
+/** Longest an act waits to re-read a disclosure's `open` state before refusing. */
+const DISCLOSURE_STATE_READ_MS = 1000;
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
@@ -3204,7 +3206,7 @@ class PlaywrightPage implements EnginePage {
           frameCoverage.push({
             frame: identity,
             status: 'budget_exceeded',
-            reason: `disclosure rows capped at ${MAX_FORM_CONTROLS} of ${eligible.length}; the frame snapshot itself is complete`,
+            reason: `disclosure rows capped at ${MAX_FORM_CONTROLS} of ${eligible.length}`,
           });
         }
         for (const info of eligible.slice(0, MAX_FORM_CONTROLS)) {
@@ -4259,7 +4261,15 @@ class PlaywrightPage implements EnginePage {
       // Evidence provenance is fixed at observation. A failed fresh element check
       // cannot switch to document evidence or substitute the old value.
       if (binding.expectedOpen !== undefined) {
-        const open = (await binding.locator.locator('xpath=..').getAttribute('open')) !== null;
+        // Bounded: an engine that cannot resolve the parent (Obscura) refuses fast instead of
+        // waiting out the action timeout. An unreadable state is treated as a changed one.
+        const open = await binding.locator
+          .locator('xpath=..')
+          .getAttribute('open', { timeout: DISCLOSURE_STATE_READ_MS })
+          .then(
+            (value) => value !== null,
+            () => undefined
+          );
         if (open !== binding.expectedOpen) {
           throw new EngineError(
             'STALE_TARGET',

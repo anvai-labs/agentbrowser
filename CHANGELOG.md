@@ -7,6 +7,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — a disclosure whose state cannot be read refuses fast
+
+- The act-time `open` re-check is bounded to one second. An engine that cannot resolve the
+  parent (Obscura) refuses with `STALE_TARGET` instead of waiting 30 seconds for the action
+  timeout. The cap coverage entry no longer claims the frame snapshot is complete.
+
 ### Fixed — disclosure scan follow-ups
 
 - When a CDP accessibility call fails, the disclosure scan now falls back to the validated page

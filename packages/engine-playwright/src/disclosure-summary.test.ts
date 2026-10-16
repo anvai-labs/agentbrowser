@@ -242,7 +242,11 @@ describe('native disclosures (details/summary) in observe', () => {
       const found = state.elements.filter((el) => el.role === 'html-summary');
       expect(found).toHaveLength(200);
       expect(found.at(-1)?.name).toBe('Outer 199');
-      expect(JSON.stringify(state)).toMatch(/disclosure rows capped at 200 of 210/);
+      expect(state.frameCoverage).toContainEqual({
+        frame: 'main',
+        status: 'budget_exceeded',
+        reason: 'disclosure rows capped at 200 of 210',
+      });
     });
   }, 120_000);
 
@@ -373,4 +377,38 @@ describe('native disclosures (details/summary) in observe', () => {
     const [clamped] = validateSummaryInfos([{ ...base, index: 0, name: 'x'.repeat(600) }], 1).valid;
     expect(clamped?.name).toHaveLength(512);
   });
+
+  it('an unreadable disclosure state refuses fast instead of waiting out the action timeout', async () => {
+    await withPage('<details><summary>Slow</summary><p>x</p></details>', async (p) => {
+      const [summary] = await summaries(p);
+      const page = (p as unknown as { backingPage(): import('playwright').Page }).backingPage();
+      // Simulate an engine that never resolves the parent step (seen on Obscura): an untimed
+      // attribute read hangs; a timed one fails at its deadline.
+      const proto = Object.getPrototypeOf(page.locator('body')) as {
+        getAttribute: (name: string, options?: { timeout?: number }) => Promise<string | null>;
+      };
+      const original = proto.getAttribute;
+      proto.getAttribute = function (name, options) {
+        if (name !== 'open') return original.call(this, name, options);
+        return options?.timeout === undefined
+          ? new Promise(() => {})
+          : new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('timeout')), options.timeout)
+            );
+      };
+      try {
+        const started = Date.now();
+        const outcome = await p
+          .act({ type: 'click', target: { ref: summary?.ref as string } })
+          .then(
+            (result) => result.error?.code ?? 'ran',
+            (error: { code?: string }) => error.code
+          );
+        expect(outcome).toBe('STALE_TARGET');
+        expect(Date.now() - started).toBeLessThan(10_000);
+      } finally {
+        proto.getAttribute = original;
+      }
+    });
+  }, 60_000);
 });
