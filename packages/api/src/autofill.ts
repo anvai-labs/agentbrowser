@@ -463,7 +463,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         const element = view.elements.find(
           (candidate) => candidate.attributes?.['autofill-node'] === identity
         );
-        if (!element || !element.visible || !element.enabled)
+        if (!element?.visible || !element.enabled)
           throw new AutofillFailure('STALE_TARGET', 'A field the run committed to has changed');
       }
       return;
