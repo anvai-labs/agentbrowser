@@ -555,7 +555,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           REPO="${GITHUB_REPOSITORY}"
-          # Published bytes are immutable (repository immutable releases): assemble the
+          # Published bytes are immutable once repository immutable releases are on: assemble the
           # Release as a draft, upload every asset, then publish once. Duplicate asset names
           # fail closed; never replace an asset or rerun publication over a published release.
           gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || \
