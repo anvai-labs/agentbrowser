@@ -3157,9 +3157,11 @@ class PlaywrightPage implements EnginePage {
       const formControlsRequested = request.include?.includes('formControls') === true;
       for (const root of summaryRoots) {
         const block = root === this.page ? undefined : blockOfFrame.get(root);
+        // The main frame is labelled 'main' (as the formControls scan does), never by URL, so a
+        // coverage entry about it cannot be mistaken for a child frame at the same address.
         const identity =
           root === this.page
-            ? frameIdentity(mainFrame, 0)
+            ? 'main'
             : frameIdentity(root as import('playwright').Frame, scanRoots.indexOf(root));
         let found: SummaryInfo[];
         try {
@@ -3202,7 +3204,7 @@ class PlaywrightPage implements EnginePage {
           frameCoverage.push({
             frame: identity,
             status: 'budget_exceeded',
-            reason: `disclosures capped at ${MAX_FORM_CONTROLS} of ${eligible.length}`,
+            reason: `disclosure rows capped at ${MAX_FORM_CONTROLS} of ${eligible.length}; the frame snapshot itself is complete`,
           });
         }
         for (const info of eligible.slice(0, MAX_FORM_CONTROLS)) {
@@ -4122,6 +4124,10 @@ class PlaywrightPage implements EnginePage {
           };
         })
       );
+    } catch {
+      // A CDP engine that lacks these domains (Obscura), or a DOM that changed between the
+      // calls: fall back to the validated page-function scan rather than minting nothing.
+      return undefined;
     } finally {
       await cdp.detach().catch(() => {});
     }
