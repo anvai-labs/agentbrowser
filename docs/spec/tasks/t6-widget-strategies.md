@@ -76,7 +76,8 @@ remain open.
 **Cross-engine (2026-10-15, W3b):** the same real react-select qualification (add-only and
 exact chip sets) runs on Chromium, Firefox and WebKit through the Playwright engine, in CI (the
 Test job installs all three binaries), with the session's engine name pinning the family; no
-engine-specific code was needed. W3a (conditional and multi-stage mappings) remains open.
+engine-specific code was needed. W3a (conditional and multi-stage mappings) is delivered too
+(staged mappings, #511).
 
 
 The [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
