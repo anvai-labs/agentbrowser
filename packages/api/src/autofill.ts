@@ -21,6 +21,13 @@ export interface AutofillPorts {
   }>;
   act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
+  /**
+   * T5 B-dur (B6): receives, once, the run's own recheck — a fresh observation that re-validates
+   * the scoped stage (URL, distinct node and block identities against the pins, readiness) and
+   * throws the same typed failures the run would. A durable run calls it after its marker's
+   * storage wait, before the first effect. Optional; ignoring it changes nothing.
+   */
+  onRecheck?(recheck: () => Promise<void>): void;
 }
 
 interface StrategyScope {
@@ -32,6 +39,8 @@ interface StrategyScope {
   resolve(elements: PageElement[], match: AutofillMatch, identity: string): PageElement;
   /** Bounded read-only readiness polling; undefined means pending, exceptions stop. */
   ready<T>(read: (elements: PageElement[]) => T | undefined): Promise<T>;
+  /** T6 W2: record one confirmed chip effect on the field's receipt, in order. */
+  effect(kind: 'removed' | 'added', label: string): void;
 }
 
 interface WidgetStrategy {
@@ -39,7 +48,11 @@ interface WidgetStrategy {
   supports(element: PageElement, field: AutofillRequest['fields'][number]): boolean;
   action(field: AutofillRequest['fields'][number], ref: string): ServiceActRequest;
   /** Strategy-owned proof that the requested value reached committed widget state. */
-  isCommitted(element: PageElement, expected: string): boolean;
+  isCommitted(
+    element: PageElement,
+    expected: string,
+    field: AutofillRequest['fields'][number]
+  ): boolean;
   /**
    * Multi-step commit for widget classes whose selection cannot be expressed
    * as one wire action (react-select menus need open → filter → fresh option
@@ -63,24 +76,104 @@ const MAX_COMMITTED_MEMBERS = 32;
 const MAX_COMMITTED_MEMBER_CHARS = 512;
 const MAX_COMMITTED_MEMBERS_JSON_CHARS = 16_384;
 
-function committedMember(element: PageElement, expected: string): boolean {
-  if (element.attributes?.['autofill-committed-members-complete'] !== 'true') return false;
+/** The complete, bounded committed membership, or undefined when it is not proven complete. */
+function committedMembers(element: PageElement): string[] | undefined {
+  if (element.attributes?.['autofill-committed-members-complete'] !== 'true') return undefined;
   const encoded = element.attributes['autofill-committed-members'];
-  if (encoded === undefined || encoded.length > MAX_COMMITTED_MEMBERS_JSON_CHARS) return false;
+  if (encoded === undefined || encoded.length > MAX_COMMITTED_MEMBERS_JSON_CHARS) return undefined;
   try {
     const members: unknown = JSON.parse(encoded);
-    return (
-      Array.isArray(members) &&
+    return Array.isArray(members) &&
       members.length <= MAX_COMMITTED_MEMBERS &&
       members.every(
         (member) => typeof member === 'string' && member.length <= MAX_COMMITTED_MEMBER_CHARS
-      ) &&
-      members.includes(expected)
-    );
+      )
+      ? (members as string[])
+      : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
+
+function committedMember(
+  element: PageElement,
+  expected: string,
+  field: AutofillRequest['fields'][number]
+): boolean {
+  const members = committedMembers(element);
+  if (members === undefined) return false;
+  // T6 W2: an exact set commits only as exactly that set (order-insensitive, no duplicates), on a
+  // control proven to be multi-valued.
+  if (field.options !== undefined) {
+    const desired = new Set(field.options.values);
+    return (
+      element.attributes?.['autofill-multi'] === 'true' &&
+      members.length === desired.size &&
+      new Set(members).size === members.length &&
+      members.every((member) => desired.has(member))
+    );
+  }
+  return members.includes(expected);
+}
+
+/**
+ * T6 W2: make a React Select-style multi-value control hold EXACTLY `options.values`.
+ * Refuses before any dispatch unless the current membership is proven complete and
+ * unambiguous. Removes extra chips one at a time through the remove control the engine ties to
+ * this combobox and label, confirming each removal, then adds missing values through the
+ * shared typeahead. Each confirmed step is recorded; a failure part-way is reported with its
+ * effects so far and never compensated by guesswork.
+ */
+const runExactSet: NonNullable<WidgetStrategy['run']> = async (field, ref, identity, scope) => {
+  const desired = field.options?.values ?? [];
+  const membersOf = (elements: PageElement[]) => {
+    const control = scope.resolve(elements, field.match, identity);
+    if (control.attributes?.['autofill-multi'] !== 'true')
+      throw new AutofillFailure(
+        'ENGINE_UNSUPPORTED',
+        'The control is not a proven multi-value widget; an exact set cannot be written'
+      );
+    const members = committedMembers(control);
+    if (members === undefined)
+      throw new AutofillFailure(
+        'ENGINE_UNSUPPORTED',
+        'Widget membership is not proven complete; an exact set cannot be written'
+      );
+    return members;
+  };
+  const initial = membersOf(await scope.observe());
+  if (new Set(initial).size !== initial.length)
+    throw new AutofillFailure('TARGET_AMBIGUOUS', 'Widget holds duplicate chip labels');
+  for (const label of initial.filter((member) => !desired.includes(member))) {
+    const elements = await scope.observe();
+    const removers = elements.filter(
+      (candidate) =>
+        candidate.role === 'button' &&
+        candidate.attributes?.['autofill-chip-owner'] === identity &&
+        candidate.attributes['autofill-chip-label'] === label
+    );
+    if (removers.length !== 1)
+      throw new AutofillFailure(
+        removers.length === 0 ? 'ENGINE_UNSUPPORTED' : 'TARGET_AMBIGUOUS',
+        'No single remove control is tied to this chip'
+      );
+    const remover = removers[0] as PageElement;
+    if (!remover.visible || !remover.enabled)
+      throw new AutofillFailure('TARGET_NOT_VISIBLE', 'Chip remove control is not actionable');
+    await scope.act({ action: 'click', target: { ref: remover.ref }, remap: false });
+    await scope.ready((fresh) => (membersOf(fresh).includes(label) ? undefined : true));
+    scope.effect('removed', label);
+  }
+  for (const label of desired) {
+    const elements = await scope.observe();
+    if (membersOf(elements).includes(label)) continue;
+    const control = scope.resolve(elements, field.match, identity);
+    await runTypeahead({ ...field, option: { value: label } }, control.ref, identity, scope);
+    await scope.ready((fresh) => (membersOf(fresh).includes(label) ? true : undefined));
+    scope.effect('added', label);
+  }
+  return { expected: JSON.stringify([...desired].sort()) };
+};
 
 /** Shared typeahead sequence; selection must belong to this control's observed popup. */
 const runTypeahead: NonNullable<WidgetStrategy['run']> = async (field, ref, identity, scope) => {
@@ -187,17 +280,20 @@ const strategies: readonly WidgetStrategy[] = [
     run: runTypeahead,
   },
   {
-    // Add-only React Select-style multi-value control. A click commits only
-    // when a complete, bounded membership capture contains the requested label.
+    // React Select-style multi-value control. `option` adds one label (commits only when a
+    // complete, bounded membership capture contains it); `options` (W2) writes an exact set.
     name: 'chip-multiselect',
     supports: (e, f) =>
-      f.option !== undefined &&
+      (f.option !== undefined || f.options !== undefined) &&
       e.role === 'combobox' &&
       !!e.attributes?.['aria-autocomplete'] &&
       hasPopupEvidence(e),
     action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
     isCommitted: committedMember,
-    run: runTypeahead,
+    run: (field, ref, identity, scope) =>
+      field.options !== undefined
+        ? runExactSet(field, ref, identity, scope)
+        : runTypeahead(field, ref, identity, scope),
   },
 ];
 
@@ -345,6 +441,50 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     }
     return view.elements;
   };
+  // T5 B-dur (B6): a READ-ONLY recheck. It never writes the run's state (scope validity, scope or
+  // block pins, preflight index): a recheck passing inside a dispatch must never re-authorize
+  // anything the dispatch deliberately revoked (raw artifact capture needs a complete observation
+  // AFTER the dispatch), and must never pin a block the run has not reached. With a scope it
+  // compares a fresh, complete observation with the pins the preflight recorded (before preflight
+  // there is nothing to compare, which is refused). Without a scope it checks only the fields the
+  // run has ALREADY committed to (their node identity still present, visible and enabled); later
+  // fields stay the run's own business, so forms that reveal fields after earlier writes work.
+  ports.onRecheck?.(async () => {
+    guard();
+    const view = await ports.observe();
+    guard();
+    if (view.truncated || view.degraded)
+      throw new AutofillFailure(
+        'OUTPUT_TRUNCATED',
+        'Autofill requires complete, non-degraded observations'
+      );
+    if (!request.scope) {
+      for (const identity of identities.values()) {
+        const element = view.elements.find(
+          (candidate) => candidate.attributes?.['autofill-node'] === identity
+        );
+        if (!element?.visible || !element.enabled)
+          throw new AutofillFailure('STALE_TARGET', 'A field the run committed to has changed');
+      }
+      return;
+    }
+    if (view.url !== request.scope.url)
+      throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Page URL does not match the mapped stage');
+    for (const [index, field] of request.fields.entries()) {
+      const pin = scopePins.get(index);
+      if (!pin) throw new AutofillFailure('STALE_TARGET', 'Mapped stage was not preflighted');
+      // A copy: resolving must never pin a block in the run's own map.
+      const element = resolve(view.elements, field.match, new Map(blocks));
+      if (
+        element.attributes?.['autofill-node'] !== pin.node ||
+        element.attributes?.['autofill-block'] !== pin.block ||
+        !element.visible ||
+        !element.enabled ||
+        !strategyFor(element, field)
+      )
+        throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
+    }
+  });
   let preflightFailed = false;
   if (request.scope) {
     try {
@@ -371,7 +511,9 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       const value =
         field.value !== undefined
           ? await (ports.resolveValue?.(field.value) ?? field.value)
-          : (field.option?.value ?? '');
+          : field.options !== undefined
+            ? JSON.stringify([...field.options.values].sort())
+            : (field.option?.value ?? '');
       if (value.length > 8192) throw new Error('Resolved autofill value exceeds 8192 characters');
       expectedValues.push(value);
     }
@@ -454,6 +596,11 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
               throw new AutofillFailure('STALE_TARGET', 'Widget changed between strategy steps');
             return fresh;
           },
+          effect: (kind, label) => {
+            receipt.effects ??= { removed: [], added: [] };
+            const effects = receipt.effects;
+            effects[kind].push((ports.redact?.(label) ?? label).slice(0, 512));
+          },
           ready: async (read) => {
             for (let attempt = 0; ; attempt++) {
               const result = read(await observe());
@@ -517,7 +664,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           continue fieldLoop;
         }
         display(receipt, same.value);
-        if (strategy.isCommitted(same, expected)) {
+        if (strategy.isCommitted(same, expected, field)) {
           receipt.verified = true;
           receipt.status = 'verified';
           break;
@@ -572,7 +719,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
             );
           display(receipt, same.value);
           const strategy = selectedStrategies.get(receipt.field);
-          if (!strategy?.isCommitted(same, expectedValues[receipt.field] as string)) {
+          if (!strategy?.isCommitted(same, expectedValues[receipt.field] as string, field)) {
             // The per-field loop's withheld rule applies here too: a control
             // newly classified sensitive has its value withheld by policy, and
             // downgrading a verified receipt to a mismatch would invite a

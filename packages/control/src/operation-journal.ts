@@ -8,6 +8,7 @@ import {
   parseJournalIntent,
   parseJournalKey,
   parseJournalNamespace,
+  parseJournalOperationQuery,
   parseJournalRecord,
   parseJournalTransition,
 } from './journal-record.js';
@@ -15,6 +16,7 @@ import type {
   JournalCall,
   JournalCloseOutcome,
   JournalConflictReason,
+  JournalFindOutcome,
   JournalIdentity,
   JournalIntent,
   JournalKey,
@@ -23,6 +25,7 @@ import type {
   JournalNamespace,
   JournalNoWriteReason,
   JournalOpenOutcome,
+  JournalOperationQuery,
   JournalTerminalTransition,
   JournalTransition,
   JournalUncertainReason,
@@ -176,6 +179,7 @@ export async function openOperationJournal(
             'markDispatch',
             'commitTerminal',
             'lookup',
+            'findByOperation',
             'close',
           ]);
           const actual = journalObject(journalData(own.namespace.value), [
@@ -242,11 +246,20 @@ function createJournal(
   };
   const stamp = <T>(value: T): Stamped<T> =>
     deeplyFreezeSnapshot({ namespaceId: namespace.namespaceId, ownerFence, value });
-  const unstamp = (input: unknown): Record<string, unknown> => {
-    const envelope = journalObject(journalData(input), ['namespaceId', 'ownerFence', 'value']);
+  const unstamp = (
+    input: unknown,
+    optional: readonly string[] = ['reason', 'disposition', 'record'],
+    maxBytes = 65_536,
+    maxNodes = 1_024
+  ): Record<string, unknown> => {
+    const envelope = journalObject(journalData(input, maxBytes, maxNodes), [
+      'namespaceId',
+      'ownerFence',
+      'value',
+    ]);
     if (envelope.namespaceId !== namespace.namespaceId || envelope.ownerFence !== ownerFence)
       badResponse();
-    return journalObject(envelope.value, ['kind'], ['reason', 'disposition', 'record']);
+    return journalObject(envelope.value, ['kind'], optional);
   };
   const negative = (
     value: Record<string, unknown>,
@@ -280,7 +293,7 @@ function createJournal(
     return undefined;
   };
 
-  function io<T extends JournalMutationOutcome | JournalLookupOutcome>(
+  function io<T extends JournalMutationOutcome | JournalLookupOutcome | JournalFindOutcome>(
     write: boolean,
     invoke: (signal: AbortSignal) => PromiseLike<unknown>,
     validate: (value: unknown) => T,
@@ -492,6 +505,45 @@ function createJournal(
           const record = parseJournalRecord(value.record, namespace);
           if (!equal(record.identity.key, key)) badResponse();
           return deeplyFreezeSnapshot({ kind: 'found', record });
+        },
+        signal
+      );
+    },
+    findByOperation(
+      input: JournalOperationQuery,
+      signal?: AbortSignal
+    ): JournalCall<JournalFindOutcome> {
+      let query: JournalOperationQuery;
+      try {
+        query = parseJournalOperationQuery(input);
+      } catch {
+        return settledCall(noRead('invalid_request') as JournalFindOutcome);
+      }
+      return io(
+        false,
+        (abort) => raw.findByOperation(stamp(query), abort),
+        (rawResult): JournalFindOutcome => {
+          // A find answer legitimately carries up to `limit` records of `maxRecordBytes` each;
+          // lookup's 64 KiB envelope budget would poison a truthful full answer (review F2).
+          const budget = namespace.bounds.maxRecordBytes * (query.limit + 1) + 1024;
+          const nodes = 64 * (query.limit + 1) + 256;
+          const value = unstamp(rawResult, ['reason', 'records', 'truncated'], budget, nodes);
+          const refusal = negative(value, 'lookup');
+          if (refusal) return refusal as JournalFindOutcome;
+          journalObject(value, ['kind', 'records', 'truncated']);
+          if (value.kind !== 'found' || typeof value.truncated !== 'boolean') badResponse();
+          if (!Array.isArray(value.records) || value.records.length > query.limit) badResponse();
+          const records = (value.records as unknown[]).map((stored) => {
+            const record = parseJournalRecord(stored, namespace);
+            // The adapter may only return this tenant's records for this operation ID.
+            if (
+              record.identity.key.tenantId !== query.tenantId ||
+              record.identity.key.operationId !== query.operationId
+            )
+              badResponse();
+            return record;
+          });
+          return deeplyFreezeSnapshot({ kind: 'found', records, truncated: value.truncated });
         },
         signal
       );

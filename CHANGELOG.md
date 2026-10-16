@@ -7,6 +7,566 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-10-16
+
+Entries are newest first, and an entry supersedes the entries below it: the durable journal
+landed in slices, so an older (lower) entry's "not yet" or "proposed" (C4b's refusals, J3/J4
+"proposed", B-dur-1/2a "not yet used") is resolved by a newer (higher) entry in this same
+release — 1.19.0 ships the wired journal, lookup and recovery (J3, J4) and browser durability.
+
+### Docs — the site matches the release
+
+- Every page under `docs/` is now in the site navigation (37 were unreachable, including the T5
+  recovery and browser-durability designs, the journal runtime evidence, ADR-026 and the
+  1.15.0–1.18.0 release records). Internal handoff notes, the ADR template and the agent skill
+  file are excluded instead, and the strict build now **fails** when a page is missing from
+  the nav, so the site cannot drift again.
+- Operations gains a visual "Durable operations and recovery" overview: a record-lifecycle
+  diagram and tables for application versus browser durability and for who can read or recover.
+- Stale claims fixed: the CLI guide's "durable recovery: planned", the delegated-sessions,
+  bulk-autofill and comparison pages' "records disappear on restart" / "journal under
+  construction", the home page's status line, the quality spec's "future journal contract", and
+  the execution spec's event sync (now a table: what is built, no recovery across a restart by
+  decision D4, and the not-yet-built target cursor contract).
+
+### Fixed — journal review follow-ups (T5)
+
+- `journalReconcileTimeoutMs` outside 1..2147483647 (or not an integer) is refused at service
+  construction; before, `setTimeout` fired at once and every reconcile counted as unresolved.
+- Adapter `reconcile` functions are captured only after the application authority has validated
+  the adapters, so a null entry gets the authority's typed `INVALID_REQUEST` refusal instead of a
+  `TypeError` (duplicates were already refused by the authority).
+- The lookup route's documented `operationId` pattern now matches the route's check exactly.
+- A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
+  its leftover debug logger is gone.
+
+### Changed — task status table refreshed
+
+- The task README's status rows for T0, T1, T3, T5, T6, T8 and T9 now match develop; the
+  continuation note says everything since the #483 back-sync is unreleased; the stale 1.15.2-era
+  "Next items" sections are replaced by one current list of owner- and infrastructure-gated
+  items; the T6 packet no longer lists delivered W2, W3a and W3b work as open.
+
+### Changed — T5 records reflect browser durability
+
+- `docs/spec/review.md` R08, the task README's T5 row, the T5 packet and the recovery design now
+  record the browser portion as narrowed to classification (never replay; receipt contents are
+  never journaled, so R08's autofill-receipt part stays open by design). T5's remaining items
+  are per-host deployment by the operator and the optional, unscheduled constrained-mount depth.
+- Process-loss rows now cover every durable browser owner (act, plan and autofill) at each
+  boundary, and pin the operator's recovery on the record each kill left: close for an
+  undispatched one, settle for an in-doubt one, reconcile refused.
+
+### Fixed — a plan no longer re-runs a step whose follow-up read failed
+
+- A plan step whose effect ran but whose follow-up read failed (for example a click that closed
+  its page, then `observe: 'after'`) could be retried by the stale-target self-heal when the
+  error message matched, running the effect a second time. Such a failure is never healed now.
+
+### Added — durable browser parity and crash rows (T5 B-dur-2c)
+
+- SDK (`executeAction`, `plan`, `autofill` mutation options), CLI (`--execution-requirement` on
+  `act`, `plan` and `autofill`) and MCP (`executionRequirement` on the `act`, `plan` and
+  `autofill` tools) carry the durable browser requirement; omitted, every request is unchanged.
+- Process-loss rows for a durable browser act on a real store: killed before the marker, after
+  it, and after the click, the record holds the expected state, the click ran at most once, and
+  nothing is replayed on reopen.
+
+### Added — durable act, plan and autofill (T5 B-dur-2b)
+
+- `act`, `plan` and `autofill` accept `executionRequirement` over REST (OpenAPI documented).
+  `durable` journals the call as one browser operation for classification only, never replay:
+  controlled sessions with an open journal only (`CONTROL_REQUIRED` otherwise). The target and
+  approval are re-checked after the journal marker and before the first effect; the approval is
+  consumed only after that, and a refused operation never self-heals. Failures known to occur
+  before any effect keep their response (`failed`); anything else (a lost step result, an
+  unverified fill, an uncertain field) is recorded `settled_unknown`, and its report is still
+  returned. `ephemeral` is identical to omitting the field; other routes refuse the field.
+  SDK, CLI and MCP parity: B-dur-2c.
+
+### Added — the browser journal in the control layer (T5 B-dur-2a)
+
+- The session authority can journal a durable browser operation as one record under the
+  reserved `browser` identity (its own fingerprint domain): the marker at the first page
+  dispatch, then the owner's recheck once, then the effects. A failed recheck crosses no effect
+  (`failed`, dispatched); a known failure keeps its report; an operation with nothing to dispatch
+  keeps its result. Not yet used by the service (B-dur-2b).
+
+### Added — browser-durability revalidation primitives (T5 B-dur-1)
+
+- The application adapter id `browser` is reserved for browser-operation journal records.
+- The act approval check is split into a decision and a deferred consumption, with a
+  non-consuming currency check for leases, plain tokens and reviewed approvals
+  (`ApprovalGate.validateReviewedApproval`); plain acts behave exactly as before.
+- `ActionExecutor.revalidateTarget` and an autofill `onRecheck` port expose the target and
+  scoped-stage checks to run after a storage wait. Durable browser operations (B-dur-2) will use
+  them; nothing is journaled yet.
+
+### Docs — browser-operation durability, the settled choices (T5 B-dur, accepted)
+
+- A design addendum settles the implementation choices D6 left open, accepted by the owner:
+  browser operations are journaled only on request (`executionRequirement: 'durable'`, controlled
+  sessions only), as one record per operation with the marker at the first page action, after an
+  asynchronous owner-level recheck whose remaining window is disclosed (the approval token is
+  consumed only after the marker), sharing the namespace's capacity, under a reserved `browser`
+  application identity (no store-format change). Known step or field failures stay `failed` with
+  their report returned, never `JOURNAL_UNAVAILABLE`.
+
+### Added — continue and reconcile for journaled operations (T5 J3c part 2)
+
+- A new operation may carry `supersedes: {namespace, operationId}` naming the closed operation it
+  continues, on execute and review requests and via `application execute --supersedes <id>
+  --supersedes-namespace <ns>`. It is provenance only: consent covers it (a reviewed write
+  executed with a different link is refused), the operation identity does not include it, and it
+  is not journaled or receipted — a non-reviewed write's link leaves no durable trace. The server
+  does not verify the named operation.
+- `POST /v1/journal/operations/{operationId}/reconcile` (operator key only) asks the bound
+  adapter's new opt-in `reconcile(identity)` what happened to each in-doubt record: `committed` or
+  `rejected` commit the matching terminal; `unknown`, a malformed answer, or a call slower than
+  10 s changes nothing. An adapter without `reconcile` is refused with 409 `CONTROL_REQUIRED`
+  before anything is written — settle instead. Nothing is ever replayed.
+
+### Added — journal history namespaces after rotation (T5 J3d)
+
+- `AGENTBROWSER_JOURNAL_HISTORY_FILE` lists namespaces you rotated away from, each with its
+  original descriptor inputs and key file. They open on the same store, stay searchable by
+  lookup and recoverable by the operator (close, settle, reconcile commit in the namespace that
+  owns the record) until `retainUntil`, and never accept new writes.
+- `GET /v1/journal` lists them (`history`, with `refused` and the store's reason for a wrong
+  entry, which never stops the current namespace). Lookups report any namespace they could not
+  read in `unreadNamespaces`, and are never `absent` while one is unread.
+- The server warns at startup within 7 days of a history namespace's `retainUntil`.
+- A namespace past its `ACCEPT_UNTIL` is opened recover-only: no durable writes, but its records
+  stay readable and recoverable until retention ends. History entries are opened only once their
+  horizon has passed (an early or typo'd entry is reported and never creates a namespace).
+- `agentbrowser journal status` lists history namespaces; `journal operations` names each
+  record's namespace and any namespace it could not read.
+
+### Tests — recovery gates for application writes (T5 J4)
+
+- A service restarted on the same real store refuses a pre-restart event cursor as
+  session-not-found: events and cursors are not recovered, never silently reset, never replayed
+  from the journal.
+- The non-business write classification is recorded as the delivered rule, and R08's
+  application-write portion and R10's durable-receipt portion are marked delivered (the
+  browser/autofill portion stays open for B-dur).
+
+### Added — operator-only journal recovery writes: close and settle (T5 J3c part 1)
+
+- `POST /v1/journal/operations/{operationId}/close` closes every never-dispatched record of the
+  operation as a failed pre-dispatch terminal carrying a supersession marker. Dispatched work
+  refuses: it is settled or reconciled, never closed.
+- `POST /v1/journal/operations/{operationId}/settle` settles every in-doubt record as terminal
+  `outcome_unknown`, claiming nothing about the effect. Irreversible.
+- Both are OPERATOR KEY ONLY per the accepted design (D1 as amended): a tenant API key may read
+  history and is refused here with 403 — pinned at the service and HTTP layers. Tenant-scoped;
+  another tenant's operation is not found, never writable. Rate-limited per tenant.
+
+### Added — staged form mappings (T6 W3a)
+
+- A form mapping document may carry 1-12 stages, each exactly the single-stage shape with its own
+  distinct scope URL. `form prepare <mapping> <values> [stageId]` materializes the chosen stage;
+  values must match the union of every stage's keys; `form stages <mapping>` lists the stages
+  offline. Single-stage documents are unchanged. Which stage applies to the page in front of the
+  caller stays caller-observed — the scoped preflight refuses a stage whose fields are not all
+  present — never inferred from business state.
+
+### Added — read-only journal lookup and status (T5 J3b)
+
+- `GET /v1/journal/operations/{operationId}` returns every historical record of one durable
+  operation in the configured namespace, projected to a classification (`undispatched`,
+  `in_doubt`, `failed_before_dispatch`, `completed`, `failed`, `settled_unknown`), an
+  `actionable` flag, application identity and the departed session's opaque identity. Per the
+  accepted design (D1 as amended), it accepts the operator key or a tenant API key, read-only and
+  tenant-scoped; delegated grants are refused and keyless deployments get no surface. Absence is
+  scoped absence, never proof of non-execution.
+- `GET /v1/journal` reports the journal's configuration, namespace, health, horizons and an
+  advisory `recoveryQualified` (Node 24 on Linux/macOS only; no exactly-once promise).
+- Both routes are rate limited per tenant, in the regenerated OpenAPI, and exposed by the SDK
+  (`journalStatus`, `journalOperations`) and the CLI (`agentbrowser journal status`,
+  `agentbrowser journal operations <id>`).
+
+### Tests — the durable-restart claims qualified (T4 A2)
+
+- Two service instances (fresh authorities and storage children) run one after the other on the
+  same real journal store; the first stops gracefully. A completed
+  durable write survives the graceful restart and stays readable through the new process's own
+  journal handle; nothing replays; and re-submitting the same operation ID commits a NEW record
+  with a new service generation — the advertised weaker outcome, with idempotency remaining the
+  adapter's responsibility.
+
+### Added — journal `findByOperation` (T5 J3a)
+
+- The operation journal port can now find every record of one tenant's operation ID in a
+  namespace. The query is read-only, fenced, at most 16 records, in order, and reports
+  truncation.
+- It is implemented by the memory and SQLite adapters (a bounded scan, no schema change),
+  validated by the facade (an adapter cannot leak another tenant's records), and covered by the
+  shared conformance suite.
+- It is the read path for the accepted J3 historical lookup.
+
+### Added — measured CI runner minutes (T9)
+
+- `scripts/runner-minutes.mjs` reports per-workflow medians from the GitHub API: wall time, job
+  minutes, and billed-style minutes split by hosted and self-hosted runners. It is read-only.
+- The 2026-10-15 baseline is recorded in `docs/spec/evidence/t9-runner-minutes.md`: about 26
+  hosted minutes per CI round on a pull request (CI, Windows and docs), plus about 2 macOS minutes on journal-path
+  pull requests. The repository is public, so these are capacity, not cost.
+
+### Tests — widget strategies qualified on Firefox and WebKit (T6 W3b)
+
+- The real react-select qualification (add-only and exact chip sets, with the app's state as the
+  oracle) now runs on Chromium, Firefox and WebKit through the Playwright engine. All pass, with
+  no engine-specific code.
+
+### Docs — T5 recovery design accepted (J-design sign-off)
+
+- The owner accepted `docs/spec/design/t5-recovery-design.md` on 2026-10-15. D1 is amended:
+  historical lookup accepts the operator key **or** a tenant API key (read-only, tenant-scoped),
+  so it also works in multi-tenant keyed deployments.
+- Writes stay operator-only: close and continue (D2), and reconcile and settle (D3).
+- D2–D7 are accepted as recommended. Implementation follows: J3a → J3b → J3c → J3d → J4 →
+  browser-operation classification.
+
+### Added — exact chip sets with removal for `chip-multiselect` (T6 W2)
+
+- An autofill field can set `options: { values: [...], mode: 'exact' }`, with
+  `strategy: 'chip-multiselect'`. The control's committed membership must end exactly that set.
+- **How it writes.** Extra chips are removed one at a time, through the remove control the engine
+  ties to that combobox and chip label, and each removal is confirmed. Missing values are added
+  through the existing typeahead.
+- **Receipts.** A receipt reports `effects: { removed, added }`, including on failure. Nothing is
+  rolled back by guesswork.
+- **Refusals.** Refused before any dispatch on a control that is not a proven multi-value widget,
+  or whose membership is incomplete, duplicated, or has an extra chip without exactly one owned
+  remove control. Values must be non-blank and trimmed.
+- Qualified against the real react-select 5.10.2.
+
+### Tests — process loss through the service with the durable journal (T5 J-e)
+
+- The compiled service, with the real SQLite journal, is SIGKILLed before the intent, after the
+  intent, after the marker, after the effect and after the terminal of a durable write.
+- Each case leaves the expected record (none / undispatched / in doubt / in doubt / completed),
+  proven by a store read inside the process before the kill. The independent effect counter never
+  exceeds 1.
+- The next process reopens the same namespace, with the full service, and replays nothing.
+- Key loss and in-place key rotation are refused at startup as a configuration mismatch, without
+  exposing key material.
+
+### Added — a CI entrypoint for `test evaluate` (T3)
+
+- `.github/actions/test-evaluate` is a composite GitHub Action that other repositories can pin.
+  - It installs a release CLI and verifies it against the release's `sha256sums.txt`, so a
+    corrupted or mismatched download is never run. The check does not prove the release itself is
+    authentic.
+  - It evaluates a directory of caller-observed test-case bundles offline and writes JUnit,
+    carrying identities and verdicts only.
+  - It fails the job unless every bundle passed.
+- Qualified with a stub CLI and against the compiled CLI in CI. It executes nothing itself:
+  test execution stays with the caller's job.
+
+### Added — a repeatable real-ZAP recorded run (T7 depth)
+
+- `scripts/zap-depth-run.mjs` runs the ZAP adapter against a real OWASP ZAP daemon and its own
+  deliberately vulnerable fixture. It archives the result, sanitized raw alerts and the fixture
+  source, and fails unless the seeded reflected XSS is found and every finding stays
+  `suspected`.
+- The dispatch-only `zap-depth.yml` workflow runs it in CI with the digest-pinned ZAP image.
+- First run (2026-10-15, ZAP 2.17.0): the seeded XSS plus four header and DOM findings, archived
+  under `docs/spec/evidence/t7-zap-depth/`.
+
+### Docs — proposed: T5 recovery design (J3, J4, browser-operation durability)
+
+- `docs/spec/design/t5-recovery-design.md` (Proposed, awaiting the owner's sign-off) refines J3
+  and J4 on top of the wired journal. It has seven decision points:
+  - D1: operator-only historical lookup;
+  - D2: close or continue only never-dispatched records, closed as marked pre-dispatch failures;
+  - D3: an unknown outcome is resolved only by an opt-in, typed adapter `reconcile` bound to the
+    original operation, never by replay; the operator may also settle it as unknown;
+  - D4: events and cursors are not recovered;
+  - D5: recovery status for operators on the qualified matrix;
+  - D6: browser operations journaled for classification only, which narrows R08;
+  - D7: opt-in history namespaces after rotation, with full-descriptor entries and a stated
+    retention deadline.
+- It states what records do not hold (no times), what a new recovery write path needs, and that
+  the lookup is a bounded scan with no new DDL. Nothing is implemented.
+
+### Added — durable application writes behind an opt-in journal (T5 C4b, J-d)
+
+- **Configuration.** Trusted variables open the qualified SQLite journal at startup:
+  `AGENTBROWSER_JOURNAL_DIR`, `_ANCHOR_DIR`, `_KEY_FILE` (a `0600` file holding `keyId:hex`),
+  `_RESTORE_GENERATION` and `_ACCEPT_UNTIL`, plus optional `_NAMESPACE`, `_MAX_RECORDS` and
+  `_INITIALIZE`. A partial or refused configuration aborts startup; unconfigured, nothing changes.
+  The namespace is stable across restarts, so records survive; its horizon and bounds are
+  immutable, and you rotate by naming a new namespace.
+- **Behaviour.** Application writes that request `executionRequirement: "durable"` are journaled:
+  the intent is committed before the effect, then a dispatch marker and a terminal record. The
+  fingerprint domain is labeled `application-operation:v2-durable`, so it never collides with an
+  ephemeral identity. Ephemeral writes never touch the journal.
+- **Availability.** Discovery advertises `durable`, and execute and reviews accept it, only while
+  the journal is open and before the accept horizon. Otherwise `CONTROL_REQUIRED`, with no
+  fallback. The application authority now also refuses `durable` itself whenever the write cannot
+  be journaled; previously only the service-level refusal stood in the way.
+- **Reviewed writes.** Durable operator-reviewed writes are approvable end to end.
+- **Shutdown.** With a journal attached, a graceful shutdown drains in-flight durable work,
+  bounded at 30 s, before the journal closes. Nothing else waits. Once the accept horizon has passed, the server starts without the journal and
+  warns, rather than refusing to start. The journal needs Node 22.13 or later.
+- **Deprecation.** `durableJournalAvailable` is deprecated and has no effect.
+- **Not yet.** Reading records back across a restart (J3) and recovery semantics (J4) remain
+  proposed.
+
+### Changed — observation is faster on element-heavy pages (F2)
+
+- The Playwright engine now binds observed elements to their nodes with bounded concurrency (8),
+  instead of one at a time, and resolves each node in one round trip. Each element's steps and its
+  document-order ordinal are unchanged, and every binding settles before cleanup.
+- On the 120-element benchmark an observation drops from ~1.2 s to ~0.5 s in **Chromium** (about
+  2.3×, from an interleaved A/B in one session), with identical password redaction. The review
+  measured about 1.8× in Firefox and 1.1× in WebKit.
+- An element's aria capture is bounded to a 500 ms slice. A node renamed between being resolved
+  and being captured therefore degrades to document evidence and reports a page change; it no
+  longer waits out the whole ~5 s snapshot envelope.
+- Recorded in `docs/spec/evidence/observation-120-baseline.md`.
+
+### Docs — proposed: policy reload without restart (ADR-026)
+
+- ADR-026 (Proposed) and TD-BROWSER-15 phase 8 (Proposed) design an opt-in reload of the Cedar
+  policy file through one endpoint guarded by a server-scope admin key held in a file (no signal:
+  `SIGHUP` stays shutdown). The new document is validated before the swap and never fails open.
+  New sessions get the new policy; live sessions are decided by their pinned policy AND every
+  policy loaded since, with limits taking the minimum, so per-call tightenings reach running
+  agents and loosenings never do. Creation-time grants are reported, not revoked. Nothing is
+  implemented.
+
+### Added — a committed provider-CLI qualification driver (T8 Q1)
+
+- `scripts/t8-harness-qualification.mjs` re-qualifies the MCP bridge through the installed Codex
+  and Claude Code CLIs against a scratch service and a loopback fixture.
+- Each provider is locked to the bridge: Codex's shell, exec and browser features are disabled,
+  Claude runs `--restricted --tools ""`, and any other tool fails the run. Credentials never
+  appear in a provider's argv.
+- Each verdict comes from an independent oracle: the fixture's request log or the service's
+  operation records, plus the event stream checked for the password value.
+- Both providers pass every exercisable dimension (2026-10-15). Provider-path cancellation is
+  recorded as not exercisable.
+- Recorded observation: screenshot bytes reach the model inline, as base64 text.
+- The T1 catalog footprint was re-measured after the output schemas.
+
+### Added — the durable requirement is part of the operation identity (T5 C4b, part 2)
+
+- A `durable` application write now has its own operation identity: its fingerprint uses the
+  `application-operation:v2-durable` domain and names the requirement, so consent and replay can
+  never cross requirements. Ephemeral fingerprints are unchanged byte for byte (pinned to golden
+  hashes captured before this change). The operator review intent names a durable requirement;
+  an ephemeral intent, explicit or omitted, is unchanged.
+- `application reviews` accept `request.executionRequirement` (an explicit `ephemeral` is the
+  default); the CLI's `application execute` takes `--execution-requirement ephemeral|durable`.
+- Durable execution, and a durable review (which could never be executed), stay refused
+  (`403 CONTROL_REQUIRED`, nothing reserved) until a durable journal is wired to the runtime
+  (J-d), even with `durableJournalAvailable` set: that option currently has no effect.
+- Known for J-d: the journal intent still labels every live fingerprint
+  `application-operation:v1`; it must carry the durable domain once durable writes run.
+
+### Added — the journal gates run on macOS (T5 J-f)
+
+- `.github/workflows/journal-darwin.yml` runs the journal manager/child/adapter qualification and
+  the packaging gate (package the server for the runner's target, then prove the extracted
+  candidate resolves the storage child) on `macos-15`, nightly on the default branch (`main`) and
+  on pull requests that touch journal code or its dependencies (including `.tool-versions`, which
+  pins Node and its SQLite). It is deliberately not a required check: it is path-filtered on pull requests,
+  and a path-filtered required check would strand unrelated ones (the T9 packet's invariant now
+  says so).
+
+### Added — autofill qualified against the real react-select (T6 W1)
+
+- The `react-select` and `chip-multiselect` strategies are now tested against react-select 5.10.2
+  on React 19.3.0 in real Chromium, not only markup that imitates it. The app reports its own
+  committed state, which must show the exact option (`Chicago`, not `Chicago Heights`) and no form
+  submission. The qualification uses react-select's `classNamePrefix: 'select'`: the strategies
+  read the committed selection from `select__*` class names (see `docs/bulk-autofill.md`), and on
+  react-select's default generated class names they fail closed rather than verify. The libraries
+  are pinned test-only devDependencies of `@agentbrowser/api`; the shipped tarball and production
+  dependencies are unchanged.
+
+### Changed — `option.value` cannot contain a line break
+
+- An autofill `option.value` with `\n` or `\r` is refused (`INVALID_REQUEST`) before dispatch, for
+  every strategy: the custom strategies type the option text, and a typed line break is an Enter
+  keypress that could commit an unintended option or submit the form (native selects never type,
+  and no real option label contains one). It is refused rather than escaped; other control
+  characters are typed literally and stay allowed.
+
+### Added — a committed observation-overhead benchmark (F1)
+
+- `node packages/benchmarks/dist/run.js observe [n]` observes a 120-element fixture (40 text, 40
+  password, 40 buttons) through the service on real Chromium and prints latency (mean/p50/p95/max);
+  it fails unless all 40 password fields are observed redacted and no password value appears.
+  A baseline snapshot is recorded in `docs/spec/evidence/observation-120-baseline.md`; runs drift
+  ~18% between sessions on the same host, so comparisons (F2) must interleave both builds in one
+  session.
+
+### Added — journal time never moves backwards within a process (T5 J-c)
+
+- The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
+  and retention horizons) use `max(startWall + monotonicElapsed, wallNow, previousReading)`, so a
+  backward wall-clock step mid-process can no longer extend a horizon; they can only become
+  stricter. Everything that persists or deletes (the high-water, namespace retirement, the reopen
+  rollback check) still uses the plain wall reading, so no persisted value derives from the
+  monotonic source and restart behaviour is unchanged.
+
+### Added — output schemas for the last six MCP tools (T0 M2, part 2)
+
+- `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
+  schemas (`PolicyToolResultSchema`, `CookieListResultSchema`, `CookieHandoffToolResultSchema`,
+  `PageSnapshotSchema`, `PageHtmlResultSchema`, `SessionInspectionResultSchema`), and so does
+  the delegated `operation` tool (`OperationRecordResultSchema`): every MCP tool in every catalog
+  now does. `policy` and `cookie_handoff` keep an object root with their two result shapes as
+  alternatives. The nested session, control and operation views are relaxed for clients
+  (`relaxForClients`: open objects, closed enums widened to strings, required fields kept), so an
+  older MCP binary keeps accepting a newer server's results; the protocol schemas stay strict. Qualified end to end, including a real cookie handoff (approval relay, operator
+  decision over HTTP, completion) and a handed-off session's view; a test fails if any tool lacks
+  a schema.
+
+### Fixed — `html` honours its byte cap; `cookie_handoff` reports an unsupported server as an error
+
+- `html`'s `maxBytes` now bounds the returned UTF-8: it is taken in whole bytes, and a cut inside
+  a multibyte character backs off to the character boundary instead of emitting U+FFFD, which
+  overshot the cap by up to 2 bytes.
+- `cookie_handoff` against a client without the handoff surface returned an error envelope as a
+  successful result; it now fails as an error.
+
+### Fixed — the T8 footprint gate measures the CLI's peak exactly
+
+- `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's
+  `--version` can exit before the first sample lands ("no RSS sample collected", seen on #474,
+  #475 and #484), and polling can also understate a peak reached just before exit. The CLI
+  one-shot is now measured exactly — `ru_maxrss` of the reaped child (wait4 rusage, via a
+  python3 helper) — and must exit 0. The MCP bridge's idle-after-handshake peak is still polled,
+  now reading `VmRSS` from /proc on Linux instead of forking `ps`. A stand-in allocating 40 MB and
+  exiting at once reads 51.4–51.6 MB on every run.
+- The bridge harness read stdout with one listener per request, all appending to one buffer, so a
+  response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
+  uses one shared line reader with a pending-request map.
+
+### Docs — release records and task-status reconciliation
+
+- Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).
+- The task table and manifest match the 2026-10-15 reconciliation: T1 is active, T7 complete, the
+  Victor gate is aiserver1's gateway (not TLS), and C4b is partial. Stale "candidate" status lines
+  on three delivered evidence records are corrected, C3b cites #254, the T9 checkpoint names the
+  current protections, and the release guide no longer claims the upload permits clobbering.
+
+### Fixed — the execution requirement as shipped (T5 C4b, part 1)
+
+- An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
+  invalid request; the authority's request normalizer now accepts it as the default made
+  explicit and drops it behind its existing caller-data checks, so explicit and omitted requests
+  share one operation identity (the second is a replay, not a conflict). `durable` is refused
+  before any identity is reserved, and stays refused even with a durable store configured until
+  it is part of the operation identity; discovery advertises only `ephemeral` until then.
+- REST discovery (`GET …/application`) now publishes `writeExecution` (it was added only to the
+  service's return value, which REST does not send), and "nothing bound" stays `null` instead of
+  becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
+
+### Added — declared adapter output (T4)
+
+- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not
+  match is never reported as success, and neither the adapter output nor the parser's message
+  is echoed; a matching value is replaced by the parsed one.
+  - A mismatched **read** is refused like any invalid read result (`400 INVALID_REQUEST`,
+    `Invalid application output`).
+  - A mismatched **write** has already run: it is an internal adapter fault (`500 INTERNAL`), its
+    operation stays dispatched with `outcome_unknown`, and the same operation ID never executes
+    again.
+  - Rejected results skip the parser; operations without `parseOutput` are unchanged.
+
+### Added — MCP request cancellation (T0/T8)
+
+- The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is
+  aborted down to its HTTP request, and no response is sent for it (MCP 2025-06-18). A cancel for
+  a finished or unknown request is ignored and re-runs nothing; `initialize` is never cancelled;
+  concurrent calls are independent. A cancelled `create` still frees the session it created: its
+  cleanup runs outside the cancelled call's scope.
+- SDK: `ClientOptions.requestSignal` (a hook read per request) lets a caller cancel. A cancelled
+  request fails with `CANCELLED` — not retryable, `operationId` attached, "outcome may be
+  unknown" — so a cancelled write is reconciled, never treated as success or replayed blindly.
+
+### Added — output schemas for six more MCP tools (T0 M2, part 1)
+
+- `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` advertise an
+  `outputSchema` on the `2025-06-18` protocol, so structured-capable clients receive
+  `structuredContent` for them. New protocol schemas: `PageResponseSchema`,
+  `SessionCreatedResultSchema`, `PageListResultSchema`, `SessionClosedResultSchema` and
+  `SessionEventsPageResultSchema`; `pdf` shares `screenshot`'s `ArtifactRefSchema`. The schemas
+  stay open to additive fields. A full-stack test validates every tool's real result against its
+  schema.
+
+### Fixed — structured tool errors no longer break MCP clients that validate output
+
+- MCP clients (the official TypeScript SDK among them) validate `structuredContent` against a
+  tool's `outputSchema` even on `isError` results. Ours advertised the success shape only, so a
+  structured error (`{error: {code, message, operationId?}}`, shipped in 1.17) from `act`,
+  `navigate`, `extract`, `observe`, `autofill`, `plan`, `screenshot` and the tools above became a
+  client-side `-32602` and the agent never saw the error. Every advertised `outputSchema` is now
+  `{type: "object", anyOf: [<result schema>, <error envelope>]}`, keeping the result schema's
+  `$id` at the root. Protocol schemas, OpenAPI and discovery are unchanged. A client-view test
+  reads `tools/list` and validates every `structuredContent`, errors included, with a draft-07
+  validator.
+
+### Fixed — the documented session response no longer requires `engine.capabilities`
+
+- OpenAPI's `EngineInfo` (in every session response) marked `capabilities` required, but no
+  session response has ever carried it. It is now optional; capabilities come from
+  `GET /v1/engine`.
+
+### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
+
+- Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository
+  default. In `release.yml` only the `release` job (GitHub Release and asset upload) can write
+  contents; `npm-publish` keeps only its OIDC `id-token`.
+- All 67 action references in the four workflows are pinned to the full commit SHA of their
+  release, with a `# vX.Y.Z` comment for Dependabot. `scripts/release-workflow.test.mjs` checks
+  every workflow file: it refuses an unpinned reference, any top-level permissions other than
+  `contents: read`, and any job-level grant beyond an exact allowlist (`release`, `npm-publish`
+  and the docs `deploy` job).
+- The T9 packet records why skipped or canceled jobs cannot turn the required checks or the
+  release graph green.
+
+### Changed — plans are capped at 100 steps (T0)
+
+- A plan now accepts at most **`MAX_PLAN_STEPS` = 100** steps (new protocol export, separate from the
+  20-step `act` batch cap). The cap is enforced in `AgentBrowserService.executePlan` itself, so no
+  caller bypasses it, and on every surface before dispatch: REST `/plan` answers
+  `400 INVALID_REQUEST` naming the limit; `/outcomes` (an outcome run's `actions` carry the same
+  `maxItems`) answers `400 INVALID_REQUEST` with its usual generic message; the MCP `plan` tool advertises `maxItems` and refuses locally; the CLI `plan` command refuses
+  locally; the SDK receives the server's refusal. Nothing executes for an over-limit plan. Split
+  longer work into several plans. Plan *reports* are unaffected.
+
+### Added — confirmed vs suspected findings, and a role-access fixture (T7)
+
+- **Scanner alerts are labelled.** Every `ScannerFinding` now carries `status: 'suspected'`;
+  ZAP's own confidence is kept as `scannerConfidence` (information only — ZAP's "Confirmed" maps
+  to `confirmed-by-scanner-user`, still suspected here).
+- **`confirmFinding(finding, evidence)`** is the only way to reach `confirmed`, including for the
+  role-access probe below. It requires a reproduction record (the `independent-reproduction`
+  method label, a full ISO-8601 date-time with offset, a bounded observation) and a cleanup
+  record; a required but unperformed cleanup refuses with `CLEANUP_INCOMPLETE`, and a scanner
+  confidence label is refused as evidence. The record is an **attestation** the caller vouches
+  for: the function checks its shape, not that the reproduction happened.
+- **Role/business-logic fixture.** `checkRoleAccess` reads each fixture resource as every
+  non-owner identity, read-only (GET, redirects never followed, bodies read up to 1 MiB, 15 s
+  timeout) and host-scope-checked for every resource before any request; path, method, time and
+  budget limits stay with the caller. A non-owner that receives the owner's private marker is a
+  `broken-access-control` finding confirmed through `confirmFinding`, the detecting read being
+  the reproduction; a success status without the marker is not a finding. The marker never
+  appears in a finding: a fixture whose URL contains it is refused, as are unknown (including
+  prototype-key) owners and empty markers. A failing owner control invalidates the fixture rather
+  than passing. The tests drive a vulnerable/fixed invoice pair plus a fixed app that answers 200.
+- **SARIF.** Results carry `kind: review` (suspected) or `kind: fail` (confirmed) and a
+  `properties.status`. Per SARIF 2.1.0 §3.27.10 a suspected result has `level: none`, with the
+  scanner's risk in `properties.risk` and the rule's `defaultConfiguration`; confirmed results keep
+  the risk level and add their evidence description. Role-access findings get their own run.
+
 ## [1.18.0] — 2026-10-15
 
 ### Fixed — the login browser's no-disabling-flags test now actually checks (TD-BROWSER-16 phase 4)

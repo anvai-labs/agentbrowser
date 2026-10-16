@@ -11,6 +11,7 @@
  * for a live namespace inside one child is refused by the ownership fence.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { createJournalClock } from './journal-clock.js';
 import {
   isJournalChildRequest,
   type JournalChildRequest,
@@ -19,6 +20,7 @@ import {
   closeJournalSqliteNamespace,
   commitJournalSqliteTerminal,
   ensureJournalSqliteRecordSchema,
+  findJournalSqliteRecordsByOperation,
   lookupJournalSqliteRecord,
   markJournalSqliteDispatch,
   openJournalSqliteRecords,
@@ -39,6 +41,9 @@ try {
   const send = process.send.bind(process);
   const disconnect = process.disconnect.bind(process);
   const options = JSON.parse(process.argv[2] ?? '');
+  // T5 J-c: journal time never moves backwards within this process (the persisted high-water,
+  // applied in each transaction, covers restarts).
+  const clock = createJournalClock();
 
   const { openJournalSqliteStore } = await import('./journal-sqlite-store.js');
   const store = openJournalSqliteStore(options);
@@ -106,24 +111,40 @@ try {
         closeJournalSqliteNamespace(tx, namespaceId, ownerFence);
         return { kind: 'closed' };
       });
+    } else if (read && kind === 'findByOperation') {
+      const connection = readConnection();
+      outcome = findJournalSqliteRecordsByOperation(
+        {
+          get: get(connection),
+          all: (sql: string, ...parameters: unknown[]) =>
+            connection.prepare(sql).all(...(parameters as never[])) as Record<string, unknown>[],
+        },
+        namespaceId,
+        ownerFence,
+        value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
+        clock.now()
+      );
     } else if (read) {
       outcome = lookupJournalSqliteRecord(
         { get: get(readConnection()) },
         namespaceId,
         ownerFence,
         value as Parameters<typeof lookupJournalSqliteRecord>[3],
-        Date.now()
+        clock.now()
       );
     } else {
       outcome = store.mutate((tx: JournalSqliteTransaction) => {
-        const now = Date.now();
+        // Checks use the effective time; what persists uses the wall reading.
+        const now = clock.now();
+        const wall = clock.wall();
         if (kind === 'reserveIntent')
           return reserveJournalSqliteIntent(
             tx,
             namespaceId,
             ownerFence,
             value as Parameters<typeof reserveJournalSqliteIntent>[3],
-            now
+            now,
+            wall
           );
         if (kind === 'markDispatch')
           return markJournalSqliteDispatch(
@@ -131,7 +152,8 @@ try {
             namespaceId,
             ownerFence,
             value as Parameters<typeof markJournalSqliteDispatch>[3],
-            now
+            now,
+            wall
           );
         if (kind === 'commitTerminal')
           return commitJournalSqliteTerminal(
@@ -139,7 +161,8 @@ try {
             namespaceId,
             ownerFence,
             value as Parameters<typeof commitJournalSqliteTerminal>[3],
-            now
+            now,
+            wall
           );
         throw new Error('unreachable mutation kind');
       });
@@ -175,7 +198,12 @@ try {
         | undefined;
       try {
         openOutcome = store.mutate((tx: JournalSqliteTransaction) => {
-          const result = openJournalSqliteRecords(tx, message.descriptor, Date.now());
+          const result = openJournalSqliteRecords(
+            tx,
+            message.descriptor,
+            clock.now(),
+            clock.wall()
+          );
           return result.kind === 'opened'
             ? { kind: 'opened' as const, ownerFence: result.ownerFence }
             : { kind: 'refused' as const, reason: result.reason };
@@ -218,7 +246,7 @@ try {
         maybeShutdown();
         return;
       }
-      const read = message.kind === 'lookup';
+      const read = message.kind === 'lookup' || message.kind === 'findByOperation';
       send({
         kind: 'outcome',
         correlationId: message.correlationId,
@@ -242,7 +270,7 @@ try {
         message.namespaceId,
         message.ownerFence,
         'value' in message ? message.value : undefined,
-        message.kind === 'lookup'
+        message.kind === 'lookup' || message.kind === 'findByOperation'
       );
     } catch {
       inFlight -= 1;

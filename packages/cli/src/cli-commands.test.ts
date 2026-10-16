@@ -326,6 +326,16 @@ describe('AgentBrowser CLI remaining command surface', () => {
       ]);
     });
 
+    it('plan refuses more than 100 steps locally, naming the limit, without calling the service', async () => {
+      sessions.plan.mockClear();
+      const steps = JSON.stringify(
+        Array.from({ length: 101 }, () => ({ action: 'press', key: 'Tab' }))
+      );
+      expect(await run('plan', 'ses_1', 'pg_1', steps)).not.toBe(0);
+      expect([...out, ...err].join('\n')).toContain('A plan accepts at most 100 steps; got 101');
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
     it('outcome renders the execution summary in text mode', async () => {
       sessions.outcome = vi.fn().mockResolvedValue({
         plan: { ok: true, completed: 1, results: [{ step: 0, ok: true }] },

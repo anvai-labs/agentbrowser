@@ -28,6 +28,7 @@ import {
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   EVENT_REPLAY_MIN_SINCE,
+  ExecutionRequirementSchema,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
   NonActApprovalDecisionSchema,
@@ -60,6 +61,27 @@ const API_VERSION = '1.0.0';
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 
 const json = (schema: object) => ({ 'application/json': { schema } });
+
+/**
+ * T5 B-dur (B1): the browser routes (act, plan, autofill) accept `executionRequirement`. The
+ * server peels it off before the body is validated, so it is documented here, not in the protocol
+ * body schemas the service and MCP validate against.
+ */
+const withExecutionRequirement = <T extends { properties: object }>(schema: T): T => ({
+  ...schema,
+  properties: {
+    ...schema.properties,
+    executionRequirement: {
+      ...ExecutionRequirementSchema,
+      description:
+        "'ephemeral' (the default; identical to omitting it) or 'durable'. Durable journals the " +
+        'call as ONE browser operation (adapter `browser`, resource act|plan|autofill) for ' +
+        'classification only, never replay: it needs a controlled session, an operation ID and ' +
+        'an open journal, and is refused with CONTROL_REQUIRED otherwise. Each durable call ' +
+        "uses one record of the journal's shared capacity.",
+    },
+  },
+});
 
 /** An error response, always shaped as the protocol's ApiError envelope. */
 const errorResponse = (description: string) => ({
@@ -897,7 +919,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.',
           tags: ['pages'],
           parameters: [sessionIdParam, pageIdParam],
-          requestBody: { required: true, content: json(AutofillRequestSchema) },
+          requestBody: {
+            required: true,
+            content: json(withExecutionRequirement(AutofillRequestSchema)),
+          },
           responses: {
             '200': {
               description: 'Per-field report; inspect ok and receipts even on HTTP 200.',
@@ -925,12 +950,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
             required: true,
-            content: json({
-              ...PlanRequestSchema,
-              properties: {
-                actions: { ...PlanRequestSchema.properties.actions, items: ref('PlanStep') },
-              },
-            }),
+            content: json(
+              withExecutionRequirement({
+                ...PlanRequestSchema,
+                properties: {
+                  actions: { ...PlanRequestSchema.properties.actions, items: ref('PlanStep') },
+                },
+              })
+            ),
           },
           responses: {
             '200': {
@@ -1227,7 +1254,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
             required: true,
-            content: json(WireActionEnvelopeSchema),
+            content: json(withExecutionRequirement(WireActionEnvelopeSchema)),
           },
           responses: {
             '200': { description: 'The action result.', content: json(ref('ActionOutcome')) },
@@ -1610,6 +1637,345 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           },
         },
       },
+      '/v1/journal': {
+        get: {
+          operationId: 'getJournalStatus',
+          summary: 'The durable journal: configuration, health and qualified runtime',
+          description:
+            'T5 J3b (accepted J-design, D5). Read-only; a tenant API key or the operator key may call it. recoveryQualified is advisory (no exactly-once promise): true only when the journal is configured and open on the qualified matrix (Node 24 on Linux or macOS). Keyless deployments authenticate nobody and get 401. Rate limited per tenant.',
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'The journal status.',
+              content: json({
+                type: 'object',
+                required: ['schemaVersion', 'configured', 'runtime', 'recoveryQualified'],
+                properties: {
+                  schemaVersion: { type: 'integer', const: 1 },
+                  configured: {
+                    type: 'boolean',
+                    description: 'Whether AGENTBROWSER_JOURNAL_* configured a journal.',
+                  },
+                  namespace: { type: 'string', description: 'The configured namespace id.' },
+                  health: {
+                    type: 'string',
+                    enum: ['open', 'quarantined', 'poisoned', 'closed'],
+                    description: 'The opened journal handle health, when it is open.',
+                  },
+                  acceptUntil: {
+                    type: 'string',
+                    description: 'ISO-8601: new durable intents are accepted until this instant.',
+                  },
+                  retainUntil: {
+                    type: 'string',
+                    description: 'ISO-8601: records are retained until this instant.',
+                  },
+                  runtime: {
+                    type: 'object',
+                    required: ['platform', 'node', 'qualified'],
+                    properties: {
+                      platform: { type: 'string' },
+                      node: { type: 'string' },
+                      qualified: {
+                        type: 'boolean',
+                        description: 'This runtime is in the qualified matrix.',
+                      },
+                    },
+                  },
+                  recoveryQualified: { type: 'boolean' },
+                  history: {
+                    type: 'array',
+                    maxItems: 17,
+                    description:
+                      'T5 J3d: namespaces rotated away from (AGENTBROWSER_JOURNAL_HISTORY_FILE), plus the current namespace once its accept horizon has passed (current: true, recover-only). open: searched by lookup and recoverable by the operator until retainUntil; refused: the store did not open it (reason), so its records are unread.',
+                    items: {
+                      type: 'object',
+                      required: ['namespace', 'state', 'acceptUntil', 'retainUntil'],
+                      properties: {
+                        namespace: { type: 'string' },
+                        current: {
+                          type: 'boolean',
+                          description: 'The configured current namespace, past its horizon.',
+                        },
+                        state: { type: 'string', enum: ['open', 'refused', 'unavailable'] },
+                        reason: { type: 'string' },
+                        acceptUntil: { type: 'string' },
+                        retainUntil: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              }),
+            },
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '429': errorResponse('Journal lookup rate limit exceeded.'),
+          },
+        },
+      },
+
+      '/v1/journal/operations/{operationId}': {
+        get: {
+          operationId: 'lookupJournalOperation',
+          summary: 'Historical records of one durable operation, tenant-scoped and read-only',
+          description:
+            "T5 J3b (accepted J-design, D1 amended). Every stored record of the operation ID in the configured namespace, projected to classification, application identity and the departed session's opaque identity; fingerprints, digests, actors, inputs and evidence content never cross the wire. Readable by a tenant API key or the operator key, scoped to the credential's tenant; delegated grants are refused; writes do not exist here (J3c). An absent result is scoped absence in this namespace, never proof of non-execution. Rate limited per tenant.",
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The bounded record list (at most 16).',
+              content: json({
+                type: 'object',
+                required: ['schemaVersion', 'operationId', 'absent', 'truncated', 'records'],
+                properties: {
+                  schemaVersion: { type: 'integer', const: 1 },
+                  operationId: { type: 'string' },
+                  absent: {
+                    type: 'boolean',
+                    description:
+                      'No record matched in ANY searched namespace and every one answered; not proof of non-execution.',
+                  },
+                  truncated: { type: 'boolean' },
+                  unreadNamespaces: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 17,
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: searched (or configured history) namespaces that could not be read this time; absent is then false — the history is partly unread, not absent.',
+                  },
+                  records: {
+                    type: 'array',
+                    maxItems: 16,
+                    items: {
+                      type: 'object',
+                      required: [
+                        'namespace',
+                        'classification',
+                        'actionable',
+                        'application',
+                        'session',
+                      ],
+                      properties: {
+                        namespace: { type: 'string' },
+                        classification: {
+                          type: 'string',
+                          enum: [
+                            'undispatched',
+                            'in_doubt',
+                            'failed_before_dispatch',
+                            'completed',
+                            'failed',
+                            'settled_unknown',
+                          ],
+                        },
+                        actionable: {
+                          type: 'boolean',
+                          description: 'True only for states J3c can still change.',
+                        },
+                        application: {
+                          type: 'object',
+                          required: ['adapter', 'resource', 'bindingGeneration'],
+                          properties: {
+                            adapter: { type: 'string' },
+                            resource: { type: 'string' },
+                            bindingGeneration: { type: 'string' },
+                          },
+                        },
+                        session: {
+                          type: 'object',
+                          required: ['sessionIncarnation', 'epoch'],
+                          description: 'Opaque identity of the departed session.',
+                          properties: {
+                            sessionIncarnation: { type: 'string' },
+                            epoch: {
+                              type: 'integer',
+                              minimum: 0,
+                              description:
+                                'The control epoch; 0 is the initial human-active epoch.',
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '404': errorResponse('No durable journal is configured on this deployment.'),
+            '429': errorResponse('Journal lookup rate limit exceeded.'),
+            '503': errorResponse(
+              'The journal refused this lookup or is configured but not open; treat the history as unread, not absent.'
+            ),
+          },
+        },
+      },
+
+      '/v1/journal/operations/{operationId}/close': {
+        post: {
+          operationId: 'closeJournalOperation',
+          summary:
+            'Close the never-dispatched records of an operation as marked pre-dispatch failures',
+          description:
+            'T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.',
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'How many records were closed (of the first 16 that matched).',
+              content: json({
+                type: 'object',
+                required: ['closed', 'truncated'],
+                properties: {
+                  unreadNamespaces: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
+                  },
+                  closed: { type: 'integer', minimum: 0 },
+                  truncated: {
+                    type: 'boolean',
+                    description: 'More than 16 records matched; act again for the rest.',
+                  },
+                },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '403': errorResponse('Journal recovery writes require the operator key.'),
+            '404': errorResponse('No record of this operation in the searched namespace.'),
+            '409': errorResponse('No eligible record, or a record changed mid-write.'),
+            '429': errorResponse('Journal recovery rate limit exceeded.'),
+            '503': errorResponse('No open durable journal, or the journal refused the write.'),
+          },
+        },
+      },
+
+      '/v1/journal/operations/{operationId}/settle': {
+        post: {
+          operationId: 'settleJournalOperation',
+          summary: 'Settle the in-doubt records of an operation as terminal unknown (irreversible)',
+          description:
+            'T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Settles ONLY the in-doubt (dispatched, terminal-less) records; undispatched siblings are closed, terminal ones are final. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.',
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'How many records were settled (of the first 16 that matched).',
+              content: json({
+                type: 'object',
+                required: ['settled', 'truncated'],
+                properties: {
+                  unreadNamespaces: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
+                  },
+                  settled: { type: 'integer', minimum: 0 },
+                  truncated: {
+                    type: 'boolean',
+                    description: 'More than 16 records matched; act again for the rest.',
+                  },
+                },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '403': errorResponse('Journal recovery writes require the operator key.'),
+            '404': errorResponse('No record of this operation in the searched namespace.'),
+            '409': errorResponse('No eligible record, or a record changed mid-write.'),
+            '429': errorResponse('Journal recovery rate limit exceeded.'),
+            '503': errorResponse('No open durable journal, or the journal refused the write.'),
+          },
+        },
+      },
+
+      '/v1/journal/operations/{operationId}/reconcile': {
+        post: {
+          operationId: 'reconcileJournalOperation',
+          summary: "Resolve an operation's in-doubt records by asking the bound adapter",
+          description:
+            "T5 J3c part 2 (accepted design, D3). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). For each in-doubt (dispatched, terminal-less) record, asks the bound adapter's opt-in reconcile for that exact operation (tenant, application identity, session incarnation and operation ID; no fingerprint crosses). committed and rejected commit the matching terminal (completed, failed) with no evidence refs; unknown, or an adapter error, changes nothing and counts as unresolved. An adapter without reconcile refuses with 409 CONTROL_REQUIRED: settle instead. Never replays the effect. Rate limited per tenant.",
+          tags: ['journal'],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'operationId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'How many in-doubt records were resolved and how many stay unresolved.',
+              content: json({
+                type: 'object',
+                required: ['reconciled', 'unresolved', 'truncated'],
+                properties: {
+                  unreadNamespaces: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
+                  },
+                  reconciled: { type: 'integer', minimum: 0 },
+                  unresolved: {
+                    type: 'integer',
+                    minimum: 0,
+                    description: 'Records the adapter could not resolve; they stay in doubt.',
+                  },
+                  truncated: {
+                    type: 'boolean',
+                    description: 'More than 16 records matched; act again for the rest.',
+                  },
+                },
+              }),
+            },
+            '400': errorResponse('Invalid operation ID.'),
+            '401': errorResponse('No valid bearer credential named a tenant.'),
+            '403': errorResponse('Journal recovery writes require the operator key.'),
+            '404': errorResponse(
+              'No actionable record of this operation in the searched namespace.'
+            ),
+            '409': errorResponse(
+              'No in-doubt record, a record changed mid-write, or the adapter cannot reconcile (CONTROL_REQUIRED).'
+            ),
+            '429': errorResponse('Journal recovery rate limit exceeded.'),
+            '503': errorResponse('No open durable journal, or the journal refused the write.'),
+          },
+        },
+      },
+
       '/v1/policy': {
         get: {
           operationId: 'getPolicy',

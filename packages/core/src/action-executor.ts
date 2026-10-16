@@ -295,6 +295,47 @@ export class ActionExecutor {
   }
 
   /**
+   * T5 B-dur (B6): re-run, after a storage wait, the same target checks `execute` applies before
+   * the engine call, with the CURRENT page revision: the revision staleness check (the request's
+   * expected revision and the ref's own revision), then re-resolve the ref (engine failures
+   * normalized exactly as `execute` maps them — a crash stays `ENGINE_CRASHED`, no raw engine text
+   * escapes), then visibility (except `upload`), enabled and the fingerprint against the
+   * observation. Returns the typed failure, or `null` when still current.
+   */
+  async revalidateTarget(
+    request: ActionRequest,
+    context: Pick<
+      ExecutionContext,
+      'enginePage' | 'observation' | 'currentRevision' | 'elementIndex'
+    >
+  ): Promise<ApiErrorDetail | null> {
+    const { enginePage, observation, currentRevision, elementIndex } = context;
+    const target = targetOf(request.action);
+    const stale = this.checkStaleness(request, target, currentRevision ?? observation.revision);
+    if (stale) return stale;
+    if (!target) return null;
+    const ref = target.ref;
+    const actionType = request.action.type;
+    let resolved: ResolvedTarget;
+    try {
+      resolved = await enginePage.resolve({ ref });
+    } catch (error) {
+      return this.mapEngineError(error);
+    }
+    if (!resolved.visible && actionType !== 'upload')
+      return createApiErrorDetail(
+        ErrorCode.TARGET_NOT_VISIBLE,
+        `Target element ${ref} is not visible`,
+        { details: { ref } }
+      );
+    if (!resolved.enabled)
+      return createApiErrorDetail(ErrorCode.TARGET_DISABLED, `Target element ${ref} is disabled`, {
+        details: { ref },
+      });
+    return this.verifyFingerprint(ref, resolved, observation, elementIndex);
+  }
+
+  /**
    * Verify the resolved element still matches what the caller observed.
    * Prefers the caller's per-observation index (O(1)) over the linear scan
    * (TD-BROWSER-9, A7).

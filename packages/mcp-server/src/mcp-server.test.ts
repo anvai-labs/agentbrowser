@@ -139,14 +139,21 @@ describe('AgentBrowser MCP server', () => {
       const tools = JSON.parse(await request('list', 'tools/list')).result.tools;
       const autofill = tools.find((tool: { name: string }) => tool.name === 'autofill');
       expect(autofill.outputSchema.$id).toBe('urn:agentbrowser:autofill-report:v1');
+      // The advertised schema is the result schema OR the structured-error envelope.
+      expect(autofill.outputSchema.type).toBe('object');
+      expect(autofill.outputSchema.anyOf[0].$id).toBeUndefined();
+      expect(autofill.outputSchema.anyOf[1].required).toEqual(['error']);
       expect(
-        autofill.outputSchema.properties.receipts.items.properties.status.anyOf
+        autofill.outputSchema.anyOf[0].properties.receipts.items.properties.status.anyOf
       ).toContainEqual({ type: 'string', const: 'uncertain' });
       expect(
         autofill.inputSchema.properties.fields.items.properties.match.properties.block.properties
           .label.maxLength
       ).toBe(512);
       expect(autofill.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+      const plan = tools.find((tool: { name: string }) => tool.name === 'plan');
+      expect(plan.inputSchema.properties.actions.maxItems).toBe(100);
+      expect(plan.description).toContain('at most 100 steps per plan');
     });
 
     it('preserves legacy text-only catalogs and successful calls', async () => {
@@ -188,14 +195,16 @@ describe('AgentBrowser MCP server', () => {
       await initialize('2025-06-18');
       const tools = JSON.parse(await request('list', 'tools/list')).result.tools;
       const byName = new Map(
-        tools.map((tool: { name: string; outputSchema?: { $id?: string } }) => [
-          tool.name,
-          tool.outputSchema,
-        ])
+        tools.map(
+          (tool: {
+            name: string;
+            outputSchema?: { $id?: string; anyOf: Array<{ properties: Record<string, unknown> }> };
+          }) => [tool.name, tool.outputSchema]
+        )
       );
       expect(byName.get('act')?.$id).toBe('urn:agentbrowser:act-outcome:v1');
       expect(byName.get('navigate')?.$id).toBeUndefined(); // inline schema, no $id
-      expect(byName.get('navigate')?.properties.status).toBeDefined();
+      expect(byName.get('navigate')?.anyOf[0].properties.status).toBeDefined();
       expect(byName.get('extract')?.$id).toBe('urn:agentbrowser:extract-outcome:v1');
     });
 
@@ -508,6 +517,22 @@ describe('AgentBrowser MCP server', () => {
         })
       ).result;
       expect(result.isError).toBe(true);
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
+    it('refuses a plan over MAX_PLAN_STEPS locally, naming the limit, and never proxies it', async () => {
+      const result = JSON.parse(
+        await call('over-cap-plan', 'plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: Array.from({ length: 101 }, () => ({
+            action: 'hover',
+            target: { ref: 'e1_0' },
+          })),
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain('A plan accepts at most 100 steps; got 101');
       expect(sessions.plan).not.toHaveBeenCalled();
     });
 
@@ -1180,6 +1205,44 @@ describe('AgentBrowser MCP server', () => {
         expect(result.html).toHaveLength(5);
         expect(result.truncated).toBe(true);
         expect(result.warning).toContain('NOT secret-redacted');
+      });
+
+      it('maxBytes bounds the returned UTF-8 even when the cut tears a multibyte character', async () => {
+        // "a" + "€" (3 bytes) + "😀" (4 bytes) + "b": cuts at 2, 3, 5, 6 and 7 land inside a character.
+        const page = 'a€😀b';
+        sessions.html.mockResolvedValue({
+          artifactId: 'html_mb',
+          type: 'html',
+          contentType: 'text/html; charset=utf-8',
+          sizeBytes: Buffer.byteLength(page),
+          inline: { contentBase64: Buffer.from(page).toString('base64') },
+        });
+        const expected: Record<number, string> = {
+          1: 'a',
+          2: 'a',
+          3: 'a',
+          4: 'a€',
+          5: 'a€',
+          6: 'a€',
+          7: 'a€',
+          8: 'a€😀',
+          9: 'a€😀b',
+        };
+        for (const [maxBytes, html] of Object.entries(expected)) {
+          const result = textOf(
+            JSON.parse(
+              await call(`html-mb-${maxBytes}`, 'html', {
+                sessionId: 'ses_1',
+                pageId: 'pg_1',
+                maxBytes: Number(maxBytes),
+              })
+            )
+          );
+          expect(result.html).toBe(html);
+          expect(Buffer.byteLength(result.html)).toBeLessThanOrEqual(Number(maxBytes));
+          expect(result.html).not.toContain('\uFFFD');
+          expect(result.truncated).toBe(Number(maxBytes) < 9);
+        }
       });
 
       it('falls back to the artifact surface when the export is not inlined', async () => {

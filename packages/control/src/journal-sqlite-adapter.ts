@@ -1,6 +1,6 @@
 /** Bounded manager and raw adapter factory over the concrete SQLite journal child
- * (J2b.2 step 2). Deliberately absent from the control barrel: nothing here is wired
- * into the service, and no public capability is enabled.
+ * (J2b.2 step 2). Exported from the control barrel since J-d: the service opens it only when
+ * the deployment configures a durable journal (packages/api/src/journal-config.ts).
  *
  * One manager owns ONE storage child for all namespace handles (never one child per
  * open). The child self-exits after the last live handle closes and all in-flight
@@ -232,6 +232,7 @@ export async function openJournalSqliteOperationJournalAdapter(
       markDispatch: (stamped: { value: unknown }) => call('markDispatch', stamped.value),
       commitTerminal: (stamped: { value: unknown }) => call('commitTerminal', stamped.value),
       lookup: (stamped: { value: unknown }) => call('lookup', stamped.value),
+      findByOperation: (stamped: { value: unknown }) => call('findByOperation', stamped.value),
       async close() {
         const correlationId = ++correlationSequence;
         const response = await callCorrelated({

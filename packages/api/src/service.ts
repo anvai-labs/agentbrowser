@@ -1,4 +1,9 @@
-import { isNavigationFailureReason, sessionLeaseRemainingMs } from '@agentbrowser/protocol';
+import { createHash } from 'node:crypto';
+import {
+  isNavigationFailureReason,
+  MAX_PLAN_STEPS,
+  sessionLeaseRemainingMs,
+} from '@agentbrowser/protocol';
 import {
   attachRequestHasOptions,
   type CdpAttachAdmission,
@@ -37,7 +42,9 @@ import {
   defineApplicationReceiptEvidenceSource,
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
+  type JournalRecord,
   NATIVE_FORM_REVIEW_TYPE,
+  type OperationJournal,
   type OperationPublication,
   type PreparedApplicationConsent,
   type PreparedApplicationOperationReview,
@@ -164,6 +171,7 @@ import {
   DownloadTransport,
   type DownloadTransportOptions,
 } from './download-transport.js';
+import { searchJournalNamespaces } from './journal-config.js';
 import {
   createDefaultNetworkPolicy,
   networkPolicyFromEnvironment,
@@ -433,11 +441,24 @@ export interface ServiceDependencies {
     }>;
   };
   /**
-   * C4b: whether a qualified durable journal store is deployed. Defaults
-   * to false (ephemeral-only). Trusted deployment configuration — never
-   * settable from session or request input.
+   * @deprecated Has no effect. Durability is never a configuration claim: it is available only
+   * while an `operationJournal` is attached and open.
    */
   durableJournalAvailable?: boolean;
+  /**
+   * C4b (J-d): an opened durable operation journal (trusted deployment configuration, see
+   * `journal-config.ts`). With it, application writes requesting `executionRequirement:
+   * 'durable'` are journaled; durable is advertised and accepted only while it is open and
+   * accepting. The caller owns its lifetime and closes it after `shutdown()`.
+   */
+  operationJournal?: OperationJournal;
+  /**
+   * T5 J3d (D7): namespaces rotated away from, opened read-and-recover on the same store. They
+   * are searched by recovery and never take a new intent (the store refuses past the horizon).
+   */
+  historyJournals?: readonly { readonly namespaceId: string; readonly journal: OperationJournal }[];
+  /** J3d: configured history namespaces the store refused; recovery treats them as unread. */
+  refusedHistoryNamespaces?: readonly string[];
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
@@ -533,6 +554,8 @@ export interface ServiceDependencies {
    * objects, so an externally built authority could never see them.
    */
   applicationAdapters?: readonly ApplicationAdapter[];
+  /** J3c part 2: bound on one adapter reconcile call (default 10 s); slower counts unresolved. */
+  journalReconcileTimeoutMs?: number;
   /**
    * Synchronous trusted deployment composition for public evidence reviews.
    * The returned collector may use context.nativeForm within this admission only.
@@ -622,10 +645,97 @@ export type PartialObservation = {
 };
 
 /** Optional observation enrichments the stack actually delivers. */
+/** Longest graceful shutdown waits for in-flight controlled runs to settle. */
+const SHUTDOWN_DRAIN_MS = 30_000;
+
 const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
+/**
+ * T5 B-dur (B2): failures KNOWN to be raised before a browser effect (a refusal, a stale or
+ * missing target, a policy or approval decision, a bad request). Every other failure — a
+ * timeout, a crash, an internal error, a post-effect verification gap such as
+ * `ENGINE_UNSUPPORTED` "the fill may have completed", `VALUE_MISMATCH`, an untyped error — may
+ * follow an effect, so it is outcome-unknown. An allowlist, so a new code is unknown by default.
+ */
+export const BROWSER_KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'INVALID_REQUEST',
+  'INVALID_TENANT_ID',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'POLICY_DENIED',
+  'APPROVAL_REQUIRED',
+  'SESSION_NOT_FOUND',
+  'PAGE_NOT_FOUND',
+  'STALE_TARGET',
+  'TARGET_NOT_FOUND',
+  'TARGET_AMBIGUOUS',
+  'TARGET_NOT_VISIBLE',
+  'TARGET_DISABLED',
+  'PLAN_WAIT_TIMEOUT',
+  'OPERATION_CONFLICT',
+  'SESSION_BUSY',
+  'QUOTA_EXCEEDED',
+]);
+
+/**
+ * Failures raised AFTER an effect was reported done (the post-action wait or observation: a click
+ * that closed its page then fails the follow-up read with PAGE_NOT_FOUND). Whatever their code,
+ * the effect happened, so they are outcome-unknown, never a known pre-effect failure.
+ */
+const postEffectFailures = new WeakSet<object>();
+const afterEffect = (error: unknown): unknown => {
+  if (typeof error === 'object' && error !== null) postEffectFailures.add(error);
+  return error;
+};
+
+const isPostEffectFailure = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && postEffectFailures.has(error);
+const carryAfterEffect = <T>(from: unknown, to: T): T =>
+  typeof from === 'object' && from !== null && postEffectFailures.has(from)
+    ? (afterEffect(to) as T)
+    : to;
+
+/** May a browser effect have happened before this failure? (Untyped failures: yes.) */
+export const browserFailureOutcomeUnknown = (error: unknown): boolean => {
+  if (typeof error === 'object' && error !== null && postEffectFailures.has(error)) return true;
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code !== 'string' || !BROWSER_KNOWN_FAILURE_CODES.has(code);
+};
+const outcomeUnknownFailure = browserFailureOutcomeUnknown;
+
+/**
+ * Plan and batch reports whose failing step's effect is unknown. The wire report keeps only the
+ * step's message, so the service remembers the fact beside the object instead of changing it.
+ */
+const outcomeUnknownReports = new WeakSet<object>();
+const markOutcomeUnknown = <T extends object>(report: T, unknown: boolean): T => {
+  if (unknown) outcomeUnknownReports.add(report);
+  return report;
+};
+
+/**
+ * T5 B-dur (B2): does a durable browser operation's 200 report hide an effect whose outcome is
+ * unknown (a plan or batch step lost its result, or an autofill receipt is `uncertain`)? Such a
+ * report is journaled in doubt, never as a known `failed`.
+ */
+/** A copy of a report (e.g. with warnings added) keeps the original's outcome-unknown fact. */
+export function copyBrowserReport<T extends object>(source: object, copy: T): T {
+  return markOutcomeUnknown(copy, outcomeUnknownReports.has(source));
+}
+
+export function browserReportOutcomeUnknown(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) return false;
+  if (outcomeUnknownReports.has(body)) return true;
+  const receipts = (body as { receipts?: unknown }).receipts;
+  return (
+    Array.isArray(receipts) &&
+    receipts.some((receipt) => (receipt as { status?: unknown } | null)?.status === 'uncertain')
+  );
+}
+
 export class AgentBrowserService {
-  readonly authority = new SessionAuthority();
+  readonly authority: SessionAuthority;
   /**
    * Composed over this service's own SessionAuthority; without adapters
    * every application operation still fails closed (bind rejects, no
@@ -661,7 +771,18 @@ export class AgentBrowserService {
     | TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>
     | undefined;
   private readonly evidenceReviewProvider: ServiceDependencies['evidenceReviewProvider'];
-  private readonly durableJournalAvailable: boolean;
+  private readonly operationJournal: OperationJournal | undefined;
+  /**
+   * J3c part 2: each adapter's opt-in reconcile, captured ONCE at construction (never re-read
+   * from the caller's objects), keyed by adapter id.
+   */
+  private readonly reconcilers: ReadonlyMap<string, NonNullable<ApplicationAdapter['reconcile']>>;
+  /** J3c part 2: how long one adapter reconcile may take before it counts as unresolved. */
+  private readonly reconcileTimeoutMs: number;
+  private readonly historyJournals: readonly OperationJournal[];
+  private readonly refusedHistoryNamespaces: readonly string[];
+  /** J3d: which journal returned each recovery record, so a write commits to its owner. */
+  private readonly recordJournals = new WeakMap<object, OperationJournal>();
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -726,6 +847,12 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.operationJournal = deps.operationJournal;
+    this.historyJournals = (deps.historyJournals ?? []).map((entry) => entry.journal);
+    this.refusedHistoryNamespaces = [...(deps.refusedHistoryNamespaces ?? [])];
+    this.authority = new SessionAuthority(
+      this.operationJournal !== undefined ? { journal: this.operationJournal } : {}
+    );
     this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
     this.loginBrowser = deps.loginBrowser;
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
@@ -733,14 +860,40 @@ export class AgentBrowserService {
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
       throw new Error('Invalid evidence review provider');
     this.evidenceReviewProvider = evidenceReviewProvider;
-    this.durableJournalAvailable = deps.durableJournalAvailable ?? false;
     if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
       throw new Error('Evidence source registry and provider are mutually exclusive');
     this.applicationAuthority = new ApplicationAuthority(
       this.authority,
       deps.applicationAdapters ?? [],
-      { consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId) }
+      {
+        consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId),
+        durableWrites: this.operationJournal !== undefined,
+      }
     );
+    // Captured AFTER the application authority has validated every adapter (a null or duplicate
+    // entry is refused there with its typed error, never a TypeError here).
+    const reconcilers = new Map<string, NonNullable<ApplicationAdapter['reconcile']>>();
+    for (const adapter of deps.applicationAdapters ?? []) {
+      const reconcile = (adapter as { reconcile?: unknown }).reconcile;
+      if (reconcile === undefined) continue;
+      if (typeof reconcile !== 'function')
+        throw new Error(`Application adapter ${adapter.id} has a non-function reconcile`);
+      reconcilers.set(
+        adapter.id,
+        reconcile.bind(adapter) as NonNullable<ApplicationAdapter['reconcile']>
+      );
+    }
+    this.reconcilers = reconcilers;
+    // setTimeout fires at once for NaN, negatives or anything past 2^31-1, which would make every
+    // reconcile count as unresolved: refuse such a value at construction instead.
+    const reconcileTimeoutMs = deps.journalReconcileTimeoutMs ?? 10_000;
+    if (
+      !Number.isSafeInteger(reconcileTimeoutMs) ||
+      reconcileTimeoutMs < 1 ||
+      reconcileTimeoutMs > 2_147_483_647
+    )
+      throw new Error('journalReconcileTimeoutMs must be an integer from 1 to 2147483647');
+    this.reconcileTimeoutMs = reconcileTimeoutMs;
     if (evidenceSourceRegistryProvider !== undefined) {
       if (typeof evidenceSourceRegistryProvider !== 'function')
         throw new Error('Invalid evidence source registry provider');
@@ -946,7 +1099,8 @@ export class AgentBrowserService {
           );
           this.tracer?.endSpan(span);
         }
-        throw this.redactedError(mapped);
+        // The mapped, redacted error keeps a post-effect mark (T5 B-dur, B2).
+        throw carryAfterEffect(error, this.redactedError(mapped));
       }
     );
   }
@@ -2023,6 +2177,16 @@ export class AgentBrowserService {
     }
     try {
       const report = await runAutofill(input, {
+        // T5 B-dur (B6): a durable autofill's guard is its own read-only stage recheck, run once
+        // after the marker's storage wait, before the first field's effect. (Its first field's
+        // approval or lease action is decided and spent before that dispatch, as for every field:
+        // a refused marker then has spent that one approval without any effect — fail-closed.)
+        ...(this.authority.browserGuardPendingInScope(sessionId)
+          ? {
+              onRecheck: (recheck: () => Promise<void>) =>
+                this.authority.captureBrowserDispatchInScope(sessionId, recheck),
+            }
+          : {}),
         resolveValue: async (value) => {
           try {
             return this.secretManager.isReference(value)
@@ -2088,6 +2252,13 @@ export class AgentBrowserService {
     pageId: string,
     steps: ServiceActRequest[]
   ): Promise<PlanReport & { mode: 'stable' | 'verified'; newRevision: number }> {
+    // T0 aggregate input limit, enforced here as well as on every surface so that outcome runs
+    // and embedders cannot bypass it. Nothing executes for an over-limit plan.
+    if (steps.length > MAX_PLAN_STEPS)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A plan accepts at most ${MAX_PLAN_STEPS} steps; got ${steps.length}. Split it into several plans.`
+      );
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
@@ -2149,7 +2320,15 @@ export class AgentBrowserService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
-        if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
+        if (
+          ordinal !== undefined &&
+          /STALE_TARGET|revision|fingerprint/i.test(message) &&
+          // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
+          !this.authority.browserOperationRefusedInScope(sessionId) &&
+          // A failure AFTER the step's effect (its follow-up read) is never retried: healing
+          // would run the effect a second time.
+          !isPostEffectFailure(error)
+        ) {
           this.bumpChurn(churnKey);
           const mode = this.churnMode(churnKey);
           // The observation the failing ref was minted from, looked up by the
@@ -2243,14 +2422,17 @@ export class AgentBrowserService {
               const retryMessage =
                 retryError instanceof Error ? retryError.message : String(retryError);
               results.push({ step: index, ok: false, error: retryMessage });
-              return {
-                ok: false,
-                completed: index,
-                results,
-                mode: this.churnMode(churnKey),
-                newRevision: finalRevision(),
-                error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
-              };
+              return markOutcomeUnknown(
+                {
+                  ok: false,
+                  completed: index,
+                  results,
+                  mode: this.churnMode(churnKey),
+                  newRevision: finalRevision(),
+                  error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
+                },
+                outcomeUnknownFailure(retryError)
+              );
             }
           }
           if (ambiguous) {
@@ -2267,14 +2449,17 @@ export class AgentBrowserService {
           }
         }
         results.push({ step: index, ok: false, error: message });
-        return {
-          ok: false,
-          completed: index,
-          results,
-          mode: this.churnMode(churnKey),
-          newRevision: finalRevision(),
-          error: { code: 'PLAN_STEP_FAILED', message },
-        };
+        return markOutcomeUnknown(
+          {
+            ok: false,
+            completed: index,
+            results,
+            mode: this.churnMode(churnKey),
+            newRevision: finalRevision(),
+            error: { code: 'PLAN_STEP_FAILED', message },
+          },
+          outcomeUnknownFailure(error)
+        );
       }
     }
     return {
@@ -2506,6 +2691,17 @@ export class AgentBrowserService {
     request: ApplicationRequest,
     source: EvidenceReviewSource
   ): PreparedEvidenceReview {
+    // Same refusal as the public review and execute paths: a durable review is created only
+    // while it could be executed (closes the J-b residual of an unapprovable pending review).
+    if (
+      (request as { executionRequirement?: unknown }).executionRequirement === 'durable' &&
+      !this.durableAvailable()
+    )
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
+        false
+      );
     const review = this.applicationAuthority.prepareOperationReviewInScope(sessionId, request);
     return this.prepareBoundEvidenceReview(
       sessionId,
@@ -2642,28 +2838,292 @@ export class AgentBrowserService {
     return { unbound: true };
   }
 
+  /**
+   * The supersession marker (evidence-ref id format, <=128 chars): the operation ID when it
+   * fits, else its SHA-256 prefix — deterministic, so the marker is stable per operation.
+   */
+  private supersessionMarker(operationId: string): string {
+    const literal = `superseded.${operationId}`;
+    if (literal.length <= 128) return literal;
+    return `superseded.${createHash('sha256').update(operationId).digest('hex').slice(0, 32)}`;
+  }
+
+  /**
+   * T5 J3c (D2, first half): close every actionable UNDISPATCHED record of one operation ID as a
+   * marked pre-dispatch failure. Operator-only (ADR-025 human-operator principal): a tenant API
+   * key authenticates as `operator` and is refused — writes change recorded outcomes. Legal only
+   * on rev-1 records; dispatched work is settled or reconciled, never closed. The terminal
+   * carries a supersession marker in the evidence-ref id format; it resolves to nothing.
+   */
+  async journalCloseOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ closed: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
+    // Actionability is PER RECORD (accepted design): close touches only the never-dispatched
+    // records of the ID; dispatched or terminal siblings are other actions' business, never a
+    // refusal here — a blanket refusal would deadlock mixed-state operations forever. Zero
+    // eligible records is the conflict.
+    const eligible = records.filter((record) => record.revision === 1 && !record.dispatched);
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No undispatched record to close; dispatched work is settled or reconciled, terminal work is final'
+      );
+    let closed = 0;
+    for (const record of eligible) {
+      const commit = await this.recordJournals.get(record)?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 1,
+        dispatched: false,
+        terminal: { status: 'failed', evidenceRefIds: [this.supersessionMarker(operationId)] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${closed} record(s) were closed; re-read before acting again`
+        );
+      closed += 1;
+    }
+    return { closed, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
+  }
+
+  /**
+   * T5 J3c (D3, operator fallback): settle every in-doubt (dispatched, rev-2) record of one
+   * operation ID as terminal `outcome_unknown`. Operator-only. IRREVERSIBLE: a settled record
+   * can never be reconciled; try reconcile first. Claims nothing about the effect.
+   */
+  async journalSettleOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ settled: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
+    const eligible = records.filter(
+      (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
+    );
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No in-doubt record to settle; undispatched work is closed, terminal work is final'
+      );
+    let settled = 0;
+    for (const record of eligible) {
+      const commit = await this.recordJournals.get(record)?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 2,
+        dispatched: true,
+        terminal: { status: 'outcome_unknown', evidenceRefIds: [] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${settled} record(s) were settled; re-read before acting again`
+        );
+      settled += 1;
+    }
+    return { settled, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
+  }
+
+  /**
+   * T5 J3c part 2 (D3, accepted design): reconcile every in-doubt record of one operation ID by
+   * asking the bound adapter what truly happened. Operator-only (ADR-025 human-operator). An
+   * adapter without `reconcile` refuses typed (settle instead); an answer of 'unknown' (or a
+   * throwing adapter) resolves nothing and the record stays in doubt. 'committed'/'rejected'
+   * commit the matching terminal with no evidence refs. Never replays the effect.
+   */
+  async journalReconcileOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{
+    reconciled: number;
+    unresolved: number;
+    truncated: boolean;
+    unreadNamespaces?: string[];
+  }> {
+    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
+      operationId,
+      principal
+    );
+    const eligible = records.filter(
+      (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
+    );
+    if (eligible.length === 0)
+      throw new ServiceError(
+        'OPERATION_CONFLICT',
+        'No in-doubt record to reconcile; undispatched work is closed, terminal work is final'
+      );
+    // Resolve every adapter BEFORE any write, so a missing reconcile refuses without a partial
+    // result.
+    const plans = eligible.map((record) => {
+      const adapterId = record.identity.application?.adapterId;
+      const reconcile = adapterId === undefined ? undefined : this.reconcilers.get(adapterId);
+      if (!reconcile)
+        throw new ServiceError(
+          'CONTROL_REQUIRED',
+          'The bound adapter cannot reconcile this operation; settle the record instead'
+        );
+      return { record, reconcile };
+    });
+    let reconciled = 0;
+    let unresolved = 0;
+    for (const { record, reconcile } of plans) {
+      // No fingerprint crosses: binding is by tenant, application identity, incarnation and ID.
+      let answer: unknown;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const bounded = new Promise<undefined>((settle) => {
+          timer = setTimeout(() => settle(undefined), this.reconcileTimeoutMs);
+        });
+        answer = await Promise.race([
+          bounded,
+          reconcile({
+            tenant: record.identity.key.tenantId,
+            adapter: record.identity.application?.adapterId ?? '',
+            resource: record.identity.application?.resourceId ?? '',
+            bindingGeneration: record.identity.application?.bindingGeneration ?? '',
+            sessionIncarnation: record.identity.key.sessionIncarnation,
+            operationId: record.identity.key.operationId,
+          }),
+        ]);
+      } catch {
+        answer = undefined;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+      // Read strictly: a plain object whose only own key is a data property `status`.
+      let status: unknown;
+      if (
+        answer &&
+        typeof answer === 'object' &&
+        Object.getPrototypeOf(answer) === Object.prototype
+      ) {
+        const own = Object.getOwnPropertyDescriptors(answer);
+        const keys = Reflect.ownKeys(own);
+        if (keys.length === 1 && own.status && Object.hasOwn(own.status, 'value'))
+          status = own.status.value;
+      }
+      if (status !== 'committed' && status !== 'rejected') {
+        unresolved += 1;
+        continue;
+      }
+      // J3d: commit in the namespace that OWNS the record (current or history).
+      const commit = await this.recordJournals.get(record)?.commitTerminal({
+        identity: record.identity,
+        expectedRevision: 2,
+        dispatched: true,
+        terminal: { status: status === 'committed' ? 'completed' : 'failed', evidenceRefIds: [] },
+      });
+      if (commit?.kind !== 'acknowledged')
+        throw new ServiceError(
+          'OPERATION_CONFLICT',
+          `The journal did not apply the write (${commit?.kind ?? 'unavailable'}${commit && 'reason' in commit ? `: ${commit.reason}` : ''}) after ${reconciled} record(s) were reconciled; re-read before acting again`
+        );
+      reconciled += 1;
+    }
+    return { reconciled, unresolved, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
+  }
+
+  /** Shared recovery-write preconditions: journal open, human-operator principal, tenant-scoped. */
+  private async recoveryTargets(operationId: string, principal: { actor: string; tenant: string }) {
+    if (principal.actor !== 'human-operator')
+      throw new ServiceError(
+        'FORBIDDEN',
+        'Journal recovery writes require the operator key; a tenant API key may only read'
+      );
+    // The recovery gate is an OPEN journal, not the accept horizon: the design's deadline for
+    // these writes is retainUntil (30 days past ACCEPT_UNTIL), which the store enforces itself.
+    // Reusing durableAvailable() would kill the fallback exactly when its deadline begins. J3d:
+    // the current namespace and every open history namespace are searched; each record keeps the
+    // journal it came from, and absence is claimed only when every namespace answered.
+    const configured = [
+      ...(this.operationJournal ? [this.operationJournal] : []),
+      ...this.historyJournals,
+    ];
+    if (!configured.some((journal) => journal.health === 'open'))
+      throw new ServiceError('JOURNAL_UNAVAILABLE', 'No open durable journal');
+    const { entries, truncated, unreadNamespaces, lastReason } = await searchJournalNamespaces(
+      configured,
+      { tenantId: principal.tenant, operationId, actionableOnly: true }
+    );
+    if (entries.length === 0 && unreadNamespaces.length + this.refusedHistoryNamespaces.length > 0)
+      throw new ServiceError(
+        'JOURNAL_UNAVAILABLE',
+        `The journal refused this write (${lastReason}); history is unread, not absent`
+      );
+    if (entries.length === 0)
+      throw new ServiceError(
+        'NOT_FOUND',
+        'No actionable record of this operation in the searched namespaces'
+      );
+    for (const entry of entries) this.recordJournals.set(entry.record, entry.journal);
+    // Partial recovery is allowed (records found act), but never silent about what it could not
+    // read: the response names those namespaces.
+    const unread = [...unreadNamespaces, ...this.refusedHistoryNamespaces];
+    return {
+      records: entries.map((entry) => entry.record),
+      truncated,
+      ...(unread.length > 0 ? { unreadNamespaces: unread } : {}),
+    };
+  }
+
+  /**
+   * C4b (J-d): durable application writes are available only while an attached journal is open
+   * and its namespace still accepts new intents. Never a configuration claim.
+   */
+  private durableAvailable(): boolean {
+    const journal = this.operationJournal;
+    return (
+      journal !== undefined &&
+      this.authority.journalOpen() &&
+      Date.now() < journal.namespace.acceptUntil
+    );
+  }
+
   /** Discovery: the bound adapter's operations, or null when nothing is bound. */
   async applicationDiscover(
     sessionId: string,
     principal: SessionPrincipal,
     publication?: Parameters<ApplicationAuthority['discover']>[2]
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
-    const discovery = (await this.applicationAuthority.discover(
-      sessionId,
-      principal,
-      publication
-    )) as Record<string, unknown>;
-    // C4b: surface the execution-requirement capability so callers can
-    // discover what the runtime supports before dispatching.
-    return {
-      ...discovery,
-      writeExecution: {
-        defaultRequirement: 'ephemeral',
-        supportedRequirements: this.durableJournalAvailable
-          ? ['ephemeral', 'durable']
-          : ['ephemeral'],
-      },
-    } as unknown as Awaited<ReturnType<ApplicationAuthority['discover']>>;
+    // C4b: surface the execution-requirement capability so callers can discover what the
+    // runtime supports before dispatching. It is added on the PUBLISHED value too (REST
+    // publishes, it does not use the return value), and never to "nothing bound" (null).
+    type Discovery = Awaited<ReturnType<ApplicationAuthority['discover']>>;
+    const withWriteExecution = <T extends Discovery>(discovery: T): T =>
+      discovery === null || 'replay' in discovery
+        ? discovery
+        : ({
+            ...discovery,
+            writeExecution: {
+              defaultRequirement: 'ephemeral',
+              // Durable is advertised only while it would be accepted (J-d).
+              supportedRequirements: this.durableAvailable()
+                ? ['ephemeral', 'durable']
+                : ['ephemeral'],
+            },
+          } as unknown as T);
+    // Snapshot first (validates and captures publish now, as every publication path does).
+    const options = publication === undefined ? undefined : snapshotPublication(publication);
+    const published =
+      options === undefined
+        ? undefined
+        : {
+            timeoutMs: options.timeoutMs,
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
+            publish: (
+              value: Parameters<typeof options.publish>[0],
+              context: Parameters<typeof options.publish>[1]
+            ) => options.publish(withWriteExecution(value), context),
+          };
+    return withWriteExecution(
+      await this.applicationAuthority.discover(sessionId, principal, published)
+    );
   }
 
   /** Allocate one pending review; no execution identity is reserved or dispatched. */
@@ -2680,6 +3140,14 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    // A durable review that could not be executed is refused here with the same typed reason
+    // as execute, rather than reaching evidence selection.
+    if (validated.value.request.executionRequirement === 'durable' && !this.durableAvailable())
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
+        false
+      );
     const result = await this.authority.run(
       sessionId,
       principal,
@@ -2715,6 +3183,14 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    // A durable review that could not be executed is refused here with the same typed reason
+    // as execute, rather than reaching evidence selection.
+    if (validated.value.request.executionRequirement === 'durable' && !this.durableAvailable())
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
+        false
+      );
     const body = validated.value;
     const context = this.reviewContext(sessionId);
     const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
@@ -2767,19 +3243,20 @@ export class AgentBrowserService {
         false,
         { credentialSource: 'operator' }
       );
-    // C4b: normalize the execution requirement (missing → ephemeral) and
-    // refuse 'durable' when the runtime has no qualified durable journal
-    // store. The refusal is typed and must not reserve an identity or
-    // consume approval.
+    // C4b (J-d): 'durable' is accepted only while the attached journal is open and accepting;
+    // otherwise it is refused before any identity is reserved. The application authority refuses
+    // it again on its own (defence in depth) and journals it when accepted.
     const executionRequirement = (validated.value as { executionRequirement?: string })
       .executionRequirement;
-    if (executionRequirement === 'durable' && !this.durableJournalAvailable) {
+    if (executionRequirement === 'durable' && !this.durableAvailable()) {
       throw new ServiceError(
         'CONTROL_REQUIRED',
-        'durable execution requires a qualified durable journal store; this runtime supports ephemeral only',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
         false
       );
     }
+    // 'ephemeral' (explicit or omitted) passes through: the authority's request normalizer drops
+    // it behind its own caller-data checks, and refuses any other requirement.
     return this.applicationAuthority.execute(
       sessionId,
       principal,
@@ -3710,8 +4187,55 @@ export class AgentBrowserService {
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
           beforeAction: async (resolved) => {
-            await this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span);
-            onDispatch?.();
+            if (this.authority.browserGuardPendingInScope(sessionId)) {
+              // T5 B-dur (B6): the FIRST dispatch of a durable browser operation. Decide now (an
+              // approval round trip still throws here, before any marker); re-validate the
+              // target and the approval after the marker's storage wait; consume only then.
+              const approval = await this.prepareApproval(
+                sessionId,
+                pageId,
+                page,
+                request,
+                resolved?.fingerprint,
+                span
+              );
+              const recheckRequest = {
+                pageId,
+                expectedRevision: actRequest.expectedRevision ?? page.revision,
+                action: actionValidation.value,
+              };
+              this.authority.captureBrowserDispatchInScope(sessionId, async () => {
+                const failure = await this.executor.revalidateTarget(recheckRequest, {
+                  enginePage: adapter,
+                  observation: this.lastObservationOf(page),
+                  currentRevision: page.revision,
+                  ...(page.lastObservation !== undefined
+                    ? { elementIndex: page.lastObservation.byRef }
+                    : {}),
+                });
+                if (failure)
+                  throw new ServiceError(
+                    failure.code,
+                    failure.message,
+                    failure.retryable ?? false,
+                    failure.details
+                  );
+                await approval.revalidate();
+                await approval.commit();
+              });
+            } else {
+              await this.checkApproval(
+                sessionId,
+                pageId,
+                page,
+                request,
+                resolved?.fingerprint,
+                span
+              );
+            }
+            // T5 B-dur: in a durable operation the effect starts only after the recheck, so an
+            // owner (autofill) must not record a refused dispatch as possibly written.
+            if (onDispatch) this.authority.onBrowserEffectInScope(sessionId, onDispatch);
           },
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
           // than let the executor re-scan observation.elements per action.
@@ -3755,6 +4279,8 @@ export class AgentBrowserService {
         if (
           actRequest.remap === true &&
           ref !== undefined &&
+          // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
+          !this.authority.browserOperationRefusedInScope(sessionId) &&
           (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND') &&
           // Only binding staleness may be healed. A refusal without the
           // flag carries live contradicting evidence (fingerprint mismatch,
@@ -3775,53 +4301,59 @@ export class AgentBrowserService {
       }
 
       page.revision = result.newRevision;
+      // T5 B-dur (B2): the effect is done; anything that fails from here on followed it.
+      try {
+        if (
+          request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified !== true
+        )
+          throw new ServiceError(
+            'ENGINE_UNSUPPORTED',
+            'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
+            false
+          );
 
-      if (
-        request.action === 'fill' &&
-        request.expectValue !== undefined &&
-        (result.result as { verified?: unknown } | undefined)?.verified !== true
-      )
-        throw new ServiceError(
-          'ENGINE_UNSUPPORTED',
-          'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
-          false
-        );
+        // Post-action wait (spec 11.1): an explicit wait runs to its deadline
+        // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
+        // never a hang). Without one, a zero-cost settle yield keeps latency
+        // off the deterministic path - engines that need real settling take
+        // an explicit wait.
+        const waitReason =
+          request.wait !== undefined
+            ? await this.waitFor(page.enginePage, request.wait)
+            : request.action === 'wait' && request.condition !== undefined
+              ? await this.waitFor(page.enginePage, request.condition)
+              : 'settled';
 
-      // Post-action wait (spec 11.1): an explicit wait runs to its deadline
-      // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
-      // never a hang). Without one, a zero-cost settle yield keeps latency
-      // off the deterministic path - engines that need real settling take
-      // an explicit wait.
-      const waitReason =
-        request.wait !== undefined
-          ? await this.waitFor(page.enginePage, request.wait)
-          : request.action === 'wait' && request.condition !== undefined
-            ? await this.waitFor(page.enginePage, request.condition)
-            : 'settled';
+        // A requested post-action observation goes through the service's own
+        // observe(), so its refs are minted, mapped and immediately actionable.
+        let observation: PageState | undefined;
+        if (request.observe === 'after') {
+          observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+        }
 
-      // A requested post-action observation goes through the service's own
-      // observe(), so its refs are minted, mapped and immediately actionable.
-      let observation: PageState | undefined;
-      if (request.observe === 'after') {
-        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+        return {
+          status: 'success',
+          actionId: result.actionId,
+          newRevision: result.newRevision,
+          observation,
+          waitReason,
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          // Only publish the comparison boolean, never a field value.
+          ...(request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified === true
+            ? { result: { verified: true } }
+            : {}),
+          // Upload reports its separate attached-file evidence.
+          ...(request.action === 'upload' && result.result != null
+            ? { result: result.result }
+            : {}),
+        };
+      } catch (error) {
+        throw afterEffect(error);
       }
-
-      return {
-        status: 'success',
-        actionId: result.actionId,
-        newRevision: result.newRevision,
-        observation,
-        waitReason,
-        ...(result.remap !== undefined ? { remap: result.remap } : {}),
-        // Only publish the comparison boolean, never a field value.
-        ...(request.action === 'fill' &&
-        request.expectValue !== undefined &&
-        (result.result as { verified?: unknown } | undefined)?.verified === true
-          ? { result: { verified: true } }
-          : {}),
-        // Upload reports its separate attached-file evidence.
-        ...(request.action === 'upload' && result.result != null ? { result: result.result } : {}),
-      };
     });
   }
 
@@ -3858,25 +4390,33 @@ export class AgentBrowserService {
     // they run only when every step applied, so a failed batch reports its
     // failure without post-action noise masking it.
     let waitReason: string | undefined;
-    if (plan.ok && request.wait !== undefined) {
-      waitReason = await this.waitFor(page.enginePage, request.wait);
-    }
     let observation: PageState | undefined;
-    if (plan.ok && request.observe === 'after') {
-      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    // T5 B-dur (B2): every step's effect is done; a failure here followed them.
+    try {
+      if (plan.ok && request.wait !== undefined) {
+        waitReason = await this.waitFor(page.enginePage, request.wait);
+      }
+      if (plan.ok && request.observe === 'after') {
+        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+      }
+    } catch (error) {
+      throw afterEffect(error);
     }
 
-    return {
-      status: plan.ok ? 'success' : 'failed',
-      completed: plan.completed,
-      results: plan.results,
-      oldRevision,
-      newRevision: observation?.revision ?? plan.newRevision,
-      mode: plan.mode,
-      ...(waitReason !== undefined ? { waitReason } : {}),
-      ...(observation !== undefined ? { observation } : {}),
-      ...(plan.error !== undefined ? { error: plan.error } : {}),
-    };
+    return markOutcomeUnknown(
+      {
+        status: plan.ok ? 'success' : 'failed',
+        completed: plan.completed,
+        results: plan.results,
+        oldRevision,
+        newRevision: observation?.revision ?? plan.newRevision,
+        mode: plan.mode,
+        ...(waitReason !== undefined ? { waitReason } : {}),
+        ...(observation !== undefined ? { observation } : {}),
+        ...(plan.error !== undefined ? { error: plan.error } : {}),
+      },
+      browserReportOutcomeUnknown(plan)
+    );
   }
 
   /**
@@ -4723,6 +5263,10 @@ export class AgentBrowserService {
     this.shuttingDown = true;
     for (const transport of this.downloads.values())
       transport.revoke(new ServiceError('SESSION_NOT_FOUND', 'Service shutdown'));
+    // C4b (J-d): with a journal attached, refuse new journaled runs and let in-flight ones reach
+    // their terminal record (bounded) before anything they depend on is torn down; the journal is
+    // closed after this. Without a journal, shutdown is unchanged.
+    if (this.operationJournal !== undefined) await this.authority.drain(SHUTDOWN_DRAIN_MS);
     if (this.sweepTimer !== undefined) {
       clearInterval(this.sweepTimer);
     }
@@ -4828,6 +5372,12 @@ export class AgentBrowserService {
           operationId: selector.application.operationId,
           expectedVersion: selector.application.expectedVersion,
           input: action.input,
+          ...(selector.application.executionRequirement === 'durable'
+            ? { executionRequirement: 'durable' as const }
+            : {}),
+          ...(selector.application.supersedes !== undefined
+            ? { supersedes: { ...selector.application.supersedes } }
+            : {}),
         });
         application.assertCurrent();
         if (canonicalJson(application.action) !== canonicalJson(action))
@@ -5175,11 +5725,22 @@ export class AgentBrowserService {
     return lease?.hosts.some((entry) => covers(entry, host).ok) === true;
   }
 
+  /** T5 B-dur: whether the live lease would admit one action on `host`, without spending it. */
+  private leaseCoversAction(sessionId: string, host: string): boolean {
+    const lease = this.activeLeaseFor(sessionId);
+    return (
+      lease !== undefined &&
+      lease.remainingActions > 0 &&
+      lease.hosts.some((entry) => covers(entry, host).ok)
+    );
+  }
+
   /**
    * Spend one leased action for an unknown-effect act on a covered host.
    * Returns false when there is no live lease, the host is not covered, or
    * the count is spent — the caller then falls back to review (fail closed,
-   * never to allow).
+   * never to allow). A durable operation's commit refuses a spent lease with POLICY_DENIED
+   * instead (the decision was already taken at prepare).
    */
   private consumeLeasedAction(sessionId: string, host: string): boolean {
     const lease = this.activeLeaseFor(sessionId);
@@ -5516,6 +6077,11 @@ export class AgentBrowserService {
     };
   }
 
+  /**
+   * The act approval check, unchanged in outcome: decide, then consume at once (lease action,
+   * plain token or reviewed approval). T5 B-dur splits it so a durable operation can re-validate
+   * after its storage wait and consume only after the marker; this path does both back to back.
+   */
   private async checkApproval(
     sessionId: string,
     pageId: string,
@@ -5524,6 +6090,29 @@ export class AgentBrowserService {
     identity?: string,
     span?: import('@agentbrowser/core').Span | undefined
   ): Promise<void> {
+    const plan = await this.prepareApproval(sessionId, pageId, page, request, identity, span);
+    await plan.commit();
+  }
+
+  /**
+   * T5 B-dur (B6): the approval DECISION, with consumption deferred. Throws now when the action
+   * is denied or needs an approval the request does not carry (`APPROVAL_REQUIRED` with a fresh
+   * token) — so an approval round trip never reaches a marker. Otherwise returns:
+   * - `revalidate()`: a non-consuming currency check (the lease still covers the host and has an
+   *   action left; the token or reviewed approval is still valid for this exact action), for
+   *   after a storage wait;
+   * - `commit()`: the consumption; a token or reviewed approval that turned stale is refused with
+   *   a fresh `APPROVAL_REQUIRED`, exactly as an immediate consume would.
+   */
+  private async prepareApproval(
+    sessionId: string,
+    pageId: string,
+    page: PageContext,
+    request: ServiceActRequest,
+    identity?: string,
+    span?: import('@agentbrowser/core').Span | undefined
+  ): Promise<{ revalidate(): Promise<void>; commit(): Promise<void> }> {
+    const none = { revalidate: async () => {}, commit: async () => {} };
     const ref = request.target?.ref;
     const element = ref !== undefined ? page.lastObservation?.byRef.get(ref) : undefined;
     // Cached observations can precede history or out-of-band navigation.
@@ -5562,18 +6151,32 @@ export class AgentBrowserService {
     const marked = this.sessionCredentialSources.get(sessionId) === 'operator';
     if (marked) {
       const host = hostOf(currentUrl);
-      if (risk === 'unknown' && this.consumeLeasedAction(sessionId, host)) {
-        if (span)
-          this.tracer?.addEvent(span, 'lease.action', {
-            effect: risk,
-            ref,
-            remaining: this.actionLeases.get(sessionId)?.remainingActions,
-          });
-        return;
+      if (risk === 'unknown' && this.leaseCoversAction(sessionId, host)) {
+        const leaseGone = () =>
+          new ServiceError(
+            'POLICY_DENIED',
+            'The session lease no longer covers this action (it ended or ran out during the wait).',
+            false,
+            { effect: risk }
+          );
+        return {
+          revalidate: async () => {
+            if (!this.leaseCoversAction(sessionId, host)) throw leaseGone();
+          },
+          commit: async () => {
+            if (!this.consumeLeasedAction(sessionId, host)) throw leaseGone();
+            if (span)
+              this.tracer?.addEvent(span, 'lease.action', {
+                effect: risk,
+                ref,
+                remaining: this.actionLeases.get(sessionId)?.remainingActions,
+              });
+          },
+        };
       }
-      if (!(isHighRiskEffect(risk) || risk === 'unknown') && decision === 'allow') return;
+      if (!(isHighRiskEffect(risk) || risk === 'unknown') && decision === 'allow') return none;
     } else if (decision === 'allow') {
-      return;
+      return none;
     }
     const decoded = decodeWireAction(request);
     if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
@@ -5610,60 +6213,81 @@ export class AgentBrowserService {
         canonicalJson({ ...approvalRequest, kind: 'act.reviewed' })
       ) as typeof approvalRequest & { kind: 'act.reviewed' };
       this.assertReviewDisclosureSafe(reviewedRequest);
-      if (
-        request.approvalToken !== undefined &&
-        (await this.approvalGate.consumeReviewedApproval(
-          request.approvalToken,
-          reviewedRequest,
-          context
-        ))
-      ) {
+      const required = async (): Promise<never> => {
+        const token = await this.approvalGate.generateReviewedApproval(reviewedRequest, context);
         this.authority.assert(sessionId);
         if (span)
-          this.tracer?.addEvent(span, 'approval.granted', {
+          this.tracer?.addEvent(span, 'approval.required', {
             effect: risk,
             ref,
             review: 'operator',
           });
-        return;
-      }
-      const token = await this.approvalGate.generateReviewedApproval(reviewedRequest, context);
-      this.authority.assert(sessionId);
-      if (span)
-        this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref, review: 'operator' });
-      throw new ServiceError(
-        'APPROVAL_REQUIRED',
-        'Action requires an explicit operator decision.',
-        false,
-        { tokenId: token.tokenId, effect: risk, ref, review: 'operator' }
-      );
+        throw new ServiceError(
+          'APPROVAL_REQUIRED',
+          'Action requires an explicit operator decision.',
+          false,
+          { tokenId: token.tokenId, effect: risk, ref, review: 'operator' }
+        );
+      };
+      const tokenId = request.approvalToken;
+      if (
+        tokenId === undefined ||
+        !(await this.approvalGate.validateReviewedApproval(tokenId, reviewedRequest, context))
+      )
+        return required();
+      return {
+        revalidate: async () => {
+          if (
+            !(await this.approvalGate.validateReviewedApproval(tokenId, reviewedRequest, context))
+          )
+            await required();
+        },
+        commit: async () => {
+          if (!(await this.approvalGate.consumeReviewedApproval(tokenId, reviewedRequest, context)))
+            await required();
+          this.authority.assert(sessionId);
+          if (span)
+            this.tracer?.addEvent(span, 'approval.granted', {
+              effect: risk,
+              ref,
+              review: 'operator',
+            });
+        },
+      };
     }
 
-    if (request.approvalToken !== undefined) {
-      const consumed = await this.approvalGate.consumeApprovalToken(
-        request.approvalToken,
-        approvalRequest
+    // Invalid, expired, burned or mismatched token: a fresh denial with a new token.
+    const required = async (): Promise<never> => {
+      const token = await this.approvalGate.generateApprovalToken(approvalRequest);
+      if (span) {
+        this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref });
+      }
+      throw new ServiceError(
+        'APPROVAL_REQUIRED',
+        `Action targets an element classified '${risk}' and needs an approval token.`,
+        false,
+        { tokenId: token.tokenId, effect: risk, ref }
       );
-      if (consumed) {
+    };
+    const tokenId = request.approvalToken;
+    if (
+      tokenId === undefined ||
+      !(await this.approvalGate.validateApprovalToken(tokenId, approvalRequest))
+    )
+      return required();
+    return {
+      revalidate: async () => {
+        if (!(await this.approvalGate.validateApprovalToken(tokenId, approvalRequest)))
+          await required();
+      },
+      commit: async () => {
+        if (!(await this.approvalGate.consumeApprovalToken(tokenId, approvalRequest)))
+          await required();
         if (span) {
           this.tracer?.addEvent(span, 'approval.granted', { effect: risk, ref });
         }
-        return;
-      }
-      // Invalid, expired, burned or mismatched token: fall through to a fresh
-      // denial with a new token.
-    }
-
-    const token = await this.approvalGate.generateApprovalToken(approvalRequest);
-    if (span) {
-      this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref });
-    }
-    throw new ServiceError(
-      'APPROVAL_REQUIRED',
-      `Action targets an element classified '${risk}' and needs an approval token.`,
-      false,
-      { tokenId: token.tokenId, effect: risk, ref }
-    );
+      },
+    };
   }
 
   private lastObservationOf(page: PageContext): PageState {

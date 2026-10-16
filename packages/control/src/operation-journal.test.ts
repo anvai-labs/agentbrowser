@@ -70,6 +70,7 @@ function fixture() {
     markDispatch: vi.fn(async () => stamp({ kind: 'conflict', reason: 'missing_intent' })),
     commitTerminal: vi.fn(async () => stamp({ kind: 'conflict', reason: 'missing_intent' })),
     lookup: vi.fn(async () => stamp({ kind: 'scoped_absent' })),
+    findByOperation: vi.fn(async () => stamp({ kind: 'found', records: [], truncated: false })),
     close: vi.fn(async () => ({ kind: 'closed' })),
   };
   const adapter = {
@@ -632,6 +633,69 @@ describe('journal concurrency and acknowledgment boundaries', () => {
         expectedRevision: 2,
         dispatched: true,
         terminal: { status: 'completed', evidenceRefIds: ['right-evidence'] },
+      })
+    ).toEqual({ kind: 'uncertain', reason: 'invalid_response' });
+  });
+
+  it('accepts a truthful full-page answer larger than one record without poisoning (J3a review F2)', async () => {
+    const f = fixture();
+    const journal = await f.open();
+    const wide = intent();
+    const reserved = await journal.reserveIntent(wide);
+    if (reserved.kind !== 'acknowledged') throw new Error();
+    // ~5 KiB each: 16 of them (~83 KiB) exceed lookup's 64 KiB envelope budget but stay inside
+    // the find budget (maxRecordBytes x (limit+1)).
+    const wideRecord = {
+      ...reserved.record,
+      revision: 3,
+      dispatched: true,
+      terminal: {
+        status: 'completed' as const,
+        evidenceRefIds: Array.from({ length: 32 }, (_, index) => `e${index}`.padEnd(128, 'x')),
+      },
+    };
+    f.raw.findByOperation.mockResolvedValueOnce(
+      f.stamp({
+        kind: 'found',
+        records: Array.from({ length: 16 }, () => wideRecord),
+        truncated: false,
+      }) as never
+    );
+    const found = await journal.findByOperation({
+      tenantId: wide.key.tenantId,
+      operationId: wide.key.operationId,
+      limit: 16,
+    });
+    expect(found).toMatchObject({ kind: 'found', truncated: false });
+    if (found.kind === 'found') expect(found.records).toHaveLength(16);
+    expect(journal.health).toBe('open');
+  });
+
+  it.each([
+    ['another tenant', { tenantId: 'other-tenant' }, 16],
+    ['another operation ID', { operationId: 'other-op' }, 16],
+    ['more records than the limit', {}, 0],
+  ])('rejects a findByOperation answer carrying %s (J3a)', async (_name, keyChange, limitDelta) => {
+    const f = fixture();
+    const journal = await f.open();
+    const reserved = await journal.reserveIntent(intent());
+    if (reserved.kind !== 'acknowledged') throw new Error();
+    const record = {
+      ...reserved.record,
+      identity: {
+        ...reserved.record.identity,
+        key: { ...reserved.record.identity.key, ...keyChange },
+      },
+    };
+    f.raw.findByOperation.mockResolvedValueOnce(
+      f.stamp({ kind: 'found', records: [record, record], truncated: false }) as never
+    );
+    const key = reserved.record.identity.key;
+    expect(
+      await journal.findByOperation({
+        tenantId: key.tenantId,
+        operationId: key.operationId,
+        limit: limitDelta === 0 ? 1 : 16,
       })
     ).toEqual({ kind: 'uncertain', reason: 'invalid_response' });
   });

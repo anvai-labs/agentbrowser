@@ -162,6 +162,20 @@ describe('OpenAPI document', () => {
       const act = doc.paths['/v1/sessions/{sessionId}/pages/{pageId}/act'].post;
       expect(JSON.stringify(act)).toContain('STALE_TARGET');
     });
+
+    it.each(['act', 'plan', 'autofill'])(
+      'documents executionRequirement on the %s body (T5 B-dur)',
+      (route) => {
+        const body =
+          doc.paths[`/v1/sessions/{sessionId}/pages/{pageId}/${route}`].post.requestBody.content[
+            'application/json'
+          ].schema;
+        expect(
+          body.properties.executionRequirement.anyOf.map((variant: Json) => variant.const)
+        ).toEqual(['ephemeral', 'durable']);
+        expect(body.required ?? []).not.toContain('executionRequirement');
+      }
+    );
   });
 
   describe('components', () => {

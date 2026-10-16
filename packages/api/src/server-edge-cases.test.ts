@@ -448,6 +448,27 @@ describe('server edge branches', () => {
       expect(plan.statusCode).toBe(200);
       expect(plan.json()).toMatchObject({ ok: true, completed: 0 });
 
+      // T0 aggregate input limit: 101 steps are refused before anything executes.
+      const overCap = await inject('POST', `/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        actions: Array.from({ length: 101 }, () => ({ action: 'hover', target: { ref } })),
+      });
+      expect(overCap.statusCode).toBe(400);
+      expect(overCap.json().error).toMatchObject({
+        code: 'INVALID_REQUEST',
+        message: expect.stringContaining('A plan accepts at most 100 steps; got 101'),
+      });
+      // Outcome runs execute a plan too: the same cap applies before anything runs.
+      const overCapOutcome = await inject(
+        'POST',
+        `/v1/sessions/${sessionId}/pages/${pageId}/outcomes`,
+        {
+          actions: Array.from({ length: 101 }, () => ({ action: 'hover', target: { ref } })),
+          verification: { verifier: { id: 'fixture.equals', version: '1' }, input: {} },
+        }
+      );
+      expect(overCapOutcome.statusCode).toBe(400);
+      expect(overCapOutcome.json().error.code).toBe('INVALID_REQUEST');
+
       const trace = await inject('POST', `/v1/sessions/${sessionId}/trace`, {});
       expect(trace.statusCode).toBe(201);
       expect(trace.json().artifactId).toEqual(expect.any(String));

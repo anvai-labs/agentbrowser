@@ -72,6 +72,10 @@ export interface ApplicationReviewSelector {
   readonly operation: string;
   readonly operationId: string;
   readonly expectedVersion: number;
+  /** C4b: present only for a durable review; it is part of the reviewed operation identity. */
+  readonly executionRequirement?: 'durable';
+  /** T5 J3c part 2: the continuation's provenance link; consent covers it, identity does not. */
+  readonly supersedes?: { readonly namespace: string; readonly operationId: string };
 }
 
 export interface PrepareEvidenceReviewOptions {
@@ -150,16 +154,23 @@ export function captureReviewDisclosure(
   }
 }
 
-function dataProperties(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function dataProperties(
+  value: unknown,
+  keys: readonly string[],
+  optional: readonly string[] = []
+): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw unavailable();
   const own = Object.getOwnPropertyDescriptors(value);
+  const present = optional.filter((key) => Object.hasOwn(own, key));
   if (
     Object.getPrototypeOf(value) !== Object.prototype ||
-    Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !keys.includes(key)) ||
-    keys.some((key) => !own[key]?.enumerable || !Object.hasOwn(own[key], 'value'))
+    Reflect.ownKeys(own).some(
+      (key) => typeof key !== 'string' || !(keys.includes(key) || optional.includes(key))
+    ) ||
+    [...keys, ...present].some((key) => !own[key]?.enumerable || !Object.hasOwn(own[key], 'value'))
   )
     throw unavailable();
-  return Object.fromEntries(keys.map((key) => [key, own[key]?.value]));
+  return Object.fromEntries([...keys, ...present].map((key) => [key, own[key]?.value]));
 }
 
 /** Reserved application actions must be complete; they never fall back to generic routing. */
@@ -169,21 +180,42 @@ export function selectApplicationReview(value: unknown): ApplicationReviewSelect
     const type = Object.getOwnPropertyDescriptor(value, 'type');
     if (type && !Object.hasOwn(type, 'value')) throw unavailable();
     if (type?.value !== 'application-submit') return undefined;
-    const action = dataProperties(snapshot(value), [
-      'type',
-      'intent',
-      'tenant',
-      'sessionId',
-      'sessionIncarnation',
-      'adapter',
-      'resource',
-      'bindingGeneration',
-      'operation',
-      'operationId',
-      'expectedVersion',
-      'input',
-    ]);
+    const action = dataProperties(
+      snapshot(value),
+      [
+        'type',
+        'intent',
+        'tenant',
+        'sessionId',
+        'sessionIncarnation',
+        'adapter',
+        'resource',
+        'bindingGeneration',
+        'operation',
+        'operationId',
+        'expectedVersion',
+        'input',
+      ],
+      // C4b: a durable review carries its requirement (J-b); a continuation carries its
+      // supersedes link (J3c part 2); nothing else is optional.
+      ['executionRequirement', 'supersedes']
+    );
+    let supersedes: { namespace: string; operationId: string } | undefined;
+    if (Object.hasOwn(action, 'supersedes')) {
+      const link = dataProperties(action.supersedes, ['namespace', 'operationId']);
+      if (
+        typeof link.namespace !== 'string' ||
+        link.namespace.length < 1 ||
+        link.namespace.length > 128 ||
+        typeof link.operationId !== 'string' ||
+        !CONTROL_OPERATION_ID.test(link.operationId)
+      )
+        throw unavailable();
+      supersedes = { namespace: link.namespace, operationId: link.operationId };
+    }
     if (
+      (Object.hasOwn(action, 'executionRequirement') &&
+        action.executionRequirement !== 'durable') ||
       action.type !== 'application-submit' ||
       action.intent !== 'submit' ||
       !['adapter', 'resource', 'operation', 'operationId'].every(
@@ -205,6 +237,10 @@ export function selectApplicationReview(value: unknown): ApplicationReviewSelect
       operation: action.operation,
       operationId: action.operationId,
       expectedVersion: action.expectedVersion,
+      ...(action.executionRequirement === 'durable'
+        ? { executionRequirement: 'durable' as const }
+        : {}),
+      ...(supersedes !== undefined ? { supersedes } : {}),
     }) as ApplicationReviewSelector;
   } catch {
     throw unavailable();

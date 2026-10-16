@@ -68,6 +68,22 @@ const OVH_PAGE = `<!DOCTYPE html><html><body>
   ${Array.from({ length: 80 }, (_, i) => `<button>Toolbar ${i}</button>`).join('')}
 </body></html>`;
 
+/**
+ * Observation-overhead workload (F1): 120 interactive elements — 40 labelled text inputs, 40
+ * password inputs with values set and 40 buttons. The passwords also make every run a redaction
+ * check: no value may appear in an observation.
+ */
+export const OBSERVE_120_SECRET = 'bench-secret-';
+const OBSERVE_120_PAGE = `<!DOCTYPE html><html><body><main><h1>Observation overhead</h1><form>
+  ${Array.from(
+    { length: 40 },
+    (_, i) =>
+      `<label>Text ${i} <input type="text" value="visible-${i}" /></label>` +
+      `<label>Password ${i} <input type="password" value="${OBSERVE_120_SECRET}${i}" /></label>` +
+      `<button type="button">Button ${i}</button>`
+  ).join('\n  ')}
+</form></main></body></html>`;
+
 export interface FixtureServer {
   port: number;
   stop(): Promise<void>;
@@ -82,6 +98,7 @@ export function startFixtureServer(port = 0): Promise<FixtureServer> {
       '/form': FORM_PAGE,
       '/long': LONG_PAGE,
       '/ovh': OVH_PAGE,
+      '/observe120': OBSERVE_120_PAGE,
     };
     const path = url.split('?')[0] ?? '/';
     const body = pages[path];
@@ -378,3 +395,76 @@ export function comparativeReport(benchmarks: EngineBenchmark[]): string {
 }
 
 export { percentile };
+
+export interface ObservationOverheadResult {
+  engineName: string;
+  iterations: number;
+  /** Interactive elements in the last observation (122 on a real engine: 120 + main + h1). */
+  elements: number;
+  /** Password elements observed with `valueRedacted: true` in the last observation (40). */
+  redactedPasswords: number;
+  /** True when any password value appeared anywhere in an observation (must stay false). */
+  secretLeaked: boolean;
+  ms: { mean: number; p50: number; p95: number; max: number };
+}
+
+/**
+ * F1: observe the 120-element fixture `iterations` times (after sample()'s two warm-ups) and
+ * report latency.
+ * The baseline for probe batching (F2) and the redaction parity check ride in the same run.
+ */
+export async function runObservationOverheadBenchmark(
+  options: RealBenchmarkOptions
+): Promise<ObservationOverheadResult> {
+  const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
+  const port = options.fixturePort ?? ownedServer?.port;
+  if (port === undefined) throw new Error('no fixture port');
+  const iterations = options.iterations ?? 10;
+  const service = new AgentBrowserService({
+    engine: options.engine,
+    networkPolicy: new NetworkPolicy({
+      blockLoopback: false,
+      blockPrivateIPs: true,
+      blockMetadata: true,
+    }),
+  });
+  try {
+    const sessionId = (await service.createSession({ tenantId: 'bench' })).sessionId;
+    const pageId = (await service.createPage(sessionId)).pageId;
+    await service.navigate(sessionId, pageId, { url: `http://127.0.0.1:${port}/observe120` });
+    let secretLeaked = false;
+    let elements = 0;
+    let redactedPasswords = 0;
+    const observe = async () => {
+      const observation = await service.observe(sessionId, pageId, { mode: 'interactive' });
+      elements = observation.elements.length;
+      // The leak check is only meaningful if the password fields were observed at all.
+      redactedPasswords = observation.elements.filter(
+        (element) =>
+          /^Password \d+$/.test(element.name ?? '') &&
+          (element as { valueRedacted?: boolean }).valueRedacted === true
+      ).length;
+      if (JSON.stringify(observation).includes(OBSERVE_120_SECRET)) secretLeaked = true;
+    };
+    // sample() runs two unmeasured warm-up observes before the measured ones.
+    const samples = await sample(observe, iterations);
+    const mean = samples.reduce((total, value) => total + value, 0) / samples.length;
+    const round = (value: number) => Math.round(value * 10) / 10;
+    return {
+      engineName: options.engine.name,
+      iterations,
+      elements,
+      redactedPasswords,
+      secretLeaked,
+      ms: {
+        mean: round(mean),
+        p50: round(percentile(samples, 0.5)),
+        p95: round(percentile(samples, 0.95)),
+        max: round(Math.max(...samples)),
+      },
+    };
+  } finally {
+    await service.shutdown();
+    await ownedServer?.stop();
+  }
+}

@@ -14,7 +14,7 @@ import type {
 } from './journal-types.js';
 import { openOperationJournal } from './operation-journal.js';
 
-type RawMethod = 'reserveIntent' | 'markDispatch' | 'commitTerminal' | 'lookup';
+type RawMethod = 'reserveIntent' | 'markDispatch' | 'commitTerminal' | 'lookup' | 'findByOperation';
 type FailurePoint = 'before_write' | 'after_commit' | 'never_settles';
 
 interface StoredNamespace {
@@ -297,6 +297,25 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
             return current
               ? mutationEnvelope({ kind: 'found', record: copy(current) })
               : mutationEnvelope({ kind: 'scoped_absent' });
+          });
+        },
+        findByOperation(requestStamp) {
+          return run('findByOperation', () => {
+            const refused = mutationRefusal(requestStamp);
+            if (refused) return mutationEnvelope({ kind: 'definitely_not_read', reason: refused });
+            const query = requestStamp.value;
+            // Map iteration is insertion order: the oracle for "in order".
+            const matches = [...state.records.values()].filter(
+              (record) =>
+                record.identity.key.tenantId === query.tenantId &&
+                record.identity.key.operationId === query.operationId &&
+                (query.actionableOnly !== true || record.terminal === undefined)
+            );
+            return mutationEnvelope({
+              kind: 'found',
+              records: matches.slice(0, query.limit).map(copy),
+              truncated: matches.length > query.limit,
+            });
           });
         },
         async close() {
@@ -792,6 +811,92 @@ export function operationJournalAdapterConformance(
       await journal.close();
       const other = await open(fixture, { ...namespace(), namespaceId: 'deployment-b' });
       expect(await other.lookup(record.identity.key)).toEqual({ kind: 'scoped_absent' });
+    });
+
+    it('finds every record of a tenant operation ID across sessions, in order, and nothing else (J3a)', async () => {
+      const fixture = factory();
+      const journal = await open(fixture);
+      const variant = (operationId: string, key: Partial<JournalIntent['key']>): JournalIntent => {
+        const base = intent(operationId);
+        return { ...base, key: { ...base.key, ...key } };
+      };
+      for (const value of [
+        intent('shared'),
+        variant('shared', { sessionIncarnation: 'j'.repeat(22), epoch: 2 }),
+        variant('shared', { tenantId: 'tenant-b' }),
+        intent('other'),
+      ])
+        expect(await journal.reserveIntent(value)).toMatchObject({ kind: 'acknowledged' });
+      const found = await journal.findByOperation({
+        tenantId: 'tenant-a',
+        operationId: 'shared',
+        limit: 16,
+      });
+      expect(found).toMatchObject({ kind: 'found', truncated: false });
+      if (found.kind !== 'found') throw new Error('expected records');
+      expect(found.records.map((record) => record.identity.key)).toEqual([
+        intent('shared').key,
+        variant('shared', { sessionIncarnation: 'j'.repeat(22), epoch: 2 }).key,
+      ]);
+      expect(
+        await journal.findByOperation({ tenantId: 'tenant-a', operationId: 'absent', limit: 16 })
+      ).toEqual({ kind: 'found', records: [], truncated: false });
+    });
+
+    it('bounds the result and says when it was truncated (J3a)', async () => {
+      const fixture = factory();
+      const journal = await open(fixture);
+      for (const incarnation of ['a', 'b', 'c'])
+        await journal.reserveIntent({
+          ...intent('many'),
+          key: { ...intent('many').key, sessionIncarnation: incarnation.repeat(22) },
+        });
+      const found = await journal.findByOperation({
+        tenantId: 'tenant-a',
+        operationId: 'many',
+        limit: 2,
+      });
+      expect(found).toMatchObject({ kind: 'found', truncated: true });
+      if (found.kind === 'found') expect(found.records).toHaveLength(2);
+    });
+
+    it('never discloses another namespace and refuses a fenced handle (J3a)', async () => {
+      const fixture = factory();
+      const { journal: stale } = await reserve(fixture, 'scoped');
+      const query = { tenantId: 'tenant-a', operationId: 'scoped', limit: 16 };
+      fixture.releaseOwnership('deployment-a');
+      const replacement = await open(fixture);
+      expect(await stale.findByOperation(query)).toEqual({
+        kind: 'definitely_not_read',
+        reason: 'fenced',
+      });
+      expect(await replacement.findByOperation(query)).toMatchObject({
+        kind: 'found',
+        records: [{ identity: { key: { operationId: 'scoped' } } }],
+      });
+      await replacement.close();
+      const other = await open(fixture, { ...namespace(), namespaceId: 'deployment-b' });
+      expect(await other.findByOperation(query)).toEqual({
+        kind: 'found',
+        records: [],
+        truncated: false,
+      });
+    });
+
+    it.each([
+      { tenantId: '', operationId: 'op-1', limit: 1 },
+      { tenantId: 'tenant-a', operationId: 'bad id', limit: 1 },
+      { tenantId: 'tenant-a', operationId: 'op-1', limit: 0 },
+      { tenantId: 'tenant-a', operationId: 'op-1', limit: 17 },
+      { tenantId: 'tenant-a', operationId: 'op-1', limit: 1.5 },
+      { tenantId: 'tenant-a', operationId: 'op-1', limit: 1, extra: true },
+    ])('refuses an invalid query before any I/O: %j', async (query) => {
+      const fixture = factory();
+      const journal = await open(fixture);
+      expect(await journal.findByOperation(query as never)).toEqual({
+        kind: 'definitely_not_read',
+        reason: 'invalid_request',
+      });
     });
 
     it('lets a replacement reconcile fenced terminal facts and retry only the terminal acknowledgment', async () => {

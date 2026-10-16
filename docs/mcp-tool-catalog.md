@@ -10,286 +10,286 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `15a8a1c0891fe4bf89dc6044fe22eb4457e6fa00c9d9cf6ba111497b17398cf7`
+Catalog SHA-256 (complete descriptions and schemas): `98527ab508418b9c7aeed5bc9cc51f670d9aaef5499f31e12e3cf093b374c7ff`
 
-## unbound/qa (19 tools; 50501 result bytes)
-
-| Tool | Required arguments | Output contract | Purpose |
-| --- | --- | --- | --- |
-| `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
-| `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `close` | sessionId | text JSON | Close a browser session. |
-| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
-| `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
-| `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
-| `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
-| `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
-| `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
-| `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
-| `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
-
-## delegated/qa (16 tools; 44560 result bytes)
-
-| Tool | Required arguments | Output contract | Purpose |
-| --- | --- | --- | --- |
-| `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
-| `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `events_replay` | none | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
-| `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
-| `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
-| `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
-| `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
-| `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
-
-## unbound/operations (19 tools; 50501 result bytes)
+## unbound/qa (19 tools; 69551 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `close` | sessionId | text JSON | Close a browser session. |
-| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
-| `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
-| `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `close` | sessionId | urn:agentbrowser:session-closed:v1 | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
+| `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
+| `create` | tenantId | urn:agentbrowser:session-created:v1 | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
+| `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `page_create` | sessionId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | sessionId | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/operations (16 tools; 44560 result bytes)
+## delegated/qa (16 tools; 58974 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `events_replay` | none | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
+| `page_create` | operationId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | none | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (18 tools; 45632 result bytes)
-
-| Tool | Required arguments | Output contract | Purpose |
-| --- | --- | --- | --- |
-| `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
-| `close` | sessionId | text JSON | Close a browser session. |
-| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
-| `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
-| `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
-| `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
-| `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
-| `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
-| `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
-| `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
-
-## delegated/audit (15 tools; 39689 result bytes)
-
-| Tool | Required arguments | Output contract | Purpose |
-| --- | --- | --- | --- |
-| `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
-| `events_replay` | none | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
-| `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
-| `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
-| `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
-| `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
-| `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
-
-## unbound/appsec (19 tools; 50501 result bytes)
+## unbound/operations (19 tools; 69551 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `close` | sessionId | text JSON | Close a browser session. |
-| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
-| `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
-| `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `close` | sessionId | urn:agentbrowser:session-closed:v1 | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
+| `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
+| `create` | tenantId | urn:agentbrowser:session-created:v1 | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
+| `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `page_create` | sessionId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | sessionId | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/appsec (16 tools; 44560 result bytes)
+## delegated/operations (16 tools; 58974 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `events_replay` | none | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
+| `page_create` | operationId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | none | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (19 tools; 50501 result bytes)
+## unbound/audit (18 tools; 63602 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
+| `close` | sessionId | urn:agentbrowser:session-closed:v1 | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
+| `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
+| `create` | tenantId | urn:agentbrowser:session-created:v1 | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
+| `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
+| `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
+| `page_create` | sessionId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | sessionId | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
+
+## delegated/audit (15 tools; 53023 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
+| `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `html` | pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
+| `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
+| `page_create` | operationId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | none | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
+
+## unbound/appsec (19 tools; 69551 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `close` | sessionId | text JSON | Close a browser session. |
-| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
-| `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
-| `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `close` | sessionId | urn:agentbrowser:session-closed:v1 | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
+| `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
+| `create` | tenantId | urn:agentbrowser:session-created:v1 | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
+| `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `page_create` | sessionId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | sessionId | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/bounty (16 tools; 44560 result bytes)
+## delegated/appsec (16 tools; 58974 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `events_replay` | none | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
+| `page_create` | operationId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | none | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (19 tools; 50501 result bytes)
+## unbound/bounty (19 tools; 69551 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `close` | sessionId | text JSON | Close a browser session. |
-| `cookie_handoff` | sessionId, domains | text JSON | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
-| `cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
-| `events_replay` | sessionId | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `close` | sessionId | urn:agentbrowser:session-closed:v1 | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
+| `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
+| `create` | tenantId | urn:agentbrowser:session-created:v1 | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
+| `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `page_create` | sessionId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | sessionId | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/forms (16 tools; 44560 result bytes)
+## delegated/bounty (16 tools; 58974 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `events_replay` | none | text JSON | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `html` | pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
+| `page_create` | operationId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | none | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
 | `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results). |
-| `policy` | none | text JSON | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
 | `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+| `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
+
+## unbound/forms (19 tools; 69551 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
+| `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `close` | sessionId | urn:agentbrowser:session-closed:v1 | Close a browser session. |
+| `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
+| `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
+| `create` | tenantId | urn:agentbrowser:session-created:v1 | Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. |
+| `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
+| `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
+| `page_create` | sessionId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | sessionId | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `session` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
+
+## delegated/forms (16 tools; 58974 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
+| `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
+| `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `html` | pageId | urn:agentbrowser:page-html:v1 | Fetch the page's current HTML as inline text. |
+| `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
+| `page_create` | operationId | urn:agentbrowser:page:v1 | Create a page in an existing session, sharing its cookies and policy. |
+| `pages` | none | urn:agentbrowser:page-list:v1 | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). |
+| `policy` | none | urn:agentbrowser:policy-answer:v1 | Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS. |
+| `screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `session` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
 ## unbound/application (0 tools; 12 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 
-## delegated/application (1 tool; 285 result bytes)
+## delegated/application (1 tool; 838 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
-| `operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `operation` | operationId | urn:agentbrowser:operation-record:v1 | Reconcile a lost response using its operationId. |
 
 Full nested schemas and complete descriptions are available through `tools/list`.
 The digest detects changes even when a summary row stays the same. Tool errors retain

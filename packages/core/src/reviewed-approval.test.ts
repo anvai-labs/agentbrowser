@@ -227,3 +227,35 @@ it.each([true, false])(
     });
   }
 );
+
+it('validates a reviewed approval without consuming it, with the same checks as consume (B-dur, B6)', async () => {
+  const gate = fixture();
+  const token = await gate.generateReviewedApproval(request(), context());
+  // Not yet approved: invalid, exactly as consume would refuse.
+  expect(await gate.validateReviewedApproval(token.tokenId, request(), context())).toBe(false);
+  await gate.decideReviewedApproval(token.tokenId, context(), 'approve');
+  // Approved: valid, repeatedly — validation never burns the token.
+  for (let index = 0; index < 3; index += 1)
+    expect(await gate.validateReviewedApproval(token.tokenId, request(), context())).toBe(true);
+  expect(await gate.getReviewedApproval(token.tokenId, context())).toMatchObject({
+    status: 'approved',
+  });
+  // A different action, session or review context is invalid (the consume checks).
+  const otherAction = { ...request(), action: { ...request().action, value: 'different' } };
+  expect(await gate.validateReviewedApproval(token.tokenId, otherAction, context())).toBe(false);
+  // A request whose session contradicts its review context is refused by the snapshot itself —
+  // identically for validate and consume.
+  const otherSession = { ...request(), sessionId: 'other' };
+  await expect(
+    gate.validateReviewedApproval(token.tokenId, otherSession, context())
+  ).rejects.toThrow(/Invalid bounded reviewed action/);
+  await expect(
+    gate.consumeReviewedApproval(token.tokenId, otherSession, context())
+  ).rejects.toThrow(/Invalid bounded reviewed action/);
+  expect(
+    await gate.validateReviewedApproval(token.tokenId, request(), { ...context(), epoch: 1 })
+  ).toBe(false);
+  // Consumed elsewhere (during a storage wait): no longer current.
+  expect(await gate.consumeReviewedApproval(token.tokenId, request(), context())).toBe(true);
+  expect(await gate.validateReviewedApproval(token.tokenId, request(), context())).toBe(false);
+});

@@ -73,8 +73,15 @@ it('preserves generic routing and refuses malformed reserved application actions
     { ...action(), expectedVersion: Number.MAX_SAFE_INTEGER + 1 },
     { ...action(), bindingGeneration: '' },
     { ...action(), extra: 'PRIVATE' },
+    // C4b: only a durable requirement is carried; anything else is refused, never dropped.
+    { ...action(), executionRequirement: 'ephemeral' },
+    { ...action(), executionRequirement: true },
   ])
     expect(() => selectApplicationReview(value)).toThrow('Evidence review unavailable');
+  expect(selectApplicationReview({ ...action(), executionRequirement: 'durable' })).toMatchObject({
+    executionRequirement: 'durable',
+  });
+  expect(selectApplicationReview(action())).not.toHaveProperty('executionRequirement');
   const getter = vi.fn(() => 'PRIVATE');
   expect(() =>
     selectApplicationReview(Object.defineProperty(action(), 'input', { get: getter }))
@@ -141,4 +148,24 @@ it('rejects source accessors, hidden fields and malformed permissions without pr
   ])
     expect(() => captureEvidenceReviewSource(value)).toThrow('Evidence review unavailable');
   expect(getter).not.toHaveBeenCalled();
+});
+
+it('carries a continuation supersedes link through review selection and refuses malformed links (J3c part 2)', () => {
+  const link = { namespace: 'agentbrowser', operationId: 'closed-op' };
+  expect(selectApplicationReview({ ...action(), supersedes: link })).toMatchObject({
+    supersedes: link,
+  });
+  expect(selectApplicationReview(action())).not.toHaveProperty('supersedes');
+  for (const supersedes of [
+    { namespace: '', operationId: 'closed-op' },
+    { namespace: 'n'.repeat(129), operationId: 'closed-op' },
+    { namespace: 'agentbrowser', operationId: 'bad id' },
+    { namespace: 'agentbrowser', operationId: 'closed-op', extra: true },
+    { namespace: 'agentbrowser' },
+    'agentbrowser:closed-op',
+    null,
+  ])
+    expect(() => selectApplicationReview({ ...action(), supersedes })).toThrow(
+      'Evidence review unavailable'
+    );
 });

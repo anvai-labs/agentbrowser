@@ -1,7 +1,15 @@
 # T6: bounded form mapping and private-value preparation
 
-Status: DELIVERED (merged #238). One exact URL and
-one fully present form stage; not arbitrary ATS support or application submission.
+Status: DELIVERED (merged #238). One exact URL and one fully present form stage; not arbitrary
+ATS support or application submission. **Staged mappings DELIVERED 2026-10-15 (W3a):** a mapping
+document may instead carry 1-12 `stages`, each exactly the single-stage shape (its own distinct
+scope URL and fields); `materializeAutofillMapping(mapping, values, stageId)` materializes the
+chosen stage, values must match the union of every stage's keys, and `form stages` lists the
+stages offline. Which stage applies is caller-observed — the scoped preflight refuses a stage
+whose fields are not all present — never inferred; business/job identity remains out of scope. Effective bounds (review-measured):
+the document snapshot bound (2,000 nodes / 128 KiB) governs over the schema maxima (6 x 50-field
+stages fit; 7 x 50 is refused), and the union of stage value keys is capped at 50 with a clear
+static refusal for wider unions.
 
 ## Owners and contract
 

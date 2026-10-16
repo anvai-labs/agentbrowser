@@ -63,12 +63,37 @@ export interface MutationOptions {
   operationId?: string;
 }
 
+/** T5 B-dur: `act`, `plan` and `autofill` may be journaled as one durable browser operation. */
+export interface BrowserMutationOptions extends MutationOptions {
+  /**
+   * `'durable'` journals the call for classification only (never replay); it needs a controlled
+   * session, an `operationId` and an open journal (`CONTROL_REQUIRED` otherwise).
+   * `'ephemeral'` is identical to omitting it.
+   */
+  executionRequirement?: 'ephemeral' | 'durable';
+}
+
+const browserMutation = <T extends object>(
+  body: T,
+  { executionRequirement, ...options }: BrowserMutationOptions
+): { body: T; options: MutationOptions } => ({
+  body: executionRequirement === undefined ? body : { ...body, executionRequirement },
+  options,
+});
+
 export interface ClientOptions {
   baseUrl?: string;
   timeout?: number;
   headers?: Record<string, string>;
   /** Bearer API key; sent as Authorization on every request. */
   apiKey?: string;
+  /**
+   * Caller cancellation: read at the start of each request. An aborted signal abandons the
+   * request with `CANCELLED` (outcome may be unknown for a write; reconcile by operationId). A
+   * hook, not a signal, so one client can serve concurrent callers (the MCP server scopes it
+   * per tool call).
+   */
+  requestSignal?: () => AbortSignal | undefined;
 }
 
 // ADR-015 (B2/B7): the SDK mirrors the protocol's request types instead of
@@ -263,7 +288,8 @@ class HttpClient {
   constructor(
     private readonly baseUrl: string,
     private readonly timeoutMs: number,
-    private readonly headers: Record<string, string>
+    private readonly headers: Record<string, string>,
+    private readonly requestSignal?: () => AbortSignal | undefined
   ) {}
 
   async requestJson<T>(
@@ -290,8 +316,15 @@ class HttpClient {
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
         : undefined;
     const controller = new AbortController();
+    const callerSignal = this.requestSignal?.();
+    const cancelled = () => callerSignal?.aborted === true;
+    const cancel = () => controller.abort();
     const timeoutId = setTimeout(() => controller.abort(), init.timeoutMs ?? this.timeoutMs);
     try {
+      if (callerSignal !== undefined) {
+        if (callerSignal.aborted) throw new Error('cancelled before dispatch');
+        callerSignal.addEventListener('abort', cancel, { once: true });
+      }
       const response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? 'GET',
         headers: {
@@ -367,6 +400,16 @@ class HttpClient {
       }
       return result as T;
     } catch (error) {
+      if (cancelled()) {
+        // Caller cancellation: a write may already have run, so this is uncertain, never a
+        // success and never safe to replay blindly.
+        throw new AgentBrowserError(
+          'CANCELLED',
+          'Request cancelled; outcome may be unknown',
+          false,
+          operationId ? { operationId } : undefined
+        );
+      }
       if (controller.signal.aborted) {
         // A timed-out mutation may have run: never advertise blind retry safety.
         throw new AgentBrowserError(
@@ -386,6 +429,7 @@ class HttpClient {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      callerSignal?.removeEventListener('abort', cancel);
     }
   }
 }
@@ -714,12 +758,13 @@ export class SessionsClient {
     sessionId: string,
     pageId: string,
     request: AutofillRequest,
-    options: MutationOptions = {}
+    mutation: BrowserMutationOptions = {}
   ): Promise<AutofillReport> {
     const expectedFields = request.fields.length;
+    const { body, options } = browserMutation(request, mutation);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/autofill`, {
       method: 'POST',
-      body: request,
+      body,
       ...options,
       timeoutMs: Math.min(240000, request.policy?.timeoutMs ?? 240000) + 30000,
       parseResponse: (input) => parseAutofillReport(input, expectedFields),
@@ -730,12 +775,13 @@ export class SessionsClient {
     sessionId: string,
     pageId: string,
     actions: Array<Record<string, unknown>>,
-    options: MutationOptions = {}
+    mutation: BrowserMutationOptions = {}
   ): Promise<PlanReport> {
     const parseResponse = createPlanReportParser(actions);
+    const { body, options } = browserMutation({ actions }, mutation);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
-      body: { actions },
+      body,
       ...options,
       parseResponse,
     });
@@ -808,12 +854,13 @@ export class SessionsClient {
     sessionId: string,
     pageId: string,
     request: ActionRequest,
-    options: MutationOptions = {}
+    mutation: BrowserMutationOptions = {}
   ): Promise<ActionResult> {
+    const { body, options } = browserMutation(request, mutation);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/act`, {
       ...options,
       method: 'POST',
-      body: request,
+      body,
     });
   }
 
@@ -903,7 +950,12 @@ export class AgentBrowserClient {
       ...options.headers,
     };
 
-    this.http = new HttpClient(this.baseUrl, this.timeout, this.customHeaders);
+    this.http = new HttpClient(
+      this.baseUrl,
+      this.timeout,
+      this.customHeaders,
+      options.requestSignal
+    );
     this.sessions = new SessionsClient(this.http);
   }
 
@@ -920,6 +972,61 @@ export class AgentBrowserClient {
     unconditional?: string;
   }> {
     return this.http.requestJson('/v1/policy');
+  }
+
+  /**
+   * T5 J3b: the durable journal status (GET /v1/journal). Read-only;
+   * recoveryQualified is advisory and never an exactly-once promise.
+   */
+  async journalStatus(): Promise<{
+    schemaVersion: 1;
+    configured: boolean;
+    namespace?: string;
+    health?: 'open' | 'quarantined' | 'poisoned' | 'closed';
+    acceptUntil?: string;
+    retainUntil?: string;
+    runtime: { platform: string; node: string; qualified: boolean };
+    recoveryQualified: boolean;
+    /** T5 J3d: namespaces rotated away from (and a past-horizon current one), recover-only. */
+    history?: Array<{
+      namespace: string;
+      state: 'open' | 'refused' | 'unavailable';
+      reason?: string;
+      acceptUntil: string;
+      retainUntil: string;
+    }>;
+  }> {
+    return this.http.requestJson('/v1/journal');
+  }
+
+  /**
+   * T5 J3b: the historical records of one durable operation
+   * (GET /v1/journal/operations/{operationId}), scoped to the credential's
+   * tenant. An absent result is scoped absence in the searched namespace,
+   * never proof of non-execution.
+   */
+  async journalOperations(operationId: string): Promise<{
+    schemaVersion: 1;
+    operationId: string;
+    absent: boolean;
+    truncated: boolean;
+    /** T5 J3d: namespaces that could not be read; `absent` is then false (history unread). */
+    unreadNamespaces?: string[];
+    records: Array<{
+      namespace: string;
+      classification:
+        | 'undispatched'
+        | 'in_doubt'
+        | 'failed_before_dispatch'
+        | 'completed'
+        | 'failed'
+        | 'settled_unknown';
+      actionable: boolean;
+      application: { adapter: string; resource: string; bindingGeneration: string };
+      session: { sessionIncarnation: string; epoch: number };
+    }>;
+  }> {
+    return this.http.requestJson(`/v1/journal/operations/${encodeURIComponent(operationId)}`);
   }
 
   /**

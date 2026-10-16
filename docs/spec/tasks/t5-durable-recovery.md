@@ -5,7 +5,8 @@ C1a settlement merged #297; C1b authority composition merged #298;
 C2/C3 application guards and terminal/replay merged #299;
 C4a control views merged #300; J2a SQLite feasibility/audit merged #301;
 J2b.1 internal owner/anchor primitive implemented;
-runtime enablement gated and durable recovery unimplemented.
+runtime enablement (C4b: J-a, J-b, J-d), recovery (J3, J4) and browser classification
+(B-dur) delivered 2026-10-15; per-host deployment is the operator's.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
@@ -50,18 +51,50 @@ connecting a runtime store. [C1b authority composition](../design/t5-journal-aut
 tracks intent/marker settlement through the existing ticket and dispatch helpers.
 [C2 application-owned pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
 merged as #299. [C4a shared control views](../design/t5-journal-control-views.md)
-now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection IMPLEMENTED (protocol field +
-service normalization + capability check + discovery surface);
-enabling the durable store at runtime remains gated on F3 deployment;
+now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection DELIVERED
+2026-10-15. The protocol field, capability check, explicit-ephemeral acceptance and REST discovery
+were fixed (J-a). The durable requirement is part of the operation identity
+(`application-operation:v2-durable`) and of the review intent, with the CLI's
+`--execution-requirement` (J-b). J-d wires the qualified SQLite store into the service behind the
+trusted `AGENTBROWSER_JOURNAL_*` configuration ([evidence](../evidence/t5-journal-runtime.md)):
+- Only durable writes are journaled.
+- The journal intent labels its fingerprint domain.
+- Durable is advertised and accepted only while the journal is open and accepting.
+- The application authority refuses durable on its own when it cannot be journaled.
+
+F3 deployment, enabling the store on a given host, is an operator action.
+J-e (2026-10-15): process loss at each boundary of a durable write (SIGKILL through the real
+service and store) leaves the expected record state, proven by an in-process read at the hold
+point. The effect runs at most once, the next process reopens the namespace and replays nothing,
+and key loss or in-place rotation is refused
+([evidence](../evidence/t5-journal-runtime.md#j-e-process-loss-through-the-service-2026-10-15)).
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)
 loads the concrete ownership/anchor/crash/runtime gates.
 [J2b.1 owner/anchor evidence](../evidence/t5-journal-sqlite-owner.md) records the first
 storage primitive; the raw adapter, bounded child manager and all qualification gates
-are shipped; remaining: F3 authorization, C4b selection, and optional
-constrained-mount depth. J3/J4 remain proposed.
-Browser durability waits for its existing target/policy/approval owners to support
-post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
+are shipped; C4b selection, which the F3 authorization gated, is delivered (J-a, J-b, J-d,
+2026-10-15); optional constrained-mount depth remains unscheduled.
+J3a/J3b, J3c (close/settle, then continue/supersedes/reconcile), J3d (history namespaces) and
+J4's application-write gates are built (2026-10-15). The refined design was
+accepted by the owner on 2026-10-15
+([J-design](../design/t5-recovery-design.md)). It covers:
+- historical lookup for the ADR-025 operator or a tenant API key, read-only;
+- writes for the ADR-025 operator only;
+- continuation of undispatched records only;
+- typed adapter reconciliation;
+- history namespaces;
+- the non-business write classification;
+- browser-operation classification.
+
+A macOS leg (`journal-darwin.yml`, 2026-10-15)
+runs the same qualification and packaging gates nightly on main and on journal-path pull requests.
+Browser durability is delivered as classification (B-dur, 2026-10-15,
+[design](../design/t5-browser-durability.md),
+[evidence](../evidence/t5-journal-runtime.md#b-dur-2b-durable-act-plan-and-autofill-through-the-service-2026-10-15)):
+the target and approval owners (plain token, reviewed approval, lease) re-check after the
+storage wait — `act` has no navigation, so there is no egress re-check (B3) — and a durable
+browser record is never replayed. Do not advertise recovery from J0 or this design.
 
 ## TDD and acceptance
 
@@ -77,6 +110,8 @@ Cancellation drains; hard engine termination is a separate capability requiring 
 
 ## Completion / stop
 
-Close R08 and durable portions of R10. Advertise recovery only for qualified operations
+Close R08 and durable portions of R10. (R08 is closed for application writes and, by the
+accepted D6, narrowed for browser operations: receipt contents are never journaled, so its
+autofill-receipt part cannot be closed by T5.) Advertise recovery only for qualified operations
 and stores. Do not promise exactly-once external effects or resume unverified browser
 steps. Block durable publication if storage/key retention makes replay ambiguity unsafe.

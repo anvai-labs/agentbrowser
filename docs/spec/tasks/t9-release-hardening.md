@@ -40,15 +40,12 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The published and installed baseline is 1.15.1 (the 1.15.1 maintenance
-release shipped 2026-10-03; the delivery records
-[release-1.11.0](../evidence/release-1.11.0.md) and later per-release
-records remain historical references). Develop carries substantial
-unreleased work since 1.15.0 — the T7 scope-enforcement and audit-adapter
-stack, the completed T5 qualification matrix and reconciliation procedure,
-the T1/T8 provider qualifications, and the N2 prerequisite record (see the
-CHANGELOG's Unreleased section) — all pending the next deliberate
-promotion and release checkpoint. All eight strict main checks and immutable release assets
+The published baseline is **1.18.0** (released 2026-10-15 from main `9406045`, release run
+38741154969, all 14 jobs green; see [release-1.18.0](../evidence/release-1.18.0.md)). Records for
+1.16.0, 1.16.1, 1.17.0 and 1.17.1 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
+and earlier per-release records remain historical references. Both `main` and `develop` are
+protected with the same 11 strict required contexts and require a pull request (zero approving
+reviews); `main` also enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
 remain required. Label acceptance phases and measure their timing before changing
 budgets. No durable recovery, installed external-harness qualification or production
 use-case completion is implied.
@@ -80,8 +77,45 @@ gate now exists (2026-10-15): `scripts/check-tag-ancestry.mjs` runs in the relea
 `tag-guard` job, which every other release job depends on, and refuses a tag whose commit
 is not reachable from `main`. Because GitHub runs the workflow *of the tagged commit*, the
 gate does not bind a tag on an older or modified commit; R14 closes only once the owner
-applies the tag-creation ruleset and `npm` environment protection. Least-privilege publication review and measured runner-use
-improvements remain open. T9 stays active because every candidate needs fresh review, exact-head CI,
+applies the tag-creation ruleset and `npm` environment protection.
+
+**Least privilege and pinning (2026-10-15, S1c).** Every workflow now defaults to
+`contents: read` at the top level (`ci.yml` previously inherited the repository default);
+in `release.yml` only the `release` job, which creates the GitHub Release and uploads its
+assets, holds `contents: write`, and `npm-publish` keeps only `id-token: write` for
+provenance. `winget` pushes with its own app token, not `GITHUB_TOKEN`. All 67 action
+references across the four workflows are pinned to the full commit SHA of their release
+(annotated tags dereferenced to the commit) with a `# vX.Y.Z` comment, which Dependabot's
+`github-actions` ecosystem keeps current. `scripts/release-workflow.test.mjs` (in
+`test:release`) discovers every workflow file and refuses an unpinned or non-line-form action
+reference, a top-level permissions block other than exactly `contents: read`, and any job-level
+permissions block that is not exactly on its allowlist (`release.yml` `release`: contents write;
+`npm-publish`: id-token write + contents read; `docs.yml` `deploy`: pages + id-token write).
+It reads YAML with anchored regexes, so it also refuses forms it cannot read reliably (a commented `jobs:` or job key, non-two-space job keys, or any `permissions:` line it did not attribute). It checks SHA format offline; that a SHA is its tag's commit rests on review and Dependabot.
+
+**Skipped/canceled required checks (S1b, documented invariant, checked 2026-10-15).** GitHub
+reports a job skipped by its `if:` as *Success* to a required status check, and skips (does
+not fail) a job whose `needs:` dependency failed or was canceled. The required contexts on
+`develop`/`main` (Type Check, Lint, Test, Build, Docker, Benchmarks, Obscura (experimental), Bun compile +
+smoke, Journal SQLite gates, `build`, `deploy`) are safe under both rules:
+- the only `needs:` edges among the CI jobs are `Build` → Type Check + Lint and `Journal SQLite
+  gates` → Type Check; when they skip, the failed upstream is itself required and still blocks
+  (the docs workflow's `deploy` → `build` edge is covered below);
+- `deploy` (docs site) is required but skipped on every pull request by design, so it never
+  blocks a PR; it is a publication step, not a test, and its `build` sibling runs on every PR;
+- every workflow that produces a required context runs unfiltered on pull requests
+  (`paths-ignore`/`paths` apply to pushes only), so a docs-only PR cannot strand one; the
+  path-filtered macOS journal leg (`journal-darwin.yml`) is deliberately not required;
+- in `release.yml` every job `needs:` `tag-guard` and none uses `always()`/`!cancelled()`/
+  `failure()` (pinned by `check-tag-ancestry.test.mjs`), so a failed or canceled
+  prerequisite skips the publish jobs instead of running them.
+
+No aggregate "all green" job exists whose own skip could be read as success, so none is
+added. The discovery/schema/spec context check is already local and reused:
+`pnpm release:artifacts` (`scripts/check-release-artifacts.mjs`) runs `spec-context.test.mjs`
+and `checkSpecContext()` inside the existing CI and Windows jobs.
+
+Runner minutes are now measured: [baseline](../evidence/t9-runner-minutes.md) from `scripts/runner-minutes.mjs`, 2026-10-15. Measured runner-use improvements remain open. T9 stays active because every candidate needs fresh review, exact-head CI,
 promotion and publication evidence.
 
 ## Delivered checkpoint and remaining work

@@ -8,6 +8,7 @@ import {
   type ApplicationScope,
   ApplicationSessions,
   defineApplicationOperation,
+  RESERVED_BROWSER_ADAPTER_ID,
 } from './application-authority.js';
 import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
 
@@ -1117,5 +1118,109 @@ describe('application authority without a browser', () => {
     const next = sessions.create(operator);
     sessions.close(next.sessionId, operator);
     expect(sessions.authority.get(next.sessionId)).toBeUndefined();
+  });
+});
+
+describe('supersedes link normalization (J3c part 2, review F1)', () => {
+  const good = () => ({ namespace: 'agentbrowser', operationId: 'closed-op' });
+  const hostile: Array<[string, () => unknown]> = [
+    ['a numeric operation ID', () => ({ namespace: 'agentbrowser', operationId: 12345 })],
+    [
+      'an object coercing to a valid ID',
+      () => ({ namespace: 'agentbrowser', operationId: { toString: () => 'closed-op' } }),
+    ],
+    ['a null-prototype object', () => Object.assign(Object.create(null), good())],
+    [
+      'a class instance',
+      () =>
+        new (class {
+          namespace = 'agentbrowser';
+          operationId = 'closed-op';
+        })(),
+    ],
+    [
+      'a proxy whose descriptor trap reports an accessor',
+      () =>
+        new Proxy(good(), {
+          getOwnPropertyDescriptor: (target, key) =>
+            key === 'namespace'
+              ? { configurable: true, enumerable: true, get: () => 'agentbrowser' }
+              : Reflect.getOwnPropertyDescriptor(target, key),
+        }),
+    ],
+    [
+      'a getter',
+      () =>
+        Object.defineProperty({ operationId: 'closed-op' }, 'namespace', {
+          enumerable: true,
+          get: () => 'agentbrowser',
+        }),
+    ],
+    ['an extra symbol key', () => ({ ...good(), [Symbol('x')]: 1 })],
+    [
+      'a hidden extra property',
+      () =>
+        Object.defineProperty(good(), 'padding', { enumerable: false, value: 'x'.repeat(10_240) }),
+    ],
+    [
+      'an inherited namespace with an extra own key',
+      () =>
+        Object.assign(Object.create({ namespace: 'agentbrowser' }), {
+          operationId: 'closed-op',
+          other: 1,
+        }),
+    ],
+  ];
+
+  it.each(hostile)('refuses %s before any effect', async (_name, make) => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    await expect(
+      s.port.execute('session', operator, { ...command, supersedes: make() } as never)
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(s.effect).not.toHaveBeenCalled();
+  });
+
+  it('detaches a valid link: later caller mutation cannot reach the recorded request', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    const link = good();
+    await expect(
+      s.port.execute('session', operator, { ...command, supersedes: link })
+    ).resolves.toMatchObject({ status: 'committed' });
+    link.operationId = 'tampered';
+    expect(s.effect).toHaveBeenCalledTimes(1);
+    // A replay of the same operation still matches the original (identity excludes the link).
+    await expect(
+      s.port.execute('session', operator, { ...command, supersedes: good() })
+    ).resolves.toMatchObject({ replay: true });
+  });
+});
+
+describe('the reserved browser adapter id (T5 B-dur, B5)', () => {
+  it('refuses an application adapter that registers the reserved id', () => {
+    const authority = new SessionAuthority();
+    expect(RESERVED_BROWSER_ADAPTER_ID).toBe('browser');
+    expect(
+      () =>
+        new ApplicationAuthority(authority, [
+          {
+            id: RESERVED_BROWSER_ADAPTER_ID,
+            authorize: () => true,
+            operations: {},
+            receipt: async () => ({}),
+          },
+        ])
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('still accepts ids that merely contain the word', () => {
+    const authority = new SessionAuthority();
+    expect(
+      () =>
+        new ApplicationAuthority(authority, [
+          { id: 'browser-tools', authorize: () => true, operations: {}, receipt: async () => ({}) },
+        ])
+    ).not.toThrow();
   });
 });

@@ -42,6 +42,8 @@ const scannerResult: ScannerScanResult = {
       parameter: 'name',
       risk: 'high',
       name: 'Cross Site Scripting (Reflected)',
+      status: 'suspected',
+      scannerConfidence: 'medium',
     },
     {
       pluginId: 10038,
@@ -49,6 +51,7 @@ const scannerResult: ScannerScanResult = {
       parameter: null,
       risk: 'medium',
       name: 'CSP Header Not Set',
+      status: 'suspected',
     },
   ],
   droppedOutOfScope: 0,
@@ -78,7 +81,13 @@ describe('SARIF report adapter (T7 slice 4)', () => {
     expect(report.runs[0].tool.driver.name).toBe('agentbrowser-audit-scanner');
     expect(report.runs[0].results).toHaveLength(2);
     const xssResult = report.runs[0].results.find((r) => r.ruleId === '40012');
-    expect(xssResult?.level).toBe('error');
+    // Suspected (unconfirmed) results carry level 'none' per SARIF 2.1.0 §3.27.10; the scanner's
+    // risk rides in properties and in the rule's defaultConfiguration.
+    expect(xssResult?.level).toBe('none');
+    expect(xssResult?.properties).toMatchObject({ risk: 'high' });
+    expect(
+      report.runs[0].tool.driver.rules.find((rule) => rule.id === '40012')?.defaultConfiguration
+    ).toEqual({ level: 'error' });
     // The URI is percent-encoded for SARIF conformance.
     expect(xssResult?.locations?.[0]?.physicalLocation?.artifactLocation?.uri).toBe(
       'http://target.testhost.example/item?name=%3Cscript%3E'
@@ -120,5 +129,75 @@ describe('SARIF report adapter (T7 slice 4)', () => {
     const parsed = JSON.parse(text);
     expect(parsed.version).toBe('2.1.0');
     expect(parsed.runs).toHaveLength(2);
+  });
+
+  it('gate 8 (T7): suspected stays labelled as SARIF review; confirmed is fail with its evidence', async () => {
+    const { confirmFinding } = await import('./finding-confirmation.js');
+    const [xss, csp] = scannerResult.findings;
+    if (!xss || !csp) throw new Error('fixture');
+    const confirmed = confirmFinding(xss, {
+      method: 'independent-reproduction',
+      reproducedAt: '2026-10-15T10:00:00.000Z',
+      observation: 'payload marker reflected unescaped',
+      cleanup: { required: false, performed: false, note: 'read-only' },
+    });
+    const report = buildSarifReport({
+      scanner: { ...scannerResult, findings: [confirmed, csp] },
+    });
+    const results = report.runs[0]?.results ?? [];
+    expect(results[0]).toMatchObject({
+      kind: 'fail',
+      properties: {
+        status: 'confirmed',
+        scannerConfidence: 'medium',
+        evidence: { method: 'independent-reproduction', reproducedAt: '2026-10-15T10:00:00.000Z' },
+      },
+    });
+    expect(results[0]?.level).toBe('error');
+    expect(results[1]).toMatchObject({
+      kind: 'review',
+      level: 'none',
+      properties: { status: 'suspected' },
+    });
+    expect(results[1]?.properties).not.toHaveProperty('evidence');
+    // SARIF 2.1.0 §3.27.9/§3.27.10: a kind other than 'fail' SHALL have level 'none', and a level
+    // other than 'none' with kind present SHALL have kind 'fail'.
+    for (const result of results) {
+      if (result.kind !== undefined && result.kind !== 'fail') expect(result.level).toBe('none');
+      if (result.kind !== undefined && result.level !== 'none') expect(result.kind).toBe('fail');
+    }
+  });
+
+  it('gate 9 (T7): role-access findings get their own run, confirmed, without private markers', () => {
+    const report = buildSarifReport({
+      roleAccess: {
+        findings: [
+          {
+            kind: 'broken-access-control',
+            url: 'http://app.testhost.example/invoices/1001',
+            owner: 'alice',
+            actor: 'bob',
+            risk: 'high',
+            status: 'confirmed',
+            evidence: {
+              method: 'independent-reproduction',
+              reproducedAt: '2026-10-15T10:00:00.000Z',
+              observation: "identity bob received the owner's private marker (HTTP 200)",
+              cleanup: { required: false, performed: false, note: 'read-only GET probe' },
+            },
+          },
+        ],
+        ownerControls: { passed: 1, failed: 0 },
+      },
+    });
+    const run = report.runs.find((candidate) =>
+      candidate.tool.driver.name.endsWith('-role-access')
+    );
+    expect(run?.results[0]).toMatchObject({
+      ruleId: 'broken-access-control',
+      level: 'error',
+      kind: 'fail',
+      properties: { status: 'confirmed', owner: 'alice', actor: 'bob' },
+    });
   });
 });

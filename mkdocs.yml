@@ -20,6 +20,11 @@ exclude_docs: |
   /phase0-summary.md
   /phase1-progress.md
   /hygiene-audit.md
+  # Dated internal handoff/investigation notes, the ADR template and the agent skill file.
+  /AGENTBROWSER_*.md
+  /SESSION_HANDOFF_*.md
+  /adr/000-template.md
+  /skills/
 
 theme:
   name: material
@@ -119,6 +124,7 @@ nav:
     - 'T7 - Audit & security': spec/tasks/t7-audit-security.md
     - 'T8 - Harness qualification': spec/tasks/t8-harness-qualification.md
     - 'T9 - Release hardening': spec/tasks/t9-release-hardening.md
+    - 'Foundation refinements': spec/tasks/foundation-refinements.md
   - Truth & comparisons:
     - 'AgentBrowser vs Chrome debug & Claude integrations': comparison.md
   - Guides:
@@ -135,6 +141,9 @@ nav:
     - 'Benchmarks': benchmarks.md
     - 'Synthetic input limitations': synthetic-input-limitations.md
     - 'Firefox egress gate': firefox-egress-gate.md
+    - 'Firefox session BiDi gate': firefox-session-bidi-gate.md
+    - 'Firefox and application seams': firefox-and-application-seams.md
+    - 'Application operations under delegated authority': application-operation-authority.md
   - Security & trust:
     - 'Threat model': threat-model.md
     - 'Policy': policy.md
@@ -144,6 +153,9 @@ nav:
     - 'Connection authority design': connection-authority-design.md
     - 'Snapshot release review': snapshot-release-review.md
     - 'Engineering review remediation': engineering-review-remediation.md
+    - 'Shared session infrastructure': shared-session-infrastructure.md
+    - 'Transport integration contract': transport-integration-contract.md
+    - 'Session gateway (M2) scope': session-gateway-m2-scope.md
   - Architecture decisions:
     - '001 Typescript Playwright Mvp': adr/001-typescript-playwright-mvp.md
     - '002 Engine Neutral Protocol': adr/002-engine-neutral-protocol.md
@@ -170,6 +182,7 @@ nav:
     - '023 Windows Server Bundled Node': adr/023-windows-server-bundled-node.md
     - '024 Server Policy Engine Cedar': adr/024-server-policy-engine-cedar.md
     - '025 Operator Login Browser And Cookie Handoff': adr/025-operator-cookie-handoff.md
+    - '026 Policy Reload Without Restart': adr/026-policy-reload-without-restart.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
@@ -210,6 +223,7 @@ nav:
     - 'Consumer Research Intake': spec/design/consumer-research-intake.md
     - 'Extraction Output Budget': spec/design/extraction-output-budget.md
     - 'Navigation Failure Reasons': spec/design/navigation-failure-reasons.md
+    - 'N1 Bounded Network Observation': spec/design/n1-bounded-network-observation.md
     - 'Operator Cdp Attach': spec/design/operator-cdp-attach.md
     - 'Research Browser Ownership': spec/design/research-browser-ownership.md
     - 'Session Close Causes': spec/design/session-close-causes.md
@@ -227,6 +241,7 @@ nav:
     - 'T4 Operator Reconciliation': spec/design/t4-operator-reconciliation.md
     - 'T4 Production Evidence Composition': spec/design/t4-production-evidence-composition.md
     - 'T5 Browser Review Publication': spec/design/t5-browser-review-publication.md
+    - 'T5 Browser Durability': spec/design/t5-browser-durability.md
     - 'T5 Finalization Publication': spec/design/t5-finalization-publication.md
     - 'T5 Http Publication': spec/design/t5-http-publication.md
     - 'T5 Journal Application Terminal': spec/design/t5-journal-application-terminal.md
@@ -236,6 +251,8 @@ nav:
     - 'T5 Journal Sqlite Audit': spec/design/t5-journal-sqlite-audit.md
     - 'T5 Journal Sqlite Qualification': spec/design/t5-journal-sqlite-qualification.md
     - 'T5 Operation Journal': spec/design/t5-operation-journal.md
+    - 'T5 Operator Reconciliation': spec/design/t5-operator-reconciliation.md
+    - 'T5 Recovery Design': spec/design/t5-recovery-design.md
     - 'T5 Review Publication': spec/design/t5-review-publication.md
     - 'T5 Status Publication': spec/design/t5-status-publication.md
     - 'T6 Application Read Evidence': spec/design/t6-application-read-evidence.md
@@ -244,6 +261,7 @@ nav:
     - 'T6 Draft Oracle': spec/design/t6-draft-oracle.md
     - 'T6 Evidence Review Binding': spec/design/t6-evidence-review-binding.md
     - 'T6 Form Mapping': spec/design/t6-form-mapping.md
+    - 'T6 Frame Observation': spec/design/t6-frame-observation.md
     - 'T6 Job Application Checkpoint': spec/design/t6-job-application-checkpoint.md
     - 'T6 Job Eligibility': spec/design/t6-job-eligibility.md
     - 'T6 Listing Review': spec/design/t6-listing-review.md
@@ -257,6 +275,10 @@ nav:
     - 'T6 Reviewed Payload Consent': spec/design/t6-reviewed-payload-consent.md
     - 'T6 Scoped Application Read': spec/design/t6-scoped-application-read.md
     - 'T6 Verified Upload Draft': spec/design/t6-verified-upload-draft.md
+    - 'T7 Audit Adapter': spec/design/t7-audit-adapter.md
+    - 'T7 OS Egress Pairing': spec/design/t7-os-egress-pairing.md
+    - 'T7 Scanner Regression': spec/design/t7-scanner-regression.md
+    - 'T7 Scope Enforcement': spec/design/t7-scope-enforcement.md
   - Evidence & delivery:
     - 'Consumer Research Smoke': spec/evidence/consumer-research-smoke.md
     - 'Foundation Coverage Findings': spec/evidence/foundation-coverage-findings.md
@@ -264,11 +286,19 @@ nav:
     - 'Foundation Progress 2026 09 20': spec/evidence/foundation-progress-2026-09-20.md
     - 'Navigation Failure Reasons': spec/evidence/navigation-failure-reasons.md
     - 'Node24 Baseline': spec/evidence/node24-baseline.md
+    - 'Observation 120 Baseline': spec/evidence/observation-120-baseline.md
     - 'Operator Cdp Attach': spec/evidence/operator-cdp-attach.md
     - 'Release 1.10.0': spec/evidence/release-1.10.0.md
     - 'Release 1.11.0': spec/evidence/release-1.11.0.md
     - 'Release 1.12.0': spec/evidence/release-1.12.0.md
     - 'Release 1.13.0': spec/evidence/release-1.13.0.md
+    - 'Release 1.15.0': spec/evidence/release-1.15.0.md
+    - 'Release 1.15.2': spec/evidence/release-1.15.2.md
+    - 'Release 1.16.0': spec/evidence/release-1.16.0.md
+    - 'Release 1.16.1': spec/evidence/release-1.16.1.md
+    - 'Release 1.17.0': spec/evidence/release-1.17.0.md
+    - 'Release 1.17.1': spec/evidence/release-1.17.1.md
+    - 'Release 1.18.0': spec/evidence/release-1.18.0.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md
@@ -310,6 +340,7 @@ nav:
     - 'T5 Journal Settlement': spec/evidence/t5-journal-settlement.md
     - 'T5 Journal Sqlite Audit': spec/evidence/t5-journal-sqlite-audit.md
     - 'T5 Journal Sqlite Owner': spec/evidence/t5-journal-sqlite-owner.md
+    - 'T5 Journal Runtime (C4b, J3, J4, B-dur)': spec/evidence/t5-journal-runtime.md
     - 'T5 Operation Status Publication': spec/evidence/t5-operation-status-publication.md
     - 'T5 Replay Publication': spec/evidence/t5-replay-publication.md
     - 'T5 Review Publication': spec/evidence/t5-review-publication.md
@@ -320,7 +351,9 @@ nav:
     - 'T6 Document Read': spec/evidence/t6-document-read.md
     - 'T6 Draft Oracle': spec/evidence/t6-draft-oracle.md
     - 'T6 Evidence Review Binding': spec/evidence/t6-evidence-review-binding.md
+    - 'T6 Exact Chip Sets': spec/evidence/t6-exact-chip-sets.md
     - 'T6 Form Mapping': spec/evidence/t6-form-mapping.md
+    - 'T6 Frame Budgets': spec/evidence/t6-frame-budgets.md
     - 'T6 Job Eligibility': spec/evidence/t6-job-eligibility.md
     - 'T6 Listing Review': spec/evidence/t6-listing-review.md
     - 'T6 Mandatory Application Consent': spec/evidence/t6-mandatory-application-consent.md
@@ -333,11 +366,22 @@ nav:
     - 'T6 Scoped Application Read': spec/evidence/t6-scoped-application-read.md
     - 'T6 Verified Upload Draft': spec/evidence/t6-verified-upload-draft.md
     - 'T6 Widget Commitment': spec/evidence/t6-widget-commitment.md
+    - 'T7 Scanner Regression': spec/evidence/t7-scanner-regression.md
     - 'T8 Installed Harness Availability': spec/evidence/t8-installed-harness-availability.md
+    - 'T9 Runner Minutes': spec/evidence/t9-runner-minutes.md
   - History:
     - 'MVP implementation plan (technical design)': technical-design.md
     - 'Implementation roadmap': implementation-roadmap.md
     - 'Release milestones': release-milestones.md
+    - 'Full audit (2026-08)': audit.md
+    - 'Playwright integration inquiry': playwright-integration-inquiry.md
+
+# Fail the strict build when a page exists but is not in the nav (or the nav names a missing
+# page), so the site cannot silently drift from docs/ again.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
 
 strict: true
 use_directory_urls: true

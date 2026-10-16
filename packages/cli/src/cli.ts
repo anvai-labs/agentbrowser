@@ -43,6 +43,7 @@ import {
   INTERACTION_GUIDANCE,
   isAgentMode,
   isPassingOutcome,
+  listFormMappingStages,
   materializeAutofillMapping,
   navigationFailureDetail,
   ObservationRequestSchema,
@@ -154,7 +155,16 @@ function waitFromOptions(
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface CliClient
   extends Partial<
-    Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady' | 'policy' | 'policyCheck'>
+    Pick<
+      AgentBrowserClient,
+      | 'health'
+      | 'healthLive'
+      | 'healthReady'
+      | 'policy'
+      | 'policyCheck'
+      | 'journalStatus'
+      | 'journalOperations'
+    >
   > {
   sessions: Pick<
     AgentBrowserClient['sessions'],
@@ -425,6 +435,9 @@ export function buildCli(deps: CliDependencies): Cli {
             json: Boolean(globals.json),
             ...(act.opts().approvalToken
               ? { approvalToken: String(act.opts().approvalToken) }
+              : {}),
+            ...(act.opts().executionRequirement !== undefined
+              ? { actExecutionRequirement: String(act.opts().executionRequirement) }
               : {}),
             ...(operatorKey !== undefined ? { operatorKey } : {}),
             baseUrl: globals.baseUrl ?? 'http://localhost:5709',
@@ -1055,6 +1068,18 @@ export function buildCli(deps: CliDependencies): Cli {
           '--approval-token <token>',
           'consume existing operator consent for this exact operation; does not grant approval'
         )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable; durable is part of the operation identity and is refused unless the runtime has a durable journal'
+        )
+        .option(
+          '--supersedes <operationId>',
+          'continuation provenance: the closed operation this one replaces (needs --supersedes-namespace); metadata only, not part of the operation identity'
+        )
+        .option(
+          '--supersedes-namespace <namespace>',
+          'the journal namespace holding the closed operation named by --supersedes'
+        )
         .action(
           action(
             async (
@@ -1062,8 +1087,26 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               operation: string,
               inputJson: string | undefined,
-              options: { expectedVersion?: string; approvalToken?: string }
+              options: {
+                expectedVersion?: string;
+                approvalToken?: string;
+                executionRequirement?: string;
+                supersedes?: string;
+                supersedesNamespace?: string;
+              }
             ) => {
+              const requirement = options.executionRequirement;
+              if (
+                (options.supersedes === undefined) !==
+                (options.supersedesNamespace === undefined)
+              )
+                throw new UsageError('--supersedes and --supersedes-namespace go together');
+              if (
+                requirement !== undefined &&
+                requirement !== 'ephemeral' &&
+                requirement !== 'durable'
+              )
+                throw new UsageError('--execution-requirement must be ephemeral or durable');
               if (!ctx.client.sessions.applicationExecute)
                 throw new UsageError('Client does not support the application surface');
               const input =
@@ -1083,6 +1126,15 @@ export function buildCli(deps: CliDependencies): Cli {
                 ...(expectedVersion !== undefined ? { expectedVersion } : {}),
                 ...(options.approvalToken !== undefined
                   ? { approvalToken: options.approvalToken }
+                  : {}),
+                ...(requirement !== undefined ? { executionRequirement: requirement } : {}),
+                ...(options.supersedes !== undefined && options.supersedesNamespace !== undefined
+                  ? {
+                      supersedes: {
+                        namespace: options.supersedesNamespace,
+                        operationId: options.supersedes,
+                      },
+                    }
                   : {}),
               });
               const lines =
@@ -1553,21 +1605,38 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<stepsJson>', 'JSON array of plan steps: inline, @file, or - for stdin')
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
+        )
         .action(
-          action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
-            const steps = parsePlanSteps(await readCommandJson(plan, stepsJson, 'plan steps'));
-            const parseResponse = createPlanReportParser(steps);
-            const result = parseResponse(await ctx.client.sessions.plan(sessionId, pageId, steps));
-            if (!result.ok) exitCode = 1;
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              stepsJson: string,
+              options: { executionRequirement?: string }
+            ) => {
+              const execution = browserExecution(options.executionRequirement);
+              const steps = parsePlanSteps(await readCommandJson(plan, stepsJson, 'plan steps'));
+              const parseResponse = createPlanReportParser(steps);
+              const result = parseResponse(
+                await (execution.executionRequirement === undefined
+                  ? ctx.client.sessions.plan(sessionId, pageId, steps)
+                  : ctx.client.sessions.plan(sessionId, pageId, steps, execution))
+              );
+              if (!result.ok) exitCode = 1;
 
-            ctx.emit(result, () => [
-              `${result.ok ? 'ok' : 'failed'}: ${result.completed}/${steps.length} steps completed (mode: ${result.mode ?? 'stable'})`,
-              ...result.results.map(
-                (r) => `  step ${r.step}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
-              ),
-              ...(result.error ? [`  ${result.error.code}: ${result.error.message}`] : []),
-            ]);
-          })
+              ctx.emit(result, () => [
+                `${result.ok ? 'ok' : 'failed'}: ${result.completed}/${steps.length} steps completed (mode: ${result.mode ?? 'stable'})`,
+                ...result.results.map(
+                  (r) => `  step ${r.step}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
+                ),
+                ...(result.error ? [`  ${result.error.code}: ${result.error.message}`] : []),
+              ]);
+            }
+          )
         );
 
       advertiseWireSchema(plan, { input: PlanActionsSchema, output: PlanReportSchema });
@@ -1615,6 +1684,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--approval-token <token>',
           'consume a previously approved action token; does not grant approval'
+        )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
         );
 
       act
@@ -2308,6 +2381,67 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      const journal = program
+        .command('journal')
+        .description(
+          'read-only durable-journal surfaces: history and status (T5 J3b; writes are operator-only and not in the CLI)'
+        );
+      journal
+        .command('status')
+        .description(
+          'the durable journal: configuration, namespace, health, horizons and qualified runtime'
+        )
+        .action(
+          action(async (ctx) => {
+            if (!ctx.client.journalStatus)
+              throw new UsageError('Client does not support journal queries');
+            const result = await ctx.client.journalStatus();
+            ctx.emit(result, () => {
+              const lines = [
+                result.configured
+                  ? `namespace ${result.namespace ?? '?'} health ${result.health ?? 'not open'}`
+                  : 'no journal configured',
+                `accepts until ${result.acceptUntil ?? '-'}, retains until ${result.retainUntil ?? '-'}`,
+                `runtime ${result.runtime.platform}/Node ${result.runtime.node} (qualified: ${result.runtime.qualified})`,
+                `recoveryQualified ${result.recoveryQualified} (advisory; never an exactly-once promise)`,
+              ];
+              for (const entry of result.history ?? [])
+                lines.push(
+                  `history ${entry.namespace}: ${entry.state}${entry.reason ? ` (${entry.reason})` : ''}, retains until ${entry.retainUntil}`
+                );
+              return lines;
+            });
+          })
+        );
+      journal
+        .command('operations <operationId>')
+        .description(
+          'every historical record of one durable operation across the configured and history namespaces, tenant-scoped; absence is never proof of non-execution'
+        )
+        .action(
+          action(async (ctx, operationId: string) => {
+            if (!ctx.client.journalOperations)
+              throw new UsageError('Client does not support journal queries');
+            const result = await ctx.client.journalOperations(operationId);
+            ctx.emit(result, () => {
+              const lines = [
+                `${result.operationId}: ${result.records.length} record(s)${result.truncated ? ' (truncated)' : ''}`,
+              ];
+              for (const record of result.records)
+                lines.push(
+                  `  ${record.namespace}: ${record.classification}${record.actionable ? ' (actionable)' : ''} ${record.application.adapter}/${record.application.resource} epoch ${record.session.epoch}`
+                );
+              if (result.unreadNamespaces?.length)
+                lines.push(
+                  `  UNREAD namespaces: ${result.unreadNamespaces.join(', ')} — the history is partly unread, not absent`
+                );
+              if (result.absent)
+                lines.push('  absent in every searched namespace (not proof of non-execution)');
+              return lines;
+            });
+          })
+        );
+
       program
         .command('policy')
         .description(
@@ -2451,11 +2585,15 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .argument('<mappingJson>', 'reusable mapping JSON: inline, @file, or -')
         .argument('<valuesJson>', 'private values JSON: inline, @file, or -')
+        .argument(
+          '[stageId]',
+          'which stage of a staged mapping to materialize (T6 W3a); required when the mapping has stages'
+        )
         .addHelpText(
           'after',
           '\nEmits the prepared payload as JSON in every output mode. Preparation does not contact the service, inspect a page, or verify a form. Mapping URLs and labels must be safe to share; do not place private data or access tokens in them. Use stdin for at most one input. --operation-id is unused.'
         )
-        .action(async (mappingJson: string, valuesJson: string) => {
+        .action(async (mappingJson: string, valuesJson: string, stageId?: string) => {
           // Offline: action() would construct a client and read credentials.
           try {
             if (mappingJson === '-' && valuesJson === '-') {
@@ -2465,7 +2603,7 @@ export function buildCli(deps: CliDependencies): Cli {
             const values = await readCommandJson(prepareForm, valuesJson, 'form values');
             let prepared: AutofillRequest;
             try {
-              prepared = materializeAutofillMapping(mapping, values);
+              prepared = materializeAutofillMapping(mapping, values, stageId);
             } catch (error) {
               // The canonical materializer owns static, value-free diagnostics.
               throw new UsageError((error as Error).message);
@@ -2476,6 +2614,68 @@ export function buildCli(deps: CliDependencies): Cli {
             deps.err(formatError(error));
           }
         });
+      const stagesCommand = form
+        .command('stages <mappingJson>')
+        .description(
+          'list the stages of a mapping offline: id, scope URL and field count per stage (T6 W3a). Values are not needed and never read'
+        )
+        .action(async (mappingJson: string) => {
+          try {
+            const mapping = await readCommandJson(stagesCommand, mappingJson, 'form mapping');
+            const stages = listFormMappingStages(mapping);
+            if (stages === undefined) {
+              deps.out(program.opts().json ? '{"stages":[]}' : 'single-stage mapping (no stages)');
+              return;
+            }
+            // The global --json flag is honored (the advertised output contract is this shape).
+            if (program.opts().json) {
+              deps.out(JSON.stringify({ stages }, null, 2));
+              return;
+            }
+            deps.out(
+              stages
+                .map(
+                  (stage: { id: string; url: string; fieldCount: number }) =>
+                    `${stage.id}  ${stage.url}  ${stage.fieldCount} field(s)`
+                )
+                .join('\n')
+            );
+          } catch (error) {
+            exitCode = 1;
+            deps.err(formatError(new UsageError((error as Error).message)));
+          }
+        });
+
+      advertiseWireSchema(stagesCommand, {
+        input: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['mapping'],
+          properties: { mapping: FormMappingSchema },
+        },
+        output: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['stages'],
+          properties: {
+            stages: {
+              type: 'array',
+              maxItems: 12,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['id', 'url', 'fieldCount'],
+                properties: {
+                  id: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' },
+                  url: { type: 'string' },
+                  fieldCount: { type: 'integer', minimum: 1, maximum: 50 },
+                },
+              },
+            },
+          },
+        },
+      });
+
       advertiseWireSchema(prepareForm, {
         input: {
           type: 'object',
@@ -2495,6 +2695,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .argument('<requestJson>')
         .option('--policy <json>', 'replace the request policy object wholesale')
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
+        )
         .action(
           action(
             async (
@@ -2502,8 +2706,9 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               pageId: string,
               requestJson: string,
-              options: { policy?: string }
+              options: { policy?: string; executionRequirement?: string }
             ) => {
+              const execution = browserExecution(options.executionRequirement);
               if (requestJson === '-' && options.policy === '-') {
                 throw new UsageError('Stdin can be used only once per command.');
               }
@@ -2524,7 +2729,9 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const expectedFields = parsed.fields.length;
               const report = parseAutofillReport(
-                await ctx.client.sessions.autofill(sessionId, pageId, parsed),
+                await (execution.executionRequirement === undefined
+                  ? ctx.client.sessions.autofill(sessionId, pageId, parsed)
+                  : ctx.client.sessions.autofill(sessionId, pageId, parsed, execution)),
                 expectedFields
               );
               if (!report.ok) exitCode = 1;
@@ -2778,6 +2985,8 @@ interface CommandContext {
   client: CliClient;
   json: boolean;
   approvalToken?: string;
+  /** T5 B-dur: `act --execution-requirement`, validated where it is used. */
+  actExecutionRequirement?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
   /** TD-BROWSER-16: the human-operator key for approval commands; never env. */
@@ -2820,12 +3029,25 @@ async function runAction(
       `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
     );
   const request = validated.value;
-  const result = await ctx.client.sessions.executeAction(sessionId, pageId, request);
+  const execution = browserExecution(ctx.actExecutionRequirement);
+  const result = await (execution.executionRequirement === undefined
+    ? ctx.client.sessions.executeAction(sessionId, pageId, request)
+    : ctx.client.sessions.executeAction(sessionId, pageId, request, execution));
 
   ctx.emit(result, () => [
     `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
   ]);
+}
+
+/** T5 B-dur: `--execution-requirement` for act, plan and autofill; omitted means unchanged. */
+function browserExecution(requirement: string | undefined): {
+  executionRequirement?: 'ephemeral' | 'durable';
+} {
+  if (requirement === undefined) return {};
+  if (requirement !== 'ephemeral' && requirement !== 'durable')
+    throw new UsageError('--execution-requirement must be ephemeral or durable');
+  return { executionRequirement: requirement };
 }
 
 /**

@@ -8,6 +8,16 @@ import {
   type OperatorCdpAdmissionOptions,
   requireCdpAttachAdmission,
 } from './floor.js';
+import {
+  JournalConfigError,
+  journalConfigFromEnvironment,
+  journalHistoryFromEnvironment,
+  journalHistoryWarnings,
+  journalRuntimeQualified,
+  openServiceJournalSet,
+  SERVICE_JOURNAL_RETAIN_MS,
+  searchJournalNamespaces,
+} from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
@@ -20,7 +30,11 @@ import type { SessionPrincipal } from './session-authority.js';
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
+import {
+  RESERVED_BROWSER_ADAPTER_ID,
+  type TrustedEvidenceSourceRegistry,
+  type TrustedVerifierRegistry,
+} from '@agentbrowser/control';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -29,6 +43,8 @@ import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
+  CONTROL_OPERATION_ID,
+  classifyJournalRecord,
   DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
@@ -63,6 +79,9 @@ import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
   AgentBrowserService,
+  browserFailureOutcomeUnknown,
+  browserReportOutcomeUnknown,
+  copyBrowserReport,
   type ServiceActRequest,
   ServiceError,
   type ServiceEvidenceSourceBuilder,
@@ -254,6 +273,7 @@ const STATUS_FOR = {
   // Gone.
   [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.SESSION_NOT_FOUND]: 404,
+  [ErrorCode.JOURNAL_UNAVAILABLE]: 503,
   [ErrorCode.PAGE_NOT_FOUND]: 404,
   [ErrorCode.SESSION_EXPIRED]: 410,
   // The service could not satisfy the request shape (engine can't do it).
@@ -552,65 +572,120 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   // Validated before the service exists: an invalid ceiling aborts startup.
   const artifactStore = artifactStoreFromEnvironment(process.env);
-  const service = new AgentBrowserService({
-    cdpAttachAdmission: attachAdmission,
-    extractMaxBytes,
-    engine,
-    ...(artifactStore !== undefined ? { artifactStore } : {}),
-    // TD-BROWSER-16 phase 6: the handoff reads through the login browser
-    // (constructed above; enabled encodes operator keys being configured).
-    loginBrowser: options.loginBrowserPort ?? loginBrowser,
-    ...(options.evidenceReviewProvider !== undefined
-      ? { evidenceReviewProvider: options.evidenceReviewProvider }
-      : {}),
-    ...(options.networkPolicy
-      ? { networkPolicy: options.networkPolicy }
-      : policyLimiter === undefined &&
-          (process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
-            process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
-            process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined)
+  // T5 J-d: a configured durable journal opens before the service exists, and any refusal to
+  // open it aborts startup. Durable work is never served ephemerally: with no open journal it is
+  // refused. Unconfigured: nothing changes.
+  const journalConfig = await journalConfigFromEnvironment(process.env);
+  // A namespace past its accept horizon cannot take new durable work. Refusing startup would take
+  // the whole (non-durable) service down with it, so start without the journal instead: durable
+  // is then neither advertised nor accepted, and the operator is told to rotate.
+  const horizonPassed = journalConfig !== undefined && journalConfig.acceptUntil <= Date.now();
+  if (horizonPassed)
+    console.warn(
+      "[agentbrowser] AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: durable execution is refused; the namespace's records stay readable and recoverable (recover-only) until its retainUntil. Configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon, listing this one in AGENTBROWSER_JOURNAL_HISTORY_FILE."
+    );
+  // T5 J3d (D7): namespaces the operator rotated away from, listed with every descriptor input.
+  // They open on the SAME store adapter (the store admits one server) and stay searchable and
+  // recoverable until retainUntil; they never take a new intent.
+  const journalHistory = journalConfig
+    ? await journalHistoryFromEnvironment(process.env, journalConfig)
+    : [];
+  if (!journalConfig && process.env.AGENTBROWSER_JOURNAL_HISTORY_FILE?.trim())
+    throw new JournalConfigError(
+      'AGENTBROWSER_JOURNAL_HISTORY_FILE requires the durable journal configuration (AGENTBROWSER_JOURNAL_DIR and the rest)'
+    );
+  // A configured journal always opens its set: the current namespace for durable work while its
+  // horizon holds, and recover-only once it has passed (review F1), plus every history namespace.
+  const journalSet =
+    journalConfig === undefined
+      ? undefined
+      : await openServiceJournalSet(journalConfig, journalHistory);
+  const serviceJournal = journalSet?.journal ? { journal: journalSet.journal } : undefined;
+  const historyJournals = (journalSet?.history ?? []).flatMap((state) =>
+    state.journal ? [{ namespaceId: state.namespaceId, journal: state.journal }] : []
+  );
+  // A history namespace the store refused is still configured history: it is UNREAD, never
+  // absent, in every lookup and recovery answer.
+  const refusedHistory = (journalSet?.history ?? []).flatMap((state) =>
+    state.journal ? [] : [state.namespaceId]
+  );
+  for (const warning of journalHistoryWarnings(journalSet?.history ?? []))
+    console.warn(`[agentbrowser] ${warning}`);
+  let service: AgentBrowserService;
+  try {
+    service = new AgentBrowserService({
+      ...(serviceJournal !== undefined ? { operationJournal: serviceJournal.journal } : {}),
+      ...(historyJournals.length > 0 ? { historyJournals } : {}),
+      ...(refusedHistory.length > 0 ? { refusedHistoryNamespaces: refusedHistory } : {}),
+      cdpAttachAdmission: attachAdmission,
+      extractMaxBytes,
+      engine,
+      ...(artifactStore !== undefined ? { artifactStore } : {}),
+      // TD-BROWSER-16 phase 6: the handoff reads through the login browser
+      // (constructed above; enabled encodes operator keys being configured).
+      loginBrowser: options.loginBrowserPort ?? loginBrowser,
+      ...(options.evidenceReviewProvider !== undefined
+        ? { evidenceReviewProvider: options.evidenceReviewProvider }
+        : {}),
+      ...(options.networkPolicy
+        ? { networkPolicy: options.networkPolicy }
+        : policyLimiter === undefined &&
+            (process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
+              process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
+              process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined)
+          ? {
+              allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
+              allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
+              maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
+            }
+          : {}),
+      ...(policyLimiter !== undefined
         ? {
-            allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
-            allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
-            maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
+            authorizer: policyLimiter.authorizer,
+            policyVersion: policyLimiter.version,
+            ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
+            ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
           }
         : {}),
-    ...(policyLimiter !== undefined
-      ? {
-          authorizer: policyLimiter.authorizer,
-          policyVersion: policyLimiter.version,
-          ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
-          ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
-        }
-      : {}),
-    ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
-      ? {
-          approvalPolicy:
-            options.approvalPolicy ?? JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
-        }
-      : {}),
-    ...(options.engines ? { engines: options.engines } : {}),
-    metrics,
-    tracer,
-    ...(options.secretManager ? { secretManager: options.secretManager } : {}),
-    ...(options.logger ? { logger: options.logger } : {}),
-    ...(options.downloader ? { downloader: options.downloader } : {}),
-    ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
-    ...(options.defaultIdleTimeoutMs !== undefined
-      ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
-      : {}),
-    ...(options.verifierRegistry ? { verifierRegistry: options.verifierRegistry } : {}),
-    ...(options.evidenceSourceRegistry !== undefined
-      ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
-      : {}),
-    ...(options.evidenceSourceRegistryProvider !== undefined
-      ? { evidenceSourceRegistryProvider: options.evidenceSourceRegistryProvider }
-      : {}),
-    ...(options.applicationAdapters ? { applicationAdapters: options.applicationAdapters } : {}),
-  });
+      ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
+        ? {
+            approvalPolicy:
+              options.approvalPolicy ??
+              JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
+          }
+        : {}),
+      ...(options.engines ? { engines: options.engines } : {}),
+      metrics,
+      tracer,
+      ...(options.secretManager ? { secretManager: options.secretManager } : {}),
+      ...(options.logger ? { logger: options.logger } : {}),
+      ...(options.downloader ? { downloader: options.downloader } : {}),
+      ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
+      ...(options.defaultIdleTimeoutMs !== undefined
+        ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
+        : {}),
+      ...(options.verifierRegistry ? { verifierRegistry: options.verifierRegistry } : {}),
+      ...(options.evidenceSourceRegistry !== undefined
+        ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
+        : {}),
+      ...(options.evidenceSourceRegistryProvider !== undefined
+        ? { evidenceSourceRegistryProvider: options.evidenceSourceRegistryProvider }
+        : {}),
+      ...(options.applicationAdapters ? { applicationAdapters: options.applicationAdapters } : {}),
+    });
+  } catch (error) {
+    // A service that never existed cannot close the journal it was given.
+    await journalSet?.close();
+    throw error;
+  }
 
   fastify.addHook('onClose', async () => {
-    await service.shutdown();
+    try {
+      await service.shutdown();
+    } finally {
+      // The journal outlives every session's terminal write; closed last.
+      await journalSet?.close();
+    }
   });
 
   /**
@@ -926,6 +1001,191 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         (request as FastifyRequest & { tenant?: string }).tenant;
 
       // ------------------------------------------------------------------
+      // T5 J3b (accepted J-design, D1 amended + D5): read-only journal
+      // surfaces. Readable by a tenant API key or the operator key,
+      // tenant-scoped; delegated agent grants are refused (no session-bound
+      // route), and writes do not exist here (J3c, operator-only). Keyless
+      // deployments have no surface: no credential names a tenant.
+      // ------------------------------------------------------------------
+      const journalLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
+      const journalRefusal = (
+        reply: FastifyReply,
+        code: string,
+        message: string,
+        status: number,
+        retryable = false
+      ) => reply.code(status).send({ error: { code, message, retryable } });
+
+      v1.get(
+        '/journal',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (!principal)
+            return journalRefusal(
+              reply,
+              'UNAUTHORIZED',
+              'A valid bearer credential is required',
+              401
+            );
+          if (!journalLimiter.take(principal.tenant))
+            return journalRefusal(
+              reply,
+              'RATE_LIMITED',
+              'Journal lookup rate limit exceeded',
+              429,
+              true
+            );
+          const acceptUntil = journalConfig
+            ? new Date(journalConfig.acceptUntil).toISOString()
+            : undefined;
+          const retainUntil = journalConfig
+            ? new Date(journalConfig.acceptUntil + SERVICE_JOURNAL_RETAIN_MS).toISOString()
+            : undefined;
+          const health = serviceJournal?.journal.health;
+          const qualified = journalRuntimeQualified();
+          return {
+            schemaVersion: 1 as const,
+            configured: journalConfig !== undefined,
+            ...(journalConfig ? { namespace: journalConfig.namespaceId } : {}),
+            ...(health !== undefined ? { health } : {}),
+            ...(acceptUntil !== undefined ? { acceptUntil } : {}),
+            ...(retainUntil !== undefined ? { retainUntil } : {}),
+            runtime: {
+              platform: process.platform,
+              node: process.versions.node,
+              qualified,
+            },
+            recoveryQualified: qualified && health === 'open',
+            ...(journalSet && journalSet.history.length > 0
+              ? {
+                  history: journalSet.history.map((state) => ({
+                    namespace: state.namespaceId,
+                    ...(state.current ? { current: true as const } : {}),
+                    // A refused namespace stays refused for this process; an opened one reports
+                    // open while its handle is healthy.
+                    state:
+                      state.journal === undefined
+                        ? ('refused' as const)
+                        : state.journal.health === 'open'
+                          ? ('open' as const)
+                          : ('unavailable' as const),
+                    ...(state.refusal !== undefined
+                      ? { reason: state.refusal }
+                      : state.journal !== undefined && state.journal.health !== 'open'
+                        ? { reason: state.journal.health }
+                        : {}),
+                    acceptUntil: new Date(state.acceptUntil).toISOString(),
+                    retainUntil: new Date(state.retainUntil).toISOString(),
+                  })),
+                }
+              : {}),
+          };
+        }
+      );
+
+      v1.get(
+        '/journal/operations/:operationId',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (!principal)
+            return journalRefusal(
+              reply,
+              'UNAUTHORIZED',
+              'A valid bearer credential is required',
+              401
+            );
+          if (!journalLimiter.take(principal.tenant))
+            return journalRefusal(
+              reply,
+              'RATE_LIMITED',
+              'Journal lookup rate limit exceeded',
+              429,
+              true
+            );
+          const { operationId } = request.params as { operationId: string };
+          if (!CONTROL_OPERATION_ID.test(operationId))
+            return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
+          // J3d: the current namespace (when open) and every open history namespace are searched.
+          const searched = [
+            ...(serviceJournal ? [serviceJournal.journal] : []),
+            ...historyJournals.map((entry) => entry.journal),
+          ];
+          if (searched.length === 0) {
+            if (journalConfig)
+              // Configured but not open (for example a passed accept horizon): records may exist
+              // and be unreachable — history is unread, not absent.
+              return journalRefusal(
+                reply,
+                'JOURNAL_UNAVAILABLE',
+                'The journal is configured but not open on this deployment; history is unread, not absent',
+                503,
+                true
+              );
+            return journalRefusal(
+              reply,
+              'JOURNAL_NOT_CONFIGURED',
+              'No durable journal is configured on this deployment',
+              404
+            );
+          }
+          const tenant = principal.tenant;
+          // Keyless deployments authenticate nobody; a credential without a tenant scopes nothing.
+          if (tenant === undefined)
+            return journalRefusal(
+              reply,
+              'FORBIDDEN',
+              'Journal history is tenant-scoped; this credential names no tenant',
+              403
+            );
+          const search = await searchJournalNamespaces(searched, { tenantId: tenant, operationId });
+          const { entries, truncated, lastReason } = search;
+          const unreadNamespaces = [...search.unreadNamespaces, ...refusedHistory];
+          // Nothing could be read at all: the whole answer is unread, not absent.
+          if (search.unreadNamespaces.length === searched.length)
+            return journalRefusal(
+              reply,
+              'JOURNAL_UNAVAILABLE',
+              `The journal refused this lookup (${lastReason}); treat the history as unread, not absent`,
+              503,
+              true
+            );
+          const found = entries.map((entry) => entry.record);
+          // Projection: only derived classification, application identity and the departed
+          // session's opaque identity cross the wire. Fingerprints, digests, actors, inputs and
+          // evidence content never do.
+          const records = found.map((record) => ({
+            namespace: record.namespaceId,
+            ...classifyJournalRecord(record),
+            application: {
+              adapter: record.identity.application?.adapterId ?? '',
+              resource: record.identity.application?.resourceId ?? '',
+              bindingGeneration: record.identity.application?.bindingGeneration ?? '',
+            },
+            session: {
+              sessionIncarnation: record.identity.key.sessionIncarnation,
+              epoch: record.identity.key.epoch,
+            },
+          }));
+          return {
+            schemaVersion: 1 as const,
+            operationId,
+            // Absence is claimed only when EVERY searched namespace answered.
+            absent: records.length === 0 && !truncated && unreadNamespaces.length === 0,
+            truncated,
+            ...(unreadNamespaces.length > 0 ? { unreadNamespaces } : {}),
+            records,
+          };
+        }
+      );
+
+      // ------------------------------------------------------------------
       // TD-BROWSER-15 phase 5: the policy query surface. Answers by
       // enumeration, never by resolution; bounded per tenant.
       // ------------------------------------------------------------------
@@ -963,6 +1223,118 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         });
         return true;
       };
+
+      // ------------------------------------------------------------------
+      // T5 J3c part 1: the operator-only recovery WRITES (D2 close, D3 settle),
+      // sharing J3b's journal refusal helper and rate limiter.
+      // ------------------------------------------------------------------
+      // Recovery writes keep their OWN per-tenant bucket: a tenant API key's reads share the
+      // tenant with the operator in single-tenant deployments, and the credential class that may
+      // never write must not starve the only one that may.
+      const recoveryLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
+      const recoveryWrite = (request: FastifyRequest, reply: FastifyReply) => {
+        const principal = principals.get(request);
+        if (!principal)
+          return journalRefusal(
+            reply,
+            'UNAUTHORIZED',
+            'A valid bearer credential is required',
+            401
+          );
+        // D1 as amended: writes are the ADR-025 operator principal only. A tenant API key
+        // authenticates as actor 'operator' and the /v1 hook admits it on any route; the
+        // service refuses it — the accepted design's named implementation hazard.
+        if (principal.actor !== 'human-operator')
+          return journalRefusal(
+            reply,
+            'FORBIDDEN',
+            'Journal recovery writes require the operator key; a tenant API key may only read',
+            403
+          );
+        if (!recoveryLimiter.take(principal.tenant))
+          return journalRefusal(
+            reply,
+            'RATE_LIMITED',
+            'Journal recovery rate limit exceeded',
+            429,
+            true
+          );
+        return undefined;
+      };
+      const recoveryOperation = async (
+        request: FastifyRequest,
+        reply: FastifyReply,
+        run: () => Promise<{ closed?: number; settled?: number; reconciled?: number }>
+      ) => {
+        if (recoveryWrite(request, reply)) return reply;
+        const { operationId } = request.params as { operationId: string };
+        if (!CONTROL_OPERATION_ID.test(operationId))
+          return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
+        try {
+          return await run();
+        } catch (error) {
+          const code = (error as { code?: string }).code;
+          // CONTROL_REQUIRED here is a state precondition (the adapter cannot reconcile), not an
+          // authorization failure, so it answers 409 like the other recovery conflicts.
+          const status =
+            code === 'NOT_FOUND'
+              ? 404
+              : code === 'OPERATION_CONFLICT' || code === 'CONTROL_REQUIRED'
+                ? 409
+                : 503;
+          if (status !== 503 || code === 'JOURNAL_UNAVAILABLE')
+            return journalRefusal(
+              reply,
+              code ?? 'INTERNAL',
+              (error as Error).message,
+              status,
+              status === 503
+            );
+          throw error;
+        }
+      };
+
+      v1.post(
+        '/journal/operations/:operationId/close',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) =>
+          recoveryOperation(request, reply, () =>
+            service.journalCloseOperation(
+              (request.params as { operationId: string }).operationId,
+              principals.get(request) as { actor: string; tenant: string }
+            )
+          )
+      );
+
+      v1.post(
+        '/journal/operations/:operationId/settle',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) =>
+          recoveryOperation(request, reply, () =>
+            service.journalSettleOperation(
+              (request.params as { operationId: string }).operationId,
+              principals.get(request) as { actor: string; tenant: string }
+            )
+          )
+      );
+
+      // T5 J3c part 2 (D3): ask the bound adapter what truly happened to in-doubt records.
+      v1.post(
+        '/journal/operations/:operationId/reconcile',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) =>
+          recoveryOperation(request, reply, () =>
+            service.journalReconcileOperation(
+              (request.params as { operationId: string }).operationId,
+              principals.get(request) as { actor: string; tenant: string }
+            )
+          )
+      );
 
       v1.get('/policy', { config: { publication: 'lifecycle' } }, async (request, reply) => {
         if (rateLimited(request, reply)) return reply;
@@ -1195,6 +1567,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         terminal?: 'retained-resource';
         /** TD-BROWSER-16 phase 1: human-operator keys are valid here and only here. */
         operatorRoute?: boolean;
+        /**
+         * T5 B-dur (B1): this route accepts `executionRequirement`; `durable` journals it as ONE
+         * browser operation of this kind under the reserved `browser` identity.
+         */
+        browserDurable?: 'act' | 'plan' | 'autofill';
       };
       const onTransport = (
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -1227,11 +1604,46 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           method,
           url,
           async (request, reply) => {
-            const { sessionId } = request.params as { sessionId?: string };
+            const { sessionId, pageId } = request.params as { sessionId?: string; pageId?: string };
+            // T5 B-dur (B1): peel the execution requirement off a browser route's body before the
+            // handler validates it. 'ephemeral' is the default made explicit and is dropped, so
+            // explicit and omitted requests share one identity; 'durable' journals the operation.
+            let durable = false;
+            // No silent fallback: a route that cannot journal must not quietly accept the field.
+            if (
+              !meta.browserDurable &&
+              request.body &&
+              typeof request.body === 'object' &&
+              Object.hasOwn(request.body, 'executionRequirement')
+            )
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                'executionRequirement is accepted only on act, plan and autofill (and application execute)'
+              );
+            if (meta.browserDurable && request.body && typeof request.body === 'object') {
+              const body = request.body as Record<string, unknown>;
+              if (Object.hasOwn(body, 'executionRequirement')) {
+                const requirement = body.executionRequirement;
+                if (requirement !== 'ephemeral' && requirement !== 'durable')
+                  throw new ServiceError(
+                    'INVALID_REQUEST',
+                    "executionRequirement must be 'ephemeral' or 'durable'"
+                  );
+                durable = requirement === 'durable';
+                const { executionRequirement: _peeled, ...rest } = body;
+                request.body = rest;
+              }
+            }
             const input = requestData(request);
             if (!sessionId || !service.authority.get(sessionId)) {
               if (sessionId && service.requiresSessionAuthority(sessionId))
                 throw new ServiceError('CONTROL_REVOKED', 'Session authority is unavailable');
+              if (durable)
+                throw new ServiceError(
+                  'CONTROL_REQUIRED',
+                  'Durable browser operations require a controlled session (an operation scope and X-AgentBrowser-Operation-Id)',
+                  false
+                );
               return httpPublication.sendUncontrolled(request, reply, await handler(input));
             }
             const principal = principals.get(request);
@@ -1246,27 +1658,68 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               );
             return httpPublication.respond(request, reply, async (output) => {
               let draft: HttpResponseDraft | undefined;
+              let thrownOutcomeUnknown = false;
               await service.authority.run(
                 sessionId,
                 principal,
                 mutation
                   ? {
                       id: id as string,
+                      // A durable request is its own identity: it can never replay an ephemeral
+                      // one, and an explicit 'ephemeral' was already peeled (same as omitted).
                       fingerprint: sha256Hex(
-                        JSON.stringify([request.method, request.url, request.body ?? null])
+                        JSON.stringify([
+                          request.method,
+                          request.url,
+                          request.body ?? null,
+                          ...(durable ? ['durable'] : []),
+                        ])
                       ),
+                      ...(durable && meta.browserDurable
+                        ? {
+                            journal: {
+                              version: 1 as const,
+                              application: {
+                                adapterId: RESERVED_BROWSER_ADAPTER_ID,
+                                resourceId: meta.browserDurable,
+                                bindingGeneration: pageId ?? 'session',
+                              },
+                              durable: true as const,
+                              browser: true as const,
+                            },
+                          }
+                        : {}),
                     }
                   : {},
                 async () => {
                   try {
                     draft = await handler(input);
                   } catch (error) {
+                    // T5 B-dur (B2): judged on the error object itself (a post-effect failure is
+                    // marked there), before it is serialized into a response.
+                    thrownOutcomeUnknown = browserFailureOutcomeUnknown(error);
                     // Admitted errors may carry private approval details; publish with the same owner.
                     draft = errorResponse(error);
                   }
                   return draft;
                 },
-                () => !!draft && (draft.statusCode >= 400 || draft.executionFailed === true),
+                () => {
+                  if (!draft) return true;
+                  const failedDraft = draft.statusCode >= 400 || draft.executionFailed === true;
+                  if (!durable || !failedDraft) return failedDraft;
+                  // T5 B-dur (B2): a durable browser operation's KNOWN failure (its own report, a
+                  // typed refusal) is a terminal `failed` with the response returned; a failure
+                  // whose effect is genuinely unknown — an error code that loses the result, or a
+                  // report hiding such a step or an `uncertain` receipt — stays in doubt.
+                  if (draft.statusCode < 400)
+                    return browserReportOutcomeUnknown(draft.body) ? true : 'rejected';
+                  return thrownOutcomeUnknown ||
+                    browserFailureOutcomeUnknown(
+                      (draft.body as { error?: unknown } | undefined)?.error
+                    )
+                    ? true
+                    : 'rejected';
+                },
                 output.draftPublication(),
                 output.publication((operation) => ({ replay: true, operation }))
               );
@@ -1890,7 +2343,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
         },
-        { capability: 'page.interact' }
+        { capability: 'page.interact', browserDurable: 'plan' }
       );
 
       on(
@@ -2045,7 +2498,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const report = await service.autofill(sessionId, pageId, request.body);
           return executionResponse(report);
         },
-        { capability: 'page.form' }
+        { capability: 'page.form', browserDurable: 'autofill' }
       );
 
       // Action execution endpoint
@@ -2072,14 +2525,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const result = await service.act(sessionId, pageId, validated.value as ServiceActRequest);
           if (validated.warnings?.length) {
-            return executionResponse({
-              ...result,
-              warnings: validated.warnings,
-            });
+            return executionResponse(
+              copyBrowserReport(result, { ...result, warnings: validated.warnings })
+            );
           }
           return executionResponse(result);
         },
-        { capability: 'page.interact' }
+        { capability: 'page.interact', browserDurable: 'act' }
       );
 
       // Download endpoint: policy-gated artifact capture

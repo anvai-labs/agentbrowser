@@ -88,6 +88,27 @@ export type JournalLookupOutcome =
   | { readonly kind: 'scoped_absent' }
   | { readonly kind: 'definitely_not_read'; readonly reason: JournalNoWriteReason }
   | { readonly kind: 'uncertain'; readonly reason: JournalUncertainReason };
+/** J3a: a bounded, tenant-scoped query for every record of one operation ID in a namespace. */
+export interface JournalOperationQuery {
+  readonly tenantId: string;
+  readonly operationId: string;
+  /** 1–16; `truncated` reports that more matched. */
+  readonly limit: number;
+  /**
+   * J3c: return only records a recovery write could still act on (no terminal fact). Recovery
+   * pages then ADVANCE as records terminalize; without it the first-16 window is fixed and
+   * records beyond it become unreachable ("act again for the rest" would be a lie).
+   */
+  readonly actionableOnly?: boolean;
+}
+export type JournalFindOutcome =
+  | {
+      readonly kind: 'found';
+      readonly records: readonly JournalRecord[];
+      readonly truncated: boolean;
+    }
+  | { readonly kind: 'definitely_not_read'; readonly reason: JournalNoWriteReason }
+  | { readonly kind: 'uncertain'; readonly reason: JournalUncertainReason };
 export type JournalCloseOutcome =
   | { readonly kind: 'closed' }
   | { readonly kind: 'uncertain'; readonly reason: JournalUncertainReason };
@@ -113,6 +134,11 @@ export interface RawOperationJournalHandle {
     signal: AbortSignal
   ): PromiseLike<unknown>;
   lookup(request: Stamped<JournalKey>, signal: AbortSignal): PromiseLike<unknown>;
+  /** J3a: read-only, fenced, bounded; never a write. */
+  findByOperation(
+    request: Stamped<JournalOperationQuery>,
+    signal: AbortSignal
+  ): PromiseLike<unknown>;
   close(signal: AbortSignal): PromiseLike<unknown>;
 }
 export interface RawJournalNamespace extends JournalNamespace {
@@ -155,6 +181,11 @@ export interface OperationJournal {
     signal?: AbortSignal
   ): JournalCall<JournalMutationOutcome>;
   lookup(key: JournalKey, signal?: AbortSignal): JournalCall<JournalLookupOutcome>;
+  /** J3a: every record of one tenant's operation ID in this namespace, bounded, in order. */
+  findByOperation(
+    query: JournalOperationQuery,
+    signal?: AbortSignal
+  ): JournalCall<JournalFindOutcome>;
   close(): Promise<JournalCloseOutcome>;
 }
 export type JournalOpenOutcome =

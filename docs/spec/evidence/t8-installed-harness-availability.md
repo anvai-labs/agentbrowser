@@ -304,3 +304,77 @@ qualified at the manager/bridge level (the journal and service-side
 gates), not through a third-party client; this record qualifies what
 is observable through the provider: honest failure, recovery, and
 timeout-uncertainty surfacing.
+
+## 2026-10-15 update: re-qualified on 1.18.0-era develop through BOTH provider CLIs (Q1)
+
+The 1.14/1.15 runs had no committed driver. This one does:
+[`scripts/t8-harness-qualification.mjs`](../../../scripts/t8-harness-qualification.mjs). It builds
+nothing itself (run `pnpm -r build` first). It starts a keyed scratch service from this checkout on
+a loopback port with `AGENTBROWSER_ALLOW_LOOPBACK=1`, plus a loopback fixture whose form carries
+a random password value.
+
+Each provider can reach the outside world **only through the agentbrowser bridge**:
+
+- **Codex** 0.162.1 (ChatGPT auth) runs `codex exec --ephemeral --ignore-user-config
+  --approve-for-me --json`. Its `shell_tool`, `unified_exec`, `browser_use`,
+  `browser_use_external`, `in_app_browser`, `computer_use`, `apps`, `plugins` and `multi_agent`
+  features are disabled.
+- **Claude Code** 2.1.300 (claude.ai auth) runs `claude -p --restricted --tools ""
+  --strict-mcp-config --allowedTools "mcp__agentbrowser__*"`. That removes every built-in tool and
+  ignores user and project settings.
+- **Credentials** (the operator key, and the delegated grant in D2) never appear in a provider's
+  argv or MCP configuration. A launcher reads them from a `0600` file outside the provider's
+  working directory.
+- **Any use of another tool fails the run, whatever the oracles say.** The driver reads every
+  invocation event: Codex items other than messages and reasoning, and Claude `tool_use` blocks
+  other than the bridge and the `ToolSearch` schema loader.
+
+Every verdict also needs an **oracle that is independent of the model's narrative**:
+
+| Dimension | Gate (in addition to: clean exit, no other tool, required bridge tools invoked, password absent from the stream) | Codex | Claude Code |
+| --- | --- | --- | --- |
+| Tool-call fidelity, unbound (create, navigate, snapshot, act) | The fixture server saw `/submit` with the exact random value the prompt named | PASS | PASS |
+| Structured results | `structuredContent` present in the stream (gated within D1) | PASS | PASS |
+| Delegated navigate + act with caller-chosen operation IDs | The service's own operation records, read with the operator key: both `completed`, `dispatched: true`, epoch 2; the fixture saw `/form` | PASS | PASS |
+| Screenshot returned as an artifact reference | A service-minted `art_…` id appears in the stream | PASS | PASS |
+| Password value never crosses the bridge | The random value is absent from every stream (gated in every dimension) | PASS | PASS |
+| Cancellation through the provider | — | not exercisable | not exercisable |
+
+The tools each provider actually invoked were identical for both:
+- `act, close, create, navigate, snapshot` for the unbound run;
+- `act, navigate, observe` for the delegated run;
+- `close, create, navigate, observe, screenshot` for the screenshot run.
+
+Neither provider used any other tool.
+
+**Observation: screenshot bytes do cross the bridge.** The screenshot's artifact reference also
+carries the image inline (`ArtifactRef.inline.contentBase64`, base64 PNG), and both providers
+received it. This is by design for small artifacts, and it is not a password leak: the field
+renders masked, and the value never appears. But the bytes reach the model as base64 **text**
+inside a JSON result, not as an MCP image block: 15,444 characters (about 15 KB) for this
+fixture's screenshot, carried twice per result (once in the text content, once in the structured
+content). The model cannot view that text
+as an image, so it only costs context.
+
+Recorded as a follow-up decision, not changed here: either the MCP `screenshot` and `pdf` tools
+omit `inline` and return the reference only, or they return an MCP `image` content block. An
+earlier draft of this record claimed "no inline bytes". That claim was wrong; the detection
+pattern missed the `contentBase64` field. The committed driver detects PNG and JPEG magic
+anywhere in the stream.
+
+**Cancellation:** neither CLI lets a scripted run cancel one in-flight tool call, so this is
+recorded as not exercisable through the provider, not as a pass. The bridge side
+(`notifications/cancelled` aborts the HTTP request and no response is sent) is qualified end to
+end in `packages/mcp-server/src/cancellation.test.ts`.
+
+**HTML** is delivered inline and is deliberately not secret-redacted (ADR-020), so it is not a
+privacy dimension of this run.
+
+Final run: 2026-10-15T16:21Z–16:23Z on Linux x64 (WSL2), Node v24.21.0. Earlier attempts are
+recorded, not counted:
+- A synchronous child spawn blocked the in-process fixture, so no page could load. The service
+  correctly reported `TIMEOUT`/`outcome_unknown`.
+- One Claude Code attempt hit the account's usage limit.
+- One pass ran before the provider lockdown and the tool-evidence gates existed.
+
+**Victor** remains gated on aiserver1's gateway (owner reconciliation 2026-10-15).

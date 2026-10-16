@@ -112,6 +112,15 @@ JUnit results. This tests the two-file, builtins-only distribution seam against 
 existing preconfigured service. It does not provide general application provisioning,
 a plugin loader or a public runner.
 
+**CI entrypoint (2026-10-15).** The scoped "public runner" item is delivered as an installable
+CI entrypoint, not a runner: the composite action
+[`.github/actions/test-evaluate`](../../../.github/actions/test-evaluate/README.md) installs a
+pinned release CLI verified against `sha256sums.txt`, evaluates a directory of caller-observed
+bundles offline, writes JUnit (identities and verdicts only) and fails unless every bundle passed.
+It is qualified with a stub CLI in the lint job and against the compiled CLI in the Bun job
+(`scripts/test-evaluate-action.test.mjs`). Execution, fixtures and credentials stay with the
+caller's own test job, as the [evaluation design](../design/t3-cli-evaluation.md) requires.
+
 The delivered qualification also records one explicitly scoped local sample: live-recipe elapsed
 time and maximum config, evaluation, manifest and JUnit bytes. Its CLI/version/discovery,
 outcome, evaluation and Node-test counts come from the fixed qualified call paths and

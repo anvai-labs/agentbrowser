@@ -1981,6 +1981,72 @@ describe('AgentBrowser CLI', () => {
       expect(out).toEqual(['committed: {"operationId":"effect-1","total":1}']);
     });
 
+    it('forwards --execution-requirement and refuses an unknown value before any call', async () => {
+      for (const requirement of ['ephemeral', 'durable'] as const) {
+        sessions.applicationExecute.mockClear();
+        expect(
+          await run(
+            '--operation-id',
+            'effect-2',
+            'application',
+            'execute',
+            'ses_1',
+            'add',
+            '1',
+            '--expected-version',
+            '0',
+            '--execution-requirement',
+            requirement
+          )
+        ).toBe(0);
+        expect(sessions.applicationExecute).toHaveBeenCalledWith('ses_1', {
+          operation: 'add',
+          input: 1,
+          operationId: 'effect-2',
+          expectedVersion: 0,
+          executionRequirement: requirement,
+        });
+      }
+      sessions.applicationExecute.mockClear();
+      expect(
+        await run('application', 'execute', 'ses_1', 'add', '1', '--execution-requirement', 'fast')
+      ).not.toBe(0);
+      expect(sessions.applicationExecute).not.toHaveBeenCalled();
+    });
+
+    it('forwards a supersedes link only when both halves are given (J3c part 2)', async () => {
+      sessions.applicationExecute.mockClear();
+      expect(
+        await run(
+          '--operation-id',
+          'continuation-1',
+          'application',
+          'execute',
+          'ses_1',
+          'add',
+          '1',
+          '--supersedes',
+          'closed-op',
+          '--supersedes-namespace',
+          'agentbrowser'
+        )
+      ).toBe(0);
+      expect(sessions.applicationExecute).toHaveBeenCalledWith('ses_1', {
+        operation: 'add',
+        input: 1,
+        operationId: 'continuation-1',
+        supersedes: { namespace: 'agentbrowser', operationId: 'closed-op' },
+      });
+      for (const half of [
+        ['--supersedes', 'closed-op'],
+        ['--supersedes-namespace', 'agentbrowser'],
+      ]) {
+        sessions.applicationExecute.mockClear();
+        expect(await run('application', 'execute', 'ses_1', 'add', '1', ...half)).not.toBe(0);
+        expect(sessions.applicationExecute).not.toHaveBeenCalled();
+      }
+    });
+
     it('renders rejections, replays, and defaults input to null', async () => {
       sessions.applicationExecute = vi
         .fn()

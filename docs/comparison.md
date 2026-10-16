@@ -148,10 +148,11 @@ user permission in a consumer profile.
   REST service effectively cannot run Safari; native Firefox is
   experimental and unqualified ([engines](engines.md),
   [operations](operations.md)).
-- **Delegated-session records are ephemeral** — "records and grants
-  disappear on session close/restart"; durable receipts are future work
-  ([delegated sessions](delegated-sessions.md)). (The durable operation
-  journal is under construction — [T5](spec/tasks/t5-durable-recovery.md).)
+- **Durability is opt-in and narrow.**
+    - Grants and in-memory operation status disappear on close/restart.
+    - With the optional journal, a `durable` operation's record survives a restart and can be
+      closed or settled — **never replayed**; receipt contents (form values) are never stored
+      ([recovery](operations.md#durable-operations-and-recovery-t5)).
 - **No prompt-injection classifier of its own**; it flags untrusted
   content and relies on the calling harness — weaker guarantees than
   Anthropic's measured defenses

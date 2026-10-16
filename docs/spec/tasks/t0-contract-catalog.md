@@ -72,7 +72,20 @@ both catalogs. T1 must measure selection savings rather than claim shrinking all
 
 1. Preserve the completed contract audit when reviewing this candidate. Autofill and
    plan are qualified here; migrate remaining wire envelopes under T2 with fixtures
-   rather than extending T0 with unqualified output schemas.
+   rather than extending T0 with unqualified output schemas. **2026-10-15 (M2, part 1):**
+   `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` now advertise output
+   schemas that are *qualified*: `packages/api/src/mcp-output-schemas.test.ts` validates each
+   tool's real result (MCP handler → SDK → REST → service) against its schema, and each schema
+   rejects `{}`. The qualification found that `SessionResponse.engine.capabilities` was
+   documented as required but never returned; it is now optional. Review then showed that
+   MCP clients validate `structuredContent` against `outputSchema` on `isError` results too, so
+   success-only schemas broke every structured error (already true for the earlier schema'd
+   tools); advertised schemas now accept the error envelope (`anyOf`), qualified from the
+   client's side over JSON-RPC. **Part 2 (2026-10-15):** `policy`,
+   `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise qualified schemas
+   too, as does the delegated `operation` tool, so every MCP tool in every catalog does (nested
+   views relaxed for forward compatibility); the qualification adds a real cookie handoff (relay,
+   operator decision, completion) and asserts no tool lacks a schema.
 2. Preserve the adversarial review resolution: autofill reports are validated before
    CLI success/output and the malformed-report case has a red-then-green regression.
 3. Continue dependency-ready increments. Installed Victor, Codex and Claude structured-

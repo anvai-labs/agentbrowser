@@ -7,6 +7,7 @@ import {
   VERIFICATION_SNAPSHOT_LIMITS,
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
+import { RESERVED_BROWSER_ADAPTER_ID } from './browser-journal.js';
 import { canonicalJson } from './canonical-json.js';
 import {
   type OperationPublication,
@@ -20,6 +21,8 @@ import {
   type SessionPrincipal,
 } from './session-authority.js';
 import { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
+
+export { RESERVED_BROWSER_ADAPTER_ID };
 
 export interface ApplicationScope {
   readonly sessionId: string;
@@ -74,26 +77,84 @@ export interface ApplicationOperation {
   prepare(input: unknown): (scope: ApplicationScope) => Promise<ApplicationResult>;
 }
 
-/** Type-check adapter input/output while keeping validation inside admission. */
+/**
+ * Type-check adapter input/output while keeping validation inside admission. An optional
+ * `parseOutput` validates (and may normalize) a read/committed value: a mismatch fails with a
+ * static `Invalid application output` and never reports success. For a write the effect has
+ * already run, so the operation stays dispatched; reconcile it by receipt, never by re-running.
+ */
 export function defineApplicationOperation<Input, Output>(operation: {
   mode: 'read' | 'write';
   review?: 'operator-submit';
   parse(input: unknown): Input;
   execute(input: Input, scope: ApplicationScope): Promise<ApplicationResult<Output>>;
+  parseOutput?(value: unknown): Output;
 }): ApplicationOperation {
   const mode = operation.mode;
   const review = operation.review;
   validateReviewDeclaration(mode, review);
   const parse = operation.parse.bind(operation);
   const execute = operation.execute.bind(operation);
+  const parseOutput = operation.parseOutput?.bind(operation);
   return Object.freeze({
     mode,
     ...(review !== undefined ? { review } : {}),
     prepare(input: unknown) {
       const parsed = parse(input);
-      return (scope: ApplicationScope) => execute(parsed, scope);
+      if (parseOutput === undefined) return (scope: ApplicationScope) => execute(parsed, scope);
+      return async (scope: ApplicationScope): Promise<ApplicationResult> => {
+        const result = await execute(parsed, scope);
+        if (result.status === 'rejected') return result;
+        let value: Output;
+        try {
+          value = parseOutput(result.value);
+        } catch {
+          // Static diagnostics: neither the adapter output nor the parser's message is echoed.
+          // A read is refused like any invalid read result. A write's effect has already run, so
+          // it is an internal adapter fault (HTTP 500, outcome unknown), never a 400 that invites
+          // the caller to "fix the request" and repeat the side effect.
+          if (mode === 'write') throw new Error('Invalid application output');
+          throw new ControlError('INVALID_REQUEST', 'Invalid application output');
+        }
+        return { status: result.status, value };
+      };
     },
   });
+}
+
+/**
+ * The operation identity of an application write: domain-separated SHA-256 over the binding,
+ * operation, expected version (and, for an operator-submit write, its approval token) and the
+ * canonical input. Duplicate IDs replay only when this matches exactly.
+ */
+export function applicationOperationFingerprint(
+  binding: ApplicationBinding & { generation: string; tenant: string },
+  request: Pick<
+    ApplicationRequest,
+    'operation' | 'expectedVersion' | 'approvalToken' | 'executionRequirement'
+  >,
+  serializedInput: string,
+  protectedWrite: boolean
+): string {
+  // Durable writes hash under their own domain (and name the requirement), so consent and replay
+  // can never cross requirements. Ephemeral keeps the v1 domain and body byte for byte.
+  const durable = request.executionRequirement === 'durable';
+  return createHash('sha256')
+    .update(durable ? 'application-operation:v2-durable\0' : 'application-operation:v1\0')
+    .update(
+      canonicalJson({
+        ...binding,
+        operation: request.operation,
+        expectedVersion: request.expectedVersion,
+        ...(protectedWrite && request.approvalToken !== undefined
+          ? { approvalToken: request.approvalToken }
+          : {}),
+        ...(durable ? { executionRequirement: 'durable' } : {}),
+      })
+    )
+    .update('\0')
+    .update(serializedInput)
+    .digest('hex');
 }
 
 export interface ApplicationAdapter {
@@ -101,6 +162,21 @@ export interface ApplicationAdapter {
   authorize(scope: { tenant: string; resource: string }): boolean;
   readonly operations: Readonly<Record<string, ApplicationOperation>>;
   receipt(scope: ApplicationScope, operationId: string): Promise<unknown>;
+  /**
+   * T5 J3c part 2 (D3, accepted design): resolve an in-doubt durable write's true outcome from
+   * the adapter's own records. OPT-IN — an adapter that cannot answer for a specific departed
+   * operation does not implement this. The identity carries NO fingerprint: binding is by
+   * tenant, adapter/resource/binding generation, session incarnation and operation ID, so a
+   * later operation that reused the ID can never satisfy it. 'unknown' changes nothing.
+   */
+  reconcile?(identity: {
+    tenant: string;
+    adapter: string;
+    resource: string;
+    bindingGeneration: string;
+    sessionIncarnation: string;
+    operationId: string;
+  }): Promise<{ status: 'committed' | 'rejected' | 'unknown' }>;
 }
 export interface ApplicationBinding {
   adapter: string;
@@ -112,6 +188,10 @@ export interface ApplicationRequest {
   operationId?: string | undefined;
   expectedVersion?: number | undefined;
   approvalToken?: string | undefined;
+  /** C4b: 'ephemeral' (the default) is dropped at normalization; only 'durable' is carried. */
+  executionRequirement?: 'ephemeral' | 'durable' | undefined;
+  /** T5 J3c part 2: provenance link to the closed operation this one replaces; metadata only. */
+  supersedes?: { namespace: string; operationId: string } | undefined;
 }
 
 export interface PreparedApplicationOperationReview {
@@ -149,7 +229,15 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
   try {
     if (!request || Object.getPrototypeOf(request) !== Object.prototype) throw new Error();
     const own = Object.getOwnPropertyDescriptors(request);
-    const allowed = ['operation', 'input', 'operationId', 'expectedVersion', 'approvalToken'];
+    const allowed = [
+      'operation',
+      'input',
+      'operationId',
+      'expectedVersion',
+      'approvalToken',
+      'executionRequirement',
+      'supersedes',
+    ];
     if (
       Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !allowed.includes(key)) ||
       Object.values(own).some((field) => !field.enumerable || !Object.hasOwn(field, 'value')) ||
@@ -161,6 +249,16 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
     const operationId = own.operationId?.value;
     const expectedVersion = own.expectedVersion?.value;
     const approvalToken = own.approvalToken?.value;
+    // C4b: 'ephemeral' is the default made explicit and is dropped here, so explicit and omitted
+    // requests share one canonical identity. 'durable' is carried into the operation identity
+    // (its own fingerprint domain) and the review intent; anything else is refused.
+    const executionRequirement: unknown = own.executionRequirement?.value;
+    if (
+      executionRequirement !== undefined &&
+      executionRequirement !== 'ephemeral' &&
+      executionRequirement !== 'durable'
+    )
+      throw new Error();
     if (
       typeof operation !== 'string' ||
       !CONTROL_OPERATION_ID.test(operation) ||
@@ -176,6 +274,36 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
           approvalToken.length > 128))
     )
       throw new Error();
+    // J3c part 2: the supersedes link is bounded caller data (a namespace and an operation ID),
+    // inspected through its own data descriptors exactly like the request itself (a plain
+    // object, exactly two own enumerable string data properties, no coercion), then detached
+    // into a fresh frozen copy. It is metadata and never part of the operation identity.
+    let supersedes: Readonly<{ namespace: string; operationId: string }> | undefined;
+    if (own.supersedes !== undefined) {
+      const link: unknown = own.supersedes.value;
+      if (!link || typeof link !== 'object' || Object.getPrototypeOf(link) !== Object.prototype)
+        throw new Error();
+      const fields = Object.getOwnPropertyDescriptors(link);
+      const keys = Reflect.ownKeys(fields);
+      const namespace = fields.namespace;
+      const linkedId = fields.operationId;
+      if (
+        keys.length !== 2 ||
+        !namespace ||
+        !linkedId ||
+        !namespace.enumerable ||
+        !linkedId.enumerable ||
+        !Object.hasOwn(namespace, 'value') ||
+        !Object.hasOwn(linkedId, 'value') ||
+        typeof namespace.value !== 'string' ||
+        namespace.value.length < 1 ||
+        namespace.value.length > 128 ||
+        typeof linkedId.value !== 'string' ||
+        !CONTROL_OPERATION_ID.test(linkedId.value)
+      )
+        throw new Error();
+      supersedes = Object.freeze({ namespace: namespace.value, operationId: linkedId.value });
+    }
     const input = snapshotReadData(own.input.value);
     const serialized = canonicalJson(input);
     return {
@@ -185,6 +313,8 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
         ...(operationId !== undefined ? { operationId } : {}),
         ...(expectedVersion !== undefined ? { expectedVersion } : {}),
         ...(approvalToken !== undefined ? { approvalToken } : {}),
+        ...(executionRequirement === 'durable' ? { executionRequirement } : {}),
+        ...(supersedes !== undefined ? { supersedes } : {}),
       }),
       serialized,
     };
@@ -218,11 +348,22 @@ export class ApplicationAuthority {
   private readonly bindings = new WeakMap<SessionControl, Binding>();
   private readonly consentPolicy: ApplicationConsentPolicy | undefined;
   private readonly journalWrites: boolean;
+  private readonly durableWrites: boolean;
 
   constructor(
     private readonly authority: SessionAuthority,
     adapters: readonly ApplicationAdapter[] = [],
-    options: { consentPolicy?: ApplicationConsentPolicy; journalWrites?: boolean } = {}
+    options: {
+      consentPolicy?: ApplicationConsentPolicy;
+      /** Journal every write (qualification seam). */
+      journalWrites?: boolean;
+      /**
+       * C4b (J-d): journal writes that request `executionRequirement: 'durable'`, and only those.
+       * Without it `durable` is refused before any effect. The SessionAuthority's journal must
+       * also be open, or the intent is refused before the effect.
+       */
+      durableWrites?: boolean;
+    } = {}
   ) {
     const consentPolicy = options.consentPolicy;
     if (consentPolicy !== undefined && typeof consentPolicy !== 'function')
@@ -232,6 +373,10 @@ export class ApplicationAuthority {
     if (journalWrites !== undefined && typeof journalWrites !== 'boolean')
       throw new ControlError('INVALID_REQUEST', 'Invalid application journal selection');
     this.journalWrites = journalWrites ?? false;
+    const durableWrites = options.durableWrites;
+    if (durableWrites !== undefined && typeof durableWrites !== 'boolean')
+      throw new ControlError('INVALID_REQUEST', 'Invalid application journal selection');
+    this.durableWrites = durableWrites ?? false;
     for (const adapter of adapters) {
       try {
         const id = adapter.id;
@@ -241,6 +386,9 @@ export class ApplicationAuthority {
         if (
           typeof id !== 'string' ||
           !CONTROL_OPERATION_ID.test(id) ||
+          // T5 B-dur (B5): `browser` names browser-operation journal records; a real adapter
+          // may never take it (reconcile must always refuse browser records).
+          id === RESERVED_BROWSER_ADAPTER_ID ||
           this.adapters.has(id) ||
           typeof authorize !== 'function' ||
           typeof receipt !== 'function' ||
@@ -439,6 +587,10 @@ export class ApplicationAuthority {
         operation: request.operation,
         operationId: request.operationId,
         expectedVersion: request.expectedVersion,
+        ...(request.executionRequirement === 'durable'
+          ? { executionRequirement: request.executionRequirement }
+          : {}),
+        ...(request.supersedes !== undefined ? { supersedes: request.supersedes } : {}),
         input: request.input,
       }) as Readonly<Record<string, unknown>>;
       canonicalJson(action);
@@ -487,27 +639,22 @@ export class ApplicationAuthority {
     const { request, serialized } = normalizeApplicationRequest(callerRequest);
     this.authority.assertPrincipal(sessionId, principal);
     const { binding, adapter, operation, write } = this.captureOperation(sessionId, request);
+    const durable = request.executionRequirement === 'durable';
+    // C4b (J-d): durability is a write-execution requirement that must actually be journaled.
+    // Refused here, before any identity, preparation or effect, when it cannot be.
+    if (durable && (!write || !this.durableWrites || !this.authority.journalOpen()))
+      throw new ControlError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only'
+      );
+    const journaled = write && (this.journalWrites || durable);
     const replayOwner =
-      replay || (this.journalWrites && write)
+      replay || journaled
         ? { binding, adapter, scope: this.scope(sessionId, binding, request) }
         : undefined;
     const protectedWrite = operation.review === 'operator-submit';
     const fingerprint = write
-      ? createHash('sha256')
-          .update('application-operation:v1\0')
-          .update(
-            canonicalJson({
-              ...binding,
-              operation: request.operation,
-              expectedVersion: request.expectedVersion,
-              ...(protectedWrite && request.approvalToken !== undefined
-                ? { approvalToken: request.approvalToken }
-                : {}),
-            })
-          )
-          .update('\0')
-          .update(serialized)
-          .digest('hex')
+      ? applicationOperationFingerprint(binding, request, serialized, protectedWrite)
       : undefined;
     let rejected = false;
     return this.authority.run(
@@ -517,7 +664,7 @@ export class ApplicationAuthority {
         ? {
             id: request.operationId,
             fingerprint,
-            ...(this.journalWrites
+            ...(journaled
               ? {
                   journal: {
                     version: 1 as const,
@@ -526,6 +673,7 @@ export class ApplicationAuthority {
                       resourceId: binding.resource,
                       bindingGeneration: binding.generation,
                     },
+                    ...(durable ? { durable: true as const } : {}),
                   },
                 }
               : {}),
@@ -619,7 +767,7 @@ export class ApplicationAuthority {
           ? this.authority.dispatchInScope(
               sessionId,
               () => execute(scope),
-              this.journalWrites
+              journaled
                 ? this.authority.captureApplicationDispatchInScope(sessionId, assertDispatch)
                 : undefined
             )
@@ -638,7 +786,7 @@ export class ApplicationAuthority {
               this.publishApplication(sessionId, replayOwner, value, context, replay.publish),
           }
         : undefined,
-      this.journalWrites && write && replayOwner
+      journaled && replayOwner
         ? () => this.applicationAccess(sessionId, replayOwner, () => {}).assertAuthority()
         : undefined
     );

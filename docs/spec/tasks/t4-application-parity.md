@@ -45,6 +45,9 @@ stock remote exploit. Keep the 1.9.1 release immutable; deliver this slice to de
 Test stale expected versions, resource/account rebinding, revoked grants, duplicate IDs,
 invalid nested input, output schema mismatch and after-commit response loss. Application
 mutation, idempotency and expected-version validation are atomic at the app fixture.
+Output schema mismatch (2026-10-15): an operation's optional `parseOutput` refuses a
+non-matching read (400) and turns a non-matching write into an internal fault (500) that stays
+dispatched with `outcome_unknown` and is never re-run (`application-output*.test.ts`).
 The service cannot report a browser command as that fixture's commit receipt.
 
 Run existing application independence audits with browser packages unavailable.
@@ -60,7 +63,13 @@ an independent UI/API parity oracle,
 a production evidence source and the remaining receipt-correlation acceptance. Durable
 service-restart claims depend on T5. If an external app cannot supply durable idempotency
 or receipts, advertise weaker observed outcomes and refuse automatic replay. No
-application-specific executor fork.
+application-specific executor fork. **A2 (2026-10-15):** the durable-restart claims are now
+qualified against a real store through the service
+([evidence](../evidence/t5-journal-runtime.md#a2-durable-restart-claims-2026-10-15)): records
+survive a graceful restart and stay readable through the new process; nothing replays; and a
+re-submitted operation ID is a NEW operation (identity includes the process's service
+generation), so the weaker outcome — the adapter owns idempotency, the journal never claims it —
+is what the product advertises.
 
 The [C2a draft-oracle candidate](../design/t6-draft-oracle.md) adds a named
 independent UI/API oracle for synthetic drafts, with separate path outcomes and a

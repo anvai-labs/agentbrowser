@@ -10,7 +10,8 @@ export type JournalChildMutationKind =
   | 'reserveIntent'
   | 'markDispatch'
   | 'commitTerminal'
-  | 'lookup';
+  | 'lookup'
+  | 'findByOperation';
 
 /** Child-to-parent broadcast sent once the store is acquired and the loop is live. */
 export interface JournalChildReady {
@@ -85,7 +86,8 @@ export function isJournalChildRequest(input: unknown): input is JournalChildRequ
     request.kind === 'reserveIntent' ||
     request.kind === 'markDispatch' ||
     request.kind === 'commitTerminal' ||
-    request.kind === 'lookup'
+    request.kind === 'lookup' ||
+    request.kind === 'findByOperation'
   )
     return (
       boundedId(request.correlationId) &&

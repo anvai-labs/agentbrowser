@@ -51,6 +51,47 @@ describe('AgentBrowser SDK', () => {
     });
   });
 
+  describe('journal surfaces (T5 J3b)', () => {
+    it('returns the journal status unchanged', async () => {
+      const status = {
+        schemaVersion: 1,
+        configured: true,
+        namespace: 'agentbrowser',
+        health: 'open',
+        acceptUntil: '2099-01-01T00:00:00.000Z',
+        retainUntil: '2099-01-31T00:00:00.000Z',
+        runtime: { platform: 'linux', node: '24.21.0', qualified: true },
+        recoveryQualified: true,
+      };
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(status), { status: 200 }));
+      await expect(client.journalStatus()).resolves.toEqual(status);
+      const called = vi.mocked(fetch).mock.calls.at(-1)?.[0];
+      expect(String(called)).toContain('/v1/journal');
+    });
+
+    it('looks up one operation and encodes the ID', async () => {
+      const result = {
+        schemaVersion: 1,
+        operationId: 'op-1',
+        absent: false,
+        truncated: false,
+        records: [
+          {
+            namespace: 'agentbrowser',
+            classification: 'in_doubt',
+            actionable: true,
+            application: { adapter: 'a', resource: 'r', bindingGeneration: 'g' },
+            session: { sessionIncarnation: 'i'.repeat(22), epoch: 1 },
+          },
+        ],
+      };
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 200 }));
+      await expect(client.journalOperations('op 1')).resolves.toEqual(result);
+      const called = vi.mocked(fetch).mock.calls.at(-1)?.[0];
+      expect(String(called)).toContain('/v1/journal/operations/op%201');
+    });
+  });
+
   describe('session management', () => {
     it('preserves machine-readable consent details and trace correlation', async () => {
       vi.mocked(fetch).mockResolvedValueOnce(
@@ -808,6 +849,69 @@ describe('AgentBrowser SDK', () => {
   });
 
   describe('action execution', () => {
+    it('sends executionRequirement in the body and the operation id as a header (T5 B-dur)', async () => {
+      const ok = (json: unknown) => ({ ok: true, status: 200, json: async () => json });
+      mockFetch
+        .mockResolvedValueOnce(ok({ status: 'success', actionId: 'a', newRevision: 2 }))
+        .mockResolvedValueOnce(ok({ ok: true, completed: 0, results: [] }))
+        .mockResolvedValueOnce(
+          ok({ ok: true, receipts: [{ status: 'verified', verified: true }] })
+        );
+      await client.sessions.executeAction(
+        's',
+        'p',
+        { action: 'scroll', direction: 'down' } as never,
+        { operationId: 'op-act', executionRequirement: 'durable' }
+      );
+      await client.sessions.plan('s', 'p', [], {
+        operationId: 'op-plan',
+        executionRequirement: 'durable',
+      });
+      await client.sessions
+        .autofill('s', 'p', { fields: [{ match: { label: 'Company' }, value: 'Acme' }] } as never, {
+          operationId: 'op-fill',
+          executionRequirement: 'ephemeral',
+        })
+        .catch(() => undefined);
+      const calls = mockFetch.mock.calls as Array<[string, { body: string; headers: object }]>;
+      expect(JSON.parse(calls[0]?.[1].body ?? '{}')).toEqual({
+        action: 'scroll',
+        direction: 'down',
+        executionRequirement: 'durable',
+      });
+      expect(calls[0]?.[1].headers).toMatchObject({ 'x-agentbrowser-operation-id': 'op-act' });
+      expect(JSON.parse(calls[1]?.[1].body ?? '{}')).toEqual({
+        actions: [],
+        executionRequirement: 'durable',
+      });
+      expect(JSON.parse(calls[2]?.[1].body ?? '{}')).toMatchObject({
+        executionRequirement: 'ephemeral',
+      });
+      for (const [, init] of calls) expect(Object.keys(init)).not.toContain('executionRequirement');
+    });
+
+    it('omits executionRequirement when it is not given (unchanged requests)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'success', actionId: 'a', newRevision: 2 }),
+      });
+      await client.sessions.executeAction('s', 'p', {
+        action: 'scroll',
+        direction: 'down',
+      } as never);
+      const body = (mockFetch.mock.calls[0] as [string, { body: string }])[1].body;
+      expect(JSON.parse(body)).toEqual({ action: 'scroll', direction: 'down' });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, completed: 0, results: [] }),
+      });
+      await client.sessions.plan('s', 'p', [], { operationId: 'op-plan' });
+      const plan = mockFetch.mock.calls[1] as [string, { body: string }];
+      expect(JSON.parse(plan[1].body)).toEqual({ actions: [] });
+    });
+
     it('should execute click action', async () => {
       const mockResponse = {
         status: 'success',
