@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — T10 engagements plan and record hygiene
+
+- New task packet T10 (`docs/spec/tasks/t10-engagements.md`): engagements (scope without holes,
+  status and a metadata-only ledger, program scope and findings) and saved plan runs, each
+  milestone released (1.21.0–1.24.0). Registered in the task index and manifest.
+- Review findings R01, R02 and R12 annotated closed; stale lines fixed (T9 "develop unprotected",
+  the delivery audit row, the TD-BROWSER-12 status).
+
 ### Docs — the 1.20.0 release record
 
 - `docs/spec/evidence/release-1.20.0.md` records the first release under the R14 gates and the

@@ -226,7 +226,7 @@ test('enforces file and complete serialized budgets without partial CLI output',
 
 test('validates every allowed actual manifest selection and reports exact counts', async () => {
   const result = await checkSpecContext();
-  assert.deepEqual(result, { modules: 30, modes: 7, views: 6, tasks: 10, selections: 82 });
+  assert.deepEqual(result, { modules: 31, modes: 7, views: 6, tasks: 11, selections: 86 });
   const active = await loadSpecContext({ mode: 'qa', task: 't1' });
   assert.equal(active.selection.task, 't1');
   assert.ok(active.modules.some(({ id }) => id === 'task-t1'));
