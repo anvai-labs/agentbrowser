@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — native disclosures are targetable controls
+
+- `observe` now reports each `<details>` element's first `<summary>` as role `html-summary`
+  (HTML-AAM's computed role; never forced to `button`). It carries its accessible name and an
+  `expanded` state from `details.open`, and binds a ref that `click` or `press Enter` / `Space`
+  toggles.
+  - Before, Playwright's snapshot dropped the summary, so only `{role:"group", value:"…"}`
+    remained.
+  - Not a regression: Playwright 1.62.1 and 1.64.0 behave the same.
+- Protocol: page elements gain an optional `expanded` boolean.
+- New docs page "Observation gotchas" catalogues where `observe` differs from the browser's
+  accessibility tree, starting with this case.
+
 ### Changed — release hardening R14 closed
 
 - `v*` tags: only repository admins can create, move or delete them (ruleset).

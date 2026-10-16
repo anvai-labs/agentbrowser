@@ -378,6 +378,8 @@ export interface PageElement {
    * (tri-state mixed, or degraded observations without bound handles).
    */
   checked?: boolean | undefined;
+  /** Disclosure state: role html-summary reports whether its details is open (HTML-AAM). */
+  expanded?: boolean;
   /**
    * 0-based nesting depth within the element's snapshot block (the flattened
    * a11y tree in document order). Absent means 0 (top level of the block).

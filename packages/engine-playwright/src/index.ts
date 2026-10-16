@@ -108,6 +108,13 @@ interface StoredElement {
    * binds by ordinal over the formControls candidate selector.
    */
   formControlIndex?: number;
+  /**
+   * Set on role:"html-summary" elements (a details' first summary, which the ARIA snapshot
+   * cannot emit): binds by ordinal over SUMMARY_SELECTOR.
+   */
+  summaryIndex?: number;
+  /** Expanded state of a disclosure control (html-summary: its details' `open`). */
+  expanded?: boolean;
   attributes?: Record<string, string>;
   /** Block-local nesting depth from the aria snapshot (absent = 0). */
   depth?: number;
@@ -117,6 +124,70 @@ interface StoredElement {
   context?: string;
   /** Enrichment-minted marker (protocol, round-15/F2). */
   minted?: boolean;
+}
+
+/** One details' first summary, as the disclosure scan reports it. */
+interface SummaryInfo {
+  /** Position within the SUMMARY_SELECTOR match list (document order). */
+  index: number;
+  name: string;
+  expanded: boolean;
+  visible: boolean;
+}
+
+/**
+ * Self-contained (serialized into the page by evaluateAll). The accessible name follows the
+ * name computation for a summary: aria-labelledby, then aria-label, then its subtree text
+ * (image alt text included, aria-hidden subtrees excluded).
+ */
+/** The DOM surface the page function touches (the engine compiles without the DOM lib). */
+interface SummaryDomNode {
+  nodeType: number;
+  tagName?: string;
+  textContent: string | null;
+  childNodes: ArrayLike<SummaryDomNode>;
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): { width: number; height: number };
+  parentElement: { open?: boolean } | null;
+  ownerDocument: {
+    getElementById(id: string): { textContent: string | null } | null;
+    defaultView: { getComputedStyle(node: unknown): { visibility: string } } | null;
+  };
+}
+
+function summaryInfoPageFunction(nodes: SummaryDomNode[]): SummaryInfo[] {
+  const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const subtreeText = (node: SummaryDomNode): string => {
+    let text = '';
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === 3) text += child.textContent ?? '';
+      else if (child.nodeType === 1) {
+        if (child.getAttribute('aria-hidden') === 'true') continue;
+        text +=
+          child.tagName === 'IMG' ? ` ${child.getAttribute('alt') ?? ''} ` : subtreeText(child);
+      }
+    }
+    return text;
+  };
+  return nodes.map((node, index) => {
+    const labelledBy = (node.getAttribute('aria-labelledby') ?? '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((id) => node.ownerDocument.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    const name =
+      collapse(labelledBy) ||
+      collapse(node.getAttribute('aria-label') ?? '') ||
+      collapse(subtreeText(node));
+    const rect = node.getBoundingClientRect();
+    const style = node.ownerDocument.defaultView?.getComputedStyle(node);
+    return {
+      index,
+      name,
+      expanded: node.parentElement?.open === true,
+      visible: rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden',
+    };
+  });
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -637,6 +708,14 @@ const FORM_CONTROL_SELECTOR = [
   'div[onclick]:not([role])',
   'span[onclick]:not([role])',
 ].join(', ');
+
+/**
+ * A native disclosure's control: HTML-AAM maps only a details element's FIRST summary child,
+ * with no ARIA role (computed role `html-summary`), so Playwright's aria snapshot folds its text
+ * into the parent group and mints no control. A summary with an explicit role is already in the
+ * snapshot under that role, so it is excluded here.
+ */
+const SUMMARY_SELECTOR = 'details > summary:first-of-type:not([role])';
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
@@ -2953,6 +3032,45 @@ class PlaywrightPage implements EnginePage {
         this.page,
         ...this.page.frames().filter((frame) => frame !== mainFrame),
       ];
+      // Native disclosures (always on, like the snapshot itself): each rendered first summary
+      // becomes role "html-summary" with its accessible name and expanded state. A closed
+      // details does not render its content, so a nested summary appears once its parent opens.
+      // Only roots the snapshot actually captured are scanned: a frame still loading (or never
+      // snapshotted) has no document to read, and evaluating in it would wait on its context.
+      const summaryRoots = scanRoots.filter(
+        (root) => root === this.page || blockOfFrame.has(root as import('playwright').Frame)
+      );
+      for (const root of summaryRoots) {
+        const block = root === this.page ? undefined : blockOfFrame.get(root);
+        let found: SummaryInfo[];
+        try {
+          found = await root.locator(SUMMARY_SELECTOR).evaluateAll(summaryInfoPageFunction);
+        } catch (error) {
+          if (root === this.page) throw error;
+          frameCoverage.push({
+            frame: frameIdentity(root as import('playwright').Frame, 0),
+            status: 'unavailable',
+            reason: 'disclosure scan failed',
+          });
+          continue;
+        }
+        for (const info of found.slice(0, MAX_FORM_CONTROLS)) {
+          if (!info.visible) continue;
+          elements.push({
+            ref: `e${this.revision}_${elements.length}`,
+            role: 'html-summary',
+            name: info.name,
+            visible: true,
+            enabled: true,
+            expanded: info.expanded,
+            summaryIndex: info.index,
+            ...(block !== undefined ? { block } : {}),
+            attributes: { tag: 'summary' },
+          });
+          const merged = elements.at(-1);
+          if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+        }
+      }
       if (request.include?.includes('fileInputs') === true) {
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
@@ -3227,9 +3345,11 @@ class PlaywrightPage implements EnginePage {
             ? scanRoot.locator('input[type=file]').nth(element.fileInputIndex)
             : element.formControlIndex !== undefined
               ? scanRoot.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
-              : locatorRoot
-                  .getByRole(element.role as never, { name: element.name ?? '', exact: true })
-                  .nth(ordinal));
+              : element.summaryIndex !== undefined
+                ? scanRoot.locator(SUMMARY_SELECTOR).nth(element.summaryIndex)
+                : locatorRoot
+                    .getByRole(element.role as never, { name: element.name ?? '', exact: true })
+                    .nth(ordinal));
         return { element, ref, ownerFrame, fallback, locator };
       });
       // F2: binding is one round trip per step per element (resolve, aria snapshot, identity
@@ -3278,7 +3398,9 @@ class PlaywrightPage implements EnginePage {
         // Bounded to a short slice, it degrades to document evidence like any capture miss,
         // and the evidence comparison below then reports the page change.
         const captured =
-          element.fileInputIndex !== undefined || element.formControlIndex !== undefined
+          element.fileInputIndex !== undefined ||
+          element.formControlIndex !== undefined ||
+          element.summaryIndex !== undefined
             ? await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS).catch(() => undefined)
             : await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS);
         binding.snapshot = snapshotDigest(captured);
