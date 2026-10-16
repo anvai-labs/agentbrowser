@@ -486,4 +486,37 @@ describe('known versus unknown failures after the effect (B-dur-2b review)', () 
     },
     60_000
   );
+
+  it('an act batch whose end-of-batch observation fails after its steps is settled unknown', async () => {
+    const t = await journaledServer();
+    try {
+      const act = t.raw.act.bind(t.raw);
+      const observe = t.raw.observe.bind(t.raw);
+      let effects = 0;
+      t.raw.act = async (action) => {
+        effects += 1;
+        return act(action);
+      };
+      t.raw.observe = async (request) => {
+        if (effects > 0)
+          throw Object.assign(new Error('Page is closed'), { code: 'PAGE_NOT_FOUND' });
+        return observe(request);
+      };
+      const response = await t.server.inject({
+        method: 'POST',
+        url: `${t.pagePath}/act`,
+        headers: t.headers('batch-closed'),
+        payload: {
+          steps: [{ action: 'scroll', direction: 'down' }],
+          observe: 'after',
+          executionRequirement: 'durable',
+        },
+      });
+      expect(effects).toBe(1);
+      expect(response.statusCode).toBeGreaterThanOrEqual(400);
+      expect(await t.classification('batch-closed')).toBe('settled_unknown');
+    } finally {
+      await t.close();
+    }
+  }, 60_000);
 });

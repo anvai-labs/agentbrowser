@@ -4385,12 +4385,17 @@ export class AgentBrowserService {
     // they run only when every step applied, so a failed batch reports its
     // failure without post-action noise masking it.
     let waitReason: string | undefined;
-    if (plan.ok && request.wait !== undefined) {
-      waitReason = await this.waitFor(page.enginePage, request.wait);
-    }
     let observation: PageState | undefined;
-    if (plan.ok && request.observe === 'after') {
-      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    // T5 B-dur (B2): every step's effect is done; a failure here followed them.
+    try {
+      if (plan.ok && request.wait !== undefined) {
+        waitReason = await this.waitFor(page.enginePage, request.wait);
+      }
+      if (plan.ok && request.observe === 'after') {
+        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+      }
+    } catch (error) {
+      throw afterEffect(error);
     }
 
     return markOutcomeUnknown(
