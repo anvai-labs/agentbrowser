@@ -127,8 +127,10 @@ the real choke point.
   passthrough requests are scope-checked on the initial request;
   their native redirects are not re-checked — the pre-existing,
   documented residual, unchanged by this slice.
-- **Workers**: dedicated-worker requests are routed with their owner frame
-  and checked like page requests. Service workers are refused with a scope
+- **Workers**: dedicated-worker requests were observed routed with their
+  owner frame on Playwright 1.64, and a scoped worker POST redirect is
+  pinned by #540's real-Chromium test; that is observed coverage, not a
+  worker guarantee (the operator guide's caveat stands). Service workers are refused with a scope
   (below). Shared workers and WebSockets opened from workers are not
   qualified here — the same coverage boundary as the egress choke point
   itself; not represented as complete containment (T7 packet rule).
