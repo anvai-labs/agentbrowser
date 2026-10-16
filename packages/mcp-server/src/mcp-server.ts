@@ -171,6 +171,22 @@ function operationOptions(args: Record<string, unknown>): [] | [MutationOptions]
   return [{ operationId: args.operationId }];
 }
 
+/**
+ * T5 B-dur: act, plan and autofill take `executionRequirement`. Omitted means unchanged (the SDK
+ * call is exactly the one before this field existed); any other value is refused before a call.
+ */
+export const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill'] as const);
+function browserOptions(
+  args: Record<string, unknown>
+): [] | [MutationOptions & { executionRequirement?: 'ephemeral' | 'durable' }] {
+  const [operation] = operationOptions(args);
+  const requirement = args.executionRequirement;
+  if (requirement === undefined) return operation ? [operation] : [];
+  if (requirement !== 'ephemeral' && requirement !== 'durable')
+    throw new UsageError("executionRequirement must be 'ephemeral' or 'durable'");
+  return [{ ...operation, executionRequirement: requirement }];
+}
+
 // Delegated-mutation tools: these carry the operation-id contract (choose an
 // ID before dispatch; reconcile after a lost response). Single declaration -
 // the schema injection and the runtime requirement read it together.
@@ -609,7 +625,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         }
         const expectedFields = payload.fields.length;
         return parseAutofillReport(
-          await client.sessions.autofill(sessionId, pageId, payload, ...operationOptions(args)),
+          await client.sessions.autofill(sessionId, pageId, payload, ...browserOptions(args)),
           expectedFields
         );
       },
@@ -636,7 +652,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         const actions = parsePlanSteps(args.actions);
         const parseResponse = createPlanReportParser(actions);
         return parseResponse(
-          await client.sessions.plan(sessionId, pageId, actions, ...operationOptions(args))
+          await client.sessions.plan(sessionId, pageId, actions, ...browserOptions(args))
         );
       },
     },
@@ -761,7 +777,13 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           );
         }
 
-        const { sessionId: _session, pageId: _page, operationId: _operation, ...request } = args;
+        const {
+          sessionId: _session,
+          pageId: _page,
+          operationId: _operation,
+          executionRequirement: _requirement,
+          ...request
+        } = args;
 
         const validated = validateWireAction(request);
         if (!validated.ok)
@@ -772,7 +794,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           sessionId,
           pageId,
           validated.value,
-          ...operationOptions(args)
+          ...browserOptions(args)
         );
       },
     },
@@ -1090,6 +1112,14 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           ...((tool.inputSchema.required as string[]) ?? []),
           'operationId',
         ];
+    }
+    if ((BROWSER_DURABLE_TOOLS as readonly string[]).includes(tool.name)) {
+      (tool.inputSchema.properties as Record<string, unknown>).executionRequirement = {
+        type: 'string',
+        enum: ['ephemeral', 'durable'],
+        description:
+          "'ephemeral' (default; same as omitting) or 'durable': journal this call as one browser operation for classification only, never replay. Needs a delegated session, an operationId and a durable journal (CONTROL_REQUIRED otherwise); a lost result is then looked up, never repeated.",
+      };
     }
   }
   if (deps.sessionId) {

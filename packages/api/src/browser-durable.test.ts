@@ -532,4 +532,31 @@ describe('review fixes (B-dur-2b round 2)', () => {
     expect(remap).not.toHaveBeenCalled();
     expect(effects).toBe(0);
   }, 60_000);
+
+  it('a plan never self-heals a step whose failure came after its effect (no second click)', async () => {
+    const f = await fixture();
+    f.raw.setElements([{ role: 'button', name: 'Save' }]);
+    const ref = await f.refOf('Save');
+    let effects = 0;
+    const act = f.raw.act.bind(f.raw);
+    const observe = f.raw.observe.bind(f.raw);
+    f.raw.act = async (action) => {
+      effects += 1;
+      return act(action);
+    };
+    f.raw.observe = async (request) => {
+      // The follow-up read fails with a message the heal would otherwise match.
+      if (effects > 0)
+        throw Object.assign(new Error('page revision is gone'), { code: 'PAGE_NOT_FOUND' });
+      return observe(request);
+    };
+    const report = await f.run(() =>
+      f.service.executePlan(f.sessionId, f.pageId, [
+        { action: 'click', target: { ref }, observe: 'after' } as never,
+      ])
+    );
+    expect(report.ok).toBe(false);
+    expect(effects).toBe(1);
+    expect(browserReportOutcomeUnknown(report)).toBe(true);
+  }, 60_000);
 });
