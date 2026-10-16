@@ -53,8 +53,8 @@ so each hop is a first-class scope check, never a free ride):
   denied before the browser sends it. Scope of the guarantee: it holds
   on every walker-checked lane (initial requests and redirect hops),
   and since T10 M1 on the redirect hops of body-bearing requests in
-  scoped sessions (see the residuals below: a hop the guard cannot check
-  is refused, not followed).
+  scoped sessions (see the residuals below: a request whose redirects the
+  guard cannot watch is refused before the wire).
 - **Time** (`expiresAt`, injected `now`): a scope is expired AT OR AFTER
   the boundary; an expired scope denies every
   check with `SCOPE_EXPIRED`. The clock is injected (default `Date.now`)

@@ -9,12 +9,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Tests — engagement-scope release smoke (T10 M1)
 
-- `scripts/scope-consumer-smoke.mjs` drives one scoped session through REST, the SDK, the CLI and
-  MCP against local fixtures: the unchecked lanes are refused, an out-of-scope navigation is a
-  policy denial, and a form POST redirected out of scope never reaches the out-of-scope host.
-  It runs from a checkout or against an extracted release candidate (`--server-root …`).
-- Recorded gap, scheduled in M2: navigate refusals on REST/SDK/CLI/MCP report `egress_policy`,
-  not the `SCOPE_*` sub-code that direct service callers receive.
+- `scripts/scope-consumer-smoke.mjs` runs against local fixtures, from a checkout or an extracted
+  release candidate (`--server-root …`):
+
+  | Check | Surfaces |
+  | --- | --- |
+  | the out-of-scope host is reachable (control) | Node fetch |
+  | service workers, `cdpAttach` and a top-level scope are refused with a scope | REST (rule ids); CLI and MCP (service workers) |
+  | an out-of-scope navigation is a policy denial and never reaches the wire | REST, SDK, CLI, MCP |
+  | a form POST redirected out of scope never arrives and is recorded as a blocked `request.failed` | browser session via the SDK; events via REST |
+
+- Recorded gap, scheduled in M2: CLI and MCP navigate refusals report `egress_policy`, not the
+  `SCOPE_*` sub-code REST and the SDK carry (`navigationFailureDetail()` keeps only the reason).
 
 ### Security — a scope refuses the lanes it cannot check (T10 M1)
 
