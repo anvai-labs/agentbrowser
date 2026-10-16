@@ -9,8 +9,15 @@ import { loadConsumerSmokeRuntime } from './consumer-smoke-runtime.mjs';
 import { checkMcp, runExecutable } from './release-smoke.mjs';
 
 const runtime = await loadConsumerSmokeRuntime();
-const { version, buildServer, PlaywrightChromiumEngine, NetworkPolicy, cliCommand, mcpCommand, provenance } =
-  runtime;
+const {
+  version,
+  buildServer,
+  PlaywrightChromiumEngine,
+  NetworkPolicy,
+  cliCommand,
+  mcpCommand,
+  provenance,
+} = runtime;
 const { AgentBrowserClient } = runtime.sdk;
 
 // One loopback listener answers two host names: 127.0.0.1 is in scope,
@@ -59,8 +66,8 @@ try {
   const at = (host, path) => `http://${host}:${port}${path}`;
   const baseUrl = await server.listen({ host: '127.0.0.1', port: 0 });
   const client = new AgentBrowserClient({ baseUrl, apiKey: key, timeout: 60_000 });
-  const env = { ...process.env, AGENTBROWSER_BASE_URL: baseUrl, AGENTBROWSER_API_KEY: key };
-  delete env.AGENTBROWSER_SESSION_ID;
+  const { AGENTBROWSER_SESSION_ID: _unused, ...inherited } = process.env;
+  const env = { ...inherited, AGENTBROWSER_BASE_URL: baseUrl, AGENTBROWSER_API_KEY: key };
 
   // 1. The lanes a scope cannot check are refused on every surface.
   const rest = await fetch(`${baseUrl}/v1/sessions`, {
@@ -74,12 +81,26 @@ try {
   const scopeFile = join(scratch, 'scope.json');
   await writeFile(scopeFile, JSON.stringify(scope));
   const cliRefusal = await runExecutable(
-    [...cliCommand, '--base-url', baseUrl, '--json', 'session', 'create', '--tenant', 'scope-smoke',
-      '--scope-file', scopeFile, '--allow-service-workers'],
+    [
+      ...cliCommand,
+      '--base-url',
+      baseUrl,
+      '--json',
+      'session',
+      'create',
+      '--tenant',
+      'scope-smoke',
+      '--scope-file',
+      scopeFile,
+      '--allow-service-workers',
+    ],
     { env, timeoutMs: 60_000, expectedExitCode: 1 }
   );
   // The CLI and MCP print the code and message; REST above pins the rule id.
-  assert.match(cliRefusal.stdout + cliRefusal.stderr, /INVALID_REQUEST.*cannot check service-worker/);
+  assert.match(
+    cliRefusal.stdout + cliRefusal.stderr,
+    /INVALID_REQUEST.*cannot check service-worker/
+  );
   check('lanes refused', { rest: rest.status, cli: 'refused' });
 
   // 2. One scoped session: in scope allowed, out of scope blocked, and a POST
@@ -105,14 +126,19 @@ try {
         assert.equal(allowed.status, 'success');
         const mcpBlocked = await request('tools/call', {
           name: 'navigate',
-          arguments: { sessionId: session.sessionId, pageId: page.pageId, url: at(OUT_HOST, '/never') },
+          arguments: {
+            sessionId: session.sessionId,
+            pageId: page.pageId,
+            url: at(OUT_HOST, '/never'),
+          },
         });
         assert.equal(mcpBlocked.isError, true);
         // Blocked as a policy denial. The SCOPE_* sub-code does not reach the
         // REST/MCP surfaces yet (T10 M2 carries it through); recorded, not assumed.
         const blockedValue = mcpBlocked.structuredContent ?? JSON.parse(mcpBlocked.content[0].text);
         assert.equal(blockedValue.error?.code, 'POLICY_DENIED');
-        const outOfScopeReason = blockedValue.error?.details?.scope ?? blockedValue.error?.details?.reason;
+        const outOfScopeReason =
+          blockedValue.error?.details?.scope ?? blockedValue.error?.details?.reason;
 
         await client.sessions
           .navigate(session.sessionId, page.pageId, { url: at(IN_HOST, '/post-out') })
@@ -124,7 +150,11 @@ try {
           [],
           'a scoped POST redirect reached the out-of-scope host'
         );
-        check('scoped session', { inScope: 'success', outOfScope: outOfScopeReason, postRedirect: 'blocked' });
+        check('scoped session', {
+          inScope: 'success',
+          outOfScope: outOfScopeReason,
+          postRedirect: 'blocked',
+        });
       },
     });
   } finally {
