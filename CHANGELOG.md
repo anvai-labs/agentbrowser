@@ -9,6 +9,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [1.19.0] — 2026-10-16
 
+Entries are in landing order and later entries supersede earlier ones: the durable journal
+landed in slices, so an early entry's "not yet" or "proposed" (C4b's refusals, J3/J4 "proposed",
+B-dur-1/2a "not yet used") is resolved by a later entry in this same release — 1.19.0 ships the
+wired journal, lookup and recovery (J3, J4) and browser durability (B-dur).
+
 ### Fixed — journal review follow-ups (T5)
 
 - `journalReconcileTimeoutMs` outside 1..2147483647 (or not an integer) is refused at service
