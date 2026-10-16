@@ -84,7 +84,7 @@ gate does not bind a tag on an older or modified commit. **R14 closed 2026-10-16
 | Tag ruleset `release tags` (25241502) | `refs/tags/v*`: creation, deletion, update, non-fast-forward restricted; admin role bypasses |
 | `npm` environment | owner is a required reviewer (self-review allowed; admins can bypass); deploys only from `v*` tags |
 | Provenance | `actions/attest-build-provenance` signs every release asset; npm keeps `--provenance` |
-| Immutability | the Release is drafted, filled, then published; repository immutable releases lock it |
+| Immutability | the Release is drafted, filled, then published. **Pending:** switch on repository immutable releases after the next develop→main promotion, before tagging 1.20.0 (main's current flow uploads after publishing) |
 | First exercised | the `v*` deployment policy, attestations and immutability: on the next release (1.20.0) |
 
 **Least privilege and pinning (2026-10-15, S1c).** Every workflow now defaults to

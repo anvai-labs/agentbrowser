@@ -256,7 +256,8 @@ versions identify one shipped product; they do not claim every package changed.
 | `npm` environment | the npm publish job pauses for the owner's approval (Review deployments; an admin can bypass); deploys only from a `v*` tag |
 | Draft, then publish | the Release is filled as a draft and published once every asset is uploaded |
 | Provenance | every asset has a signed build-provenance attestation: `gh attestation verify <file> -R anvai-labs/agentbrowser` |
-| Immutable releases | once published, assets and the tag cannot be changed; a bad release gets a new version |
+| Immutable releases (switched on before 1.20.0) | once published, assets and the tag cannot be changed; a bad release gets a new version |
+| Rerun after a failed publish | a partial draft is never overwritten: delete the draft (upload failed) or publish it by hand (only the final publish failed), then rerun |
 
 ### Upgrading from 1.8.4 to the 1.8.5 candidate
 
