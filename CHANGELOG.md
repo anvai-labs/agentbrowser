@@ -14,14 +14,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   307 from an in-scope form POST re-sent the body to an out-of-scope host; a 302/303 sent a GET
   there.
 - **The fix:** on Chromium, a guard checks every redirect hop of those requests (fresh verdict,
-  hop cap, loop detection) and fails a denied hop before the browser follows it. A body-bearing
-  request the guard did not see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`).
+  hop cap, loop detection) and fails a denied hop before the browser follows it. Chains are
+  tracked by Chromium's network id, so a rewritten URL (fragment, re-encoding) or two chains
+  meeting at one URL cannot slip a hop. A body-bearing request its own target's guard did not
+  see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`), including a popup's first
+  request (a `target=_blank` form POST).
   Policies opt in with `requireRedirectGuard`; `EngagementScopePolicy` sets it and the metadata
   floor carries it.
 
 | Session | Before | After |
 | --- | --- | --- |
-| Scoped, Chromium | redirect hops after POST/PUT/PATCH unchecked | every hop checked; requests pause once more |
+| Scoped, Chromium | redirect hops after POST/PUT/PATCH unchecked | every hop checked; each request pauses twice more (about 1.5× load time on a 51-request page) |
 | Scoped, Firefox/WebKit | same hole | **POST/PUT/PATCH refused** (`REDIRECT_UNCHECKABLE`) |
 | Unscoped | native passthrough | unchanged |
 

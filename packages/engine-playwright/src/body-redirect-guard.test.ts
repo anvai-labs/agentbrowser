@@ -63,10 +63,43 @@ function startFixture(): Promise<Fixture> {
       // /hop/<status>?to=in|out&next=<path> answers with that redirect.
       const hop = /^\/hop\/(\d{3})$/.exec(url.pathname);
       if (hop) {
+        // `suffix` makes Chromium's follow-up URL differ from the Location
+        // text (a fragment is stripped, `|` is re-encoded).
         response.writeHead(Number(hop[1]), {
-          location: target(url.searchParams.get('to'), url.searchParams.get('next') ?? '/landed'),
+          location:
+            target(url.searchParams.get('to'), url.searchParams.get('next') ?? '/landed') +
+            (url.searchParams.get('suffix') ?? ''),
         });
         response.end();
+        return;
+      }
+      // Two chains converge on /shared: the frame's ends here, the
+      // document's is sent out of scope.
+      if (url.pathname === '/converge') {
+        const delay = Number(url.searchParams.get('delay') ?? '0');
+        setTimeout(() => {
+          response.writeHead(307, { location: target('in', '/shared') });
+          response.end();
+        }, delay);
+        return;
+      }
+      if (url.pathname === '/shared') {
+        if (request.headers['sec-fetch-dest'] === 'iframe') {
+          response.writeHead(200, { 'content-type': 'text/html' });
+          response.end('frame done');
+        } else {
+          response.writeHead(307, { location: target('out', '/leak-shared') });
+          response.end();
+        }
+        return;
+      }
+      if (url.pathname === '/two-chains') {
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.end(
+          `<html><body><iframe src="/auto/POST?action=${encodeURIComponent('/converge?delay=300')}"></iframe>` +
+            `<form id="f" method="post" action="/converge?delay=50"><input type="hidden" name="b" value="1"></form>` +
+            `<script>setTimeout(function(){document.getElementById('f').submit()}, 200)</script></body></html>`
+        );
         return;
       }
       if (url.pathname === '/worker.js') {
@@ -155,8 +188,8 @@ async function submit(page: EnginePage, fixture: Fixture, action: string, method
   await new Promise((resolve) => setTimeout(resolve, 1_000));
 }
 
-const hopTo = (status: number, to: 'in' | 'out', next = '/landed') =>
-  `/hop/${status}?to=${to}&next=${encodeURIComponent(next)}`;
+const hopTo = (status: number, to: 'in' | 'out', next = '/landed', suffix = '') =>
+  `/hop/${status}?to=${to}&next=${encodeURIComponent(next)}${suffix ? `&suffix=${encodeURIComponent(suffix)}` : ''}`;
 
 describe('redirects after body-bearing requests are checked (T10 M1, real Chromium)', () => {
   it('a 307 from an in-scope POST to an out-of-scope host is blocked: the body never leaves scope', async () => {
@@ -195,6 +228,44 @@ describe('redirects after body-bearing requests are checked (T10 M1, real Chromi
         expect(fixture.hits.some((hit) => hit.host === IN_HOST && hit.path === '/hop/302')).toBe(
           true
         );
+        expect(fixture.leaked()).toEqual([]);
+      });
+    } finally {
+      await closeFixture(fixture);
+    }
+  }, 60_000);
+
+  it.each([
+    ['a fragment', '#frag'],
+    ['an empty fragment', '#'],
+    ['a re-encoded character', '|x'],
+  ])(
+    'a hop whose URL Chromium rewrites (%s) is still checked',
+    async (_label, suffix) => {
+      const fixture = await startFixture();
+      try {
+        await withPage(scoped(), async (page) => {
+          // In-scope 307 whose Location carries the suffix, then 307 out of scope.
+          await submit(page, fixture, hopTo(307, 'in', hopTo(307, 'out'), suffix));
+          expect(fixture.hits.filter((hit) => hit.path === '/hop/307').length).toBe(2);
+          expect(fixture.leaked()).toEqual([]);
+        });
+      } finally {
+        await closeFixture(fixture);
+      }
+    },
+    60_000
+  );
+
+  it('two chains converging on the same hop URL are each checked', async () => {
+    const fixture = await startFixture();
+    try {
+      await withPage(scoped(), async (page) => {
+        await page.navigate({ url: fixture.url('/two-chains') }).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        // Chains are told apart by network id, so neither can consume the
+        // other's hop; whichever reach /shared, nothing leaves scope.
+        expect(fixture.hits.some((hit) => hit.path === '/shared')).toBe(true);
         expect(fixture.leaked()).toEqual([]);
       });
     } finally {
@@ -287,38 +358,91 @@ describe('redirects after body-bearing requests are checked (T10 M1, real Chromi
 });
 
 describe('BodyRedirectGuard unit rules', () => {
-  const fakeContext = () => {
-    const handlers = new Map<string, Array<(value: unknown) => void>>();
+  type Handler = (value: never) => void;
+  const emitter = () => {
+    const handlers = new Map<string, Handler[]>();
     return {
-      on: (event: string, handler: (value: unknown) => void) => {
+      on: (event: string, handler: Handler) => {
         handlers.set(event, [...(handlers.get(event) ?? []), handler]);
       },
-      pages: () => [],
-      newCDPSession: async () => {
-        throw new Error('no CDP');
+      emit: (event: string, value: unknown) => {
+        for (const handler of handlers.get(event) ?? []) handler(value as never);
       },
     };
   };
+  const fakeCdp = () => {
+    const events = emitter();
+    return { ...events, send: async () => ({}) };
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-  it('refuses to claim a body-bearing request it did not see (fail closed)', () => {
-    const guard = new BodyRedirectGuard(fakeContext() as never, {
+  /** A page target and an out-of-process child frame target, both guarded. */
+  async function harness() {
+    const pageCdp = fakeCdp();
+    const frameCdp = fakeCdp();
+    const pageEvents = emitter();
+    const page = { on: pageEvents.on };
+    const main = { parentFrame: () => null, page: () => page };
+    const child = { parentFrame: () => main, page: () => page };
+    const context = {
+      ...emitter(),
+      pages: () => [page],
+      newCDPSession: async (owner: unknown) => (owner === page ? pageCdp : frameCdp),
+    };
+    const guard = new BodyRedirectGuard(context as never, {
       verdictOf: async () => ({ verdict: 'allow' }),
       onBlocked: () => {},
       maxHops: 10,
     });
-    const page = {};
-    const request = {
-      frame: () => ({ page: () => page }),
+    await settle();
+    pageEvents.emit('frameattached', child);
+    await settle();
+    await settle();
+    const request = (frame: unknown, url = 'http://127.0.0.1/form') => ({
+      frame: () => frame,
       method: () => 'POST',
-      url: () => 'http://127.0.0.1/form',
+      url: () => url,
       headers: () => ({}),
-    };
-    expect(guard.track(request as never)).toBe(false);
+    });
+    const seen = (
+      cdp: ReturnType<typeof fakeCdp>,
+      networkId: string,
+      url = 'http://127.0.0.1/form'
+    ) =>
+      cdp.emit('Fetch.requestPaused', {
+        requestId: `job-${networkId}`,
+        networkId,
+        request: { url, method: 'POST', headers: {} },
+      });
+    return { guard, pageCdp, frameCdp, main, child, request, seen };
+  }
+
+  it('claims a request only after the guard saw it (fail closed)', async () => {
+    const { guard, pageCdp, main, request, seen } = await harness();
+    expect(guard.track(request(main) as never)).toBe(false);
+    seen(pageCdp, 'n1');
+    expect(guard.track(request(main) as never)).toBe(true);
+    // One sighting claims one request.
+    expect(guard.track(request(main) as never)).toBe(false);
+  });
+
+  it("claims only from the request's own target, never a sibling target", async () => {
+    const { guard, pageCdp, frameCdp, child, request, seen } = await harness();
+    // Seen by the page target only: the out-of-process frame's own guard did not see it.
+    seen(pageCdp, 'stale');
+    expect(guard.track(request(child) as never)).toBe(false);
+    seen(frameCdp, 'n2');
+    expect(guard.track(request(child) as never)).toBe(true);
+  });
+
+  it('refuses requests without a frame', async () => {
+    const { guard } = await harness();
     const workerRequest = {
-      ...request,
       frame: () => {
         throw new Error('no frame');
       },
+      method: () => 'POST',
+      url: () => 'http://127.0.0.1/form',
     };
     expect(guard.track(workerRequest as never)).toBe(false);
   });

@@ -1918,6 +1918,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             verdictOf: (hostname, url, hop) => verdictOf(hostname, url, hop),
             maxHops: MAX_REDIRECT_HOPS,
             onBlocked: (root, detail) => {
+              // The hop is failed either way; an unclaimed chain has no routed
+              // request to attribute the event to.
+              if (root === undefined) return;
               const reason = isNavigationFailureReason(detail.reason)
                 ? detail.reason
                 : 'egress_policy';
