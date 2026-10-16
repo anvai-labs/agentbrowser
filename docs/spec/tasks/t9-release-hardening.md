@@ -40,15 +40,15 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The published baseline is **1.18.0** (released 2026-10-15 from main `9406045`, release run
-38741154969, all 14 jobs green; see [release-1.18.0](../evidence/release-1.18.0.md)). Records for
-1.16.0, 1.16.1, 1.17.0 and 1.17.1 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
+The published baseline is **1.19.0** (released 2026-10-16 from main `c963d4f`, release run
+38859766439, all 14 jobs green; see [release-1.19.0](../evidence/release-1.19.0.md)). Records for
+1.16.0 through 1.18.0 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
 and earlier per-release records remain historical references. Both `main` and `develop` are
 protected with the same 11 strict required contexts and require a pull request (zero approving
 reviews); `main` also enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
 remain required. Label acceptance phases and measure their timing before changing
-budgets. No durable recovery, installed external-harness qualification or production
-use-case completion is implied.
+budgets. Durable recovery is opt-in and classification-only (never replay); installed
+external-harness qualification and production use-case completion are not implied.
 
 ## Current implementation state
 

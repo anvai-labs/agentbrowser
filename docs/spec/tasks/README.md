@@ -29,12 +29,11 @@ declared files and budgets without contacting a service.
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor gated on aiserver1's gateway, not TLS (owner reconciliation 2026-10-15). MCP cancellation (#485, bridge side; no CLI can script a provider-path cancel) and the Q1 re-qualification on both CLIs (#497) delivered; open: the inline-screenshot decision | T0; profile/full-run slices also require T1/T3 |
 | [T9](t9-release-hardening.md) | Recurring | 1.18.0 released 2026-10-15 (run 38741154969); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closes with the owner's tag ruleset and `npm` environment protection | T0; each release also requires its changed tasks' acceptance |
 
-## Current continuation (2026-10-15)
+## Current continuation (2026-10-16)
 
-Published baseline **1.18.0** (TD-BROWSER-15/16, data-review fixes, tag-ancestry gate); records
-in ../evidence/release-1.16.0.md through release-1.18.0.md. Everything merged since the #483
-back-sync is unreleased (CHANGELOG `[Unreleased]`), ending with J3c part 2, J3d and
-B-dur. Every agent-actionable item of the 2026-10-15 reconciliation is delivered; what remains
+Published baseline **1.19.0** (2026-10-16: the durable journal and recovery, browser
+durability, MCP schemas and cancellation, widget strategies); records in
+../evidence/release-1.16.0.md through release-1.19.0.md. Every agent-actionable item of the 2026-10-15 reconciliation is delivered; what remains
 is below.
 
 ## Earlier continuation (2026-10-07)

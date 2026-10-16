@@ -86,7 +86,7 @@ revalidating mappings, state and authority and creating an explicit resume decis
 | Built | per-stream integer `since` cursor; events after it; one process |
 | Across a restart | none (accepted D4): the session is gone; start a new one |
 | Target contract (not built) | snapshot at cursor C (journal generation + sequence, per session and principal), then events after C; duplicates idempotent; expired or mismatched cursor → resync |
-| Always | authorize each delivery, incl. buffered items after takeover; bound buffers; disconnect slow consumers; never drop authority transitions |
+| Rules (all paths; normative) | authorize each delivery, incl. buffered items after takeover; bound buffers; disconnect slow consumers; never drop authority transitions |
 
 Events are notifications, not commit receipts. This application contract must work
 independently of WebSocket, polling, SSE or any MCP protocol session semantics.
