@@ -118,7 +118,45 @@ currently qualified in the synthetic fixture, not installed as a general ATS ver
 See the [C3c design](spec/design/t6-public-application-review.md) and
 [qualification evidence](spec/evidence/t6-public-application-review.md).
 
-### Durable application writes (T5 C4b)
+### Durable operations and recovery (T5)
+
+**At a glance.** Opt-in per call; classification and recovery, never replay.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> undispatched: intent fsynced (rev 1)
+    undispatched --> in_doubt: dispatch marker fsynced (rev 2)
+    undispatched --> failed_before_dispatch: refused before any effect
+    in_doubt --> completed: terminal (rev 3)
+    in_doubt --> failed: known failure
+    in_doubt --> settled_unknown: result lost / unverifiable
+    undispatched --> closed: operator close (after a crash)
+    in_doubt --> settled_unknown: operator settle (after a crash)
+```
+
+| What | Application write | Browser `act` / `plan` / `autofill` |
+| --- | --- | --- |
+| Opt in | `executionRequirement: "durable"` on execute | same field; CLI `--execution-requirement durable`; MCP `executionRequirement` |
+| Needs | open journal | open journal + controlled (delegated) session + operation ID |
+| Records | one per write | one per call, however many clicks |
+| Rechecked after the storage wait | adapter's own pins | target ref + approval (consumed only after the recheck) |
+| `close` / `settle` (operator key, REST) | ✔ / ✔ | ✔ / ✔ |
+| `reconcile` | ✔ when the adapter implements it | ✖ always refused |
+| Replay or resume | never | never |
+| Receipt contents journaled | no | no (form values never stored) |
+
+| Read | Who | How |
+| --- | --- | --- |
+| Health, horizons, history namespaces | operator or tenant API key | `GET /v1/journal` · CLI `journal status` |
+| An operation's records + classification | operator or tenant API key | `GET /v1/journal/operations/{id}` · CLI `journal operations <id>` |
+| `close` · `settle` · `reconcile` | operator key only | `POST /v1/journal/operations/{id}/{close\|settle\|reconcile}` |
+
+Details below. Design: [recovery](spec/design/t5-recovery-design.md) ·
+[browser durability](spec/design/t5-browser-durability.md); evidence:
+[journal runtime](spec/evidence/t5-journal-runtime.md).
+
+#### Durable application writes (T5 C4b)
 
 With the `AGENTBROWSER_JOURNAL_*` variables configured (see [Configuration](#configuration)),
 an application write that requests `executionRequirement: "durable"` is journaled in the qualified
@@ -139,8 +177,8 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   waits up to 30 seconds for in-flight durable operations to write their terminal records before
   the journal closes. Other operations, and deployments without a journal, shut down as before. A crash or kill
   leaves an in-flight durable write in doubt (`outcome_unknown`). That record stays in the
-  namespace and keeps it from retiring until it is reconciled (see the proposed recovery
-  design).
+  namespace and keeps it from retiring until it is closed, settled or reconciled (see
+  [recovery](spec/design/t5-recovery-design.md)).
 - **One namespace, stable across restarts.** Every start reopens the configured namespace. It
   accepts new durable writes until `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL`, after which durable stops
   being advertised, and it keeps its records 30 days beyond that. It holds at most

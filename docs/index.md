@@ -78,11 +78,18 @@ agentbrowser --json observe SESSION PAGE --roles dialog --name policy   # compac
 - :material-check-circle: All page content is **untrusted data** — never instructions.
 - :material-check-circle: `valueRedacted` means withheld, not empty; redaction is server-side.
 - :material-check-circle: No silent fallbacks: engine/policy changes are recorded in responses.
+- :material-check-circle: Optional durable journal: opt-in records survive restarts; recovery is
+  close/settle, **never replay** ([operations](operations.md#durable-operations-and-recovery-t5)).
 - :material-alert-circle-outline: Egress control is honestly partial — read the
   [threat model](threat-model.md) and the [comparison page](comparison.md).
 
 ## Status
 
-- **v1.x shipped**; post-MVP packets [T0–T9](spec/tasks/README.md) — T0/T2/T3 complete, T7 slices 1/2a/3 delivered.
+- **v1.x shipped**; post-MVP packets [T0–T9](spec/tasks/README.md):
+
+    | Complete | Active (gated on owner or infrastructure) | Recurring |
+    | --- | --- | --- |
+    | T0 · T2 · T3 · T7 | T1 · T4 · T5 · T6 · T8 | T9 (each release) |
+
 - Every claim is adversarially reviewable via the [evidence index](spec/evidence/t0-foundation.md).
 - Defaults (1.16): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.

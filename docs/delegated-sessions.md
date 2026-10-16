@@ -87,7 +87,9 @@ control generation and whether browser dispatch began. `completed` describes
 command completion, **not verified application success**. A lost HTTP response
 includes its operation ID in SDK errors. Use `sessions.operation()` or
 `session operation` to reconcile. There is no automatic write retry, failover,
-or exactly-once promise. Records and grants disappear on session close/restart.
+or exactly-once promise. Grants, and the in-memory operation status, disappear on session
+close/restart; with the optional journal, a `durable` operation's record survives
+([recovery](operations.md#durable-operations-and-recovery-t5)).
 This initial record is intentionally small; durable receipts, a completed-plan
 prefix, business preconditions, and an evidence timeline remain follow-up work.
 

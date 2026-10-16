@@ -81,8 +81,9 @@ revalidating mappings, state and authority and creating an explicit resume decis
 
 ## Event synchronization
 
-Proposed event recovery uses a consistent authorized snapshot at cursor C followed
-by events after C. Cursor = journal generation + sequence, scoped to session and
+Within one process, sync is a consistent authorized snapshot at cursor C followed by
+events after C. Across a restart there is no event recovery (accepted D4): a pre-restart
+cursor is refused and the client resyncs from a fresh snapshot. Cursor = journal generation + sequence, scoped to session and
 principal. Duplicates are idempotent; expired or mismatched cursor requires resync.
 Authorize each delivery, including buffered items, after takeover. Bound subscriber
 buffers and disconnect slow consumers; never silently drop authority transitions.

@@ -424,7 +424,7 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
 | Uncertain delegated mutation | CLI `session operation`; delegated MCP `operation` |
 | Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
-| Durable workflow recovery | Planned; operation records do not survive a service restart |
+| A record that survives a restart (journal configured) | `act`, `plan`, `autofill` with `--execution-requirement durable` (needs `--operation-id`); read it back with `journal operations <id>`. Classification only: never replayed or resumed |
 
 ## Attach the bytes you reviewed (develop slice)
 
