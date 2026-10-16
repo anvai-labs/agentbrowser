@@ -9,10 +9,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Changed — release hardening R14 closed
 
-- A `release tags` ruleset now restricts creating, moving and deleting `v*` tags to repository
-  admins, and the `npm` publish environment requires the owner's approval and deploys only from
-  `v*` tags. With the existing main-ancestry tag guard, R14 is closed; the operations guide's
-  release section says what each gate means when releasing (the npm job now waits for approval).
+- `v*` tags: only repository admins can create, move or delete them (ruleset).
+- npm publish: pauses for the owner's approval; deploys only from a `v*` tag.
+- Every release asset gets a signed build-provenance attestation
+  (`gh attestation verify <file> -R anvai-labs/agentbrowser`).
+- Releases are drafted, filled, then published, and are immutable once published.
+- With the main-ancestry tag guard this closes R14; the operations guide's release section has
+  the table of gates.
 
 ### Docs — the 1.19.0 release record
 

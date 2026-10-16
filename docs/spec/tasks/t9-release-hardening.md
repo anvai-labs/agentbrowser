@@ -80,9 +80,12 @@ gate does not bind a tag on an older or modified commit. **R14 closed 2026-10-16
 
 | Gate | Setting |
 | --- | --- |
-| Release ancestry | `tag-guard` refuses a tag not on `main` (#475) |
+| Release ancestry | `tag-guard` refuses a commit not reachable from `main` (#475) |
 | Tag ruleset `release tags` (25241502) | `refs/tags/v*`: creation, deletion, update, non-fast-forward restricted; admin role bypasses |
-| `npm` environment | owner is a required reviewer; deploys only from `v*` tags |
+| `npm` environment | owner is a required reviewer (self-review allowed; admins can bypass); deploys only from `v*` tags |
+| Provenance | `actions/attest-build-provenance` signs every release asset; npm keeps `--provenance` |
+| Immutability | the Release is drafted, filled, then published; repository immutable releases lock it |
+| First exercised | the `v*` deployment policy, attestations and immutability: on the next release (1.20.0) |
 
 **Least privilege and pinning (2026-10-15, S1c).** Every workflow now defaults to
 `contents: read` at the top level (`ci.yml` previously inherited the repository default);

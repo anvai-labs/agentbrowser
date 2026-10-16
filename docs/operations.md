@@ -251,9 +251,12 @@ versions identify one shipped product; they do not claim every package changed.
 
 | Release gate (R14) | What it means for the person releasing |
 | --- | --- |
-| Tag on `main` | tag the promotion merge commit; `tag-guard` refuses any other commit |
+| Tag on `main` | tag the promotion merge commit; `tag-guard` refuses a commit not reachable from `main` |
 | `release tags` ruleset | only a repository admin can create, move or delete a `v*` tag |
-| `npm` environment | the npm publish job **waits for the owner's approval** in the run (Review deployments); it deploys only from a `v*` tag |
+| `npm` environment | the npm publish job pauses for the owner's approval (Review deployments; an admin can bypass); deploys only from a `v*` tag |
+| Draft, then publish | the Release is filled as a draft and published once every asset is uploaded |
+| Provenance | every asset has a signed build-provenance attestation: `gh attestation verify <file> -R anvai-labs/agentbrowser` |
+| Immutable releases | once published, assets and the tag cannot be changed; a bad release gets a new version |
 
 ### Upgrading from 1.8.4 to the 1.8.5 candidate
 
