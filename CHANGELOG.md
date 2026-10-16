@@ -23,9 +23,11 @@ release — 1.19.0 ships the wired journal, lookup and recovery (J3, J4) and bro
   the nav, so the site cannot drift again.
 - Operations gains a visual "Durable operations and recovery" overview: a record-lifecycle
   diagram and tables for application versus browser durability and for who can read or recover.
-- Stale claims fixed: the CLI guide's "durable recovery: planned", the delegated-sessions and
-  bulk-autofill pages' "records disappear on restart", the home page's status line, and the
-  execution spec's "proposed event recovery" (there is none across a restart, by decision D4).
+- Stale claims fixed: the CLI guide's "durable recovery: planned", the delegated-sessions,
+  bulk-autofill and comparison pages' "records disappear on restart" / "journal under
+  construction", the home page's status line, the quality spec's "future journal contract", and
+  the execution spec's event sync (now a table: what is built, no recovery across a restart by
+  decision D4, and the not-yet-built target cursor contract).
 
 ### Fixed — journal review follow-ups (T5)
 

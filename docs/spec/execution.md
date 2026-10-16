@@ -81,12 +81,12 @@ revalidating mappings, state and authority and creating an explicit resume decis
 
 ## Event synchronization
 
-Within one process, sync is a consistent authorized snapshot at cursor C followed by
-events after C. Across a restart there is no event recovery (accepted D4): a pre-restart
-cursor is refused and the client resyncs from a fresh snapshot. Cursor = journal generation + sequence, scoped to session and
-principal. Duplicates are idempotent; expired or mismatched cursor requires resync.
-Authorize each delivery, including buffered items, after takeover. Bound subscriber
-buffers and disconnect slow consumers; never silently drop authority transitions.
+| | Event sync |
+| --- | --- |
+| Built | per-stream integer `since` cursor; events after it; one process |
+| Across a restart | none (accepted D4): the session is gone; start a new one |
+| Target contract (not built) | snapshot at cursor C (journal generation + sequence, per session and principal), then events after C; duplicates idempotent; expired or mismatched cursor → resync |
+| Always | authorize each delivery, incl. buffered items after takeover; bound buffers; disconnect slow consumers; never drop authority transitions |
 
 Events are notifications, not commit receipts. This application contract must work
 independently of WebSocket, polling, SSE or any MCP protocol session semantics.

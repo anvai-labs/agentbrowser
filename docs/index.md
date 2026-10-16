@@ -87,9 +87,9 @@ agentbrowser --json observe SESSION PAGE --roles dialog --name policy   # compac
 
 - **v1.x shipped**; post-MVP packets [T0–T9](spec/tasks/README.md):
 
-    | Complete | Active (gated on owner or infrastructure) | Recurring |
-    | --- | --- | --- |
-    | T0 · T2 · T3 · T7 | T1 · T4 · T5 · T6 · T8 | T9 (each release) |
+    | Complete | Active (gated on owner or infrastructure) |
+    | --- | --- |
+    | T0 · T2 · T3 · T7 | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
 
 - Every claim is adversarially reviewable via the [evidence index](spec/evidence/t0-foundation.md).
 - Defaults (1.16): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.

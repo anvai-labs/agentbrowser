@@ -131,8 +131,9 @@ stateDiagram-v2
     in_doubt --> completed: terminal (rev 3)
     in_doubt --> failed: known failure
     in_doubt --> settled_unknown: result lost / unverifiable
-    undispatched --> closed: operator close (after a crash)
-    in_doubt --> settled_unknown: operator settle (after a crash)
+    undispatched --> failed_before_dispatch: operator close (rev 2, not dispatched)
+    in_doubt --> settled_unknown: operator settle
+    in_doubt --> completed: operator reconcile (application writes only)
 ```
 
 | What | Application write | Browser `act` / `plan` / `autofill` |
@@ -140,7 +141,7 @@ stateDiagram-v2
 | Opt in | `executionRequirement: "durable"` on execute | same field; CLI `--execution-requirement durable`; MCP `executionRequirement` |
 | Needs | open journal | open journal + controlled (delegated) session + operation ID |
 | Records | one per write | one per call, however many clicks |
-| Rechecked after the storage wait | adapter's own pins | target ref + approval (consumed only after the recheck) |
+| Rechecked after the storage wait | authorization + binding; reviewed writes also review currency, consent and pins | target ref + approval (consumed only after the recheck) |
 | `close` / `settle` (operator key, REST) | ✔ / ✔ | ✔ / ✔ |
 | `reconcile` | ✔ when the adapter implements it | ✖ always refused |
 | Replay or resume | never | never |
@@ -177,7 +178,7 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   waits up to 30 seconds for in-flight durable operations to write their terminal records before
   the journal closes. Other operations, and deployments without a journal, shut down as before. A crash or kill
   leaves an in-flight durable write in doubt (`outcome_unknown`). That record stays in the
-  namespace and keeps it from retiring until it is closed, settled or reconciled (see
+  namespace and keeps it from retiring until it is settled or reconciled (see
   [recovery](spec/design/t5-recovery-design.md)).
 - **One namespace, stable across restarts.** Every start reopens the configured namespace. It
   accepts new durable writes until `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL`, after which durable stops

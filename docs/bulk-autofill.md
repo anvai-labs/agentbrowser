@@ -96,7 +96,11 @@ refusal is uncertain and stops the suffix. See the
 3. **Widgets without clear/rollback:** report the applied prefix and uncertainty. Automatic undo can itself trigger side effects; compensation requires a separately approved widget-specific contract.
 4. **Parallel DOM writes:** not enabled. Disjoint subtrees do not prove independence of event handlers, focus, validation, network effects or the application's state store. Parallelize independent reads only after measuring and bounding them.
 5. **Custom widget registry:** qualify native-independent strategies against real widget versions. Each needs a machine-checkable commitment predicate, focus ownership, stable scope, replacement behavior and partial-effect reporting. Do not introduce keyboard guesses to claim broad coverage.
-6. **Durable recovery / hard deadlines:** a `durable` autofill is now journaled for classification (it survives restarts and can be closed or settled; [recovery](operations.md#durable-operations-and-recovery-t5)), but its receipt is never stored and it is never resumed. Hard deadlines and a resumable job/report store remain open.
+6. **Durable recovery / hard deadlines:**
+    - Done: a `durable` autofill is journaled — it survives restarts and can be closed or
+      settled ([recovery](operations.md#durable-operations-and-recovery-t5)).
+    - Never: its receipt is not stored; it is not resumed.
+    - Open: hard deadlines; a resumable job/report store.
 
 Local qualification includes repeated labels, fieldset reorder, moved/replaced nodes, native select verification, post-write normalization, cross-field invalidation, redaction collisions, human takeover, bounded display values and duplicate-operation refusal. A real Chromium fixture is driven through one actual stdio MCP call.
 

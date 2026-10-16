@@ -366,8 +366,8 @@ nav:
     - 'T6 Scoped Application Read': spec/evidence/t6-scoped-application-read.md
     - 'T6 Verified Upload Draft': spec/evidence/t6-verified-upload-draft.md
     - 'T6 Widget Commitment': spec/evidence/t6-widget-commitment.md
-    - 'T8 Installed Harness Availability': spec/evidence/t8-installed-harness-availability.md
     - 'T7 Scanner Regression': spec/evidence/t7-scanner-regression.md
+    - 'T8 Installed Harness Availability': spec/evidence/t8-installed-harness-availability.md
     - 'T9 Runner Minutes': spec/evidence/t9-runner-minutes.md
   - History:
     - 'MVP implementation plan (technical design)': technical-design.md
