@@ -52,10 +52,8 @@ external-harness qualification and production use-case completion are not implie
 
 ## Current implementation state
 
-Main is protected with required checks, admin enforcement and force-push/deletion
-blocks. Develop is currently unprotected, so each develop merge additionally requires
-an explicit operational review and all eight required checks on the exact candidate;
-do not infer equivalent branch enforcement. The previous **1.9.0** checkpoint used exact
+Main and develop are protected (see the checkpoint above); historically develop was
+unprotected and each develop merge required an explicit operational review. The previous **1.9.0** checkpoint used exact
 main/tag commit `02f263f3764b41f923553c69c11dff69c819fae5`. Promotion PR 210, all eight main
 checks and all twelve release jobs passed; published asset, checksum, npm and
 package acceptance completed. Main was synchronized back to develop by PR 211

@@ -124,6 +124,7 @@ nav:
     - 'T7 - Audit & security': spec/tasks/t7-audit-security.md
     - 'T8 - Harness qualification': spec/tasks/t8-harness-qualification.md
     - 'T9 - Release hardening': spec/tasks/t9-release-hardening.md
+    - 'T10 - Engagements': spec/tasks/t10-engagements.md
     - 'Foundation refinements': spec/tasks/foundation-refinements.md
   - Truth & comparisons:
     - 'AgentBrowser vs Chrome debug & Claude integrations': comparison.md
