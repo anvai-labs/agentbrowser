@@ -154,4 +154,94 @@ describe('native disclosures (details/summary) in observe', () => {
       }
     );
   }, 60_000);
+
+  it('a hostile page that breaks built-ins cannot fail observe: the scan degrades and says so', async () => {
+    await withPage(
+      '<details><summary>S</summary><p>x</p></details><button>Still here</button>' +
+        '<script>Array.from = () => { throw new Error("hostile"); };' +
+        'Object.defineProperty(HTMLDetailsElement.prototype, "open", { get() { throw new Error("hostile"); } });</script>',
+      async (p) => {
+        const state = await p.observe({});
+        expect(state.elements.some((el) => el.name === 'Still here')).toBe(true);
+        expect(JSON.stringify(state)).toMatch(/disclosure scan failed/);
+      }
+    );
+  }, 60_000);
+
+  it('a summary toggled by page script since observe is refused as changed state', async () => {
+    await withPage('<details id="d"><summary>Scripted</summary><p>x</p></details>', async (p) => {
+      const [summary] = await summaries(p);
+      await (p as unknown as { backingPage(): import('playwright').Page })
+        .backingPage()
+        .evaluate(() => {
+          (document.getElementById('d') as HTMLDetailsElement).open = true;
+        });
+      const outcome = await p.act({ type: 'click', target: { ref: summary?.ref as string } }).then(
+        (result) => result.error?.code ?? 'ran',
+        (error: { code?: string }) => error.code
+      );
+      expect(outcome).toBe('STALE_TARGET');
+    });
+  }, 60_000);
+
+  it('the cap counts only rendered summaries and a capped observation says so', async () => {
+    const many = Array.from(
+      { length: 210 },
+      (_, i) =>
+        `<details><summary>Outer ${i}</summary><details><summary>Inner ${i}</summary></details></details>`
+    ).join('');
+    await withPage(many, async (p) => {
+      const state = await p.observe({});
+      const found = state.elements.filter((el) => el.role === 'html-summary');
+      expect(found).toHaveLength(200);
+      expect(found.at(-1)?.name).toBe('Outer 199');
+      expect(JSON.stringify(state)).toMatch(/disclosures? capped/);
+    });
+  }, 120_000);
+
+  it('accessible names match Chromium for the tricky cases', async () => {
+    const cases = [
+      '<summary>Visible <span style="display:none">HIDDEN</span> end</summary>',
+      '<summary>T<style>.x{color:red}</style><script>var a=1</script></summary>',
+      '<summary aria-labelledby="la">ignored</summary>',
+      '<summary>Sum <button aria-label="BtnLabel">x</button></summary>',
+      '<summary title="TitleName"></summary>',
+      '<summary>a<br>b</summary>',
+    ];
+    await withPage(
+      cases.map((c, i) => `<details data-i="${i}">${c}<p>.</p></details>`).join('') +
+        // The labelledby target lives outside the (closed) details, as on real pages.
+        '<span id="la" aria-label="LabelOfA">textA</span>',
+      async (p) => {
+        const page = (p as unknown as { backingPage(): import('playwright').Page }).backingPage();
+        const cdp = await page.context().newCDPSession(page);
+        const { nodes } = await cdp.send('Accessibility.getFullAXTree');
+        const chromium = nodes
+          .filter((n) => !n.ignored && n.role?.value === 'DisclosureTriangle')
+          .map((n) => String(n.name?.value ?? ''));
+        const ours = (await summaries(p)).map((s) => s.name ?? '');
+        expect(ours).toEqual(chromium);
+      }
+    );
+  }, 60_000);
+
+  it('mints summaries with an empty or invalid role (Chromium still exposes them as disclosures)', async () => {
+    await withPage(
+      '<details><summary role="">Empty role</summary><p>a</p></details>' +
+        '<details><summary role="bogus">Bogus role</summary><p>b</p></details>',
+      async (p) => {
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['Empty role', 'Bogus role']);
+      }
+    );
+  }, 60_000);
+
+  it('does not double-mint a menu summary that formControls already mints', async () => {
+    await withPage(
+      '<details><summary aria-haspopup="menu">Menu</summary><div>items</div></details>',
+      async (p) => {
+        const state = await p.observe({ include: ['formControls'] });
+        expect(state.elements.filter((el) => el.name === 'Menu')).toHaveLength(1);
+      }
+    );
+  }, 60_000);
 });

@@ -27,6 +27,7 @@ const INTERACTIVE_ROLES = new Set<string>([
   'tablist',
   'fileinput',
   'control',
+  'html-summary',
 ]);
 
 export interface NormalizationOptions {

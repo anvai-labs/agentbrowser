@@ -133,13 +133,11 @@ interface SummaryInfo {
   name: string;
   expanded: boolean;
   visible: boolean;
+  /** A valid explicit ARIA role: the snapshot already reports it under that role. */
+  explicitRole: boolean;
+  hasPopup: boolean;
 }
 
-/**
- * Self-contained (serialized into the page by evaluateAll). The accessible name follows the
- * name computation for a summary: aria-labelledby, then aria-label, then its subtree text
- * (image alt text included, aria-hidden subtrees excluded).
- */
 /** The DOM surface the page function touches (the engine compiles without the DOM lib). */
 interface SummaryDomNode {
   nodeType: number;
@@ -147,47 +145,104 @@ interface SummaryDomNode {
   textContent: string | null;
   childNodes: ArrayLike<SummaryDomNode>;
   getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
   getBoundingClientRect(): { width: number; height: number };
   parentElement: { open?: boolean } | null;
   ownerDocument: {
-    getElementById(id: string): { textContent: string | null } | null;
-    defaultView: { getComputedStyle(node: unknown): { visibility: string } } | null;
+    getElementById(id: string): SummaryDomNode | null;
+    defaultView: {
+      getComputedStyle(
+        node: unknown,
+        pseudo?: string
+      ): { visibility: string; display: string; content: string };
+    } | null;
   };
 }
 
+/**
+ * Self-contained (serialized into the page by evaluateAll). The accessible name follows the
+ * browser's name computation for a summary, pinned against Chromium's own AX names: valid
+ * aria-labelledby targets (each by its aria-label, else its text), then aria-label, then the
+ * rendered subtree (display:none, visibility:hidden, aria-hidden and script/style/template
+ * excluded; a nested element's aria-label replaces its text; img alt; <br> as a space; ::before
+ * and ::after content), then title.
+ */
 function summaryInfoPageFunction(nodes: SummaryDomNode[]): SummaryInfo[] {
+  const ROLES = new Set(
+    (
+      'alert alertdialog application article banner blockquote button caption cell checkbox code ' +
+      'columnheader combobox complementary contentinfo definition deletion dialog directory ' +
+      'document emphasis feed figure form generic grid gridcell group heading img insertion link ' +
+      'list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox ' +
+      'menuitemradio meter navigation none note option paragraph presentation progressbar radio ' +
+      'radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider ' +
+      'spinbutton status strong subscript superscript switch tab table tablist tabpanel term ' +
+      'textbox time timer toolbar tooltip tree treegrid treeitem'
+    ).split(' ')
+  );
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
   const collapse = (text: string) => text.replace(/\s+/g, ' ').trim();
-  const subtreeText = (node: SummaryDomNode): string => {
-    let text = '';
-    for (const child of Array.from(node.childNodes)) {
-      if (child.nodeType === 3) text += child.textContent ?? '';
-      else if (child.nodeType === 1) {
-        if (child.getAttribute('aria-hidden') === 'true') continue;
-        text +=
-          child.tagName === 'IMG' ? ` ${child.getAttribute('alt') ?? ''} ` : subtreeText(child);
-      }
-    }
-    return text;
+  const styleOf = (node: SummaryDomNode, pseudo?: string) =>
+    node.ownerDocument.defaultView?.getComputedStyle(node, pseudo);
+  const pseudoText = (node: SummaryDomNode, pseudo: string): string => {
+    const content = styleOf(node, pseudo)?.content ?? 'none';
+    return /^"(.*)"$/.test(content) ? content.slice(1, -1) : '';
   };
-  return nodes.map((node, index) => {
+  const hidden = (el: SummaryDomNode): boolean => {
+    const style = styleOf(el);
+    return (
+      el.getAttribute('aria-hidden') === 'true' ||
+      style?.display === 'none' ||
+      style?.visibility === 'hidden'
+    );
+  };
+  const subtreeText = (node: SummaryDomNode): string => {
+    let text = pseudoText(node, '::before');
+    for (const child of Array.prototype.slice.call(node.childNodes) as SummaryDomNode[]) {
+      if (child.nodeType === 3) {
+        text += child.textContent ?? '';
+        continue;
+      }
+      if (child.nodeType !== 1 || SKIP_TAGS.has(child.tagName ?? '') || hidden(child)) continue;
+      if (child.tagName === 'BR') {
+        text += ' ';
+        continue;
+      }
+      if (child.tagName === 'IMG') {
+        text += ` ${child.getAttribute('alt') ?? ''} `;
+        continue;
+      }
+      const label = collapse(child.getAttribute('aria-label') ?? '');
+      text += label ? ` ${label} ` : subtreeText(child);
+    }
+    return text + pseudoText(node, '::after');
+  };
+  return Array.prototype.map.call(nodes, (node: SummaryDomNode, index: number): SummaryInfo => {
     const labelledBy = (node.getAttribute('aria-labelledby') ?? '')
       .split(/\s+/)
       .filter(Boolean)
-      .map((id) => node.ownerDocument.getElementById(id)?.textContent ?? '')
+      .map((id) => {
+        const target = node.ownerDocument.getElementById(id);
+        if (!target) return '';
+        return collapse(target.getAttribute('aria-label') ?? '') || collapse(subtreeText(target));
+      })
       .join(' ');
     const name =
       collapse(labelledBy) ||
       collapse(node.getAttribute('aria-label') ?? '') ||
-      collapse(subtreeText(node));
+      collapse(subtreeText(node)) ||
+      collapse(node.getAttribute('title') ?? '');
     const rect = node.getBoundingClientRect();
-    const style = node.ownerDocument.defaultView?.getComputedStyle(node);
+    const role = (node.getAttribute('role') ?? '').trim().split(/\s+/)[0] ?? '';
     return {
       index,
       name,
       expanded: node.parentElement?.open === true,
-      visible: rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden',
+      visible: rect.width > 0 && rect.height > 0 && styleOf(node)?.visibility !== 'hidden',
+      explicitRole: ROLES.has(role.toLowerCase()),
+      hasPopup: node.hasAttribute('aria-haspopup'),
     };
-  });
+  }) as SummaryInfo[];
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -223,6 +278,11 @@ interface FormControlInfo {
 interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
+  /**
+   * Where the semantic evidence is read when it differs from the target: a summary's own snapshot
+   * omits its disclosure state, so its evidence is the parent details (which changes on toggle).
+   */
+  evidenceLocator?: Locator;
   formEvidence?: Record<string, string>;
   /** Owning child frame for frame-scoped form-identity evidence (T6). */
   frame?: import('playwright').Frame;
@@ -712,10 +772,11 @@ const FORM_CONTROL_SELECTOR = [
 /**
  * A native disclosure's control: HTML-AAM maps only a details element's FIRST summary child,
  * with no ARIA role (computed role `html-summary`), so Playwright's aria snapshot folds its text
- * into the parent group and mints no control. A summary with an explicit role is already in the
- * snapshot under that role, so it is excluded here.
+ * into the parent group and mints no control. A summary with a valid explicit role is already in
+ * the snapshot under that role, so the scan skips it (an empty or unknown role is ignored by the
+ * browser, which still exposes the disclosure, so that one is minted).
  */
-const SUMMARY_SELECTOR = 'details > summary:first-of-type:not([role])';
+const SUMMARY_SELECTOR = 'details > summary:first-of-type';
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
@@ -872,6 +933,8 @@ function canonicalFingerprint(element: StoredElement): string {
     `visible_${element.visible}`,
     `enabled_${element.enabled}`,
     element.value !== undefined && element.value !== '' ? `value_${element.value}` : '',
+    // A disclosure's state is part of what was observed (only html-summary carries it).
+    element.expanded !== undefined ? `expanded_${element.expanded}` : '',
   ]
     .filter(Boolean)
     .join('_');
@@ -3040,22 +3103,42 @@ class PlaywrightPage implements EnginePage {
       const summaryRoots = scanRoots.filter(
         (root) => root === this.page || blockOfFrame.has(root as import('playwright').Frame)
       );
+      const formControlsRequested = request.include?.includes('formControls') === true;
       for (const root of summaryRoots) {
         const block = root === this.page ? undefined : blockOfFrame.get(root);
+        const identity =
+          root === this.page
+            ? frameIdentity(mainFrame, 0)
+            : frameIdentity(root as import('playwright').Frame, scanRoots.indexOf(root));
         let found: SummaryInfo[];
         try {
+          // The page function runs in the page's world: its output is untrusted page data, and a
+          // page that breaks built-ins can make it throw. That must never fail the observation:
+          // the scan degrades to a disclosed coverage entry, main frame included.
           found = await root.locator(SUMMARY_SELECTOR).evaluateAll(summaryInfoPageFunction);
-        } catch (error) {
-          if (root === this.page) throw error;
+        } catch {
           frameCoverage.push({
-            frame: frameIdentity(root as import('playwright').Frame, 0),
+            frame: identity,
             status: 'unavailable',
             reason: 'disclosure scan failed',
           });
           continue;
         }
-        for (const info of found.slice(0, MAX_FORM_CONTROLS)) {
-          if (!info.visible) continue;
+        const eligible = found.filter(
+          (info) =>
+            info.visible &&
+            !info.explicitRole &&
+            // include:["formControls"] already mints an aria-haspopup summary (with row context).
+            !(formControlsRequested && info.hasPopup)
+        );
+        if (eligible.length > MAX_FORM_CONTROLS) {
+          frameCoverage.push({
+            frame: identity,
+            status: 'budget_exceeded',
+            reason: `disclosures capped at ${MAX_FORM_CONTROLS} of ${eligible.length}`,
+          });
+        }
+        for (const info of eligible.slice(0, MAX_FORM_CONTROLS)) {
           elements.push({
             ref: `e${this.revision}_${elements.length}`,
             role: 'html-summary',
@@ -3350,7 +3433,11 @@ class PlaywrightPage implements EnginePage {
                 : locatorRoot
                     .getByRole(element.role as never, { name: element.name ?? '', exact: true })
                     .nth(ordinal));
-        return { element, ref, ownerFrame, fallback, locator };
+        // A summary's snapshot is only its text; its parent details changes when it opens or
+        // closes, so that is the evidence an act re-checks.
+        const evidenceLocator =
+          element.summaryIndex !== undefined ? locator.locator('xpath=..') : undefined;
+        return { element, ref, ownerFrame, fallback, locator, evidenceLocator };
       });
       // F2: binding is one round trip per step per element (resolve, aria snapshot, identity
       // check); run sequentially it dominated observation (~90% on a 120-element page). Each
@@ -3362,7 +3449,7 @@ class PlaywrightPage implements EnginePage {
       const bindOne = async (planIndex: number): Promise<void> => {
         const plan = plans[planIndex];
         if (plan === undefined) return;
-        const { element, ref, ownerFrame, fallback, locator } = plan;
+        const { element, ref, ownerFrame, fallback, locator, evidenceLocator } = plan;
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
         // elementHandles() resolves without waiting (as count() + elementHandle() did) in one
         // round trip; an nth() locator yields at most one node.
@@ -3381,6 +3468,7 @@ class PlaywrightPage implements EnginePage {
         const binding: NodeBinding = {
           handle,
           locator,
+          ...(evidenceLocator !== undefined ? { evidenceLocator } : {}),
           snapshot: undefined,
           documentSnapshot,
           // frameOfElement tags only non-page scan roots, so the cast is
@@ -3401,7 +3489,9 @@ class PlaywrightPage implements EnginePage {
           element.fileInputIndex !== undefined ||
           element.formControlIndex !== undefined ||
           element.summaryIndex !== undefined
-            ? await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS).catch(() => undefined)
+            ? await snapshotBudget
+                .capture(evidenceLocator ?? locator, ELEMENT_CAPTURE_SLICE_MS)
+                .catch(() => undefined)
             : await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS);
         binding.snapshot = snapshotDigest(captured);
         const prior = previous.get(ref);
@@ -4049,7 +4139,9 @@ class PlaywrightPage implements EnginePage {
       // Evidence provenance is fixed at observation. A failed fresh element check
       // cannot switch to document evidence or substitute the old value.
       const semanticLocator =
-        binding.snapshot !== undefined ? binding.locator : this.page.locator('body');
+        binding.snapshot !== undefined
+          ? (binding.evidenceLocator ?? binding.locator)
+          : this.page.locator('body');
       const liveSnapshot = snapshotDigest(
         await semanticLocator.ariaSnapshot({
           timeout: this.snapshotTimeoutMs,

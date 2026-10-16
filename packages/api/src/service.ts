@@ -3967,6 +3967,7 @@ export class AgentBrowserService {
         'visible',
         'enabled',
         'checked',
+        'expanded',
         'context',
       ] as const) {
         const old = before[field];

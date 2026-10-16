@@ -16,7 +16,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   - Before, Playwright's snapshot dropped the summary, so only `{role:"group", value:"…"}`
     remained.
   - Not a regression: Playwright 1.62.1 and 1.64.0 behave the same.
-- Protocol: page elements gain an optional `expanded` boolean.
+- Names match Chromium's own accessible names. A disclosure toggled by page script since the
+  observation is refused (`STALE_TARGET`). A page that breaks built-ins degrades only the scan,
+  and says so. More than 200 per frame is reported. The CLI shows `[expanded]` / `[collapsed]`.
+- Protocol: page elements gain an optional `expanded` boolean (also in `sinceRevision` diffs).
 - New docs page "Observation gotchas" catalogues where `observe` differs from the browser's
   accessibility tree, starting with this case.
 
