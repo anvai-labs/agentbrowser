@@ -9,11 +9,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [1.20.0] — 2026-10-16
 
-Entries are newest first. **Compatibility:** a policy file now refuses startup when an
-approval rule's id is invalid, reserved or duplicated, or when a rule's `decision` is not read
-by any policy (see "Fixed — a policy file's approval rules classify actions"). Releases from
-this version on are drafted, carry signed build-provenance attestations, and pause npm
-publication for the owner's approval.
+Entries are newest first. **Upgrading from 1.19.x:**
+
+| Who | What changes |
+| --- | --- |
+| Agents | Pages with `<details>` now return `html-summary` rows on every `observe`. Element counts change. Rows from `include:["fileInputs"]` / `include:["formControls"]` get new ref numbers (they follow the new rows). Under a tight `maxElements`, the new interactive rows can displace rows 1.19.0 returned. Re-observe; never reuse refs across versions. |
+| Operators with a policy file | Its `approvalRules` now take effect: rules classifying a control as high risk now require approval. Startup now **refuses** a rule id that is invalid, reserved or duplicated, and a rule `decision` that no policy reads. |
+| Release consumers | Releases are drafted, then published. Every asset carries a signed build-provenance attestation (`gh attestation verify`). Releases are immutable from 1.20.0. npm publication pauses for the owner's approval. |
 
 ### Fixed — a disclosure whose state cannot be read refuses fast
 
@@ -81,8 +83,8 @@ publication for the owner's approval.
 - npm publish: pauses for the owner's approval; deploys only from a `v*` tag.
 - Every release asset gets a signed build-provenance attestation
   (`gh attestation verify <file> -R anvai-labs/agentbrowser`).
-- Releases are drafted, filled, then published, so repository immutable releases can be switched
-  on (planned after the next promotion, before 1.20.0).
+- Releases are drafted, filled, then published; repository immutable releases are on from
+  1.20.0.
 - With the main-ancestry tag guard this closes R14; the operations guide's release section has
   the table of gates.
 
