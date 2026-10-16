@@ -472,3 +472,37 @@ green with no expectation changed).
   passing at the first dispatch while a later field is not yet revealed, and `STALE_TARGET` when
   the committed field's node is replaced during the wait.
 
+## B-dur-2a: the browser journal in the control layer (2026-10-15)
+
+`SessionAuthority` now runs a durable browser operation as the accepted design says, tested on the
+real journal facade (`browser-journal.test.ts`). Nothing in the service uses it yet (B-dur-2b).
+
+- **Selection (B5).** A journal selection may carry `browser: true`; it requires `durable: true`
+  and the reserved `browser` application identity, and labels the intent's fingerprint
+  `browser-operation:v1-durable`. Anything else is refused before any journal I/O (three shapes
+  pinned). The reserved id and the domain live in `browser-journal.ts`, shared by the
+  application authority (which refuses the id) and the session authority.
+- **One record, many dispatches (B2).** `captureBrowserDispatchInScope(guard)` registers the
+  owner's async recheck once per operation. Every page dispatch then awaits ONE shared promise —
+  the marker, then the guard — so the guard runs exactly once, after the marker's storage wait,
+  before the first effect; later dispatches write nothing new. Pinned: three dispatches give one
+  record (rev 3, `completed`), with the order `guard (record already at rev 2) → effect 1 → 2 → 3`.
+  A dispatch before the guard is captured is refused before the marker (the record stays at
+  rev 2, undispatched); a second capture, and a capture outside a browser scope, are refused. No
+  dispatch may run inside the guard: "inside" is the guard's own async context (its own
+  `AsyncLocalStorage`), so a dispatch from the guard is refused and seals the operation instead
+  of deadlocking on the guard it runs in, while the operation's OTHER dispatches issued during
+  the guard's await simply wait for it and run (review finding 1; each pinned). The guard is
+  awaited without its own deadline: it is the owner's recheck, bounded by the operation's own
+  reads (disclosed; B-dur-2b's guards are a re-resolve, an approval read and a re-observe).
+- **Reserved identity (B5, review finding 2).** A selection naming the reserved `browser`
+  adapter without `browser: true` (durable or not) is refused, so no application write can be
+  recorded under the browser identity even through `run()` directly; an application dispatch
+  qualification cannot be captured in a browser scope.
+- **Terminal mapping (B2).** A guard failure crosses no effect and seals the operation: the
+  terminal is `failed` with `dispatched: true` (the marker was crossed), and the caller gets the
+  guard's own typed error. A known failure the work returns (`failed()` → `rejected`) is `failed`
+  with its report returned — never `JOURNAL_UNAVAILABLE`. An operation that never dispatches keeps
+  its normal result and is `failed_before_dispatch` (an application write that never dispatches
+  stays an error, unchanged). Pinned for each.
+

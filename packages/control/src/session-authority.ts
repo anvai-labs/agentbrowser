@@ -16,6 +16,7 @@ import {
   type OperationRecord,
   type RunCursor,
 } from '@agentbrowser/protocol';
+import { BROWSER_OPERATION_FINGERPRINT, RESERVED_BROWSER_ADAPTER_ID } from './browser-journal.js';
 import { journalData, journalObject, parseJournalIntent } from './journal-record.js';
 import type {
   JournalApplication,
@@ -96,6 +97,12 @@ type Scope = {
     record?: JournalRecord;
     marker?: Promise<void>;
     failed: boolean;
+    /** T5 B-dur: a durable browser operation (one record, many dispatches). */
+    readonly browser?: true;
+    /** T5 B-dur (B6): the owner's async recheck, captured once, run after the marker. */
+    browserGuard?: () => Promise<void>;
+    /** The marker followed by the guard, shared by every dispatch of the operation. */
+    guarded?: Promise<void>;
   };
   /** Actual bounded output lifetime, never borrowed from a caller-supplied context. */
   publicationGuard: (() => void) | undefined;
@@ -155,6 +162,12 @@ export class SessionAuthority {
   private readonly entries = new Map<string, Entry>();
   private readonly grants = new Map<string, Extract<SessionPrincipal, { actor: 'agent' }>>();
   private readonly scope = new AsyncLocalStorage<Scope>();
+  /**
+   * T5 B-dur (B6): the async context of a running browser guard. "Inside the guard" is the guard's
+   * own call chain, not the whole scope: a dispatch issued from it is refused (it would otherwise
+   * wait on the guard it runs in), while the operation's other work is not poisoned by the await.
+   */
+  private readonly insideBrowserGuard = new AsyncLocalStorage<Scope>();
   private readonly now: () => number;
   private readonly journal: OperationJournal | undefined;
   /** Journaled runs admitted and not yet settled; drained before shutdown closes the journal. */
@@ -368,15 +381,34 @@ export class SessionAuthority {
     const admitted = this.admit(sessionId, candidate);
     const { entry, admission } = admitted;
     let intent: JournalIntent | undefined;
+    let browser = false;
     if (selection !== undefined) {
       try {
         if (!this.journal) throw journalUnavailable();
         const descriptor = journalObject(
           journalData(selection),
           ['version', 'application'],
-          ['durable']
+          ['durable', 'browser']
         );
         if (descriptor.version !== 1) throw journalUnavailable();
+        // T5 B-dur (B5): a browser selection is durable by definition and uses the reserved
+        // `browser` application identity; its fingerprint has its own domain.
+        if (descriptor.browser !== undefined) {
+          const application = descriptor.application as { adapterId?: unknown } | undefined;
+          if (
+            descriptor.browser !== true ||
+            descriptor.durable !== true ||
+            application?.adapterId !== RESERVED_BROWSER_ADAPTER_ID
+          )
+            throw journalUnavailable();
+          browser = true;
+        } else if (
+          (descriptor.application as { adapterId?: unknown } | undefined)?.adapterId ===
+          RESERVED_BROWSER_ADAPTER_ID
+        ) {
+          // The reserved identity is never an application write's (B5).
+          throw journalUnavailable();
+        }
         // J-d: the live fingerprint's domain is labeled, never caller-selected: a durable
         // operation's fingerprint is computed in the v2-durable domain (J-b), and the label is
         // part of the retained keyed digest, so durable and ephemeral identities never collide.
@@ -393,8 +425,9 @@ export class SessionAuthority {
           actor: admission.actor,
           application: descriptor.application,
           liveFingerprint: {
-            algorithm:
-              descriptor.durable === true
+            algorithm: browser
+              ? BROWSER_OPERATION_FINGERPRINT
+              : descriptor.durable === true
                 ? 'application-operation:v2-durable'
                 : 'application-operation:v1',
             digest: fingerprint,
@@ -448,6 +481,7 @@ export class SessionAuthority {
                 key: { ...intent.key, epoch: ticket.epoch },
               }),
               failed: false,
+              ...(browser ? { browser: true as const } : {}),
             },
           }
         : {}),
@@ -505,8 +539,13 @@ export class SessionAuthority {
             await Promise.allSettled([...scope.pending]);
           if (status === 'completed' && !ticket.didDispatch) {
             status = 'failed';
-            succeeded = false;
-            executionError = journalUnavailable();
+            // T5 B-dur (B2): a browser operation that returns without any page dispatch (nothing
+            // to do) is failed_before_dispatch in the journal, but its caller still gets the
+            // normal response; an application write that never dispatched remains an error.
+            if (!scope.journal.browser) {
+              succeeded = false;
+              executionError = journalUnavailable();
+            }
           }
           finalize();
           await this.acknowledgeJournal(scope, 'terminal', status);
@@ -706,10 +745,31 @@ export class SessionAuthority {
   ): ApplicationDispatchQualification {
     this.assert(sessionId);
     const scope = this.scope.getStore();
-    if (!scope?.journal?.intent.application || typeof assertCurrent !== 'function')
+    if (
+      !scope?.journal?.intent.application ||
+      scope.journal.browser ||
+      typeof assertCurrent !== 'function'
+    )
       throw journalUnavailable();
     this.checkJournalScope(scope);
     return new CapturedApplicationDispatch(scope, assertCurrent);
+  }
+
+  /**
+   * T5 B-dur (B6): register the durable browser operation's recheck, ONCE. Every page dispatch of
+   * the operation then awaits the marker followed by this guard (run a single time, after the
+   * marker's storage wait, before the first effect); later dispatches await the same settled
+   * promise and write nothing new. A guard failure seals the operation before any effect: its
+   * terminal is `failed` with `dispatched: true` (the marker was crossed), and the caller gets the
+   * guard's own error.
+   */
+  captureBrowserDispatchInScope(sessionId: string, guard: () => Promise<void>): void {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope?.journal?.browser || typeof guard !== 'function' || scope.journal.browserGuard)
+      throw journalUnavailable();
+    this.checkJournalScope(scope);
+    scope.journal.browserGuard = guard;
   }
 
   /** One effect boundary and drain owner for ephemeral and qualified journal work. */
@@ -732,7 +792,8 @@ export class SessionAuthority {
   }
 
   private checkDispatchGuardBoundary(scope: Scope): void {
-    if (scope.guardingDispatch) scope.dispatchGuardViolated = true;
+    if (scope.guardingDispatch || this.insideBrowserGuard.getStore() === scope)
+      scope.dispatchGuardViolated = true;
     if (scope.dispatchGuardViolated) throw journalUnavailable();
   }
 
@@ -747,7 +808,9 @@ export class SessionAuthority {
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
     if (dispatch) {
       this.checkDispatchGuardBoundary(scope);
-      if (scope.journal && !qualification) throw journalUnavailable();
+      if (scope.journal?.browser) {
+        if (qualification || !scope.journal.browserGuard) throw journalUnavailable();
+      } else if (scope.journal && !qualification) throw journalUnavailable();
       if (qualification) CapturedApplicationDispatch.check(qualification, scope);
       if (scope.journal) this.checkJournalScope(scope);
     }
@@ -779,9 +842,19 @@ export class SessionAuthority {
       start = () => {
         try {
           if (dispatch && scope.journal) {
-            scope.journal.marker ??= this.acknowledgeJournal(scope, 'dispatch');
+            const journal = scope.journal;
+            journal.marker ??= this.acknowledgeJournal(scope, 'dispatch');
+            const marker = journal.marker;
+            if (journal.browser && !journal.guarded)
+              journal.guarded = marker.then(async () => {
+                const guard = journal.browserGuard;
+                if (!guard) throw journalUnavailable();
+                // No dispatch may run inside the owner's recheck (its own async context only).
+                await this.insideBrowserGuard.run(scope, guard);
+              });
+            const ready: Promise<void> = journal.guarded ?? marker;
             resolve(
-              scope.journal.marker.then(invoke).catch((error) => {
+              ready.then(invoke).catch((error) => {
                 // Before-effect failure seals further journal work. An effect's own
                 // rejection retains the existing handled-error execution semantics.
                 if (!dispatched && scope.journal) scope.journal.failed = true;
