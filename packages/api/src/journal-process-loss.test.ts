@@ -60,7 +60,14 @@ function layout() {
  * A synchronous hold (prepare) signals through a file, because a blocked thread cannot flush IPC.
  */
 async function runChild(
-  args: { env: Record<string, string>; mode: string; counterFile: string; operationId: string },
+  args: {
+    env: Record<string, string>;
+    mode: string;
+    counterFile: string;
+    operationId: string;
+    kind?: string;
+    recoverId?: string;
+  },
   kill: boolean,
   script = CHILD
 ) {
@@ -243,19 +250,29 @@ describe('process loss through the service (real store, SIGKILL)', () => {
   );
 });
 
-describe('process loss during a durable browser act (B-dur-2c; real store, SIGKILL)', () => {
-  const browser = { adapter: 'browser', resource: 'act' };
-  it.each([
-    // [kill point, expected rows, effects]
-    ['before-marker', [{ revision: 1, dispatched: false, terminal: undefined, ...browser }], 0],
-    ['after-marker', [{ revision: 2, dispatched: true, terminal: undefined, ...browser }], 0],
-    ['after-effect', [{ revision: 2, dispatched: true, terminal: undefined, ...browser }], 1],
-  ] as const)(
-    'killed %s: the browser record holds the expected state, the click ran at most once, and the next process reopens without replaying',
-    async (mode, expected, expectedEffects) => {
+describe('process loss during a durable browser operation (B-dur-2c; real store, SIGKILL)', () => {
+  // One crash row per owner (act, plan, autofill), at each boundary; the next process then runs
+  // the operator's recovery writes on the record the kill left.
+  const rowsFor = (kind: string) => {
+    const browser = { adapter: 'browser', resource: kind };
+    return [
+      // [kill point, expected rows, effects]
+      ['before-marker', [{ revision: 1, dispatched: false, terminal: undefined, ...browser }], 0],
+      ['after-marker', [{ revision: 2, dispatched: true, terminal: undefined, ...browser }], 0],
+      ['after-effect', [{ revision: 2, dispatched: true, terminal: undefined, ...browser }], 1],
+    ] as const;
+  };
+  it.each(
+    (['act', 'plan', 'autofill'] as const).flatMap((kind) =>
+      rowsFor(kind).map(([mode, expected, effects]) => [kind, mode, expected, effects] as const)
+    )
+  )(
+    'durable %s killed %s: the record holds the expected state, the effect ran at most once, nothing is replayed, and recovery closes or settles it',
+    async (kind, mode, expected, expectedEffects) => {
       const l = layout();
+      const operationId = `browser-${kind}-${mode}`;
       const killed = await runChild(
-        { env: l.env, mode, counterFile: l.counter, operationId: `browser-${mode}` },
+        { env: l.env, mode, counterFile: l.counter, operationId, kind },
         true,
         BROWSER_CHILD
       );
@@ -266,15 +283,54 @@ describe('process loss during a durable browser act (B-dur-2c; real store, SIGKI
 
       const { AGENTBROWSER_JOURNAL_INITIALIZE: _first, ...later } = l.env;
       const reopened = await runChild(
-        { env: later, mode: 'reopen', counterFile: l.counter, operationId: 'unused' },
+        {
+          env: later,
+          mode: 'recover',
+          counterFile: l.counter,
+          operationId: 'unused',
+          recoverId: operationId,
+        },
         false,
         BROWSER_CHILD
       );
       expect(reopened.message).toMatchObject({ phase: 'reopened', health: 'open' });
-      // Nothing replayed: the reopened service sees exactly the record the kill left.
-      expect(reopened.message.rows).toEqual(expected);
       expect(reopened.code).toBe(0);
+      // Nothing replayed: the effect count is unchanged by reopening and recovery.
       expect(effects(l.counter)).toBe(expectedEffects);
+      const { recovery, rows: after } = reopened.message as {
+        recovery?: Record<string, { ok: boolean; code?: string; value?: unknown }>;
+        rows?: unknown;
+      };
+      const browser = { adapter: 'browser', resource: kind };
+      if (mode === 'before-marker') {
+        // Never dispatched: reconcile has nothing in doubt to ask about; close ends it (failed,
+        // still undispatched, marked as superseded); settle then finds nothing to settle.
+        expect(recovery?.reconcile).toMatchObject({ ok: false, code: 'OPERATION_CONFLICT' });
+        expect(recovery?.close).toMatchObject({ ok: true, value: { closed: 1 } });
+        expect(recovery?.settle).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+        expect(after).toEqual([
+          {
+            revision: 2,
+            dispatched: false,
+            terminal: { status: 'failed', evidenceRefIds: [`superseded.${operationId}`] },
+            ...browser,
+          },
+        ]);
+      } else {
+        // In doubt: reconcile is refused (no adapter may own the reserved `browser` id); close
+        // refuses a dispatched record; settle ends it as unknown — never replayed.
+        expect(recovery?.reconcile).toMatchObject({ ok: false, code: 'CONTROL_REQUIRED' });
+        expect(recovery?.close).toMatchObject({ ok: false, code: 'OPERATION_CONFLICT' });
+        expect(recovery?.settle).toMatchObject({ ok: true, value: { settled: 1 } });
+        expect(after).toEqual([
+          {
+            revision: 3,
+            dispatched: true,
+            terminal: { status: 'outcome_unknown', evidenceRefIds: [] },
+            ...browser,
+          },
+        ]);
+      }
     },
     120_000
   );

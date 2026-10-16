@@ -269,6 +269,9 @@ path:
 - approval-token currency.
 
 Each owner must first expose that check. Any failure becomes `failed_before_dispatch`.
+*(Superseded by the [B-dur addendum](t5-browser-durability.md): the recheck runs
+asynchronously after the marker, so a recheck failure is `failed` with `dispatched: true`, and
+`act` has no egress re-check.)*
 
 **Alternative:** do not journal browser operations; R08's autofill part stays open. Recommended
 order: D6 **after** J3, reusing J3's read path.
@@ -302,6 +305,7 @@ order: D6 **after** J3, reusing J3's read path.
    implementation choices (trigger, one record per operation, what is revalidated and when,
    capacity, the reserved `browser` identity, the asynchronous recheck) are in
    [the B-dur addendum](t5-browser-durability.md), accepted by the owner on 2026-10-15.
+   **Delivered 2026-10-15** (#518–#521, records #522).
 
 ## Out of scope
 

@@ -595,8 +595,14 @@ HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
   | not killed | rev 3, `completed` | 1 |
 
   The next process reopens the namespace and sees exactly the record the kill left, with the
-  click count unchanged: nothing is replayed. A record left undispatched can be closed; one left
-  dispatched can only be settled, and reconcile refuses browser records (B5).
+  click count unchanged: nothing is replayed. **Rows per owner (records PR #522):** the same
+  three kill points run for `act`, `plan` and `autofill`, and the reopened process then runs the
+  operator's recovery writes on the record the kill left. Pinned for all nine rows: a record
+  killed before the marker is closed (`closed: 1`, terminal `failed`, still undispatched,
+  marked superseded), reconcile answers `OPERATION_CONFLICT` and settle finds nothing; a record
+  killed after the marker or after the effect is settled (`settled: 1`, terminal
+  `outcome_unknown`), close answers `OPERATION_CONFLICT` and reconcile is refused with
+  `CONTROL_REQUIRED` (no adapter may own the reserved id, B5). The effect count never changes.
 - **No second effect from a self-heal (B-dur-2b review, informational residual, closed here).**
   The plan's stale-target self-heal matched on the error message and could retry a step whose
   failure came AFTER its effect (its follow-up read), running the effect twice — for every plan,
