@@ -242,7 +242,7 @@ describe('native disclosures (details/summary) in observe', () => {
       const found = state.elements.filter((el) => el.role === 'html-summary');
       expect(found).toHaveLength(200);
       expect(found.at(-1)?.name).toBe('Outer 199');
-      expect(JSON.stringify(state)).toMatch(/disclosures? capped/);
+      expect(JSON.stringify(state)).toMatch(/disclosure rows capped at 200 of 210/);
     });
   }, 120_000);
 
@@ -329,5 +329,48 @@ describe('native disclosures (details/summary) in observe', () => {
     expect(result.valid.map((row) => row.index)).toEqual([1]);
     expect(result.dropped).toBe(4);
     expect(validateSummaryInfos('nope', 2)).toEqual({ valid: [], dropped: 2 });
+  });
+
+  it('falls back to the page scan when the CDP calls fail (Obscura, or a DOM changed mid-scan)', async () => {
+    await withPage('<details><summary>Fallback path</summary><p>x</p></details>', async (p) => {
+      const page = (p as unknown as { backingPage(): import('playwright').Page }).backingPage();
+      const context = page.context() as unknown as { newCDPSession: unknown };
+      context.newCDPSession = async () => ({
+        send: async () => {
+          throw new Error('domain not supported');
+        },
+        detach: async () => {},
+      });
+      expect((await summaries(p)).map((s) => [s.name, s.expanded])).toEqual([
+        ['Fallback path', false],
+      ]);
+    });
+  }, 60_000);
+
+  it('a hostile child frame cannot inject rows: spoofed page-function output is dropped and reported', async () => {
+    await withPage(
+      '<iframe title="f" srcdoc="<details><summary>Real</summary><p>x</p></details>' +
+        '<script>Array.prototype.map = function () { return [{ index: 0, name: { evil: 1 }, expanded: true }]; };</script>"></iframe>',
+      async (p) => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const state = await p.observe({});
+        expect(state.elements.some((el) => el.role === 'html-summary')).toBe(false);
+        expect(JSON.stringify(state)).toMatch(/disclosure scan returned 1 invalid rows/);
+      }
+    );
+  }, 60_000);
+
+  it('the validator bounds the index and clamps names', async () => {
+    const { validateSummaryInfos } = await import('./index.js');
+    const base = {
+      name: 'A',
+      expanded: false,
+      visible: true,
+      explicitRole: false,
+      hasPopup: false,
+    };
+    expect(validateSummaryInfos([{ ...base, index: 5 }], 2)).toEqual({ valid: [], dropped: 1 });
+    const [clamped] = validateSummaryInfos([{ ...base, index: 0, name: 'x'.repeat(600) }], 1).valid;
+    expect(clamped?.name).toHaveLength(512);
   });
 });

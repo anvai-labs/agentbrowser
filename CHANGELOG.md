@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — disclosure scan follow-ups
+
+- When a CDP accessibility call fails, the disclosure scan now falls back to the validated page
+  scan instead of minting nothing. This happens on CDP engines without those domains (Obscura)
+  and on a Chromium page whose DOM changed mid-scan.
+- Coverage entries about the main frame are labelled `main`, not by URL. The cap entry says the
+  frame snapshot itself is complete.
+
 ### Fixed — native disclosures are targetable controls
 
 - `observe` now reports each `<details>` element's first `<summary>` as role `html-summary`
