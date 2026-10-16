@@ -9,6 +9,15 @@ import { EngagementScopePolicy } from './scope-policy.js';
 const permissive = () => new NetworkPolicy({}); // blockMetadata off, as embedders may pass
 
 describe('MetadataFloorPolicy', () => {
+  it('carries an engagement scope requirement that every redirect hop be checked', () => {
+    const scope = new EngagementScopePolicy(permissive(), { allowedHosts: ['example.test'] });
+    expect(scope.requireRedirectGuard).toBe(true);
+    expect(new MetadataFloorPolicy(scope).requireRedirectGuard).toBe(true);
+    // Without a scope nothing claims the requirement, so engines keep the
+    // native passthrough for body-bearing requests (ADR-006 residual).
+    expect('requireRedirectGuard' in new MetadataFloorPolicy(permissive())).toBe(false);
+  });
+
   it.each([
     'http://169.254.169.254/latest/meta-data/',
     'http://[fd00:ec2::254]/',

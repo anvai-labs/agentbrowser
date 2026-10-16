@@ -74,6 +74,8 @@ const scopeDenial = (subCode: string, detail: string): NetworkPolicyError =>
 export const CHAIN_SPENT_BOUND = 4096;
 
 export class EngagementScopePolicy {
+  /** A scope never lets a redirect hop go unchecked (T10 M1). */
+  readonly requireRedirectGuard = true;
   private readonly allowed: string[];
   private readonly paths: ScopePathRule[];
   private readonly methods: Set<string> | undefined;

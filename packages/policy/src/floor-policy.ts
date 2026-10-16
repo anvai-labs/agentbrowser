@@ -15,6 +15,8 @@ export interface RequestPolicyChain {
   checkResponse?(response: { headers: Record<string, string> }): Promise<void>;
   checkBodySize?(bytes: number): Promise<void>;
   checkResolvedAddresses?(addresses: string[]): Promise<void>;
+  /** Every redirect hop must be checked (EngagementScopePolicy); see the engine port. */
+  readonly requireRedirectGuard?: boolean;
   /** Service-side navigation preflight without spending scope budget (EngagementScopePolicy). */
   preflightCheck?(request: {
     hostname: string;
@@ -58,8 +60,10 @@ export class MetadataFloorPolicy implements RequestPolicyChain {
     RequestPolicyChain['checkResolvedAddresses']
   >;
   declare readonly preflightCheck?: NonNullable<RequestPolicyChain['preflightCheck']>;
+  declare readonly requireRedirectGuard?: true;
 
   constructor(private readonly base: RequestPolicyChain) {
+    if (base.requireRedirectGuard === true) this.requireRedirectGuard = true;
     const {
       checkRedirectChain,
       checkResponse,
