@@ -31,7 +31,7 @@ comes from the browser or from the observation layer.
 | Interaction | `click` the ref, or `press` Enter / Space on it, toggles it; re-observe for the new state and refs |
 | Protections | refs are revision-bound; an act re-reads the parent `details`' `open` attribute, so a disclosure **toggled by page script** since the observation is refused as `STALE_TARGET` (content changing inside it is not); approval and redaction apply unchanged |
 | Failure | the scan never fails `observe`: an error degrades to a coverage entry (`disclosure scan failed`) |
-| Limits | at most 200 rendered summaries per frame; more is reported (`disclosure rows capped at 200 of N`, under frame `main` for the main frame). Summary rows follow the snapshot's rows (no depth), so `scopeRef` on a container does not include them |
+| Limits | at most 200 rendered summaries per frame; more is reported (`disclosure rows capped at 200 of N`, under frame `main` for the main frame). An unreadable disclosure state at act time refuses within a second. Summary rows follow the snapshot's rows (no depth), so `scopeRef` on a container does not include them |
 | Approval rules | a rule keyed on `role: "button"` does not match `html-summary`; key on `name` (and `hostname`) or on `role: "html-summary"` |
 | With `include:["formControls"]` | an `aria-haspopup` summary (menu pattern) is minted once, as `control` with its row context; switching the include does not move the revision |
 | Pinned by | `packages/engine-playwright/src/disclosure-summary.test.ts` (real Chromium, 18 tests): names equal Chromium's AX names, expanded state, click, keyboard, nested, unnamed, roles, frames, stale and script-toggled refs, live content, hostile page, cap, include switching, Node-side validation |
