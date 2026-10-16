@@ -725,6 +725,13 @@ operator footgun — bind application identity headers only. CLI:
 [the design record](spec/design/t7-scope-enforcement.md) for the model
 and its stated residuals.
 
+| Scoped create request | Result |
+| --- | --- |
+| `scope` under `policy` | validated; the session is scoped |
+| `scope` at the top level | refused, `400 INVALID_REQUEST` (it would skip validation) |
+| `+ cdpAttach` | refused, `400 INVALID_REQUEST`, `floor.cdp.options` |
+| `+ allowServiceWorkers: true` | refused, `400 INVALID_REQUEST`, `scope.lane.serviceWorkers` |
+
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an
 engine-construction option with no REST/MCP/env surface, and selecting

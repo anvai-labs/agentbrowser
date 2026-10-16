@@ -127,6 +127,9 @@ it.each([
       payload: { tenantId: 'one', cdpAttach: true, ...extra },
     });
     expect(response.statusCode).toBe('controlMode' in extra ? 403 : 400);
+    if ('policy' in extra && 'scope' in extra.policy) {
+      expect(response.json()).toMatchObject({ error: { details: { rule: 'floor.cdp.options' } } });
+    }
     expect(create).not.toHaveBeenCalled();
   } finally {
     await app.close();

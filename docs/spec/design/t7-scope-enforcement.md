@@ -127,10 +127,11 @@ the real choke point.
   passthrough requests are scope-checked on the initial request;
   their native redirects are not re-checked — the pre-existing,
   documented residual, unchanged by this slice.
-- **Workers**: service-worker and dedicated-worker traffic outside
-  Playwright's page routing is not scope-checked — the same coverage
-  boundary as the egress choke point itself; not represented as complete
-  containment (T7 packet rule).
+- **Workers**: dedicated-worker requests are routed with their owner frame
+  and checked like page requests. Service workers are refused with a scope
+  (below). Shared workers and WebSockets opened from workers are not
+  qualified here — the same coverage boundary as the egress choke point
+  itself; not represented as complete containment (T7 packet rule).
 - **Gateway program**: `EngagementScopePolicy` does not participate in
   gateway snapshots; if scope enforcement is wanted in that lane it is a
   prerequisite to report, not an implicit restart (packet stop rule).
