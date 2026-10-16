@@ -13,9 +13,14 @@ import { join } from 'node:path';
 import type { OperationJournal } from '@agentbrowser/control';
 import { ApprovalGate } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
-import { AgentBrowserService, browserReportOutcomeUnknown } from './service.js';
+import {
+  AgentBrowserService,
+  browserFailureOutcomeUnknown,
+  browserReportOutcomeUnknown,
+  copyBrowserReport,
+} from './service.js';
 
 const operator = { actor: 'operator' as const, tenant: 'owner' };
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -372,6 +377,11 @@ describe('reports that hide an unknown effect (B-dur-2b)', () => {
     );
     expect(lost.ok).toBe(false);
     expect(browserReportOutcomeUnknown(lost)).toBe(true);
+    // A copy (the act route adds warnings this way) keeps the fact; a plain spread would not.
+    expect(browserReportOutcomeUnknown(copyBrowserReport(lost, { ...lost, warnings: [] }))).toBe(
+      true
+    );
+    expect(browserReportOutcomeUnknown({ ...lost })).toBe(false);
 
     const g = await fixture();
     g.raw.setElements([{ role: 'button', name: 'One' }]);
@@ -402,5 +412,85 @@ describe('reports that hide an unknown effect (B-dur-2b)', () => {
     expect(browserReportOutcomeUnknown({ ok: false, receipts: [{ status: 'failed' }] })).toBe(
       false
     );
+  }, 60_000);
+});
+
+describe('review fixes (B-dur-2b round 2)', () => {
+  it('known failures are an allowlist: untyped and post-effect codes are outcome-unknown', () => {
+    expect(browserFailureOutcomeUnknown(new Error('untyped'))).toBe(true);
+    expect(browserFailureOutcomeUnknown({ code: 'ENGINE_UNSUPPORTED' })).toBe(true);
+    expect(browserFailureOutcomeUnknown({ code: 'VALUE_MISMATCH' })).toBe(true);
+    expect(browserFailureOutcomeUnknown({ code: 'SOMETHING_NEW' })).toBe(true);
+    expect(browserFailureOutcomeUnknown({ code: 'STALE_TARGET' })).toBe(false);
+    expect(browserFailureOutcomeUnknown({ code: 'APPROVAL_REQUIRED' })).toBe(false);
+  });
+
+  it('a durable plan refused by its recheck never self-heals: no new approval, the real reason', async () => {
+    const f = await fixture({ approvals: true });
+    f.raw.setElements([{ role: 'button', name: 'Pay', risk: 'transaction' }]);
+    const ref = await f.refOf('Pay');
+    const tokenId = await f
+      .run(() => f.service.act(f.sessionId, f.pageId, { action: 'click', target: { ref } }))
+      .then(
+        () => undefined,
+        (error: { details?: { tokenId?: string } }) => error.details?.tokenId
+      );
+    if (!tokenId) throw new Error('expected an approval token');
+    const minted = vi.spyOn(f.gate, 'generateApprovalToken');
+    let effects = 0;
+    const act = f.raw.act.bind(f.raw);
+    f.raw.act = async (action) => {
+      effects += 1;
+      return act(action);
+    };
+    f.setMarker(() => {
+      // Re-rendered as another control at the same ordinal: a heal candidate exists.
+      f.raw.setElements([{ role: 'button', name: 'Delete account', risk: 'transaction' }]);
+    });
+    const report = await f.durable(
+      'plan',
+      'plan-refused',
+      () =>
+        f.service.executePlan(f.sessionId, f.pageId, [
+          { action: 'click', target: { ref }, approvalToken: tokenId } as never,
+        ]),
+      () => 'rejected'
+    );
+    expect(report.ok).toBe(false);
+    expect(report.results[0]?.error).not.toMatch(/Journal execution/);
+    expect(report.results[0]?.error).toMatch(/stale|revision|fingerprint|changed/i);
+    expect(minted).not.toHaveBeenCalled();
+    expect(effects).toBe(0);
+    expect(browserReportOutcomeUnknown(report)).toBe(false);
+    expect(await f.records('plan-refused')).toEqual([
+      { revision: 3, dispatched: true, status: 'failed', kind: 'plan' },
+    ]);
+  }, 60_000);
+
+  it('an autofill refused by its recheck reports a known failure, not an uncertain write', async () => {
+    const f = await fixture();
+    const company = (node: string) => ({
+      ref: node,
+      role: 'textbox',
+      name: 'Company',
+      attributes: { tag: 'input', type: 'text', 'autofill-node': node, 'autofill-block': '' },
+    });
+    f.raw.seedElements([company('company')] as never);
+    f.setMarker(() => {
+      f.raw.setElements([company('company-v2')] as never);
+    });
+    const report = (await f.durable(
+      'autofill',
+      'fill-known',
+      () =>
+        f.service.autofill(f.sessionId, f.pageId, {
+          fields: [{ match: { label: 'Company' }, value: 'Acme', strategy: 'native-input' }],
+          policy: { settleMs: 0 },
+        }),
+      () => 'rejected'
+    )) as { ok: boolean; receipts: Array<{ status: string }> };
+    expect(report.ok).toBe(false);
+    expect(report.receipts[0]?.status).not.toBe('uncertain');
+    expect(browserReportOutcomeUnknown(report)).toBe(false);
   }, 60_000);
 });

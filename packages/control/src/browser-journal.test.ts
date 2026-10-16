@@ -217,6 +217,39 @@ describe('durable browser operations in the journal (B-dur-2a)', () => {
     });
   });
 
+  it('an effect signal waits for the recheck, never fires on refusal, and is immediate elsewhere', async () => {
+    const f = await sessionFixture();
+    const order: string[] = [];
+    await run(f, 'signal-ok', async () => {
+      f.authority.captureBrowserDispatchInScope('session', async () => {
+        order.push('guard');
+      });
+      f.authority.onBrowserEffectInScope('session', () => order.push('signal'));
+      await f.authority.dispatchInScope('session', () => {
+        order.push('effect');
+      });
+      f.authority.onBrowserEffectInScope('session', () => order.push('later-signal'));
+    });
+    expect(order).toEqual(['guard', 'signal', 'effect', 'later-signal']);
+
+    const refused = vi.fn();
+    await run(f, 'signal-refused', async () => {
+      f.authority.captureBrowserDispatchInScope('session', async () => {
+        throw Object.assign(new Error('stale'), { code: 'STALE_TARGET' });
+      });
+      f.authority.onBrowserEffectInScope('session', refused);
+      await f.authority.dispatchInScope('session', () => undefined).catch(() => undefined);
+      return 'report';
+    });
+    expect(refused).not.toHaveBeenCalled();
+
+    const plain = vi.fn();
+    await f.authority.run('session', operator, {}, async () => {
+      f.authority.onBrowserEffectInScope('session', plain);
+    });
+    expect(plain).toHaveBeenCalledOnce();
+  });
+
   it('refuses a dispatch before the guard is captured, and a second capture', async () => {
     const f = await sessionFixture();
     await expect(

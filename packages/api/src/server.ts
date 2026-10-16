@@ -79,7 +79,7 @@ import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
   AgentBrowserService,
-  BROWSER_OUTCOME_UNKNOWN_CODES,
+  browserFailureOutcomeUnknown,
   browserReportOutcomeUnknown,
   copyBrowserReport,
   type ServiceActRequest,
@@ -1609,6 +1609,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             // handler validates it. 'ephemeral' is the default made explicit and is dropped, so
             // explicit and omitted requests share one identity; 'durable' journals the operation.
             let durable = false;
+            // No silent fallback: a route that cannot journal must not quietly accept the field.
+            if (
+              !meta.browserDurable &&
+              request.body &&
+              typeof request.body === 'object' &&
+              Object.hasOwn(request.body, 'executionRequirement')
+            )
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                'executionRequirement is accepted only on act, plan and autofill (and application execute)'
+              );
             if (meta.browserDurable && request.body && typeof request.body === 'object') {
               const body = request.body as Record<string, unknown>;
               if (Object.hasOwn(body, 'executionRequirement')) {
@@ -1698,9 +1709,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                   // report hiding such a step or an `uncertain` receipt — stays in doubt.
                   if (draft.statusCode < 400)
                     return browserReportOutcomeUnknown(draft.body) ? true : 'rejected';
-                  const code = (draft.body as { error?: { code?: unknown } } | undefined)?.error
-                    ?.code;
-                  return typeof code === 'string' && BROWSER_OUTCOME_UNKNOWN_CODES.has(code)
+                  return browserFailureOutcomeUnknown(
+                    (draft.body as { error?: unknown } | undefined)?.error
+                  )
                     ? true
                     : 'rejected';
                 },

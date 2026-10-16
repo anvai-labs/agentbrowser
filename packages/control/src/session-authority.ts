@@ -109,6 +109,10 @@ type Scope = {
     guarded?: Promise<void>;
     /** The owner's recheck refused after the marker: no effect ran; the operation is sealed. */
     guardRefused?: boolean;
+    /** The owner's recheck passed: the first effect may start. */
+    guardPassed?: boolean;
+    /** Signals that an effect is starting, held until the recheck has passed. */
+    beforeEffect?: Array<() => void>;
   };
   /** Actual bounded output lifetime, never borrowed from a caller-supplied context. */
   publicationGuard: (() => void) | undefined;
@@ -796,6 +800,35 @@ export class SessionAuthority {
     );
   }
 
+  /**
+   * T5 B-dur: has this durable browser operation been refused (its recheck failed) or sealed? A
+   * self-heal retry must not run then: it could only spend an approval or lease and be refused.
+   */
+  browserOperationRefusedInScope(sessionId: string): boolean {
+    const scope = this.scope.getStore();
+    return (
+      scope?.sessionId === sessionId &&
+      scope.journal?.browser === true &&
+      (scope.journal.guardRefused === true || scope.journal.failed === true)
+    );
+  }
+
+  /**
+   * T5 B-dur: run `signal` when an effect is really about to start. In a durable browser operation
+   * whose recheck has not yet passed, that is right after the recheck (never if it refuses), so an
+   * owner never records a refused dispatch as possibly written; anywhere else it runs now.
+   */
+  onBrowserEffectInScope(sessionId: string, signal: () => void): void {
+    const scope = this.scope.getStore();
+    const journal = scope?.sessionId === sessionId ? scope.journal : undefined;
+    if (!journal?.browser || journal.guardPassed) {
+      signal();
+      return;
+    }
+    journal.beforeEffect ??= [];
+    journal.beforeEffect.push(signal);
+  }
+
   captureBrowserDispatchInScope(sessionId: string, guard: () => Promise<void>): void {
     this.assert(sessionId);
     const scope = this.scope.getStore();
@@ -885,6 +918,8 @@ export class SessionAuthority {
                 // No dispatch may run inside the owner's recheck (its own async context only).
                 try {
                   await this.insideBrowserGuard.run(scope, guard);
+                  journal.guardPassed = true;
+                  for (const signal of journal.beforeEffect?.splice(0) ?? []) signal();
                 } catch (error) {
                   journal.guardRefused = true;
                   throw error;

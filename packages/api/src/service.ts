@@ -650,19 +650,40 @@ const SHUTDOWN_DRAIN_MS = 30_000;
 
 const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
-/** T5 B-dur (B2): failures after which a browser effect may or may not have happened. */
-export const BROWSER_OUTCOME_UNKNOWN_CODES: ReadonlySet<string> = new Set([
-  'ACTION_TIMEOUT',
-  'ENGINE_CRASHED',
-  'INTERNAL',
-  'CONTROL_REVOKED',
+/**
+ * T5 B-dur (B2): failures KNOWN to be raised before a browser effect (a refusal, a stale or
+ * missing target, a policy or approval decision, a bad request). Every other failure — a
+ * timeout, a crash, an internal error, a post-effect verification gap such as
+ * `ENGINE_UNSUPPORTED` "the fill may have completed", `VALUE_MISMATCH`, an untyped error — may
+ * follow an effect, so it is outcome-unknown. An allowlist, so a new code is unknown by default.
+ */
+export const BROWSER_KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'INVALID_REQUEST',
+  'INVALID_TENANT_ID',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'POLICY_DENIED',
+  'APPROVAL_REQUIRED',
+  'SESSION_NOT_FOUND',
+  'PAGE_NOT_FOUND',
+  'STALE_TARGET',
+  'TARGET_NOT_FOUND',
+  'TARGET_AMBIGUOUS',
+  'TARGET_NOT_VISIBLE',
+  'TARGET_DISABLED',
+  'PLAN_WAIT_TIMEOUT',
+  'OPERATION_CONFLICT',
+  'SESSION_BUSY',
+  'QUOTA_EXCEEDED',
 ]);
 
-/** An untyped failure (no string code) is as unknown as a lost result. */
-const outcomeUnknownFailure = (error: unknown): boolean => {
+/** May a browser effect have happened before this failure? (Untyped failures: yes.) */
+export const browserFailureOutcomeUnknown = (error: unknown): boolean => {
   const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code !== 'string' || BROWSER_OUTCOME_UNKNOWN_CODES.has(code);
+  return typeof code !== 'string' || !BROWSER_KNOWN_FAILURE_CODES.has(code);
 };
+const outcomeUnknownFailure = browserFailureOutcomeUnknown;
 
 /**
  * Plan and batch reports whose failing step's effect is unknown. The wire report keeps only the
@@ -2279,7 +2300,12 @@ export class AgentBrowserService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
-        if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
+        if (
+          ordinal !== undefined &&
+          /STALE_TARGET|revision|fingerprint/i.test(message) &&
+          // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
+          !this.authority.browserOperationRefusedInScope(sessionId)
+        ) {
           this.bumpChurn(churnKey);
           const mode = this.churnMode(churnKey);
           // The observation the failing ref was minted from, looked up by the
@@ -4184,7 +4210,9 @@ export class AgentBrowserService {
                 span
               );
             }
-            onDispatch?.();
+            // T5 B-dur: in a durable operation the effect starts only after the recheck, so an
+            // owner (autofill) must not record a refused dispatch as possibly written.
+            if (onDispatch) this.authority.onBrowserEffectInScope(sessionId, onDispatch);
           },
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
           // than let the executor re-scan observation.elements per action.
@@ -4228,6 +4256,8 @@ export class AgentBrowserService {
         if (
           actRequest.remap === true &&
           ref !== undefined &&
+          // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
+          !this.authority.browserOperationRefusedInScope(sessionId) &&
           (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND') &&
           // Only binding staleness may be healed. A refusal without the
           // flag carries live contradicting evidence (fingerprint mismatch,

@@ -516,7 +516,9 @@ HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
 - **The field (B1).** The HTTP wrapper peels `executionRequirement` off the body before the
   route validates it: `ephemeral` is dropped (an explicit and an omitted request share one
   identity and replay each other, pinned), `durable` is folded into the fingerprint, any other
-  value is a 400. Durable on an uncontrolled session, or with no open journal, is
+  value is a 400. A route that cannot journal (navigate, observe, every route but act, plan and
+  autofill; application execute keeps its own field) refuses the field with 400 instead of
+  silently running ephemeral (review F3). Durable on an uncontrolled session, or with no open journal, is
   `CONTROL_REQUIRED` before anything runs (pinned for all three routes). OpenAPI documents the
   field on the three bodies; the protocol body schemas the service and MCP validate are unchanged
   (B-dur-2c brings SDK, CLI and MCP parity).
@@ -530,20 +532,29 @@ HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
   with no effect and a `failed`, dispatched record; a token spent during the wait gives
   `APPROVAL_REQUIRED` with no effect. Later plan steps and act-batch steps ride the same marker
   (three steps, one marker, one record, pinned). Every act kind and the act batch work durably.
+  A refused durable operation never self-heals: the plan's and act's stale-target remap retry is
+  skipped once the recheck refused or the journal sealed (a retry could only spend a lease
+  action or mint a spurious approval request, then be refused), and the report carries the
+  recheck's own reason (review F1; pinned: no new approval minted, no effect, `failed`).
 - **autofill (B6).** Its guard is its own read-only stage recheck (B-dur-1's `onRecheck`), run
   once after the marker before the first field's effect. A committed field re-rendered during
   the wait gives no effect, a `failed` dispatched record, and the autofill report is returned —
   the refusal becomes a field receipt, so the work returns; the control layer keeps a returned
   report after a guard refusal (`guardRefused`, pinned at both layers) while any other seal still
-  refuses. Residual, disclosed: the first field's approval or lease action is decided and spent
+  refuses. The owner's "effect started" signal (`onDispatch`) is held until the recheck passes
+  (`onBrowserEffectInScope`), so a refused field is a known failure, never an `uncertain` write
+  (review F4; pinned). Residual, disclosed: the first field's approval or lease action is decided and spent
   before its dispatch, as for every field, so a refused marker has spent that one approval with
   no effect (fail-closed).
-- **Terminal mapping (B2).** A known failure — an error response with a typed code, or a report
-  with `ok: false` — is `failed` with the response returned. An unknown one — `ACTION_TIMEOUT`,
-  `ENGINE_CRASHED`, `INTERNAL`, `CONTROL_REVOKED`, a plan or batch report whose failed step lost
-  its result (an untyped or outcome-unknown error; the service remembers this beside the report
-  object, the wire report is unchanged), or an autofill receipt `uncertain` — is
-  `outcome_unknown` (classified `settled_unknown`), and **the report is still returned**: it is
+- **Terminal mapping (B2).** Known failures are an **allowlist** of codes raised before any
+  effect (`BROWSER_KNOWN_FAILURE_CODES`: refusals, stale or missing targets, policy and approval
+  decisions, bad requests); such an error response, or a report whose failure is one of them, is
+  `failed` with the response returned. Everything else may follow an effect — a timeout, a crash,
+  an internal or untyped error, a post-effect verification gap such as `ENGINE_UNSUPPORTED` "the
+  fill may have completed" (review F2, pinned over HTTP), a plan or batch step that failed that
+  way (the service remembers this beside the report object; the wire report is unchanged), an
+  autofill receipt `uncertain` — and is `outcome_unknown` (classified `settled_unknown`); a new
+  code is unknown by default. **The report is still returned**: it is
   the caller's only account of what was attempted, and the record is the authority on the
   outcome. An in-doubt application write is still a refusal (unchanged). Pinned over HTTP: a plan
   whose second step lost its result is `settled_unknown` with its report; a plan whose only step

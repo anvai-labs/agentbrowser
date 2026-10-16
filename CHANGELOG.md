@@ -24,9 +24,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `durable` journals the call as one browser operation for classification only, never replay:
   controlled sessions with an open journal only (`CONTROL_REQUIRED` otherwise). The target and
   approval are re-checked after the journal marker and before the first effect; the approval is
-  consumed only after that. Known failures keep their response (`failed`); a lost step result or
-  an uncertain field is recorded `settled_unknown`, and its report is still returned.
-  `ephemeral` is identical to omitting the field. SDK, CLI and MCP parity follow (B-dur-2c).
+  consumed only after that, and a refused operation never self-heals. Failures known to occur
+  before any effect keep their response (`failed`); anything else (a lost step result, an
+  unverified fill, an uncertain field) is recorded `settled_unknown`, and its report is still
+  returned. `ephemeral` is identical to omitting the field; other routes refuse the field.
+  SDK, CLI and MCP parity follow (B-dur-2c).
 
 ### Added — the browser journal in the control layer (T5 B-dur-2a)
 
