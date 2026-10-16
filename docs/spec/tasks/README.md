@@ -2,7 +2,7 @@
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
 The table records the delivered state as of 2026-10-15, reconciled item by item against the
-packets' acceptance lists (published baseline 1.19.0, promoted to main via #526). "Complete"
+packets' acceptance lists (published baseline 1.20.0, promoted to main via #536). "Complete"
 means the manifest dependency gate is satisfied; open follow-ons are named in the row.
 Reading this task list alone does not authorize implementation or publication;
 follow the current user-authorized scope.
@@ -27,13 +27,13 @@ declared files and budgets without contacting a service.
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses, C3c synthetic submission, E0a/E0b eligibility, N0 document read, first E0c listing-capture slice delivered; W1 #491, W2 #502, W3a #511, W3b #507 delivered; remaining: business/job identity and gates owned by the consuming workflow (E0c/E1 private policy, live workflow qualification) | T2 |
 | [T7](t7-audit-security.md) | **Complete** | ALL slices delivered (the appsec/bounty parity condition on T4 stays open): 2a scope enforcement (primitive + surface, 12 real-Chromium gates plus 14 policy unit tests), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates; audit suite 53 tests after the 2026-10-15 labelling and role-access work | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor gated on aiserver1's gateway, not TLS (owner reconciliation 2026-10-15). MCP cancellation (#485, bridge side; no CLI can script a provider-path cancel) and the Q1 re-qualification on both CLIs (#497) delivered; open: the inline-screenshot decision | T0; profile/full-run slices also require T1/T3 |
-| [T9](t9-release-hardening.md) | Recurring | 1.19.0 released 2026-10-16 (run 38859766439); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closed 2026-10-16 (tag ruleset + `npm` environment protection) | T0; each release also requires its changed tasks' acceptance |
+| [T9](t9-release-hardening.md) | Recurring | 1.20.0 released 2026-10-16 (run 38940171264); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closed 2026-10-16 (tag ruleset + `npm` environment protection) | T0; each release also requires its changed tasks' acceptance |
 
 ## Current continuation (2026-10-16)
 
-Published baseline **1.19.0** (2026-10-16: the durable journal and recovery, browser
-durability, MCP schemas and cancellation, widget strategies); records in
-../evidence/release-1.16.0.md through release-1.19.0.md. Every agent-actionable item of the
+Published baseline **1.20.0** (2026-10-16: release provenance and immutability, policy-file
+approval rules, native disclosures); records in ../evidence/release-1.16.0.md through
+release-1.20.0.md. Every agent-actionable item of the
 2026-10-15 reconciliation is delivered; what remains is below.
 
 ## Earlier continuation (2026-10-07)
