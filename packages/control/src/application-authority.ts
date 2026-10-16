@@ -339,6 +339,13 @@ function assertApplicationAuthorized(
   throw new ControlError('CONTROL_REQUIRED', 'Application scope is not permitted');
 }
 
+/**
+ * T5 B-dur (B5): the application identity browser-operation journal records use (adapter
+ * `browser`, resource `act` | `plan` | `autofill`). Reserved: no application adapter may register
+ * it, so lookup can always tell a browser record apart and reconcile always refuses one.
+ */
+export const RESERVED_BROWSER_ADAPTER_ID = 'browser';
+
 /** Opt-in trusted adapters. This port owns no browser, planner, network client or database. */
 export class ApplicationAuthority {
   private readonly adapters = new Map<string, ApplicationAdapter>();
@@ -383,6 +390,9 @@ export class ApplicationAuthority {
         if (
           typeof id !== 'string' ||
           !CONTROL_OPERATION_ID.test(id) ||
+          // T5 B-dur (B5): `browser` names browser-operation journal records; a real adapter
+          // may never take it (reconcile must always refuse browser records).
+          id === RESERVED_BROWSER_ADAPTER_ID ||
           this.adapters.has(id) ||
           typeof authorize !== 'function' ||
           typeof receipt !== 'function' ||

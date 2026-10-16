@@ -21,6 +21,13 @@ export interface AutofillPorts {
   }>;
   act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
+  /**
+   * T5 B-dur (B6): receives, once, the run's own recheck — a fresh observation that re-validates
+   * the scoped stage (URL, distinct node and block identities against the pins, readiness) and
+   * throws the same typed failures the run would. A durable run calls it after its marker's
+   * storage wait, before the first effect. Optional; ignoring it changes nothing.
+   */
+  onRecheck?(recheck: () => Promise<void>): void;
 }
 
 interface StrategyScope {
@@ -434,6 +441,50 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     }
     return view.elements;
   };
+  // T5 B-dur (B6): a READ-ONLY recheck. It never writes the run's state (scope validity, scope or
+  // block pins, preflight index): a recheck passing inside a dispatch must never re-authorize
+  // anything the dispatch deliberately revoked (raw artifact capture needs a complete observation
+  // AFTER the dispatch), and must never pin a block the run has not reached. With a scope it
+  // compares a fresh, complete observation with the pins the preflight recorded (before preflight
+  // there is nothing to compare, which is refused). Without a scope it checks only the fields the
+  // run has ALREADY committed to (their node identity still present, visible and enabled); later
+  // fields stay the run's own business, so forms that reveal fields after earlier writes work.
+  ports.onRecheck?.(async () => {
+    guard();
+    const view = await ports.observe();
+    guard();
+    if (view.truncated || view.degraded)
+      throw new AutofillFailure(
+        'OUTPUT_TRUNCATED',
+        'Autofill requires complete, non-degraded observations'
+      );
+    if (!request.scope) {
+      for (const identity of identities.values()) {
+        const element = view.elements.find(
+          (candidate) => candidate.attributes?.['autofill-node'] === identity
+        );
+        if (!element?.visible || !element.enabled)
+          throw new AutofillFailure('STALE_TARGET', 'A field the run committed to has changed');
+      }
+      return;
+    }
+    if (view.url !== request.scope.url)
+      throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Page URL does not match the mapped stage');
+    for (const [index, field] of request.fields.entries()) {
+      const pin = scopePins.get(index);
+      if (!pin) throw new AutofillFailure('STALE_TARGET', 'Mapped stage was not preflighted');
+      // A copy: resolving must never pin a block in the run's own map.
+      const element = resolve(view.elements, field.match, new Map(blocks));
+      if (
+        element.attributes?.['autofill-node'] !== pin.node ||
+        element.attributes?.['autofill-block'] !== pin.block ||
+        !element.visible ||
+        !element.enabled ||
+        !strategyFor(element, field)
+      )
+        throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
+    }
+  });
   let preflightFailed = false;
   if (request.scope) {
     try {

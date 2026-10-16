@@ -8,6 +8,7 @@ import {
   type ApplicationScope,
   ApplicationSessions,
   defineApplicationOperation,
+  RESERVED_BROWSER_ADAPTER_ID,
 } from './application-authority.js';
 import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
 
@@ -1193,5 +1194,33 @@ describe('supersedes link normalization (J3c part 2, review F1)', () => {
     await expect(
       s.port.execute('session', operator, { ...command, supersedes: good() })
     ).resolves.toMatchObject({ replay: true });
+  });
+});
+
+describe('the reserved browser adapter id (T5 B-dur, B5)', () => {
+  it('refuses an application adapter that registers the reserved id', () => {
+    const authority = new SessionAuthority();
+    expect(RESERVED_BROWSER_ADAPTER_ID).toBe('browser');
+    expect(
+      () =>
+        new ApplicationAuthority(authority, [
+          {
+            id: RESERVED_BROWSER_ADAPTER_ID,
+            authorize: () => true,
+            operations: {},
+            receipt: async () => ({}),
+          },
+        ])
+    ).toThrow(expect.objectContaining({ code: 'INVALID_REQUEST' }));
+  });
+
+  it('still accepts ids that merely contain the word', () => {
+    const authority = new SessionAuthority();
+    expect(
+      () =>
+        new ApplicationAuthority(authority, [
+          { id: 'browser-tools', authorize: () => true, operations: {}, receipt: async () => ({}) },
+        ])
+    ).not.toThrow();
   });
 });

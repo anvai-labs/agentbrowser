@@ -425,3 +425,50 @@ The operator-only recovery writes, on a real store, through the service and over
     the journal does not apply now reports its kind and reason instead of claiming the record
     changed; the history file's size is checked in bytes before it is read.
 
+## B-dur-1: the revalidation primitives (2026-10-15)
+
+The building blocks the accepted [B-dur design](../design/t5-browser-durability.md) needs, each
+tested against a change injected during the storage wait. Nothing is journaled yet: B-dur-2 wires
+them into the dispatch boundary after the marker. Today's paths are unchanged (full api suite
+green with no expectation changed).
+
+- **Reserved identity (B5).** `RESERVED_BROWSER_ADAPTER_ID = 'browser'`: an application adapter
+  registering it is refused with `INVALID_REQUEST` (ids that merely contain the word are fine).
+- **Approval split (B6).** `checkApproval` is now `prepareApproval` + `commit`, called back to
+  back, so a plain act decides and consumes exactly as before. `prepareApproval` makes the
+  DECISION and throws now when the action is denied or needs an approval the request lacks (so an
+  approval round trip never reaches a marker); it returns `revalidate()` (non-consuming currency:
+  the lease still covers the host with an action left; the plain token or the reviewed approval
+  still valid for this exact action) and `commit()` (the consumption; a stale token or approval
+  is refused with a fresh `APPROVAL_REQUIRED`, a spent lease with `POLICY_DENIED`).
+  `ApprovalGate.validateReviewedApproval` is the new non-consuming twin of
+  `consumeReviewedApproval` (identical checks, including the snapshot refusal of a mismatched
+  session).
+  - Pinned: no token, an invalid or already-spent plain token, and a reviewed token still pending
+    the operator's decision are each refused by `prepareApproval` itself (an approval round trip
+    never reaches a marker; dropping the prepare-time validation fails these); a plain token, a
+    reviewed approval and a lease each spent by a concurrent act during the wait fail both
+    `revalidate` and `commit` with nothing dispatched; `revalidate` never spends. A spent lease at
+    commit is `POLICY_DENIED` (fail-closed; a plain act never reaches that branch).
+- **Target recheck (B6).** `ActionExecutor.revalidateTarget` re-runs `execute`'s own target checks
+  after the wait with the CURRENT page revision: the revision staleness check first, then
+  re-resolve the ref (engine failures mapped exactly as `execute` maps them — a crash stays
+  `ENGINE_CRASHED`, no raw engine text), still visible (except `upload`) and enabled, same
+  fingerprint as observed. Pinned: a revision that moved during the wait (`STALE_TARGET`, nothing
+  resolved), changed element, hidden, disabled, crash parity with `execute`, the upload exemption,
+  and an untargeted action (revision only).
+- **Autofill recheck (B6).** `runAutofill` offers a recheck once through an optional `onRecheck`
+  port. It is READ-ONLY: it never writes the run's state (scope validity, pins), so a recheck
+  passing inside a dispatch can never re-authorize the raw snapshot the dispatch revoked (pinned:
+  a passing recheck inside a failed dispatch leaves the snapshot uncaptured; the old
+  state-writing form fails that test). With a scope it compares a fresh, complete observation
+  with the preflight's pins (URL, node and block identities, readiness — resolving against a
+  COPY of the block pins, so it never pins a block) and refuses before any pins exist. Without a
+  scope it checks only the fields the run has already committed to (their node identity still
+  present, visible and enabled); fields the run has not reached stay its own business, so a form
+  that reveals fields after earlier writes is not refused. Pinned: passes on the pinned page
+  without dispatching; `STALE_TARGET` for a replaced control or a recheck before preflight (the
+  outcome asserted outside the run); `FORM_SCOPE_MISMATCH` when the page left the stage; unscoped,
+  passing at the first dispatch while a later field is not yet revealed, and `STALE_TARGET` when
+  the committed field's node is replaced during the wait.
+

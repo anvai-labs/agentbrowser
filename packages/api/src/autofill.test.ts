@@ -1240,6 +1240,75 @@ describe('multi-step widget strategies', () => {
   });
 });
 
+describe('unscoped recheck (B-dur, review round 2)', () => {
+  const title = (token: string): PageElement => ({ ...field(token, 'two'), name: 'Title' });
+  const request = () => ({
+    fields: [
+      { match: { label: 'Company name' }, value: 'First', strategy: 'native-input' as const },
+      { match: { label: 'Title' }, value: 'Lead', strategy: 'native-input' as const },
+    ],
+    policy: { settleMs: 0, maxReobserve: 3 },
+  });
+
+  it('checks only fields the run committed to: a later field not yet revealed is fine', async () => {
+    const f = fixture([field('a', 'one')]);
+    let recheck: (() => Promise<void>) | undefined;
+    let atFirstDispatch: unknown = 'not called';
+    const act = f.act;
+    let first = true;
+    await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+      act: async (wire, onDispatch) => {
+        if (first) {
+          first = false;
+          // B-dur-2's placement: before the first effect. 'Title' is not on the page yet.
+          atFirstDispatch = await recheck?.().then(
+            () => 'passed',
+            (error: unknown) => error
+          );
+          const result = await act(wire, onDispatch);
+          // The write reveals the next field, as conditional forms do.
+          f.replace([field('a', 'one', 'First'), title('t')]);
+          return result;
+        }
+        return act(wire, onDispatch);
+      },
+    });
+    expect(atFirstDispatch).toBe('passed');
+  });
+
+  it('refuses when a committed field was replaced by another node during the wait', async () => {
+    const f = fixture([field('a', 'one'), title('t')]);
+    let recheck: (() => Promise<void>) | undefined;
+    let atFirstDispatch: unknown = 'not called';
+    const act = f.act;
+    let first = true;
+    await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+      act: async (wire, onDispatch) => {
+        if (first) {
+          first = false;
+          // During the wait the committed control is re-rendered as a different node.
+          f.replace([field('a2', 'one'), title('t')]);
+          atFirstDispatch = await recheck?.().then(
+            () => 'passed',
+            (error: unknown) => error
+          );
+          throw new Error('stop');
+        }
+        return act(wire, onDispatch);
+      },
+    });
+    expect(atFirstDispatch).toMatchObject({ code: 'STALE_TARGET' });
+  });
+});
+
 describe('mapped stage scope and preflight', () => {
   const url = 'https://example.test/apply?id=123';
   const request = () => ({
@@ -1264,6 +1333,78 @@ describe('mapped stage scope and preflight', () => {
     f.observe.mockImplementation(async () => ({ ...(await read()), url }));
     return { ...f, resolveValue: vi.fn(async (value: string) => value) };
   };
+  it('offers its own scoped recheck once (B-dur, B6): current page passes, a changed one is refused', async () => {
+    const f = scopedFixture();
+    const offered: Array<() => Promise<void>> = [];
+    const report = await runAutofill(request(), {
+      ...f,
+      onRecheck: (recheck) => offered.push(recheck),
+    });
+    expect(report.ok).toBe(true);
+    expect(offered).toHaveLength(1);
+    const recheck = offered[0] as () => Promise<void>;
+    // The page as the run pinned it: the recheck passes and dispatches nothing.
+    const before = f.dispatch.mock.calls.length;
+    await expect(recheck()).resolves.toBeUndefined();
+    expect(f.dispatch).toHaveBeenCalledTimes(before);
+    // During a wait, the second block's control is replaced by another node: identity changed.
+    f.replace([field('a', 'one'), field('c', 'two')]);
+    await expect(recheck()).rejects.toMatchObject({ code: 'STALE_TARGET' });
+    // Or the page navigated away from the mapped stage.
+    f.observe.mockResolvedValue({
+      elements: [field('a', 'one'), field('b', 'two')],
+      url: 'https://other.test/apply',
+    } as never);
+    await expect(recheck()).rejects.toMatchObject({ code: 'FORM_SCOPE_MISMATCH' });
+  });
+  it('the recheck is read-only: passing inside a failed dispatch never re-authorizes the snapshot (review M2)', async () => {
+    const f = scopedFixture();
+    let recheck: (() => Promise<void>) | undefined;
+    const act = f.act;
+    let first = true;
+    const report = await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+      act: async (wire, onDispatch) => {
+        if (first) {
+          first = false;
+          onDispatch();
+          // B-dur-2's placement: after the marker, inside the dispatch. The page is unchanged,
+          // so the recheck passes — and the effect then fails.
+          await recheck?.();
+          throw new Error('page handler threw after dispatch');
+        }
+        return act(wire, onDispatch);
+      },
+    });
+    expect(report.ok).toBe(false);
+    // The dispatch revoked scope validity; nothing re-observed after it, so no raw capture.
+    expect(f.snapshot).not.toHaveBeenCalled();
+  });
+  it('refuses a recheck before preflight recorded any pins (review M2)', async () => {
+    const f = scopedFixture();
+    let recheck: (() => Promise<void>) | undefined;
+    let early: unknown = 'not called';
+    const read = f.observe.getMockImplementation()!;
+    f.observe.mockImplementationOnce(async () => {
+      // Inside the preflight's first observation, before any pin exists: capture the outcome
+      // here and assert it OUTSIDE the run (the run would swallow an assertion error).
+      early = await recheck?.().then(
+        () => 'passed',
+        (error: unknown) => error
+      );
+      return read();
+    });
+    await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+    });
+    expect(early).toMatchObject({ code: 'STALE_TARGET' });
+  });
   it('preflights repeated labels in separate blocks and runs the existing executor', async () => {
     const f = scopedFixture();
     const report = await runAutofill(request(), f);

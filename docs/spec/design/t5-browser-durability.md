@@ -76,8 +76,8 @@ the remaining window is disclosed.** After the marker's fsync and immediately be
 effect, the operation re-runs its owner's existing checks:
 - `act` / `plan` (first step) / `act` batch (first step): re-resolve the target ref (revision and
   identity — the engine's own `STALE_TARGET` check), and the approval's **currency without
-  consuming it** (`ApprovalGate.validateApprovalToken` for a plain token; `getReviewedApproval` for
-  an `act.reviewed` approval). The approval is consumed only AFTER the marker and the recheck, so
+  consuming it** (`ApprovalGate.validateApprovalToken` for a plain token; `validateReviewedApproval`, the
+  non-consuming twin of `consumeReviewedApproval`, for an `act.reviewed` approval). The approval is consumed only AFTER the marker and the recheck, so
   a refused or failed marker never burns it. The wire `act` has no navigation, so there is no navigation egress check
   on `act`; a plan's `navigate` step keeps its existing egress preflight before its own dispatch.
 - `autofill` with a scope: the scoped preflight's pinned identities (URL, node and block
@@ -155,7 +155,9 @@ recovery, B1).
 
 1. **B-dur-1:** the reserved `browser` identity (refused for real adapters) and the owner-level
    rechecks with token consumption moved after the marker, each refusing on an injected page
-   change during the wait.
+   change during the wait. **Delivered 2026-10-15**
+   ([evidence](../evidence/t5-journal-runtime.md#b-dur-1-the-revalidation-primitives-2026-10-15)):
+   the primitives exist and are pinned; B-dur-2 wires them into the dispatch boundary.
 2. **B-dur-2:** the protocol field with parity and `ephemeral` normalization, the browser dispatch
    qualification through the page guard, the terminal mapping, a real-store crash row per owner
    (before the marker, after the marker), and the capacity note in the operations guide.

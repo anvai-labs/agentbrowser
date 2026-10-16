@@ -572,3 +572,90 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
     }
   });
 });
+
+describe('B-dur (B6): approval currency re-validated after a wait, consumed only at commit', () => {
+  type Plan = { revalidate(): Promise<void>; commit(): Promise<void> };
+  const prepare = (f: Fixture, ref: string, approvalToken?: string, identity?: string) =>
+    f.run(() =>
+      (
+        f.service as unknown as {
+          prepareApproval(...args: unknown[]): Promise<Plan>;
+          requirePage(sessionId: string, pageId: string): unknown;
+        }
+      ).prepareApproval(
+        f.sessionId,
+        f.pageId,
+        (
+          f.service as unknown as { requirePage(sessionId: string, pageId: string): unknown }
+        ).requirePage(f.sessionId, f.pageId),
+        {
+          action: 'click',
+          target: { ref },
+          ...(approvalToken !== undefined ? { approvalToken } : {}),
+        },
+        identity
+      )
+    );
+
+  it('a lease spent during the wait fails revalidate and commit; prepare never spends it', async () => {
+    const f = await markedFixture({ allowedHosts: ['example.com'] });
+    await f.service.grantActionLease(f.sessionId, {
+      hosts: ['example.com'],
+      expiresInMs: 60_000,
+      maxActions: 1,
+    });
+    f.raw.setElements([
+      { role: 'button', name: 'Routine one' },
+      { role: 'button', name: 'Routine two' },
+    ]);
+    const plan = await prepare(f, await f.refOf('Routine one'));
+    // Preparing and re-validating spend nothing.
+    await f.run(() => plan.revalidate());
+    expect(f.service.getSession(f.sessionId)?.actionLease).toMatchObject({ remainingActions: 1 });
+    // The injected wait: another act spends the lease's only action.
+    await f.act(await f.refOf('Routine two'));
+    expect(f.dispatch).toHaveBeenCalledTimes(1);
+    await expect(f.run(() => plan.revalidate())).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    await expect(f.run(() => plan.commit())).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    expect(f.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a reviewed token still pending the operator decision is refused at prepare (review M1)', async () => {
+    const f = await markedFixture();
+    const generated = vi.spyOn(f.gate, 'generateReviewedApproval');
+    f.raw.setElements([{ role: 'button', name: 'Pay now', risk: 'transaction' }]);
+    const ref = await f.refOf('Pay now');
+    const first = await refused(f.act(ref));
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    const identity = (generated.mock.calls[0]?.[0] as { action: { identity?: string } } | undefined)
+      ?.action.identity;
+    // Not approved yet: prepare itself refuses (an approval round trip never reaches a marker).
+    const pending = await refused(prepare(f, ref, tokenId, identity));
+    expect(pending.code).toBe('APPROVAL_REQUIRED');
+    expect(pending.details).toMatchObject({ review: 'operator' });
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('a reviewed approval consumed during the wait fails revalidate and commit', async () => {
+    const f = await markedFixture();
+    const generated = vi.spyOn(f.gate, 'generateReviewedApproval');
+    f.raw.setElements([{ role: 'button', name: 'Pay now', risk: 'transaction' }]);
+    const ref = await f.refOf('Pay now');
+    const first = await refused(f.act(ref));
+    expect(first.code).toBe('APPROVAL_REQUIRED');
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    await f.run(() => f.gate.decideReviewedApproval(tokenId, f.binding(), 'approve'));
+    const identity = (generated.mock.calls[0]?.[0] as { action: { identity?: string } } | undefined)
+      ?.action.identity;
+    const plan = await prepare(f, ref, tokenId, identity);
+    await f.run(() => plan.revalidate());
+    // The injected wait: the approved decision is spent by a concurrent act.
+    await f.act(ref, tokenId);
+    expect(f.dispatch).toHaveBeenCalledTimes(1);
+    const stale = await refused(f.run(() => plan.revalidate()));
+    expect(stale.code).toBe('APPROVAL_REQUIRED');
+    expect(stale.details).toMatchObject({ review: 'operator' });
+    await expect(f.run(() => plan.commit())).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    expect(f.dispatch).toHaveBeenCalledTimes(1);
+  });
+});
