@@ -1,10 +1,13 @@
 // T5 B-dur-2c: one service process with the durable journal wired, killed by its parent at a
-// chosen boundary of a durable browser act (run exactly as the HTTP wrapper runs it). Real
-// compiled service, real SQLite store; the effect is an independent counter file (fsynced) that
-// the page's engine act appends to, read by the parent after the kill.
+// chosen boundary of a durable browser act, run through the same authority + service path the
+// HTTP wrapper uses (the browser journal selection, the marker, the guard, the effect). It does
+// NOT reproduce the wrapper's identity hashing or failure classification (those are pinned over
+// HTTP in browser-durable-http.test.ts). Real compiled service, real SQLite store; the effect is
+// an independent counter file (fsynced) the page's engine act appends to, read after the kill.
 import { closeSync, fsyncSync, openSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { RESERVED_BROWSER_ADAPTER_ID } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { journalConfigFromEnvironment, openServiceJournal } from '../../dist/journal-config.js';
 import { AgentBrowserService } from '../../dist/service.js';
@@ -106,7 +109,11 @@ await service.authority.run(
     fingerprint: `digest-${operationId}`,
     journal: {
       version: 1,
-      application: { adapterId: 'browser', resourceId: 'act', bindingGeneration: pageId },
+      application: {
+        adapterId: RESERVED_BROWSER_ADAPTER_ID,
+        resourceId: 'act',
+        bindingGeneration: pageId,
+      },
       durable: true,
       browser: true,
     },

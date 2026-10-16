@@ -902,6 +902,14 @@ describe('AgentBrowser SDK', () => {
       } as never);
       const body = (mockFetch.mock.calls[0] as [string, { body: string }])[1].body;
       expect(JSON.parse(body)).toEqual({ action: 'scroll', direction: 'down' });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, completed: 0, results: [] }),
+      });
+      await client.sessions.plan('s', 'p', [], { operationId: 'op-plan' });
+      const plan = mockFetch.mock.calls[1] as [string, { body: string }];
+      expect(JSON.parse(plan[1].body)).toEqual({ actions: [] });
     });
 
     it('should execute click action', async () => {
