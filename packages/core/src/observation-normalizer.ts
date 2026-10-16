@@ -27,6 +27,7 @@ const INTERACTIVE_ROLES = new Set<string>([
   'tablist',
   'fileinput',
   'control',
+  'html-summary',
 ]);
 
 export interface NormalizationOptions {
@@ -174,6 +175,10 @@ export class ObservationNormalizer {
 
       if (rawEl.checked !== undefined) {
         element.checked = rawEl.checked;
+      }
+
+      if (rawEl.expanded !== undefined) {
+        element.expanded = rawEl.expanded;
       }
 
       // Scope-projection metadata (block-local depth, snapshot block id):

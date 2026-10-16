@@ -9013,6 +9013,9 @@
                 "checked": {
                   "type": "boolean"
                 },
+                "expanded": {
+                  "type": "boolean"
+                },
                 "depth": {
                   "minimum": 0,
                   "type": "integer"
@@ -9314,6 +9317,9 @@
             }
           },
           "checked": {
+            "type": "boolean"
+          },
+          "expanded": {
             "type": "boolean"
           },
           "depth": {
@@ -11576,6 +11582,9 @@
                       }
                     },
                     "checked": {
+                      "type": "boolean"
+                    },
+                    "expanded": {
                       "type": "boolean"
                     },
                     "depth": {

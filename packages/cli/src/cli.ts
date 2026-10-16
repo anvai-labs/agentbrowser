@@ -3154,6 +3154,9 @@ function renderObservation(observation: ObservationResponse): string[] {
     if (element.checked === true) {
       parts.push('[checked]');
     }
+    if (element.expanded !== undefined) {
+      parts.push(element.expanded ? '[expanded]' : '[collapsed]');
+    }
     if (!element.visible) {
       parts.push('[hidden]');
     }

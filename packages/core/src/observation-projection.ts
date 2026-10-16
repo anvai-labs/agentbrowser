@@ -257,6 +257,7 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
   if (element.value !== undefined) shaped.value = element.value;
   if (element.valueRedacted !== undefined) shaped.valueRedacted = element.valueRedacted;
   if (element.checked !== undefined) shaped.checked = element.checked;
+  if (element.expanded !== undefined) shaped.expanded = element.expanded;
   if (element.risk !== undefined) shaped.risk = element.risk;
   if (element.focused !== undefined) shaped.focused = element.focused;
   if (element.depth !== undefined) shaped.depth = element.depth;
