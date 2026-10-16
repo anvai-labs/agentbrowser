@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Tests — engagement-scope release smoke (T10 M1)
+
+- `scripts/scope-consumer-smoke.mjs` drives one scoped session through REST, the SDK, the CLI and
+  MCP against local fixtures: the unchecked lanes are refused, an out-of-scope navigation is a
+  policy denial, and a form POST redirected out of scope never reaches the out-of-scope host.
+  It runs from a checkout or against an extracted release candidate (`--server-root …`).
+- Recorded gap, scheduled in M2: navigate refusals on REST/SDK/CLI/MCP report `egress_policy`,
+  not the `SCOPE_*` sub-code that direct service callers receive.
+
 ### Docs — T10 engagements plan and record hygiene
 
 - New task packet T10 (`docs/spec/tasks/t10-engagements.md`): engagements (scope without holes,

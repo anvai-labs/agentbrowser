@@ -7,6 +7,7 @@ const scripts = [
   'cdp-attach-smoke.mjs',
   'navigation-consumer-smoke.mjs',
   'research-consumer-smoke.mjs',
+  'scope-consumer-smoke.mjs',
 ];
 const root = fileURLToPath(new URL('../', import.meta.url));
 
