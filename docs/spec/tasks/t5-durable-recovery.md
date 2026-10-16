@@ -74,8 +74,8 @@ loads the concrete ownership/anchor/crash/runtime gates.
 storage primitive; the raw adapter, bounded child manager and all qualification gates
 are shipped; remaining: F3 authorization, C4b selection, and optional
 constrained-mount depth.
-J3a/J3b, J3c part 1 and J4's application-write gates are built (2026-10-15); J3c part 2
-(continue/supersedes/reconcile) and J3d (history namespaces) remain. The refined design was
+J3a/J3b, J3c (close/settle, then continue/supersedes/reconcile), J3d (history namespaces) and
+J4's application-write gates are built (2026-10-15). The refined design was
 accepted by the owner on 2026-10-15
 ([J-design](../design/t5-recovery-design.md)). It covers:
 - historical lookup for the ADR-025 operator or a tenant API key, read-only;
@@ -88,8 +88,11 @@ accepted by the owner on 2026-10-15
 
 A macOS leg (`journal-darwin.yml`, 2026-10-15)
 runs the same qualification and packaging gates nightly on main and on journal-path pull requests.
-Browser durability waits for its existing target/policy/approval owners to support
-post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
+Browser durability is delivered as classification (B-dur, 2026-10-15,
+[design](../design/t5-browser-durability.md),
+[evidence](../evidence/t5-journal-runtime.md#b-dur-2b-durable-act-plan-and-autofill-through-the-service-2026-10-15)):
+the target, policy and approval owners re-check after the storage wait, and a durable browser
+record is never replayed. Do not advertise recovery from J0 or this design.
 
 ## TDD and acceptance
 

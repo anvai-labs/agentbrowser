@@ -18,6 +18,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Changed — T5 records reflect browser durability
+
+- `docs/spec/review.md` R08, the task README's T5 row and the T5 packet now record the browser
+  portion as delivered (classification only, never replay); T5's only remaining item is per-host
+  deployment by the operator.
+
 ### Fixed — a plan no longer re-runs a step whose follow-up read failed
 
 - A plan step whose effect ran but whose follow-up read failed (for example a click that closed
