@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.19.0 release record
+
+- `docs/spec/evidence/release-1.19.0.md` records the release and the post-run verification of
+  every channel (assets against `sha256sums.txt`, versions inside the artifacts, npm, the docs
+  site, the Homebrew tap); winget was not submitted (no credential configured). The task
+  README and T9 packet now name 1.19.0 as the published baseline; the operations diagram gains
+  reconcile → `failed`, and the execution spec labels its normative rules as such.
+
 ## [1.19.0] — 2026-10-16
 
 Entries are newest first, and an entry supersedes the entries below it: the durable journal
