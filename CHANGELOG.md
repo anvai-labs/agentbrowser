@@ -7,6 +7,24 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Security — redirects after POST/PUT/PATCH are checked in scoped sessions (T10 M1)
+
+- **The hole:** body-bearing requests pass to the browser natively (byte-exact uploads), and
+  Playwright never routes their redirected follow-up. In a session with an engagement scope, a
+  307 from an in-scope form POST re-sent the body to an out-of-scope host; a 302/303 sent a GET
+  there.
+- **The fix:** on Chromium, a guard checks every redirect hop of those requests (fresh verdict,
+  hop cap, loop detection) and fails a denied hop before the browser follows it. A body-bearing
+  request the guard did not see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`).
+  Policies opt in with `requireRedirectGuard`; `EngagementScopePolicy` sets it and the metadata
+  floor carries it.
+
+| Session | Before | After |
+| --- | --- | --- |
+| Scoped, Chromium | redirect hops after POST/PUT/PATCH unchecked | every hop checked; requests pause once more |
+| Scoped, Firefox/WebKit | same hole | **POST/PUT/PATCH refused** (`REDIRECT_UNCHECKABLE`) |
+| Unscoped | native passthrough | unchanged |
+
 ### Docs — the 1.20.0 release record
 
 - `docs/spec/evidence/release-1.20.0.md` records the first release under the R14 gates and the

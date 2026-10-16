@@ -63,6 +63,7 @@ import {
   type Locator,
   type Page,
 } from 'playwright';
+import { BodyRedirectGuard } from './body-redirect-guard.js';
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import {
   classifyEmptyObservation,
@@ -1782,8 +1783,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    *
    * Verdicts and addresses are rechecked per hop, but the browser
    * connection is not DNS-pinned, body-bearing requests (POST/PUT/PATCH)
-   * bypass response inspection natively, and body checks occur after
-   * buffering. Routing disables Chromium's HTTP cache and adds an
+   * bypass response inspection natively (a scope checks their redirect
+   * hops through BodyRedirectGuard), and body checks occur after buffering. Routing disables Chromium's HTTP cache and adds an
    * in-process hop.
    */
   private async installEgress(
@@ -1907,6 +1908,29 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // own limit is ~20. Ten keeps hostile chains bounded without breaking
     // ordinary login/logo chains.
     const MAX_REDIRECT_HOPS = 10;
+    // Redirects after body-bearing requests (T10 M1): see body-redirect-guard.ts.
+    // Only a policy that requires every hop checked (an engagement scope) gets
+    // the guard, and it refuses a body-bearing request the guard did not see;
+    // other sessions keep the native passthrough (ADR-006 residual).
+    const redirectGuard =
+      egress.requireRedirectGuard === true
+        ? new BodyRedirectGuard(context, {
+            verdictOf: (hostname, url, hop) => verdictOf(hostname, url, hop),
+            maxHops: MAX_REDIRECT_HOPS,
+            onBlocked: (root, detail) => {
+              const reason = isNavigationFailureReason(detail.reason)
+                ? detail.reason
+                : 'egress_policy';
+              sink.navigationFailures.set(root, { kind: 'blocked', reason });
+              emitRequest('request.failed', root, {
+                blocked: true,
+                reason,
+                ...(detail.redirect !== undefined ? { redirect: detail.redirect } : {}),
+                ...(detail.detail !== undefined ? { detail: detail.detail } : {}),
+              });
+            },
+          })
+        : undefined;
     await context.route('**', async (route) => {
       const request = route.request();
       const url = request.url();
@@ -1950,11 +1974,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // empirically, an S3 presigned-POST multipart upload that succeeds
         // natively comes back 400 (signature mismatch) when replayed through
         // route.fetch(). The hostname/IP-range verdict above still gates SSRF
-        // exposure for these requests; what's given up is response-size
-        // capping and redirect-hop target checking, since route.continue()
-        // hands the request to the browser's native network stack with no
-        // further server-side inspection.
+        // exposure for these requests; response-size capping is given up.
+        // Redirect hops are checked by the guard (T10 M1) where it can watch
+        // the request's target; a scope refuses the request where it cannot.
         if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+          if (redirectGuard !== undefined && !redirectGuard.track(request)) {
+            emitRequest('request.failed', request, {
+              blocked: true,
+              reason: 'egress_policy',
+              detail: 'REDIRECT_UNCHECKABLE',
+            });
+            await deny('egress_policy');
+            return;
+          }
           emitRequest('request.finished', request, { passthrough: true });
           await continueRequest();
           return;
