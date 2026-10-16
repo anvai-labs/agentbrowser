@@ -5559,6 +5559,16 @@ export class AgentBrowserService {
    * the count is spent — the caller then falls back to review (fail closed,
    * never to allow).
    */
+  /** T5 B-dur: whether the live lease would admit one action on `host`, without spending it. */
+  private leaseCoversAction(sessionId: string, host: string): boolean {
+    const lease = this.activeLeaseFor(sessionId);
+    return (
+      lease !== undefined &&
+      lease.remainingActions > 0 &&
+      lease.hosts.some((entry) => covers(entry, host).ok)
+    );
+  }
+
   private consumeLeasedAction(sessionId: string, host: string): boolean {
     const lease = this.activeLeaseFor(sessionId);
     if (lease === undefined) return false;
@@ -5894,6 +5904,11 @@ export class AgentBrowserService {
     };
   }
 
+  /**
+   * The act approval check, unchanged in outcome: decide, then consume at once (lease action,
+   * plain token or reviewed approval). T5 B-dur splits it so a durable operation can re-validate
+   * after its storage wait and consume only after the marker; this path does both back to back.
+   */
   private async checkApproval(
     sessionId: string,
     pageId: string,
@@ -5902,6 +5917,29 @@ export class AgentBrowserService {
     identity?: string,
     span?: import('@agentbrowser/core').Span | undefined
   ): Promise<void> {
+    const plan = await this.prepareApproval(sessionId, pageId, page, request, identity, span);
+    await plan.commit();
+  }
+
+  /**
+   * T5 B-dur (B6): the approval DECISION, with consumption deferred. Throws now when the action
+   * is denied or needs an approval the request does not carry (`APPROVAL_REQUIRED` with a fresh
+   * token) — so an approval round trip never reaches a marker. Otherwise returns:
+   * - `revalidate()`: a non-consuming currency check (the lease still covers the host and has an
+   *   action left; the token or reviewed approval is still valid for this exact action), for
+   *   after a storage wait;
+   * - `commit()`: the consumption; a token or reviewed approval that turned stale is refused with
+   *   a fresh `APPROVAL_REQUIRED`, exactly as an immediate consume would.
+   */
+  private async prepareApproval(
+    sessionId: string,
+    pageId: string,
+    page: PageContext,
+    request: ServiceActRequest,
+    identity?: string,
+    span?: import('@agentbrowser/core').Span | undefined
+  ): Promise<{ revalidate(): Promise<void>; commit(): Promise<void> }> {
+    const none = { revalidate: async () => {}, commit: async () => {} };
     const ref = request.target?.ref;
     const element = ref !== undefined ? page.lastObservation?.byRef.get(ref) : undefined;
     // Cached observations can precede history or out-of-band navigation.
@@ -5940,18 +5978,32 @@ export class AgentBrowserService {
     const marked = this.sessionCredentialSources.get(sessionId) === 'operator';
     if (marked) {
       const host = hostOf(currentUrl);
-      if (risk === 'unknown' && this.consumeLeasedAction(sessionId, host)) {
-        if (span)
-          this.tracer?.addEvent(span, 'lease.action', {
-            effect: risk,
-            ref,
-            remaining: this.actionLeases.get(sessionId)?.remainingActions,
-          });
-        return;
+      if (risk === 'unknown' && this.leaseCoversAction(sessionId, host)) {
+        const leaseGone = () =>
+          new ServiceError(
+            'POLICY_DENIED',
+            'The session lease no longer covers this action (it ended or ran out during the wait).',
+            false,
+            { effect: risk }
+          );
+        return {
+          revalidate: async () => {
+            if (!this.leaseCoversAction(sessionId, host)) throw leaseGone();
+          },
+          commit: async () => {
+            if (!this.consumeLeasedAction(sessionId, host)) throw leaseGone();
+            if (span)
+              this.tracer?.addEvent(span, 'lease.action', {
+                effect: risk,
+                ref,
+                remaining: this.actionLeases.get(sessionId)?.remainingActions,
+              });
+          },
+        };
       }
-      if (!(isHighRiskEffect(risk) || risk === 'unknown') && decision === 'allow') return;
+      if (!(isHighRiskEffect(risk) || risk === 'unknown') && decision === 'allow') return none;
     } else if (decision === 'allow') {
-      return;
+      return none;
     }
     const decoded = decodeWireAction(request);
     if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
@@ -5988,60 +6040,81 @@ export class AgentBrowserService {
         canonicalJson({ ...approvalRequest, kind: 'act.reviewed' })
       ) as typeof approvalRequest & { kind: 'act.reviewed' };
       this.assertReviewDisclosureSafe(reviewedRequest);
-      if (
-        request.approvalToken !== undefined &&
-        (await this.approvalGate.consumeReviewedApproval(
-          request.approvalToken,
-          reviewedRequest,
-          context
-        ))
-      ) {
+      const required = async (): Promise<never> => {
+        const token = await this.approvalGate.generateReviewedApproval(reviewedRequest, context);
         this.authority.assert(sessionId);
         if (span)
-          this.tracer?.addEvent(span, 'approval.granted', {
+          this.tracer?.addEvent(span, 'approval.required', {
             effect: risk,
             ref,
             review: 'operator',
           });
-        return;
-      }
-      const token = await this.approvalGate.generateReviewedApproval(reviewedRequest, context);
-      this.authority.assert(sessionId);
-      if (span)
-        this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref, review: 'operator' });
-      throw new ServiceError(
-        'APPROVAL_REQUIRED',
-        'Action requires an explicit operator decision.',
-        false,
-        { tokenId: token.tokenId, effect: risk, ref, review: 'operator' }
-      );
+        throw new ServiceError(
+          'APPROVAL_REQUIRED',
+          'Action requires an explicit operator decision.',
+          false,
+          { tokenId: token.tokenId, effect: risk, ref, review: 'operator' }
+        );
+      };
+      const tokenId = request.approvalToken;
+      if (
+        tokenId === undefined ||
+        !(await this.approvalGate.validateReviewedApproval(tokenId, reviewedRequest, context))
+      )
+        return required();
+      return {
+        revalidate: async () => {
+          if (
+            !(await this.approvalGate.validateReviewedApproval(tokenId, reviewedRequest, context))
+          )
+            await required();
+        },
+        commit: async () => {
+          if (!(await this.approvalGate.consumeReviewedApproval(tokenId, reviewedRequest, context)))
+            await required();
+          this.authority.assert(sessionId);
+          if (span)
+            this.tracer?.addEvent(span, 'approval.granted', {
+              effect: risk,
+              ref,
+              review: 'operator',
+            });
+        },
+      };
     }
 
-    if (request.approvalToken !== undefined) {
-      const consumed = await this.approvalGate.consumeApprovalToken(
-        request.approvalToken,
-        approvalRequest
+    // Invalid, expired, burned or mismatched token: a fresh denial with a new token.
+    const required = async (): Promise<never> => {
+      const token = await this.approvalGate.generateApprovalToken(approvalRequest);
+      if (span) {
+        this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref });
+      }
+      throw new ServiceError(
+        'APPROVAL_REQUIRED',
+        `Action targets an element classified '${risk}' and needs an approval token.`,
+        false,
+        { tokenId: token.tokenId, effect: risk, ref }
       );
-      if (consumed) {
+    };
+    const tokenId = request.approvalToken;
+    if (
+      tokenId === undefined ||
+      !(await this.approvalGate.validateApprovalToken(tokenId, approvalRequest))
+    )
+      return required();
+    return {
+      revalidate: async () => {
+        if (!(await this.approvalGate.validateApprovalToken(tokenId, approvalRequest)))
+          await required();
+      },
+      commit: async () => {
+        if (!(await this.approvalGate.consumeApprovalToken(tokenId, approvalRequest)))
+          await required();
         if (span) {
           this.tracer?.addEvent(span, 'approval.granted', { effect: risk, ref });
         }
-        return;
-      }
-      // Invalid, expired, burned or mismatched token: fall through to a fresh
-      // denial with a new token.
-    }
-
-    const token = await this.approvalGate.generateApprovalToken(approvalRequest);
-    if (span) {
-      this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref });
-    }
-    throw new ServiceError(
-      'APPROVAL_REQUIRED',
-      `Action targets an element classified '${risk}' and needs an approval token.`,
-      false,
-      { tokenId: token.tokenId, effect: risk, ref }
-    );
+      },
+    };
   }
 
   private lastObservationOf(page: PageContext): PageState {

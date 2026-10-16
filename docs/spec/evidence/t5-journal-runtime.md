@@ -425,3 +425,35 @@ The operator-only recovery writes, on a real store, through the service and over
     the journal does not apply now reports its kind and reason instead of claiming the record
     changed; the history file's size is checked in bytes before it is read.
 
+## B-dur-1: the revalidation primitives (2026-10-15)
+
+The building blocks the accepted [B-dur design](../design/t5-browser-durability.md) needs, each
+tested against a change injected during the storage wait. Nothing is journaled yet: B-dur-2 wires
+them into the dispatch boundary after the marker. Today's paths are unchanged (full api suite
+green with no expectation changed).
+
+- **Reserved identity (B5).** `RESERVED_BROWSER_ADAPTER_ID = 'browser'`: an application adapter
+  registering it is refused with `INVALID_REQUEST` (ids that merely contain the word are fine).
+- **Approval split (B6).** `checkApproval` is now `prepareApproval` + `commit`, called back to
+  back, so a plain act decides and consumes exactly as before. `prepareApproval` makes the
+  DECISION and throws now when the action is denied or needs an approval the request lacks (so an
+  approval round trip never reaches a marker); it returns `revalidate()` (non-consuming currency:
+  the lease still covers the host with an action left; the plain token or the reviewed approval
+  still valid for this exact action) and `commit()` (the consumption; a stale token or approval
+  is refused with a fresh `APPROVAL_REQUIRED`, a spent lease with `POLICY_DENIED`).
+  `ApprovalGate.validateReviewedApproval` is the new non-consuming twin of
+  `consumeReviewedApproval` (identical checks, including the snapshot refusal of a mismatched
+  session).
+  - Pinned: no token → `APPROVAL_REQUIRED` at prepare with nothing dispatched; a plain token, a
+    reviewed approval and a lease each spent by a concurrent act during the wait fail both
+    `revalidate` and `commit` with nothing dispatched; `revalidate` never spends.
+- **Target recheck (B6).** `ActionExecutor.revalidateTarget` re-runs `execute`'s own target checks
+  after the wait: re-resolve the ref, still visible (except `upload`) and enabled, same
+  fingerprint as observed. Pinned: changed element (`STALE_TARGET`), hidden, disabled, no longer
+  resolvable (`STALE_TARGET`), and the upload exemption.
+- **Autofill recheck (B6).** `runAutofill` offers its own scoped recheck once through an optional
+  `onRecheck` port: a fresh observation that re-validates the stage URL and the pinned node and
+  block identities and readiness, throwing the run's own typed failures. Pinned: passes on the
+  pinned page without dispatching, `STALE_TARGET` when a pinned control is replaced,
+  `FORM_SCOPE_MISMATCH` when the page left the stage.
+

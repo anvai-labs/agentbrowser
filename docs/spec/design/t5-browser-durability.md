@@ -155,7 +155,9 @@ recovery, B1).
 
 1. **B-dur-1:** the reserved `browser` identity (refused for real adapters) and the owner-level
    rechecks with token consumption moved after the marker, each refusing on an injected page
-   change during the wait.
+   change during the wait. **Delivered 2026-10-15**
+   ([evidence](../evidence/t5-journal-runtime.md#b-dur-1-the-revalidation-primitives-2026-10-15)):
+   the primitives exist and are pinned; B-dur-2 wires them into the dispatch boundary.
 2. **B-dur-2:** the protocol field with parity and `ephemeral` normalization, the browser dispatch
    qualification through the page guard, the terminal mapping, a real-store crash row per owner
    (before the marker, after the marker), and the capacity note in the operations guide.

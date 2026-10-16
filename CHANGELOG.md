@@ -18,6 +18,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Added — browser-durability revalidation primitives (T5 B-dur-1)
+
+- The application adapter id `browser` is reserved for browser-operation journal records.
+- The act approval check is split into a decision and a deferred consumption, with a
+  non-consuming currency check for leases, plain tokens and reviewed approvals
+  (`ApprovalGate.validateReviewedApproval`); plain acts behave exactly as before.
+- `ActionExecutor.revalidateTarget` and an autofill `onRecheck` port expose the target and
+  scoped-stage checks to run after a storage wait. Durable browser operations (B-dur-2) will use
+  them; nothing is journaled yet.
+
 ### Docs — browser-operation durability, the settled choices (T5 B-dur, accepted)
 
 - A design addendum settles the implementation choices D6 left open, accepted by the owner:

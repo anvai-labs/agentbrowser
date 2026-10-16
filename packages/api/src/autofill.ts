@@ -21,6 +21,13 @@ export interface AutofillPorts {
   }>;
   act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
+  /**
+   * T5 B-dur (B6): receives, once, the run's own recheck — a fresh observation that re-validates
+   * the scoped stage (URL, distinct node and block identities against the pins, readiness) and
+   * throws the same typed failures the run would. A durable run calls it after its marker's
+   * storage wait, before the first effect. Optional; ignoring it changes nothing.
+   */
+  onRecheck?(recheck: () => Promise<void>): void;
 }
 
 interface StrategyScope {
@@ -434,6 +441,9 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     }
     return view.elements;
   };
+  ports.onRecheck?.(async () => {
+    await observe();
+  });
   let preflightFailed = false;
   if (request.scope) {
     try {

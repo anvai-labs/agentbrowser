@@ -299,6 +299,41 @@ export class ActionExecutor {
    * Prefers the caller's per-observation index (O(1)) over the linear scan
    * (TD-BROWSER-9, A7).
    */
+  /**
+   * T5 B-dur (B6): re-run, after a storage wait, the same target checks `execute` applies before
+   * the engine call — re-resolve the ref, require it still visible (except for `upload`) and
+   * enabled, and require its fingerprint to still match the observation. Returns the typed failure
+   * (`STALE_TARGET`, `TARGET_NOT_VISIBLE`, `TARGET_DISABLED`), or `null` when still current.
+   */
+  async revalidateTarget(
+    enginePage: EnginePage,
+    ref: string,
+    actionType: string,
+    observation: PageState,
+    elementIndex?: ReadonlyMap<string, PageElement>
+  ): Promise<ApiErrorDetail | null> {
+    let resolved: ResolvedTarget;
+    try {
+      resolved = await enginePage.resolve({ ref });
+    } catch (error) {
+      return staleTarget(`Target ${ref} no longer resolves after the wait.`, {
+        ref,
+        reason: (error as Error)?.message ?? 'unresolved',
+      });
+    }
+    if (!resolved.visible && actionType !== 'upload')
+      return createApiErrorDetail(
+        ErrorCode.TARGET_NOT_VISIBLE,
+        `Target element ${ref} is not visible`,
+        { details: { ref } }
+      );
+    if (!resolved.enabled)
+      return createApiErrorDetail(ErrorCode.TARGET_DISABLED, `Target element ${ref} is disabled`, {
+        details: { ref },
+      });
+    return this.verifyFingerprint(ref, resolved, observation, elementIndex);
+  }
+
   private verifyFingerprint(
     ref: string,
     resolvedTarget: ResolvedTarget,

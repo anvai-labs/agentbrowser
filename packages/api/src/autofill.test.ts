@@ -1264,6 +1264,30 @@ describe('mapped stage scope and preflight', () => {
     f.observe.mockImplementation(async () => ({ ...(await read()), url }));
     return { ...f, resolveValue: vi.fn(async (value: string) => value) };
   };
+  it('offers its own scoped recheck once (B-dur, B6): current page passes, a changed one is refused', async () => {
+    const f = scopedFixture();
+    const offered: Array<() => Promise<void>> = [];
+    const report = await runAutofill(request(), {
+      ...f,
+      onRecheck: (recheck) => offered.push(recheck),
+    });
+    expect(report.ok).toBe(true);
+    expect(offered).toHaveLength(1);
+    const recheck = offered[0] as () => Promise<void>;
+    // The page as the run pinned it: the recheck passes and dispatches nothing.
+    const before = f.dispatch.mock.calls.length;
+    await expect(recheck()).resolves.toBeUndefined();
+    expect(f.dispatch).toHaveBeenCalledTimes(before);
+    // During a wait, the second block's control is replaced by another node: identity changed.
+    f.replace([field('a', 'one'), field('c', 'two')]);
+    await expect(recheck()).rejects.toMatchObject({ code: 'STALE_TARGET' });
+    // Or the page navigated away from the mapped stage.
+    f.observe.mockResolvedValue({
+      elements: [field('a', 'one'), field('b', 'two')],
+      url: 'https://other.test/apply',
+    } as never);
+    await expect(recheck()).rejects.toMatchObject({ code: 'FORM_SCOPE_MISMATCH' });
+  });
   it('preflights repeated labels in separate blocks and runs the existing executor', async () => {
     const f = scopedFixture();
     const report = await runAutofill(request(), f);

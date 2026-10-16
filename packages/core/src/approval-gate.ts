@@ -307,6 +307,25 @@ export class ApprovalGate {
     return this.reviewView(record);
   }
 
+  /**
+   * T5 B-dur (B6): the non-consuming twin of `consumeReviewedApproval` — the same binding,
+   * context, session and approved-status checks, without burning the token. A durable browser
+   * operation re-validates currency after its storage wait and consumes only after the marker.
+   */
+  async validateReviewedApproval(
+    tokenId: string,
+    request: ApprovalRequest,
+    context: ApprovalReviewBinding
+  ): Promise<boolean> {
+    const snapshot = this.snapshotReviewed({ request, context });
+    const record = this.reviewedToken(tokenId, snapshot.contextFingerprint, Date.now());
+    return (
+      record?.token.status === 'approved' &&
+      record.sessionId === snapshot.binding.sessionId &&
+      record.actionFingerprint === snapshot.binding.actionFingerprint
+    );
+  }
+
   async consumeReviewedApproval(
     tokenId: string,
     request: ApprovalRequest,

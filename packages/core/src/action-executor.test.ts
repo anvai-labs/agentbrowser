@@ -857,4 +857,57 @@ describe('ActionExecutor', () => {
       expect(mockEnginePage.act).not.toHaveBeenCalled();
     });
   });
+
+  describe('revalidateTarget (T5 B-dur, B6: after a storage wait)', () => {
+    const current = {
+      visible: true,
+      enabled: true,
+      role: 'button',
+      name: 'Submit',
+      fingerprint: 'button_Submit_visible_true_enabled_true',
+    };
+
+    it('is current when the target still resolves to the same element', async () => {
+      vi.mocked(mockEnginePage.resolve).mockResolvedValue(current as ResolvedTarget);
+      await expect(
+        executor.revalidateTarget(mockEnginePage, 'e1_0', 'click', mockObservation)
+      ).resolves.toBeNull();
+    });
+
+    it.each([
+      [
+        'the element changed (fingerprint mismatch)',
+        { ...current, name: 'Delete account', fingerprint: 'button_Delete account' },
+        'STALE_TARGET',
+      ],
+      ['the element became hidden', { ...current, visible: false }, 'TARGET_NOT_VISIBLE'],
+      ['the element became disabled', { ...current, enabled: false }, 'TARGET_DISABLED'],
+    ] as const)('refuses when %s during the wait', async (_name, resolved, code) => {
+      vi.mocked(mockEnginePage.resolve).mockResolvedValue(resolved as unknown as ResolvedTarget);
+      await expect(
+        executor.revalidateTarget(mockEnginePage, 'e1_0', 'click', mockObservation)
+      ).resolves.toMatchObject({ code });
+    });
+
+    it('refuses with STALE_TARGET when the ref no longer resolves at all', async () => {
+      vi.mocked(mockEnginePage.resolve).mockRejectedValue(new Error('detached'));
+      await expect(
+        executor.revalidateTarget(mockEnginePage, 'e1_0', 'click', mockObservation)
+      ).resolves.toMatchObject({ code: 'STALE_TARGET' });
+    });
+
+    it('lets a hidden file input through for upload, as execute does', async () => {
+      vi.mocked(mockEnginePage.resolve).mockResolvedValue({
+        ...current,
+        visible: false,
+      } as ResolvedTarget);
+      const result = await executor.revalidateTarget(
+        mockEnginePage,
+        'e1_0',
+        'upload',
+        mockObservation
+      );
+      expect(result?.code).not.toBe('TARGET_NOT_VISIBLE');
+    });
+  });
 });
