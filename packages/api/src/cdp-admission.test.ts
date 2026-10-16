@@ -110,6 +110,8 @@ it.each([
   { cookies: [] },
   { policy: { allowDownloads: true } },
   { policy: { allowedHosts: ['example.com'] } },
+  // T10 M1: the attach lane is not scope-enforced, so a scope is refused, not ignored.
+  { policy: { scope: { allowedHosts: ['example.com'] } } },
   { cdpEndpoint: 'http://192.168.1.89:9222' },
 ])('refuses incompatible or caller-controlled attachment options %j', async (extra) => {
   const engine = new FakeEngine();
@@ -125,6 +127,9 @@ it.each([
       payload: { tenantId: 'one', cdpAttach: true, ...extra },
     });
     expect(response.statusCode).toBe('controlMode' in extra ? 403 : 400);
+    if ('policy' in extra && 'scope' in extra.policy) {
+      expect(response.json()).toMatchObject({ error: { details: { rule: 'floor.cdp.options' } } });
+    }
     expect(create).not.toHaveBeenCalled();
   } finally {
     await app.close();

@@ -16,6 +16,36 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Recorded gap, scheduled in M2: navigate refusals on REST/SDK/CLI/MCP report `egress_policy`,
   not the `SCOPE_*` sub-code that direct service callers receive.
 
+### Security — a scope refuses the lanes it cannot check (T10 M1)
+
+| Create request | Before | After |
+| --- | --- | --- |
+| `cdpAttach` + `scope` | passed the options floor; the attach lane ignores the scope | refused, `400 INVALID_REQUEST` (`floor.cdp.options`) |
+| `allowServiceWorkers: true` + `scope` | session created; service-worker fetches bypass the scope | refused, `400 INVALID_REQUEST` (`scope.lane.serviceWorkers`) |
+| `scope` alone | unchanged | unchanged (service workers blocked by default) |
+
+### Security — redirects after POST/PUT/PATCH are checked in scoped sessions (T10 M1)
+
+- **The hole:** body-bearing requests pass to the browser natively (byte-exact uploads), and
+  Playwright never routes their redirected follow-up. In a session with an engagement scope, a
+  307 from an in-scope form POST re-sent the body to an out-of-scope host; a 302/303 sent a GET
+  there.
+- **The fix:** on Chromium, a guard checks every redirect hop of those requests (fresh verdict,
+  hop cap, loop detection) and fails a denied hop before the browser follows it. Chains are
+  tracked by Chromium's network id, so a rewritten URL (fragment, re-encoding) or two chains
+  meeting at one URL cannot slip a hop. A body-bearing request its own target's guard did not
+  see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`), including a popup's first
+  request (a `target=_blank` form POST) and new ones while a target already tracks 4096
+  in-flight chains; a live chain is never evicted.
+  Policies opt in with `requireRedirectGuard`; `EngagementScopePolicy` sets it and the metadata
+  floor carries it.
+
+| Session | Before | After |
+| --- | --- | --- |
+| Scoped, Chromium | redirect hops after POST/PUT/PATCH unchecked | every hop checked; each request pauses twice more (about 1.5× load time on a 51-request page) |
+| Scoped, Firefox/WebKit | same hole | **POST/PUT/PATCH refused** (`REDIRECT_UNCHECKABLE`) |
+| Unscoped | native passthrough | unchanged |
+
 ### Docs — T10 engagements plan and record hygiene
 
 - New task packet T10 (`docs/spec/tasks/t10-engagements.md`): engagements (scope without holes,

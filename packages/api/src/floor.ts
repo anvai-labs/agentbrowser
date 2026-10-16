@@ -121,6 +121,18 @@ export const FLOOR_ATTACH_OPTIONS = [
   Object.freeze({ rule: 'floor.cdp.options' }),
 ] as const;
 
+/**
+ * T10 M1: service-worker fetches bypass the egress choke point (ADR-019), so a
+ * scope cannot check them. A scoped session refuses the opt-in rather than
+ * creating a session whose traffic partly escapes the scope.
+ */
+export const SCOPE_SERVICE_WORKERS = [
+  'INVALID_REQUEST',
+  'An engagement scope cannot check service-worker traffic; create the scoped session with service workers blocked (the default).',
+  false,
+  Object.freeze({ rule: 'scope.lane.serviceWorkers' }),
+] as const;
+
 /** True when an attach request asks for any option the floor refuses. */
 export function attachRequestHasOptions(
   request: Readonly<{
@@ -136,6 +148,7 @@ export function attachRequestHasOptions(
     allowServiceWorkers?: unknown;
     maxDownloadBytes?: unknown;
     approval?: unknown;
+    scope?: unknown;
     engine?: string;
   }>,
   defaultEngineName: string
@@ -153,6 +166,8 @@ export function attachRequestHasOptions(
     request.allowServiceWorkers !== undefined ||
     request.maxDownloadBytes !== undefined ||
     request.approval !== undefined ||
+    // The attach lane is navigation-preflight-only: a scope would be ignored.
+    request.scope !== undefined ||
     (request.engine !== undefined &&
       request.engine !== 'auto' &&
       request.engine !== defaultEngineName)

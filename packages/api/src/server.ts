@@ -1796,6 +1796,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             'INVALID_REQUEST',
             'credentialSource is server-assigned (the cookie handoff), never session input.'
           );
+        // The wire passes unknown keys through unvalidated: a scope outside
+        // `policy` would reach the service without schema validation.
+        if ('scope' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'An engagement scope belongs under policy.scope, where it is validated.'
+          );
         if (validated.value.cdpAttach === true) {
           const address = fastify.server.address();
           if (
