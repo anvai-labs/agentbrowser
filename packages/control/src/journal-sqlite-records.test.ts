@@ -159,13 +159,13 @@ function spawnChild(options: Record<string, unknown>): ChildLink {
     {
       execArgv: ['--experimental-strip-types'],
       cwd: tmpdir(),
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      // Nothing reads the child's output: inherit-free and unpiped, so it can never block on a
+      // full pipe buffer.
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     }
   );
   const exited = once(child, 'exit');
   void exited.catch(() => {});
-  // TEMP-DEBUG
-  child.stderr?.on('data', (d) => console.log('CHILD_ERR', String(d).slice(0, 300)));
   children.push({ child, exited });
   return new ChildLink(child);
 }

@@ -616,3 +616,26 @@ describe('journal reconcile hardening (J3c part 2, review round 1)', () => {
     expect(await records(f.journal, 'captured')).toEqual(['completed']);
   }, 60_000);
 });
+
+describe('reconcile construction checks (review nits)', () => {
+  it.each([Number.NaN, 0, -5, 1.5, 2 ** 31])(
+    'refuses journalReconcileTimeoutMs %s at construction',
+    async (journalReconcileTimeoutMs) => {
+      await expect(fixture([], { journalReconcileTimeoutMs })).rejects.toThrow(
+        /journalReconcileTimeoutMs must be an integer/
+      );
+    }
+  );
+
+  it('a null adapter entry is refused by the application authority, not as a TypeError', async () => {
+    const failure = await fixture([null as never]).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    expect(failure).not.toBeInstanceOf(TypeError);
+    expect(failure).toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringMatching(/Invalid or duplicate application adapter/),
+    });
+  });
+});

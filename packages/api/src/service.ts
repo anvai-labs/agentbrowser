@@ -778,6 +778,16 @@ export class AgentBrowserService {
     this.evidenceReviewProvider = evidenceReviewProvider;
     if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
       throw new Error('Evidence source registry and provider are mutually exclusive');
+    this.applicationAuthority = new ApplicationAuthority(
+      this.authority,
+      deps.applicationAdapters ?? [],
+      {
+        consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId),
+        durableWrites: this.operationJournal !== undefined,
+      }
+    );
+    // Captured AFTER the application authority has validated every adapter (a null or duplicate
+    // entry is refused there with its typed error, never a TypeError here).
     const reconcilers = new Map<string, NonNullable<ApplicationAdapter['reconcile']>>();
     for (const adapter of deps.applicationAdapters ?? []) {
       const reconcile = (adapter as { reconcile?: unknown }).reconcile;
@@ -790,15 +800,16 @@ export class AgentBrowserService {
       );
     }
     this.reconcilers = reconcilers;
-    this.reconcileTimeoutMs = deps.journalReconcileTimeoutMs ?? 10_000;
-    this.applicationAuthority = new ApplicationAuthority(
-      this.authority,
-      deps.applicationAdapters ?? [],
-      {
-        consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId),
-        durableWrites: this.operationJournal !== undefined,
-      }
-    );
+    // setTimeout fires at once for NaN, negatives or anything past 2^31-1, which would make every
+    // reconcile count as unresolved: refuse such a value at construction instead.
+    const reconcileTimeoutMs = deps.journalReconcileTimeoutMs ?? 10_000;
+    if (
+      !Number.isSafeInteger(reconcileTimeoutMs) ||
+      reconcileTimeoutMs < 1 ||
+      reconcileTimeoutMs > 2_147_483_647
+    )
+      throw new Error('journalReconcileTimeoutMs must be an integer from 1 to 2147483647');
+    this.reconcileTimeoutMs = reconcileTimeoutMs;
     if (evidenceSourceRegistryProvider !== undefined) {
       if (typeof evidenceSourceRegistryProvider !== 'function')
         throw new Error('Invalid evidence source registry provider');
