@@ -105,6 +105,13 @@ export interface RequestPolicy {
     method?: string;
     headers?: Record<string, string>;
   }): Promise<void>;
+  /**
+   * True when every redirect hop must be checked, including those after a
+   * body-bearing request (POST/PUT/PATCH) that engines hand to the browser
+   * natively. An engine that cannot watch such a request's redirects refuses
+   * the request instead of letting a hop go unchecked. Engagement scopes set it.
+   */
+  readonly requireRedirectGuard?: boolean;
   /** Redirect targets, excluding the initial request; throw before following. */
   checkRedirectChain?(
     requests: Array<{ url: string; hostname?: string; method?: string }>
