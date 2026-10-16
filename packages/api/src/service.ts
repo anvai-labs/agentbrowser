@@ -678,8 +678,25 @@ export const BROWSER_KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
   'QUOTA_EXCEEDED',
 ]);
 
+/**
+ * Failures raised AFTER an effect was reported done (the post-action wait or observation: a click
+ * that closed its page then fails the follow-up read with PAGE_NOT_FOUND). Whatever their code,
+ * the effect happened, so they are outcome-unknown, never a known pre-effect failure.
+ */
+const postEffectFailures = new WeakSet<object>();
+const afterEffect = (error: unknown): unknown => {
+  if (typeof error === 'object' && error !== null) postEffectFailures.add(error);
+  return error;
+};
+
+const carryAfterEffect = <T>(from: unknown, to: T): T =>
+  typeof from === 'object' && from !== null && postEffectFailures.has(from)
+    ? (afterEffect(to) as T)
+    : to;
+
 /** May a browser effect have happened before this failure? (Untyped failures: yes.) */
 export const browserFailureOutcomeUnknown = (error: unknown): boolean => {
+  if (typeof error === 'object' && error !== null && postEffectFailures.has(error)) return true;
   const code = (error as { code?: unknown } | null | undefined)?.code;
   return typeof code !== 'string' || !BROWSER_KNOWN_FAILURE_CODES.has(code);
 };
@@ -1080,7 +1097,8 @@ export class AgentBrowserService {
           );
           this.tracer?.endSpan(span);
         }
-        throw this.redactedError(mapped);
+        // The mapped, redacted error keeps a post-effect mark (T5 B-dur, B2).
+        throw carryAfterEffect(error, this.redactedError(mapped));
       }
     );
   }
@@ -4278,53 +4296,59 @@ export class AgentBrowserService {
       }
 
       page.revision = result.newRevision;
+      // T5 B-dur (B2): the effect is done; anything that fails from here on followed it.
+      try {
+        if (
+          request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified !== true
+        )
+          throw new ServiceError(
+            'ENGINE_UNSUPPORTED',
+            'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
+            false
+          );
 
-      if (
-        request.action === 'fill' &&
-        request.expectValue !== undefined &&
-        (result.result as { verified?: unknown } | undefined)?.verified !== true
-      )
-        throw new ServiceError(
-          'ENGINE_UNSUPPORTED',
-          'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
-          false
-        );
+        // Post-action wait (spec 11.1): an explicit wait runs to its deadline
+        // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
+        // never a hang). Without one, a zero-cost settle yield keeps latency
+        // off the deterministic path - engines that need real settling take
+        // an explicit wait.
+        const waitReason =
+          request.wait !== undefined
+            ? await this.waitFor(page.enginePage, request.wait)
+            : request.action === 'wait' && request.condition !== undefined
+              ? await this.waitFor(page.enginePage, request.condition)
+              : 'settled';
 
-      // Post-action wait (spec 11.1): an explicit wait runs to its deadline
-      // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
-      // never a hang). Without one, a zero-cost settle yield keeps latency
-      // off the deterministic path - engines that need real settling take
-      // an explicit wait.
-      const waitReason =
-        request.wait !== undefined
-          ? await this.waitFor(page.enginePage, request.wait)
-          : request.action === 'wait' && request.condition !== undefined
-            ? await this.waitFor(page.enginePage, request.condition)
-            : 'settled';
+        // A requested post-action observation goes through the service's own
+        // observe(), so its refs are minted, mapped and immediately actionable.
+        let observation: PageState | undefined;
+        if (request.observe === 'after') {
+          observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+        }
 
-      // A requested post-action observation goes through the service's own
-      // observe(), so its refs are minted, mapped and immediately actionable.
-      let observation: PageState | undefined;
-      if (request.observe === 'after') {
-        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+        return {
+          status: 'success',
+          actionId: result.actionId,
+          newRevision: result.newRevision,
+          observation,
+          waitReason,
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          // Only publish the comparison boolean, never a field value.
+          ...(request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified === true
+            ? { result: { verified: true } }
+            : {}),
+          // Upload reports its separate attached-file evidence.
+          ...(request.action === 'upload' && result.result != null
+            ? { result: result.result }
+            : {}),
+        };
+      } catch (error) {
+        throw afterEffect(error);
       }
-
-      return {
-        status: 'success',
-        actionId: result.actionId,
-        newRevision: result.newRevision,
-        observation,
-        waitReason,
-        ...(result.remap !== undefined ? { remap: result.remap } : {}),
-        // Only publish the comparison boolean, never a field value.
-        ...(request.action === 'fill' &&
-        request.expectValue !== undefined &&
-        (result.result as { verified?: unknown } | undefined)?.verified === true
-          ? { result: { verified: true } }
-          : {}),
-        // Upload reports its separate attached-file evidence.
-        ...(request.action === 'upload' && result.result != null ? { result: result.result } : {}),
-      };
     });
   }
 

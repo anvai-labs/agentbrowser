@@ -535,7 +535,8 @@ HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
   A refused durable operation never self-heals: the plan's and act's stale-target remap retry is
   skipped once the recheck refused or the journal sealed (a retry could only spend a lease
   action or mint a spurious approval request, then be refused), and the report carries the
-  recheck's own reason (review F1; pinned: no new approval minted, no effect, `failed`).
+  recheck's own reason (review F1; pinned for the plan heal and for act's own `remap: true`
+  heal: no new approval minted, no remap, no effect, `failed`).
 - **autofill (B6).** Its guard is its own read-only stage recheck (B-dur-1's `onRecheck`), run
   once after the marker before the first field's effect. A committed field re-rendered during
   the wait gives no effect, a `failed` dispatched record, and the autofill report is returned —
@@ -554,7 +555,11 @@ HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
   fill may have completed" (review F2, pinned over HTTP), a plan or batch step that failed that
   way (the service remembers this beside the report object; the wire report is unchanged), an
   autofill receipt `uncertain` — and is `outcome_unknown` (classified `settled_unknown`); a new
-  code is unknown by default. **The report is still returned**: it is
+  code is unknown by default. A code is only "known" BEFORE the effect: anything `act` throws
+  after the executor reported the effect done (the post-action wait or observation, e.g. a click
+  that closed its page so the follow-up read is `PAGE_NOT_FOUND`) is marked post-effect beside
+  the error object — carried through the service's error mapping — and is outcome-unknown
+  whatever its code (review round 2 finding A; pinned for act and plan over HTTP). **The report is still returned**: it is
   the caller's only account of what was attempted, and the record is the authority on the
   outcome. An in-doubt application write is still a refusal (unchanged). Pinned over HTTP: a plan
   whose second step lost its result is `settled_unknown` with its report; a plan whose only step

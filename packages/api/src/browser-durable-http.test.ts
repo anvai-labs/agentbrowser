@@ -446,4 +446,44 @@ describe('known versus unknown failures after the effect (B-dur-2b review)', () 
       await t.close();
     }
   }, 60_000);
+
+  it.each(['act', 'plan'] as const)(
+    'a durable %s whose click closed the page (the follow-up read fails) is settled unknown',
+    async (route) => {
+      const t = await journaledServer();
+      try {
+        t.raw.setElements([{ role: 'button', name: 'Close' }]);
+        const ref = await t.observeRef('Close');
+        const act = t.raw.act.bind(t.raw);
+        const observe = t.raw.observe.bind(t.raw);
+        let clicked = 0;
+        t.raw.act = async (action) => {
+          clicked += 1;
+          return act(action);
+        };
+        t.raw.observe = async (request) => {
+          if (clicked > 0)
+            throw Object.assign(new Error('Page is closed'), { code: 'PAGE_NOT_FOUND' });
+          return observe(request);
+        };
+        const step = { action: 'click', target: { ref }, observe: 'after' };
+        const response = await t.server.inject({
+          method: 'POST',
+          url: `${t.pagePath}/${route}`,
+          headers: t.headers(`closed-${route}`),
+          payload:
+            route === 'act'
+              ? { ...step, executionRequirement: 'durable' }
+              : { actions: [step], executionRequirement: 'durable' },
+        });
+        expect(clicked).toBe(1);
+        if (route === 'plan') expect(response.json()).toMatchObject({ ok: false });
+        else expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(await t.classification(`closed-${route}`)).toBe('settled_unknown');
+      } finally {
+        await t.close();
+      }
+    },
+    60_000
+  );
 });

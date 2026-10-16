@@ -1658,6 +1658,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               );
             return httpPublication.respond(request, reply, async (output) => {
               let draft: HttpResponseDraft | undefined;
+              let thrownOutcomeUnknown = false;
               await service.authority.run(
                 sessionId,
                 principal,
@@ -1694,6 +1695,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                   try {
                     draft = await handler(input);
                   } catch (error) {
+                    // T5 B-dur (B2): judged on the error object itself (a post-effect failure is
+                    // marked there), before it is serialized into a response.
+                    thrownOutcomeUnknown = browserFailureOutcomeUnknown(error);
                     // Admitted errors may carry private approval details; publish with the same owner.
                     draft = errorResponse(error);
                   }
@@ -1709,9 +1713,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                   // report hiding such a step or an `uncertain` receipt — stays in doubt.
                   if (draft.statusCode < 400)
                     return browserReportOutcomeUnknown(draft.body) ? true : 'rejected';
-                  return browserFailureOutcomeUnknown(
-                    (draft.body as { error?: unknown } | undefined)?.error
-                  )
+                  return thrownOutcomeUnknown ||
+                    browserFailureOutcomeUnknown(
+                      (draft.body as { error?: unknown } | undefined)?.error
+                    )
                     ? true
                     : 'rejected';
                 },

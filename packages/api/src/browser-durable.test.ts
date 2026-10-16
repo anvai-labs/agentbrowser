@@ -493,4 +493,43 @@ describe('review fixes (B-dur-2b round 2)', () => {
     expect(report.receipts[0]?.status).not.toBe('uncertain');
     expect(browserReportOutcomeUnknown(report)).toBe(false);
   }, 60_000);
+
+  it("act's own remap: true heal is skipped too once the recheck refused", async () => {
+    const f = await fixture();
+    f.raw.setElements([{ role: 'button', name: 'Save' }]);
+    const ref = await f.refOf('Save');
+    let effects = 0;
+    const act = f.raw.act.bind(f.raw);
+    f.raw.act = async (action) => {
+      effects += 1;
+      return act(action);
+    };
+    const remap = vi.spyOn(
+      f.service as unknown as { remapAct: (...args: unknown[]) => unknown },
+      'remapAct'
+    );
+    // The recheck reports binding staleness (remap-eligible), as it does when the service
+    // revision moved during the marker wait; the fake engine cannot move it by itself.
+    (
+      f.service as unknown as {
+        executor: { revalidateTarget: (...args: unknown[]) => Promise<unknown> };
+      }
+    ).executor.revalidateTarget = async () => ({
+      code: 'STALE_TARGET',
+      message: 'The page revision moved during the marker wait',
+      retryable: false,
+      details: { remapEligible: true },
+    });
+    const outcome = await f
+      .durable('act', 'remap-refused', () =>
+        f.service.act(f.sessionId, f.pageId, { action: 'click', target: { ref }, remap: true })
+      )
+      .then(
+        () => 'ran',
+        (error: { code?: string }) => error.code
+      );
+    expect(outcome).toBe('STALE_TARGET');
+    expect(remap).not.toHaveBeenCalled();
+    expect(effects).toBe(0);
+  }, 60_000);
 });
