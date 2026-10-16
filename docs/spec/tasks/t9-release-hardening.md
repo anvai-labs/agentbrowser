@@ -76,8 +76,16 @@ The 1.9.1 candidate's tag ancestry and delivery are verified. The reusable ances
 gate now exists (2026-10-15): `scripts/check-tag-ancestry.mjs` runs in the release
 `tag-guard` job, which every other release job depends on, and refuses a tag whose commit
 is not reachable from `main`. Because GitHub runs the workflow *of the tagged commit*, the
-gate does not bind a tag on an older or modified commit; R14 closes only once the owner
-applies the tag-creation ruleset and `npm` environment protection.
+gate does not bind a tag on an older or modified commit. **R14 closed 2026-10-16:**
+
+| Gate | Setting |
+| --- | --- |
+| Release ancestry | `tag-guard` refuses a commit not reachable from `main` (#475) |
+| Tag ruleset `release tags` (25241502) | `refs/tags/v*`: creation, deletion, update, non-fast-forward restricted; admin role bypasses |
+| `npm` environment | owner is a required reviewer (self-review allowed; admins can bypass); deploys only from `v*` tags |
+| Provenance | `actions/attest-build-provenance` signs every release asset; npm keeps `--provenance` |
+| Immutability | the Release is drafted, filled, then published. **Pending:** switch on repository immutable releases after the next develop→main promotion, before tagging 1.20.0 (main's current flow uploads after publishing) |
+| First exercised | the `v*` deployment policy, attestations and immutability: on the next release (1.20.0) |
 
 **Least privilege and pinning (2026-10-15, S1c).** Every workflow now defaults to
 `contents: read` at the top level (`ci.yml` previously inherited the repository default);

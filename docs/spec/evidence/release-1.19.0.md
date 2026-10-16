@@ -47,4 +47,4 @@ Full notes: CHANGELOG `[1.19.0]`.
 
 - **winget**: configure `WINGET_APP_ID`/`WINGET_APP_PRIVATE_KEY` (or `WINGET_FORK_TOKEN`), or
   submit the `winget-manifests` artifact by hand; the 1.17.1 new-package PR still awaits review.
-- **R14**: the owner's `v*` tag ruleset and `npm` environment protection (#475).
+- **R14**: closed 2026-10-16, after this release (tag ruleset + `npm` environment protection).
