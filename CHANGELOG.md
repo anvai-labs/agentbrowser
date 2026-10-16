@@ -7,6 +7,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.20.0 release record
+
+- `docs/spec/evidence/release-1.20.0.md` records the first release under the R14 gates and the
+  post-run verification of every channel (attestations on all 16 assets, immutability, owner
+  npm approval, Homebrew, the winget branch). The task README, T9 packet and R14 entry name
+  1.20.0 as the published baseline and immutable releases as on.
+
 ## [1.20.0] — 2026-10-16
 
 Entries are newest first. **Upgrading from 1.19.x:**

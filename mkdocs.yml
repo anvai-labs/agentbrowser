@@ -301,6 +301,7 @@ nav:
     - 'Release 1.17.1': spec/evidence/release-1.17.1.md
     - 'Release 1.18.0': spec/evidence/release-1.18.0.md
     - 'Release 1.19.0': spec/evidence/release-1.19.0.md
+    - 'Release 1.20.0': spec/evidence/release-1.20.0.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md
