@@ -15,7 +15,7 @@ comes from the browser or from the observation layer.
 
 | # | Markup | Browser AX tree | Playwright snapshot | `observe` today | Status |
 | --- | --- | --- | --- | --- | --- |
-| G-01 | `<details><summary>Label</summary>…</details>` | `DisclosureTriangle "Label"`, focusable, `expanded` | no node: the text folds into the parent `group` | role **`html-summary`**, name `Label`, `expanded`; a bindable ref | **fixed** (next release) |
+| G-01 | `<details><summary>Label</summary>…</details>` | `DisclosureTriangle "Label"`, focusable, `expanded` | no node: the text folds into the parent `group` | role **`html-summary`**, name `Label`, `expanded`; a bindable ref | **fixed** in 1.20.0 |
 
 ## G-01 · native disclosures (`details` / `summary`)
 

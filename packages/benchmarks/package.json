@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/benchmarks",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "private": true,
   "type": "module",
   "description": "Benchmark harness, deterministic agent task suite, and soak tests",

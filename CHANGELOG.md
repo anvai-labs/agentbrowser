@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-10-16
+
+Entries are newest first. **Compatibility:** a policy file now refuses startup when an
+approval rule's id is invalid, reserved or duplicated, or when a rule's `decision` is not read
+by any policy (see "Fixed — a policy file's approval rules classify actions"). Releases from
+this version on are drafted, carry signed build-provenance attestations, and pause npm
+publication for the owner's approval.
+
 ### Fixed — a disclosure whose state cannot be read refuses fast
 
 - The act-time `open` re-check is bounded to one second. An engine that cannot resolve the
