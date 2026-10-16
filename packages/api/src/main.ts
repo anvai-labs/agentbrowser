@@ -23,6 +23,7 @@ import {
   networkPolicyFromEnvironment,
   unknownRiskFromEnvironment,
 } from './network-policy-config.js';
+import { serverPolicyOption } from './policy-option.js';
 import { apiKeysFromEnv, startServer } from './server.js';
 import { parseLogLevel } from './server-args.js';
 
@@ -176,20 +177,7 @@ const server = await startServer({
   ...(loginBrowserEnabled ? { loginBrowser: true } : {}),
   ...(policy !== undefined
     ? {
-        policy: {
-          kind: policy.kind,
-          authorizer: policy.authorizer,
-          version: policy.authorizer.version,
-          limits: policy.limits,
-          ...(policy.kind === 'file'
-            ? {
-                approval: {
-                  rules: policy.document.approvalRules,
-                  unknownRisk: policy.document.unknownRisk,
-                },
-              }
-            : {}),
-        },
+        policy: serverPolicyOption(policy),
       }
     : {}),
   engine,

@@ -13,6 +13,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   only the document version, and the environment approval policy is refused alongside a file.
   So no rule could mark a control as a transaction and require approval. The file's rules now
   classify every action before Cedar decides (pinned by `policy-file-approval-rules.test.ts`).
+- Compatibility: a policy file now refuses startup when an approval rule's id is invalid,
+  reserved or duplicated (it was never checked before), or when a rule carries a `decision` that
+  no policy reads through `context.matchedRule` (it was silently ignored).
 
 ### Docs — a secure starter policy and how to configure policy
 

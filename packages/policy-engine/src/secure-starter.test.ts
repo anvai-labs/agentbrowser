@@ -193,3 +193,47 @@ describe('the documented loosening recipes (docs/policy.md) work as written', ()
     expect(at('192.168.1.1')).toBe(false);
   });
 });
+
+describe('approval rules with a decision in a hand-written file', () => {
+  const write = async (doc: unknown) => {
+    const { writeFile, mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = await mkdtemp(join(tmpdir(), 'starter-decision-'));
+    const path = join(dir, 'policy.json');
+    await writeFile(path, JSON.stringify(doc));
+    return path;
+  };
+
+  it('refuses a decision no policy reads (it would be silently ignored)', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const doc = JSON.parse(await readFile(STARTER, 'utf8'));
+    doc.approvalRules = [
+      { id: 'no-tab', action: 'press', effect: 'write-local', decision: 'deny' },
+    ];
+    await expect(
+      loadPolicyFile(await write(doc), { apiKeysConfigured: false }, {})
+    ).rejects.toThrow(/"no-tab" carry a decision but no policy reads context\.matchedRule/);
+  });
+
+  it('accepts it once a policy keys on context.matchedRule, and the decision then applies', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const doc = JSON.parse(await readFile(STARTER, 'utf8'));
+    doc.approvalRules = [
+      { id: 'no-tab', action: 'press', effect: 'write-local', decision: 'deny' },
+    ];
+    doc.policies.push({
+      key: 'operator.rule.no-tab',
+      ruleId: 'operator.rule.no-tab',
+      cedar:
+        '@rule("operator.rule.no-tab") forbid(principal, action in [AgentBrowser::Action::"act", AgentBrowser::Action::"act.unattended"], resource) when { context.matchedRule == "no-tab" };',
+    });
+    const policy = await loadPolicyFile(await write(doc), { apiKeysConfigured: false }, {});
+    expect(
+      approvalModeOf(policy.authorizer, {
+        effect: 'write-local',
+        rule: { id: 'no-tab', decision: 'deny' },
+      })
+    ).toBe('deny');
+  });
+});

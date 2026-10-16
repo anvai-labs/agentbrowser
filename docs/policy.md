@@ -78,6 +78,12 @@ matching rule wins:
 That click now needs owner approval, while every other click on the site runs. This is pinned
 by `packages/api/src/policy-file-approval-rules.test.ts`.
 
+| Rule field | In a policy file |
+| --- | --- |
+| `effect` | classifies the control; the starter's high-risk rules then require approval |
+| `decision` (`allow` / `required` / `deny`) | acts **only** through a policy keyed on `context.matchedRule == "<id>"`; a decision no policy reads **refuses startup** rather than being ignored |
+| `id` | must be valid and unique (startup refuses otherwise); it becomes `context.matchedRule` |
+
 ### Loosening it, one tenant at a time
 
 | Step | What to do |
