@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Security — a scope refuses the lanes it cannot check (T10 M1)
+
+| Create request | Before | After |
+| --- | --- | --- |
+| `cdpAttach` + `scope` | passed the options floor; the attach lane ignores the scope | refused, `400 INVALID_REQUEST` (`floor.cdp.options`) |
+| `allowServiceWorkers: true` + `scope` | session created; service-worker fetches bypass the scope | refused, `400 INVALID_REQUEST` (`scope.lane.serviceWorkers`) |
+| `scope` alone | unchanged | unchanged (service workers blocked by default) |
+
 ### Security — redirects after POST/PUT/PATCH are checked in scoped sessions (T10 M1)
 
 - **The hole:** body-bearing requests pass to the browser natively (byte-exact uploads), and

@@ -283,7 +283,8 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
               'covers subdomains only, list the apex separately), pathRules ' +
               '[{hostSuffix?, prefix}] (segment-boundary prefixes), allowedMethods, expiresAt ' +
               '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
-              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts).',
+              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts). ' +
+              'Refused together with allowServiceWorkers: true, a lane the scope cannot check.',
             properties: {
               allowedHosts: {
                 type: 'array',

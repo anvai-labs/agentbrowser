@@ -115,9 +115,14 @@ the real choke point.
 
 ## Residuals and prerequisite notes (stated, not hidden)
 
-- **Operator cdp-attach lane**: navigation-preflight-only by contract;
-  scope enforcement is not installed there (same lane exception as the
-  WebSocket deny handler).
+- **Operator cdp-attach lane**: navigation-preflight-only by contract, so
+  scope enforcement cannot run there. Since T10 M1 a create request with
+  both `cdpAttach` and a scope is **refused** (`floor.cdp.options`) rather
+  than silently attaching unscoped.
+- **Service workers**: their fetches bypass the choke point (ADR-019). Since
+  T10 M1 a scoped session **refuses** `allowServiceWorkers: true`
+  (`INVALID_REQUEST`, rule `scope.lane.serviceWorkers`); the default (blocked)
+  is unchanged.
 - **Body-bearing redirects — closed for scoped sessions (T10 M1, 2026-10-16).**
   POST/PUT/PATCH still pass to the browser natively (byte-exact upload
   bodies), and their redirects are now checked hop by hop:
@@ -140,10 +145,13 @@ the real choke point.
   Cost: each request in a scoped session pauses twice more (request and
   response stage); measured on a 51-request page, load took about 1.5× as
   long. Tests: `body-redirect-guard.test.ts` (real Chromium, plus unit rules).
-- **Workers**: service-worker and dedicated-worker traffic outside
-  Playwright's page routing is not scope-checked — the same coverage
-  boundary as the egress choke point itself; not represented as complete
-  containment (T7 packet rule).
+- **Workers**: dedicated-worker requests were observed routed with their
+  owner frame on Playwright 1.64, and a scoped worker POST redirect is
+  pinned by `body-redirect-guard.test.ts`; that is observed coverage, not a
+  worker guarantee (the operator guide's caveat stands). Service workers are
+  refused with a scope (above). Shared workers and WebSockets opened from
+  workers are not qualified here — the same coverage boundary as the egress
+  choke point itself; not represented as complete containment (T7 packet rule).
 - **Gateway program**: `EngagementScopePolicy` does not participate in
   gateway snapshots; if scope enforcement is wanted in that lane it is a
   prerequisite to report, not an implicit restart (packet stop rule).

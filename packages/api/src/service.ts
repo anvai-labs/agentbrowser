@@ -11,6 +11,7 @@ import {
   FLOOR_OPERATOR_REQUIRED,
   handoffFloor,
   requireCdpAttachAdmission,
+  SCOPE_SERVICE_WORKERS,
   withMetadataFloor,
 } from './floor.js';
 import { SessionAuthority } from './session-authority.js';
@@ -1568,6 +1569,8 @@ export class AgentBrowserService {
         !request.tenantId)
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
+    if (request.scope !== undefined && request.allowServiceWorkers === true)
+      throw new ServiceError(...SCOPE_SERVICE_WORKERS);
     if (request.cdpAttach === true) {
       if (attachRequestHasOptions(request, this.engine.name))
         throw new ServiceError(...FLOOR_ATTACH_OPTIONS);

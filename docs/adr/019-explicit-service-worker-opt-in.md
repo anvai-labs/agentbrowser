@@ -59,6 +59,10 @@ not evasion of anything on the destination site's side. It changes nothing about
 browser presents itself; it only stops blocking a browser feature that a legitimate site
 may depend on.
 
+**Amendment (T10 M1, 2026-10-16):** a session with an engagement scope refuses the opt-in
+(`400 INVALID_REQUEST`, rule `scope.lane.serviceWorkers`). A scope promises that every
+request is checked, and service-worker requests are not.
+
 ## Consequences
 
 - Sessions that don't opt in are bit-identical to before this ADR: `serviceWorkers:
