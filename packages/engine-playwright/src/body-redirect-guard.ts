@@ -48,6 +48,8 @@ export interface BodyRedirectGuardOptions {
     detail: { reason: string; redirect?: string; detail?: string }
   ): void;
   maxHops: number;
+  /** Live chains per target; past it new body-bearing requests are refused. */
+  maxChains?: number;
 }
 
 interface Chain {
@@ -77,7 +79,11 @@ type PausedEvent = {
 };
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
-/** Chains whose response never arrives (aborted) are evicted oldest-first past this. */
+/**
+ * Live chains per target. A chain closes when its request finishes or fails;
+ * a full table refuses new body-bearing requests (fail closed) and never
+ * evicts a live chain, whose redirect would then go unchecked.
+ */
 export const MAX_TRACKED_CHAINS = 4096;
 
 const keyOf = (method: string, url: string): string => `${method.toUpperCase()} ${url}`;
@@ -94,6 +100,7 @@ export class BodyRedirectGuard {
   private readonly frameTargets = new WeakMap<Frame, GuardTarget>();
   private readonly frameAttach = new WeakMap<Frame, Promise<void>>();
   private readonly watched = new WeakSet<Page>();
+  private readonly pageReady = new WeakMap<Page, Promise<void>>();
 
   constructor(
     private readonly context: BrowserContext,
@@ -128,6 +135,15 @@ export class BodyRedirectGuard {
     return true;
   }
 
+  /**
+   * Resolves once this page's guard is armed, so a page handed to a caller
+   * does not start with requests the guard cannot see (they would be refused).
+   */
+  ready(page: Page): Promise<void> {
+    this.watchPage(page);
+    return this.pageReady.get(page) ?? Promise.resolve();
+  }
+
   /** The target that intercepts this frame's requests: its own if out of process. */
   private targetOf(frame: Frame): GuardTarget | undefined {
     for (let current: Frame | null = frame; current !== null; current = current.parentFrame()) {
@@ -141,9 +157,15 @@ export class BodyRedirectGuard {
   private watchPage(page: Page): void {
     if (this.watched.has(page)) return;
     this.watched.add(page);
-    void this.attach(() => this.context.newCDPSession(page))
-      .then((target) => this.pageTargets.set(page, target))
-      .catch(() => {});
+    this.pageReady.set(
+      page,
+      this.attach(() => this.context.newCDPSession(page)).then(
+        (target) => {
+          this.pageTargets.set(page, target);
+        },
+        () => {}
+      )
+    );
     const watchFrame = (frame: Frame) => {
       if (frame.parentFrame() === null) return;
       // Only an out-of-process iframe has its own target; the attempt fails
@@ -172,6 +194,15 @@ export class BodyRedirectGuard {
     cdp.on('Fetch.requestPaused', (event: PausedEvent) => {
       void this.paused(target, event).catch(() => {});
     });
+    // A request that is aborted, hangs up or fails never reaches the response
+    // stage; the Network domain reports its end, which frees its chain.
+    const ended = (event: { requestId: string }) => {
+      const chain = target.chains.get(event.requestId);
+      if (chain !== undefined) this.close(target, chain);
+    };
+    cdp.on('Network.loadingFailed', ended);
+    cdp.on('Network.loadingFinished', ended);
+    await cdp.send('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0 });
     await cdp.send('Fetch.enable', {
       patterns: [
         { urlPattern: '*', requestStage: 'Request' as const },
@@ -192,11 +223,6 @@ export class BodyRedirectGuard {
     };
     target.chains.set(networkId, chain);
     target.unclaimed.set(key, [...(target.unclaimed.get(key) ?? []), networkId]);
-    while (target.chains.size > MAX_TRACKED_CHAINS) {
-      const oldest = target.chains.values().next().value;
-      if (oldest === undefined) break;
-      this.close(target, oldest);
-    }
   }
 
   private close(target: GuardTarget, chain: Chain): void {
@@ -218,6 +244,22 @@ export class BodyRedirectGuard {
         !target.chains.has(networkId) &&
         BODY_METHODS.has(event.request.method.toUpperCase())
       ) {
+        if (target.chains.size >= (this.options.maxChains ?? MAX_TRACKED_CHAINS)) {
+          // Full: refuse rather than track it without room (fail closed).
+          try {
+            this.options.onBlocked(undefined, {
+              reason: 'egress_policy',
+              detail: 'REDIRECT_UNCHECKABLE',
+            });
+          } catch {}
+          await cdp
+            .send('Fetch.failRequest', {
+              requestId: event.requestId,
+              errorReason: 'BlockedByClient',
+            })
+            .catch(() => {});
+          return;
+        }
         this.open(target, event, networkId);
       }
       await cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});

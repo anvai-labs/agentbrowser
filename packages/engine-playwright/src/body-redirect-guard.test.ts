@@ -116,6 +116,13 @@ function startFixture(): Promise<Fixture> {
         );
         return;
       }
+      if (url.pathname === '/loop/a' || url.pathname === '/loop/b') {
+        response.writeHead(307, {
+          location: target('in', url.pathname === '/loop/a' ? '/loop/b' : '/loop/a'),
+        });
+        response.end();
+        return;
+      }
       if (url.pathname === '/framed') {
         response.writeHead(200, { 'content-type': 'text/html' });
         response.end(
@@ -342,6 +349,19 @@ describe('redirects after body-bearing requests are checked (T10 M1, real Chromi
     }
   }, 60_000);
 
+  it('a redirect loop is blocked as a loop, before the hop cap', async () => {
+    const fixture = await startFixture();
+    try {
+      await withPage(scoped(), async (page, failures) => {
+        await submit(page, fixture, '/loop/a');
+        expect(fixture.hits.filter((hit) => hit.path.startsWith('/loop/')).length).toBe(2);
+        expect(failures.some((failure) => failure.detail === 'REDIRECT_LOOP')).toBe(true);
+      });
+    } finally {
+      await closeFixture(fixture);
+    }
+  }, 60_000);
+
   it('a hostile chain past the hop cap is blocked', async () => {
     const fixture = await startFixture();
     try {
@@ -372,12 +392,20 @@ describe('BodyRedirectGuard unit rules', () => {
   };
   const fakeCdp = () => {
     const events = emitter();
-    return { ...events, send: async () => ({}) };
+    const sent: Array<{ method: string; params: unknown }> = [];
+    return {
+      ...events,
+      sent,
+      send: async (method: string, params?: unknown) => {
+        sent.push({ method, params });
+        return {};
+      },
+    };
   };
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   /** A page target and an out-of-process child frame target, both guarded. */
-  async function harness() {
+  async function harness(maxChains?: number) {
     const pageCdp = fakeCdp();
     const frameCdp = fakeCdp();
     const pageEvents = emitter();
@@ -393,6 +421,7 @@ describe('BodyRedirectGuard unit rules', () => {
       verdictOf: async () => ({ verdict: 'allow' }),
       onBlocked: () => {},
       maxHops: 10,
+      ...(maxChains !== undefined ? { maxChains } : {}),
     });
     await settle();
     pageEvents.emit('frameattached', child);
@@ -433,6 +462,24 @@ describe('BodyRedirectGuard unit rules', () => {
     expect(guard.track(request(child) as never)).toBe(false);
     seen(frameCdp, 'n2');
     expect(guard.track(request(child) as never)).toBe(true);
+  });
+
+  it('fails closed when full: refuses new chains, never evicts a live one', async () => {
+    const { guard, pageCdp, main, request, seen } = await harness(2);
+    seen(pageCdp, 'a', 'http://127.0.0.1/a');
+    seen(pageCdp, 'b', 'http://127.0.0.1/b');
+    seen(pageCdp, 'c', 'http://127.0.0.1/c');
+    await settle();
+    // The third is failed at the guard's request stage and is not claimable.
+    expect(pageCdp.sent.some((call) => call.method === 'Fetch.failRequest')).toBe(true);
+    expect(guard.track(request(main, 'http://127.0.0.1/c') as never)).toBe(false);
+    // The live chains are still tracked.
+    expect(guard.track(request(main, 'http://127.0.0.1/a') as never)).toBe(true);
+    // A request that ended frees its slot.
+    pageCdp.emit('Network.loadingFailed', { requestId: 'b' });
+    seen(pageCdp, 'd', 'http://127.0.0.1/d');
+    await settle();
+    expect(guard.track(request(main, 'http://127.0.0.1/d') as never)).toBe(true);
   });
 
   it('refuses requests without a frame', async () => {

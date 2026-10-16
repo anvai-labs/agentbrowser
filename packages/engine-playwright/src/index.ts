@@ -64,6 +64,10 @@ import {
   type Page,
 } from 'playwright';
 import { BodyRedirectGuard } from './body-redirect-guard.js';
+
+/** Each scoped context's redirect guard, so new pages wait until it is armed. */
+const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
+
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import {
   classifyEmptyObservation,
@@ -1934,6 +1938,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             },
           })
         : undefined;
+    if (redirectGuard !== undefined) redirectGuards.set(context, redirectGuard);
     await context.route('**', async (route) => {
       const request = route.request();
       const url = request.url();
@@ -2357,6 +2362,7 @@ class PlaywrightSession implements EngineSession {
     }
     const playwrightPage = await this.context.newPage();
     try {
+      await redirectGuards.get(this.context)?.ready(playwrightPage);
       return await this.registerPlaywrightPage(playwrightPage, options?.viewport);
     } catch (error) {
       await playwrightPage.close().catch(() => {});

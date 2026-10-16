@@ -126,6 +126,7 @@ the real choke point.
   | --- | --- |
   | Chromium, request seen by its own target's guard (pages, frames, dedicated workers) | every redirect hop gets a fresh verdict, the hop cap and loop detection; a denied hop fails before the browser follows it |
   | Request its target's guard did not see: a popup's first request (a `target=_blank` form POST), a target attached late, Firefox/WebKit | refused before the wire: `request.failed`, `detail: REDIRECT_UNCHECKABLE` |
+  | A target already tracking 4096 open chains (requests still in flight) | new POST/PUT/PATCH refused at the guard until one ends; a live chain is never evicted |
   | Unscoped session | unchanged native passthrough (the ADR-006 residual) |
 
   Mechanism: a per-target CDP session with request- and response-stage
@@ -134,6 +135,8 @@ the real choke point.
   across its redirects (URLs are not: fragments are stripped, characters
   re-encoded); a body-bearing request is continued only if the guard on its
   own target saw it (`packages/engine-playwright/src/body-redirect-guard.ts`).
+  Pages created through the engine are returned only once their guard is
+  armed; a chain closes when its request finishes or fails.
   Cost: each request in a scoped session pauses twice more (request and
   response stage); measured on a 51-request page, load took about 1.5× as
   long. Tests: `body-redirect-guard.test.ts` (real Chromium, plus unit rules).

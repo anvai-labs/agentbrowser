@@ -18,7 +18,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   tracked by Chromium's network id, so a rewritten URL (fragment, re-encoding) or two chains
   meeting at one URL cannot slip a hop. A body-bearing request its own target's guard did not
   see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`), including a popup's first
-  request (a `target=_blank` form POST).
+  request (a `target=_blank` form POST) and new ones while a target already tracks 4096
+  in-flight chains; a live chain is never evicted.
   Policies opt in with `requireRedirectGuard`; `EngagementScopePolicy` sets it and the metadata
   floor carries it.
 
