@@ -18,6 +18,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Changed — task status table refreshed
+
+- The task README's status rows for T0, T1, T3, T5, T6, T8 and T9 now match develop; the
+  continuation note says everything since the #483 back-sync is unreleased; the stale 1.15.2-era
+  "Next items" sections are replaced by one current list of owner- and infrastructure-gated
+  items; the T6 packet no longer lists delivered W2, W3a and W3b work as open.
+
 ### Changed — T5 records reflect browser durability
 
 - `docs/spec/review.md` R08, the task README's T5 row, the T5 packet and the recovery design now

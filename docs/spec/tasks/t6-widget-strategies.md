@@ -43,9 +43,8 @@ workflow and production qualification gates remain open.
 AgentBrowser 1.8.19 extends the existing autofill strategy registry with explicit
 `react-select` and `chip-multiselect` strategies. Both reuse the same scoped field
 resolution, action executor, receipt assembly and verification loop; they do not add a
-second bulk orchestrator. This is a bounded T6 slice, not completion of T6: reusable
-mapping, removal/rollback semantics, broader async/recycled-option coverage and
-cross-engine actual-surface qualification remain open.
+second bulk orchestrator. A bounded slice: mapping (#238), chip removal (#502) and cross-engine
+(#507) came later; rollback and async/recycled-option coverage remain open.
 
 The [Q0 commitment repair](../evidence/t6-widget-commitment.md) shipped in 1.9.1 through PR #232.
 It restores four dormant tests, shares each strategy's commitment predicate between
@@ -76,7 +75,8 @@ remain open.
 **Cross-engine (2026-10-15, W3b):** the same real react-select qualification (add-only and
 exact chip sets) runs on Chromium, Firefox and WebKit through the Playwright engine, in CI (the
 Test job installs all three binaries), with the session's engine name pinning the family; no
-engine-specific code was needed. W3a (conditional and multi-stage mappings) remains open.
+engine-specific code was needed. W3a (conditional and multi-stage mappings) is delivered too
+(staged mappings, #511).
 
 
 The [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
@@ -91,7 +91,7 @@ rollback or reusable mapping claim follows.
 The [mapping foundation](../design/t6-form-mapping.md), merged in PR #238, adds a pure protocol join,
 offline CLI preparation and exact-URL/all-field preflight inside the same executor.
 See [evidence](../evidence/t6-form-mapping.md). This is one fully present stage;
-conditional stages, business/job identity and live workflow qualification remain open.
+stages came later (#511); business/job identity and live qualification remain open.
 
 The [verified upload and draft slice](../design/t6-verified-upload-draft.md), merged in PR #239,
 reuses the upload action and a shared bounded file reader, then qualifies a synthetic
