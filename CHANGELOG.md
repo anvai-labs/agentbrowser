@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Security — a scope refuses the lanes it cannot check (T10 M1)
+
+| Create request | Before | After |
+| --- | --- | --- |
+| `cdpAttach` + `scope` | passed the options floor; the attach lane ignores the scope | refused, `400 INVALID_REQUEST` (`floor.cdp.options`) |
+| `allowServiceWorkers: true` + `scope` | session created; service-worker fetches bypass the scope | refused, `400 INVALID_REQUEST` (`scope.lane.serviceWorkers`) |
+| `scope` alone | unchanged | unchanged (service workers blocked by default) |
+
 ### Docs — the 1.20.0 release record
 
 - `docs/spec/evidence/release-1.20.0.md` records the first release under the R14 gates and the

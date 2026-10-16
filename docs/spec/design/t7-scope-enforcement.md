@@ -115,9 +115,14 @@ the real choke point.
 
 ## Residuals and prerequisite notes (stated, not hidden)
 
-- **Operator cdp-attach lane**: navigation-preflight-only by contract;
-  scope enforcement is not installed there (same lane exception as the
-  WebSocket deny handler).
+- **Operator cdp-attach lane**: navigation-preflight-only by contract, so
+  scope enforcement cannot run there. Since T10 M1 a create request with
+  both `cdpAttach` and a scope is **refused** (`floor.cdp.options`) rather
+  than silently attaching unscoped.
+- **Service workers**: their fetches bypass the choke point (ADR-019). Since
+  T10 M1 a scoped session **refuses** `allowServiceWorkers: true`
+  (`INVALID_REQUEST`, rule `scope.lane.serviceWorkers`); the default (blocked)
+  is unchanged.
 - **Body-bearing redirect residual** (ADR-006): POST/PUT/PATCH
   passthrough requests are scope-checked on the initial request;
   their native redirects are not re-checked — the pre-existing,
