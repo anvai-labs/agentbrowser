@@ -7,7 +7,6 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Docs — a secure starter policy and how to configure policy
 
 - `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy file to copy.
@@ -24,7 +23,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   - how to verify a change.
 - A test loads the starter through the real loader, pins every documented decision, and proves
   the documented recipes work.
-=======
+
 ### Changed — release hardening R14 closed
 
 - `v*` tags: only repository admins can create, move or delete them (ruleset).
@@ -35,7 +34,6 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   on (planned after the next promotion, before 1.20.0).
 - With the main-ancestry tag guard this closes R14; the operations guide's release section has
   the table of gates.
->>>>>>> origin/develop
 
 ### Docs — the 1.19.0 release record
 
