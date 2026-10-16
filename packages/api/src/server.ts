@@ -30,7 +30,11 @@ import type { SessionPrincipal } from './session-authority.js';
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
+import {
+  RESERVED_BROWSER_ADAPTER_ID,
+  type TrustedEvidenceSourceRegistry,
+  type TrustedVerifierRegistry,
+} from '@agentbrowser/control';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -75,6 +79,9 @@ import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
   AgentBrowserService,
+  browserFailureOutcomeUnknown,
+  browserReportOutcomeUnknown,
+  copyBrowserReport,
   type ServiceActRequest,
   ServiceError,
   type ServiceEvidenceSourceBuilder,
@@ -1560,6 +1567,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         terminal?: 'retained-resource';
         /** TD-BROWSER-16 phase 1: human-operator keys are valid here and only here. */
         operatorRoute?: boolean;
+        /**
+         * T5 B-dur (B1): this route accepts `executionRequirement`; `durable` journals it as ONE
+         * browser operation of this kind under the reserved `browser` identity.
+         */
+        browserDurable?: 'act' | 'plan' | 'autofill';
       };
       const onTransport = (
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -1592,11 +1604,46 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           method,
           url,
           async (request, reply) => {
-            const { sessionId } = request.params as { sessionId?: string };
+            const { sessionId, pageId } = request.params as { sessionId?: string; pageId?: string };
+            // T5 B-dur (B1): peel the execution requirement off a browser route's body before the
+            // handler validates it. 'ephemeral' is the default made explicit and is dropped, so
+            // explicit and omitted requests share one identity; 'durable' journals the operation.
+            let durable = false;
+            // No silent fallback: a route that cannot journal must not quietly accept the field.
+            if (
+              !meta.browserDurable &&
+              request.body &&
+              typeof request.body === 'object' &&
+              Object.hasOwn(request.body, 'executionRequirement')
+            )
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                'executionRequirement is accepted only on act, plan and autofill (and application execute)'
+              );
+            if (meta.browserDurable && request.body && typeof request.body === 'object') {
+              const body = request.body as Record<string, unknown>;
+              if (Object.hasOwn(body, 'executionRequirement')) {
+                const requirement = body.executionRequirement;
+                if (requirement !== 'ephemeral' && requirement !== 'durable')
+                  throw new ServiceError(
+                    'INVALID_REQUEST',
+                    "executionRequirement must be 'ephemeral' or 'durable'"
+                  );
+                durable = requirement === 'durable';
+                const { executionRequirement: _peeled, ...rest } = body;
+                request.body = rest;
+              }
+            }
             const input = requestData(request);
             if (!sessionId || !service.authority.get(sessionId)) {
               if (sessionId && service.requiresSessionAuthority(sessionId))
                 throw new ServiceError('CONTROL_REVOKED', 'Session authority is unavailable');
+              if (durable)
+                throw new ServiceError(
+                  'CONTROL_REQUIRED',
+                  'Durable browser operations require a controlled session (an operation scope and X-AgentBrowser-Operation-Id)',
+                  false
+                );
               return httpPublication.sendUncontrolled(request, reply, await handler(input));
             }
             const principal = principals.get(request);
@@ -1611,27 +1658,68 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               );
             return httpPublication.respond(request, reply, async (output) => {
               let draft: HttpResponseDraft | undefined;
+              let thrownOutcomeUnknown = false;
               await service.authority.run(
                 sessionId,
                 principal,
                 mutation
                   ? {
                       id: id as string,
+                      // A durable request is its own identity: it can never replay an ephemeral
+                      // one, and an explicit 'ephemeral' was already peeled (same as omitted).
                       fingerprint: sha256Hex(
-                        JSON.stringify([request.method, request.url, request.body ?? null])
+                        JSON.stringify([
+                          request.method,
+                          request.url,
+                          request.body ?? null,
+                          ...(durable ? ['durable'] : []),
+                        ])
                       ),
+                      ...(durable && meta.browserDurable
+                        ? {
+                            journal: {
+                              version: 1 as const,
+                              application: {
+                                adapterId: RESERVED_BROWSER_ADAPTER_ID,
+                                resourceId: meta.browserDurable,
+                                bindingGeneration: pageId ?? 'session',
+                              },
+                              durable: true as const,
+                              browser: true as const,
+                            },
+                          }
+                        : {}),
                     }
                   : {},
                 async () => {
                   try {
                     draft = await handler(input);
                   } catch (error) {
+                    // T5 B-dur (B2): judged on the error object itself (a post-effect failure is
+                    // marked there), before it is serialized into a response.
+                    thrownOutcomeUnknown = browserFailureOutcomeUnknown(error);
                     // Admitted errors may carry private approval details; publish with the same owner.
                     draft = errorResponse(error);
                   }
                   return draft;
                 },
-                () => !!draft && (draft.statusCode >= 400 || draft.executionFailed === true),
+                () => {
+                  if (!draft) return true;
+                  const failedDraft = draft.statusCode >= 400 || draft.executionFailed === true;
+                  if (!durable || !failedDraft) return failedDraft;
+                  // T5 B-dur (B2): a durable browser operation's KNOWN failure (its own report, a
+                  // typed refusal) is a terminal `failed` with the response returned; a failure
+                  // whose effect is genuinely unknown — an error code that loses the result, or a
+                  // report hiding such a step or an `uncertain` receipt — stays in doubt.
+                  if (draft.statusCode < 400)
+                    return browserReportOutcomeUnknown(draft.body) ? true : 'rejected';
+                  return thrownOutcomeUnknown ||
+                    browserFailureOutcomeUnknown(
+                      (draft.body as { error?: unknown } | undefined)?.error
+                    )
+                    ? true
+                    : 'rejected';
+                },
                 output.draftPublication(),
                 output.publication((operation) => ({ replay: true, operation }))
               );
@@ -2255,7 +2343,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
         },
-        { capability: 'page.interact' }
+        { capability: 'page.interact', browserDurable: 'plan' }
       );
 
       on(
@@ -2410,7 +2498,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const report = await service.autofill(sessionId, pageId, request.body);
           return executionResponse(report);
         },
-        { capability: 'page.form' }
+        { capability: 'page.form', browserDurable: 'autofill' }
       );
 
       // Action execution endpoint
@@ -2437,14 +2525,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const result = await service.act(sessionId, pageId, validated.value as ServiceActRequest);
           if (validated.warnings?.length) {
-            return executionResponse({
-              ...result,
-              warnings: validated.warnings,
-            });
+            return executionResponse(
+              copyBrowserReport(result, { ...result, warnings: validated.warnings })
+            );
           }
           return executionResponse(result);
         },
-        { capability: 'page.interact' }
+        { capability: 'page.interact', browserDurable: 'act' }
       );
 
       // Download endpoint: policy-gated artifact capture

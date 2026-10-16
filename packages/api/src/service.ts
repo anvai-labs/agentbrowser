@@ -650,6 +650,88 @@ const SHUTDOWN_DRAIN_MS = 30_000;
 
 const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
+/**
+ * T5 B-dur (B2): failures KNOWN to be raised before a browser effect (a refusal, a stale or
+ * missing target, a policy or approval decision, a bad request). Every other failure — a
+ * timeout, a crash, an internal error, a post-effect verification gap such as
+ * `ENGINE_UNSUPPORTED` "the fill may have completed", `VALUE_MISMATCH`, an untyped error — may
+ * follow an effect, so it is outcome-unknown. An allowlist, so a new code is unknown by default.
+ */
+export const BROWSER_KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
+  'INVALID_REQUEST',
+  'INVALID_TENANT_ID',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'POLICY_DENIED',
+  'APPROVAL_REQUIRED',
+  'SESSION_NOT_FOUND',
+  'PAGE_NOT_FOUND',
+  'STALE_TARGET',
+  'TARGET_NOT_FOUND',
+  'TARGET_AMBIGUOUS',
+  'TARGET_NOT_VISIBLE',
+  'TARGET_DISABLED',
+  'PLAN_WAIT_TIMEOUT',
+  'OPERATION_CONFLICT',
+  'SESSION_BUSY',
+  'QUOTA_EXCEEDED',
+]);
+
+/**
+ * Failures raised AFTER an effect was reported done (the post-action wait or observation: a click
+ * that closed its page then fails the follow-up read with PAGE_NOT_FOUND). Whatever their code,
+ * the effect happened, so they are outcome-unknown, never a known pre-effect failure.
+ */
+const postEffectFailures = new WeakSet<object>();
+const afterEffect = (error: unknown): unknown => {
+  if (typeof error === 'object' && error !== null) postEffectFailures.add(error);
+  return error;
+};
+
+const carryAfterEffect = <T>(from: unknown, to: T): T =>
+  typeof from === 'object' && from !== null && postEffectFailures.has(from)
+    ? (afterEffect(to) as T)
+    : to;
+
+/** May a browser effect have happened before this failure? (Untyped failures: yes.) */
+export const browserFailureOutcomeUnknown = (error: unknown): boolean => {
+  if (typeof error === 'object' && error !== null && postEffectFailures.has(error)) return true;
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return typeof code !== 'string' || !BROWSER_KNOWN_FAILURE_CODES.has(code);
+};
+const outcomeUnknownFailure = browserFailureOutcomeUnknown;
+
+/**
+ * Plan and batch reports whose failing step's effect is unknown. The wire report keeps only the
+ * step's message, so the service remembers the fact beside the object instead of changing it.
+ */
+const outcomeUnknownReports = new WeakSet<object>();
+const markOutcomeUnknown = <T extends object>(report: T, unknown: boolean): T => {
+  if (unknown) outcomeUnknownReports.add(report);
+  return report;
+};
+
+/**
+ * T5 B-dur (B2): does a durable browser operation's 200 report hide an effect whose outcome is
+ * unknown (a plan or batch step lost its result, or an autofill receipt is `uncertain`)? Such a
+ * report is journaled in doubt, never as a known `failed`.
+ */
+/** A copy of a report (e.g. with warnings added) keeps the original's outcome-unknown fact. */
+export function copyBrowserReport<T extends object>(source: object, copy: T): T {
+  return markOutcomeUnknown(copy, outcomeUnknownReports.has(source));
+}
+
+export function browserReportOutcomeUnknown(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) return false;
+  if (outcomeUnknownReports.has(body)) return true;
+  const receipts = (body as { receipts?: unknown }).receipts;
+  return (
+    Array.isArray(receipts) &&
+    receipts.some((receipt) => (receipt as { status?: unknown } | null)?.status === 'uncertain')
+  );
+}
+
 export class AgentBrowserService {
   readonly authority: SessionAuthority;
   /**
@@ -1015,7 +1097,8 @@ export class AgentBrowserService {
           );
           this.tracer?.endSpan(span);
         }
-        throw this.redactedError(mapped);
+        // The mapped, redacted error keeps a post-effect mark (T5 B-dur, B2).
+        throw carryAfterEffect(error, this.redactedError(mapped));
       }
     );
   }
@@ -2092,6 +2175,16 @@ export class AgentBrowserService {
     }
     try {
       const report = await runAutofill(input, {
+        // T5 B-dur (B6): a durable autofill's guard is its own read-only stage recheck, run once
+        // after the marker's storage wait, before the first field's effect. (Its first field's
+        // approval or lease action is decided and spent before that dispatch, as for every field:
+        // a refused marker then has spent that one approval without any effect — fail-closed.)
+        ...(this.authority.browserGuardPendingInScope(sessionId)
+          ? {
+              onRecheck: (recheck: () => Promise<void>) =>
+                this.authority.captureBrowserDispatchInScope(sessionId, recheck),
+            }
+          : {}),
         resolveValue: async (value) => {
           try {
             return this.secretManager.isReference(value)
@@ -2225,7 +2318,12 @@ export class AgentBrowserService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
-        if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
+        if (
+          ordinal !== undefined &&
+          /STALE_TARGET|revision|fingerprint/i.test(message) &&
+          // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
+          !this.authority.browserOperationRefusedInScope(sessionId)
+        ) {
           this.bumpChurn(churnKey);
           const mode = this.churnMode(churnKey);
           // The observation the failing ref was minted from, looked up by the
@@ -2319,14 +2417,17 @@ export class AgentBrowserService {
               const retryMessage =
                 retryError instanceof Error ? retryError.message : String(retryError);
               results.push({ step: index, ok: false, error: retryMessage });
-              return {
-                ok: false,
-                completed: index,
-                results,
-                mode: this.churnMode(churnKey),
-                newRevision: finalRevision(),
-                error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
-              };
+              return markOutcomeUnknown(
+                {
+                  ok: false,
+                  completed: index,
+                  results,
+                  mode: this.churnMode(churnKey),
+                  newRevision: finalRevision(),
+                  error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
+                },
+                outcomeUnknownFailure(retryError)
+              );
             }
           }
           if (ambiguous) {
@@ -2343,14 +2444,17 @@ export class AgentBrowserService {
           }
         }
         results.push({ step: index, ok: false, error: message });
-        return {
-          ok: false,
-          completed: index,
-          results,
-          mode: this.churnMode(churnKey),
-          newRevision: finalRevision(),
-          error: { code: 'PLAN_STEP_FAILED', message },
-        };
+        return markOutcomeUnknown(
+          {
+            ok: false,
+            completed: index,
+            results,
+            mode: this.churnMode(churnKey),
+            newRevision: finalRevision(),
+            error: { code: 'PLAN_STEP_FAILED', message },
+          },
+          outcomeUnknownFailure(error)
+        );
       }
     }
     return {
@@ -4078,8 +4182,55 @@ export class AgentBrowserService {
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
           beforeAction: async (resolved) => {
-            await this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span);
-            onDispatch?.();
+            if (this.authority.browserGuardPendingInScope(sessionId)) {
+              // T5 B-dur (B6): the FIRST dispatch of a durable browser operation. Decide now (an
+              // approval round trip still throws here, before any marker); re-validate the
+              // target and the approval after the marker's storage wait; consume only then.
+              const approval = await this.prepareApproval(
+                sessionId,
+                pageId,
+                page,
+                request,
+                resolved?.fingerprint,
+                span
+              );
+              const recheckRequest = {
+                pageId,
+                expectedRevision: actRequest.expectedRevision ?? page.revision,
+                action: actionValidation.value,
+              };
+              this.authority.captureBrowserDispatchInScope(sessionId, async () => {
+                const failure = await this.executor.revalidateTarget(recheckRequest, {
+                  enginePage: adapter,
+                  observation: this.lastObservationOf(page),
+                  currentRevision: page.revision,
+                  ...(page.lastObservation !== undefined
+                    ? { elementIndex: page.lastObservation.byRef }
+                    : {}),
+                });
+                if (failure)
+                  throw new ServiceError(
+                    failure.code,
+                    failure.message,
+                    failure.retryable ?? false,
+                    failure.details
+                  );
+                await approval.revalidate();
+                await approval.commit();
+              });
+            } else {
+              await this.checkApproval(
+                sessionId,
+                pageId,
+                page,
+                request,
+                resolved?.fingerprint,
+                span
+              );
+            }
+            // T5 B-dur: in a durable operation the effect starts only after the recheck, so an
+            // owner (autofill) must not record a refused dispatch as possibly written.
+            if (onDispatch) this.authority.onBrowserEffectInScope(sessionId, onDispatch);
           },
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
           // than let the executor re-scan observation.elements per action.
@@ -4123,6 +4274,8 @@ export class AgentBrowserService {
         if (
           actRequest.remap === true &&
           ref !== undefined &&
+          // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
+          !this.authority.browserOperationRefusedInScope(sessionId) &&
           (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND') &&
           // Only binding staleness may be healed. A refusal without the
           // flag carries live contradicting evidence (fingerprint mismatch,
@@ -4143,53 +4296,59 @@ export class AgentBrowserService {
       }
 
       page.revision = result.newRevision;
+      // T5 B-dur (B2): the effect is done; anything that fails from here on followed it.
+      try {
+        if (
+          request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified !== true
+        )
+          throw new ServiceError(
+            'ENGINE_UNSUPPORTED',
+            'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
+            false
+          );
 
-      if (
-        request.action === 'fill' &&
-        request.expectValue !== undefined &&
-        (result.result as { verified?: unknown } | undefined)?.verified !== true
-      )
-        throw new ServiceError(
-          'ENGINE_UNSUPPORTED',
-          'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
-          false
-        );
+        // Post-action wait (spec 11.1): an explicit wait runs to its deadline
+        // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
+        // never a hang). Without one, a zero-cost settle yield keeps latency
+        // off the deterministic path - engines that need real settling take
+        // an explicit wait.
+        const waitReason =
+          request.wait !== undefined
+            ? await this.waitFor(page.enginePage, request.wait)
+            : request.action === 'wait' && request.condition !== undefined
+              ? await this.waitFor(page.enginePage, request.condition)
+              : 'settled';
 
-      // Post-action wait (spec 11.1): an explicit wait runs to its deadline
-      // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
-      // never a hang). Without one, a zero-cost settle yield keeps latency
-      // off the deterministic path - engines that need real settling take
-      // an explicit wait.
-      const waitReason =
-        request.wait !== undefined
-          ? await this.waitFor(page.enginePage, request.wait)
-          : request.action === 'wait' && request.condition !== undefined
-            ? await this.waitFor(page.enginePage, request.condition)
-            : 'settled';
+        // A requested post-action observation goes through the service's own
+        // observe(), so its refs are minted, mapped and immediately actionable.
+        let observation: PageState | undefined;
+        if (request.observe === 'after') {
+          observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+        }
 
-      // A requested post-action observation goes through the service's own
-      // observe(), so its refs are minted, mapped and immediately actionable.
-      let observation: PageState | undefined;
-      if (request.observe === 'after') {
-        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+        return {
+          status: 'success',
+          actionId: result.actionId,
+          newRevision: result.newRevision,
+          observation,
+          waitReason,
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          // Only publish the comparison boolean, never a field value.
+          ...(request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified === true
+            ? { result: { verified: true } }
+            : {}),
+          // Upload reports its separate attached-file evidence.
+          ...(request.action === 'upload' && result.result != null
+            ? { result: result.result }
+            : {}),
+        };
+      } catch (error) {
+        throw afterEffect(error);
       }
-
-      return {
-        status: 'success',
-        actionId: result.actionId,
-        newRevision: result.newRevision,
-        observation,
-        waitReason,
-        ...(result.remap !== undefined ? { remap: result.remap } : {}),
-        // Only publish the comparison boolean, never a field value.
-        ...(request.action === 'fill' &&
-        request.expectValue !== undefined &&
-        (result.result as { verified?: unknown } | undefined)?.verified === true
-          ? { result: { verified: true } }
-          : {}),
-        // Upload reports its separate attached-file evidence.
-        ...(request.action === 'upload' && result.result != null ? { result: result.result } : {}),
-      };
     });
   }
 
@@ -4226,25 +4385,33 @@ export class AgentBrowserService {
     // they run only when every step applied, so a failed batch reports its
     // failure without post-action noise masking it.
     let waitReason: string | undefined;
-    if (plan.ok && request.wait !== undefined) {
-      waitReason = await this.waitFor(page.enginePage, request.wait);
-    }
     let observation: PageState | undefined;
-    if (plan.ok && request.observe === 'after') {
-      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    // T5 B-dur (B2): every step's effect is done; a failure here followed them.
+    try {
+      if (plan.ok && request.wait !== undefined) {
+        waitReason = await this.waitFor(page.enginePage, request.wait);
+      }
+      if (plan.ok && request.observe === 'after') {
+        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+      }
+    } catch (error) {
+      throw afterEffect(error);
     }
 
-    return {
-      status: plan.ok ? 'success' : 'failed',
-      completed: plan.completed,
-      results: plan.results,
-      oldRevision,
-      newRevision: observation?.revision ?? plan.newRevision,
-      mode: plan.mode,
-      ...(waitReason !== undefined ? { waitReason } : {}),
-      ...(observation !== undefined ? { observation } : {}),
-      ...(plan.error !== undefined ? { error: plan.error } : {}),
-    };
+    return markOutcomeUnknown(
+      {
+        status: plan.ok ? 'success' : 'failed',
+        completed: plan.completed,
+        results: plan.results,
+        oldRevision,
+        newRevision: observation?.revision ?? plan.newRevision,
+        mode: plan.mode,
+        ...(waitReason !== undefined ? { waitReason } : {}),
+        ...(observation !== undefined ? { observation } : {}),
+        ...(plan.error !== undefined ? { error: plan.error } : {}),
+      },
+      browserReportOutcomeUnknown(plan)
+    );
   }
 
   /**

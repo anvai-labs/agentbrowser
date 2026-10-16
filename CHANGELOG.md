@@ -18,6 +18,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Added — durable act, plan and autofill (T5 B-dur-2b)
+
+- `act`, `plan` and `autofill` accept `executionRequirement` over REST (OpenAPI documented).
+  `durable` journals the call as one browser operation for classification only, never replay:
+  controlled sessions with an open journal only (`CONTROL_REQUIRED` otherwise). The target and
+  approval are re-checked after the journal marker and before the first effect; the approval is
+  consumed only after that, and a refused operation never self-heals. Failures known to occur
+  before any effect keep their response (`failed`); anything else (a lost step result, an
+  unverified fill, an uncertain field) is recorded `settled_unknown`, and its report is still
+  returned. `ephemeral` is identical to omitting the field; other routes refuse the field.
+  SDK, CLI and MCP parity follow (B-dur-2c).
+
 ### Added — the browser journal in the control layer (T5 B-dur-2a)
 
 - The session authority can journal a durable browser operation as one record under the

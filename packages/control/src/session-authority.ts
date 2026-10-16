@@ -47,6 +47,10 @@ import { deeplyFreezeSnapshot, synchronousResult } from './trusted-callback.js';
 export interface ApplicationJournalOperation {
   readonly version: 1;
   readonly application: JournalApplication;
+  /** C4b: present only for a durable application write (its own fingerprint domain). */
+  readonly durable?: true;
+  /** T5 B-dur: a durable browser operation (requires `durable` and the reserved identity). */
+  readonly browser?: true;
 }
 
 export type SessionPrincipal =
@@ -103,6 +107,12 @@ type Scope = {
     browserGuard?: () => Promise<void>;
     /** The marker followed by the guard, shared by every dispatch of the operation. */
     guarded?: Promise<void>;
+    /** The owner's recheck refused after the marker: no effect ran; the operation is sealed. */
+    guardRefused?: boolean;
+    /** The owner's recheck passed: the first effect may start. */
+    guardPassed?: boolean;
+    /** Signals that an effect is starting, held until the recheck has passed. */
+    beforeEffect?: Array<() => void>;
   };
   /** Actual bounded output lifetime, never borrowed from a caller-supplied context. */
   publicationGuard: (() => void) | undefined;
@@ -496,11 +506,20 @@ export class SessionAuthority {
         if (scope.journal) await this.acknowledgeJournal(scope, 'intent');
         result = await fn();
         this.checkScopeOwner(scope);
-        if (scope.journal) this.checkJournalScope(scope);
+        // T5 B-dur (B2): a browser operation whose recheck refused before any effect, and whose
+        // work then RETURNED (an autofill turns the refusal into a field receipt), keeps its
+        // report: the journal is sealed, the terminal is `failed`, and nothing replaced the
+        // caller's answer. Any other seal still refuses as before.
+        const refusedBeforeEffect =
+          scope.journal?.browser === true &&
+          scope.journal.guardRefused === true &&
+          !ticket.didDispatch;
+        if (scope.journal && !refusedBeforeEffect) this.checkJournalScope(scope);
         const failure = scope.journal ? synchronousResult(failed()) : failed();
-        if (scope.journal) this.checkJournalScope(scope);
-        status =
-          failure === 'rejected'
+        if (scope.journal && !refusedBeforeEffect) this.checkJournalScope(scope);
+        status = refusedBeforeEffect
+          ? 'failed'
+          : failure === 'rejected'
             ? 'failed'
             : failure
               ? ticket.didDispatch
@@ -550,7 +569,10 @@ export class SessionAuthority {
           finalize();
           await this.acknowledgeJournal(scope, 'terminal', status);
           if (!succeeded) throw executionError;
-          if (status === 'outcome_unknown') throw journalUnavailable();
+          // T5 B-dur (B2): an in-doubt browser operation still returns its report (it is the
+          // caller's only account of what was attempted; the journal record, `in_doubt`, is the
+          // authority on the outcome). An in-doubt application write stays a refusal.
+          if (status === 'outcome_unknown' && !scope.journal.browser) throw journalUnavailable();
           this.checkScopeOwner(scope);
           if (publication) await this.publish(scope, result, status, publication);
           return result;
@@ -763,6 +785,50 @@ export class SessionAuthority {
    * terminal is `failed` with `dispatched: true` (the marker was crossed), and the caller gets the
    * guard's own error.
    */
+  /**
+   * T5 B-dur: whether the current operation is a durable browser operation whose recheck has not
+   * been captured yet — i.e. the caller is about to make its FIRST page dispatch and must capture
+   * the guard. False outside a browser journal scope.
+   */
+  browserGuardPendingInScope(sessionId: string): boolean {
+    // A pure query: uncontrolled sessions and ordinary scopes simply answer false.
+    const scope = this.scope.getStore();
+    return (
+      scope?.sessionId === sessionId &&
+      scope.journal?.browser === true &&
+      scope.journal.browserGuard === undefined
+    );
+  }
+
+  /**
+   * T5 B-dur: has this durable browser operation been refused (its recheck failed) or sealed? A
+   * self-heal retry must not run then: it could only spend an approval or lease and be refused.
+   */
+  browserOperationRefusedInScope(sessionId: string): boolean {
+    const scope = this.scope.getStore();
+    return (
+      scope?.sessionId === sessionId &&
+      scope.journal?.browser === true &&
+      (scope.journal.guardRefused === true || scope.journal.failed === true)
+    );
+  }
+
+  /**
+   * T5 B-dur: run `signal` when an effect is really about to start. In a durable browser operation
+   * whose recheck has not yet passed, that is right after the recheck (never if it refuses), so an
+   * owner never records a refused dispatch as possibly written; anywhere else it runs now.
+   */
+  onBrowserEffectInScope(sessionId: string, signal: () => void): void {
+    const scope = this.scope.getStore();
+    const journal = scope?.sessionId === sessionId ? scope.journal : undefined;
+    if (!journal?.browser || journal.guardPassed) {
+      signal();
+      return;
+    }
+    journal.beforeEffect ??= [];
+    journal.beforeEffect.push(signal);
+  }
+
   captureBrowserDispatchInScope(sessionId: string, guard: () => Promise<void>): void {
     this.assert(sessionId);
     const scope = this.scope.getStore();
@@ -850,7 +916,14 @@ export class SessionAuthority {
                 const guard = journal.browserGuard;
                 if (!guard) throw journalUnavailable();
                 // No dispatch may run inside the owner's recheck (its own async context only).
-                await this.insideBrowserGuard.run(scope, guard);
+                try {
+                  await this.insideBrowserGuard.run(scope, guard);
+                  journal.guardPassed = true;
+                  for (const signal of journal.beforeEffect?.splice(0) ?? []) signal();
+                } catch (error) {
+                  journal.guardRefused = true;
+                  throw error;
+                }
               });
             const ready: Promise<void> = journal.guarded ?? marker;
             resolve(
