@@ -25,9 +25,38 @@ describe('secure starter policy', () => {
     ['account-security', 'required'],
     ['external-message', 'required'],
     ['destructive', 'required'],
-    ['unknown', 'required'],
+    ['unknown', 'allow'],
   ] as const)('an action with effect %s is %s', (effect, mode) => {
     expect(approvalModeOf(loaded.authorizer, { effect })).toBe(mode);
+  });
+
+  it('names the deciding rule for unattended high-risk actions and egress exceptions', () => {
+    const unattended = loaded.authorizer.decide({
+      action: 'act.unattended',
+      context: { effect: 'transaction' },
+    });
+    expect(unattended.allowed).toBe(false);
+    expect(JSON.stringify(unattended)).toContain('operator.act.high-risk-needs-approval');
+    const loopback = loaded.authorizer.decide({
+      action: 'request.loopback',
+      context: {
+        phase: 'resolved',
+        target: '127.0.0.1',
+        addressClasses: ['loopback'],
+        privateSources: [],
+      } as never,
+    });
+    expect(JSON.stringify(loopback)).toContain('operator.no-loopback');
+    const privateRange = loaded.authorizer.decide({
+      action: 'request.private',
+      context: {
+        phase: 'resolved',
+        target: '10.1.2.3',
+        addressClasses: ['private'],
+        privateSources: [{ address: '10.1.2.3', type: 'ipv4' }],
+      } as never,
+    });
+    expect(JSON.stringify(privateRange)).toContain('operator.no-private');
   });
 
   it('refuses loopback and private egress (no exceptions granted)', () => {
@@ -73,8 +102,7 @@ describe('secure starter policy', () => {
     expect(JSON.stringify(decision)).toContain('operator.capability.no-cookie-handoff');
   });
 
-  it('keeps every rule id in the operator namespace and declares unknownRisk required', () => {
-    expect(loaded.document.unknownRisk).toBe('required');
+  it('keeps every rule id in the operator namespace', () => {
     expect(loaded.document.policies.every((p) => p.ruleId.startsWith('operator.'))).toBe(true);
   });
 });

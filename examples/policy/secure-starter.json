@@ -1,7 +1,7 @@
 {
   "version": "agentbrowser-policy/v1",
   "baseline": "none",
-  "unknownRisk": "required",
+  "unknownRisk": "allow",
   "approvalRules": [],
   "policies": [
     {
@@ -22,17 +22,17 @@
     {
       "key": "operator.act.low-risk",
       "ruleId": "operator.act.low-risk",
-      "cedar": "@rule(\"operator.act.low-risk\") permit(principal, action in [AgentBrowser::Action::\"act\", AgentBrowser::Action::\"act.unattended\"], resource) when { [\"read\", \"write-local\"].contains(context.effect) };"
+      "cedar": "@rule(\"operator.act.low-risk\") permit(principal, action in [AgentBrowser::Action::\"act\", AgentBrowser::Action::\"act.unattended\"], resource) when { [\"read\", \"write-local\", \"unknown\"].contains(context.effect) };"
     },
     {
       "key": "operator.act.high-risk-attended",
       "ruleId": "operator.act.high-risk-attended",
-      "cedar": "@rule(\"operator.act.high-risk-attended\") permit(principal, action == AgentBrowser::Action::\"act\", resource) when { [\"transaction\", \"account-security\", \"external-message\", \"destructive\", \"unknown\"].contains(context.effect) };"
+      "cedar": "@rule(\"operator.act.high-risk-attended\") permit(principal, action == AgentBrowser::Action::\"act\", resource) when { [\"transaction\", \"account-security\", \"external-message\", \"destructive\"].contains(context.effect) };"
     },
     {
       "key": "operator.act.high-risk-needs-approval",
       "ruleId": "operator.act.high-risk-needs-approval",
-      "cedar": "@rule(\"operator.act.high-risk-needs-approval\") forbid(principal, action == AgentBrowser::Action::\"act.unattended\", resource) when { [\"transaction\", \"account-security\", \"external-message\", \"destructive\", \"unknown\"].contains(context.effect) };"
+      "cedar": "@rule(\"operator.act.high-risk-needs-approval\") forbid(principal, action == AgentBrowser::Action::\"act.unattended\", resource) when { [\"transaction\", \"account-security\", \"external-message\", \"destructive\"].contains(context.effect) };"
     },
     {
       "key": "operator.capability.headed",

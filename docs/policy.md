@@ -15,60 +15,83 @@ Copy it, then loosen it deliberately for each tenant.
 ```sh
 cp examples/policy/secure-starter.json /etc/agentbrowser/policy.json
 AGENTBROWSER_POLICY_FILE=/etc/agentbrowser/policy.json agentbrowser-server
-agentbrowser policy-check request 10.1.2.3    # confirm: denied by operator.no-private
+agentbrowser policy-check request 10.1.2.3    # denied by operator.no-private
 ```
 
-### How a decision is made
+### How decisions are made
 
 ```mermaid
-flowchart LR
-    R[request or action] --> F{safety floor}
-    F -- metadata, CDP refusals --> D1[denied: floor.*]
-    F -- passes --> C{Cedar policy set}
-    C -- any forbid matches --> D2[denied: that rule's id]
-    C -- a permit matches --> A[allowed: that rule's id]
-    C -- nothing matches --> D3[denied by default]
+flowchart TB
+    subgraph egress [Network request]
+      E[address] --> F{floor}
+      F -- metadata --> X1[denied: floor.metadata]
+      F -- public --> P[allowed: floor.public]
+      F -- loopback / private --> C{Cedar exception?}
+      C -- a permit, no forbid --> P2[allowed: the permit's id]
+      C -- otherwise --> X2[denied: the forbid's id, or default]
+    end
+    subgraph action [Page action]
+      A[act] --> K[classify effect<br/>approvalRules, else read / unknown]
+      K --> D{Cedar act + act.unattended}
+      D -- both permitted --> OK[runs]
+      D -- act only --> AP[APPROVAL_REQUIRED]
+      D -- act denied --> NO[POLICY_DENIED]
+    end
 ```
 
-- **The floor comes first** and no policy can grant past it.
-- **`forbid` beats `permit`.** Cedar denies whenever any `forbid` matches, whatever else permits.
-  That is why the starter's guard rails are explicit `forbid` rules: a later, broader `permit`
-  cannot quietly undo them.
-- **Nothing matched means denied.** The starter still names every decision, so
-  `rulesMatched`, the audit log and `policy-check` report *why*: for example
-  `operator.capability.no-downloads`.
+| Rule of the engine | Consequence |
+| --- | --- |
+| The floor decides public traffic and blocks metadata | no policy can grant past it; Cedar only grants *exceptions* |
+| Any matching `forbid` wins | the starter's guard rails are explicit forbids, so a broader permit cannot undo them |
+| Nothing matched means denied | the starter still names its decisions, so `rulesMatched`, audit and `policy-check` say *why* |
+| Effects come from your `approvalRules`, never from page text | clicks, typing and key presses are `unknown` unless a rule classifies the control |
 
 ### What the starter decides, and why
 
 | Area | Decision | Rule id | Why |
 | --- | --- | --- | --- |
-| Public web | allowed | `operator.public-egress` | Browsing is the product. The floor still blocks metadata addresses. |
+| Public web | allowed | `floor.public` | Browsing is the product. `operator.public-egress` only marks the intent (`request` is not evaluated) and keeps startup from warning. |
 | Loopback (`127.0.0.1`, `::1`, `localhost`) | **denied** | `operator.no-loopback` | A page could reach the service itself or local admin ports (SSRF). |
 | Private networks (`10/8`, `192.168/16`, …) | **denied** | `operator.no-private` | A hostile page could pivot into your LAN or VPC. |
-| Actions that read or write only locally | allowed, unattended | `operator.act.low-risk` | Navigation, typing and reading are the normal loop. |
-| Transaction, account-security, external-message, destructive | **owner approval** | `operator.act.high-risk-*` | Money, credentials, messages and deletions need a human. |
-| Unclassified actions (`unknown`) | **owner approval** | same rules + `unknownRisk: required` | If the effect can't be classified, it is treated as high risk. |
+| Reads, local writes, unclassified actions (click, type, press) | allowed | `operator.act.low-risk` | The normal agent loop; nothing can classify page controls generically. |
+| Actions your `approvalRules` classify as transaction, account-security, external-message or destructive | **owner approval** | `operator.act.high-risk-*` | Money, credentials, messages and deletions need a human. |
 | Headed sessions | allowed | `operator.capability.headed` | A visible window on the server host adds no new reach. |
 | Seeding cookies into a session | allowed | `operator.capability.cookie-seed` | The operator supplies them; it is the supported login path. |
 | Exporting session cookies | **denied** | `operator.capability.no-cookie-export` | Credentials should never leave a session. |
 | Cookie handoff from the operator browser | **denied** | `operator.capability.no-cookie-handoff` | Opt in per domain, never wholesale. |
 | Service workers | **denied** | `operator.capability.no-service-workers` | Their requests bypass the egress choke point ([ADR-019](adr/019-explicit-service-worker-opt-in.md)). |
 | Downloads | **denied** | `operator.capability.no-downloads` | Writes page-chosen bytes to the server's disk. |
-| CDP attach to the operator browser | **denied** | `operator.capability.no-cdp-attach` | It shares the operator's real profile. |
+| CDP attach to the operator browser | **denied** | `operator.capability.no-cdp-attach` | It shares the operator's real profile (the floor refuses it first). |
+
+`unknownRisk` has no effect with a policy file; the Cedar rules decide `unknown`.
+
+### Classify your risky controls
+
+Approval only engages once a rule says what a control *is*. Add one entry per control to
+`approvalRules`. Matching is exact on `hostname`, `action`, `role` and `name`, and the first
+matching rule wins:
+
+```json
+{ "id": "shop-place-order", "hostname": "shop.example.com", "name": "Place order", "effect": "transaction" }
+```
+
+That click now needs owner approval, while every other click on the site runs. This is pinned
+by `packages/api/src/policy-file-approval-rules.test.ts`.
 
 ### Loosening it, one tenant at a time
 
-Each snippet is one entry in `policies`, with `ruleId` matching its `@rule`. Tenants exist only
-when API keys are configured; without keys the only principal is `Tenant::"local"`. A permit
-cannot override a matching starter `forbid`, so **narrow that forbid too**, as in the first
-row's `unless` clause.
-
-| Goal | Change |
+| Step | What to do |
 | --- | --- |
-| Let tenant `qa` download files | `forbid … "downloads" … unless { principal in AgentBrowser::Tenant::"qa" }` plus `permit(principal, action == AgentBrowser::Action::"downloads", resource) when { principal in AgentBrowser::Tenant::"qa" }` |
-| Let tenant `qa` test a local app | narrow `operator.no-loopback` the same way and add a `request.loopback` permit for `qa` |
-| Reach one internal subnet | `permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context has ip && context.ip.isInRange(ip("10.20.0.0/16")) }`, with `operator.no-private` narrowed by the same condition |
-| Allow cookie handoff for one site | `operator.no-cookie-handoff` narrowed with `unless { context.domain == "example.com" }`, plus a matching permit |
+| 1 | Narrow the starter's `forbid` with `unless { … }`. A permit alone cannot beat a matching forbid. |
+| 2 | Add a `permit` with the same condition. Each entry needs a `ruleId` that matches its `@rule`. |
+| Tenants | exist only with API keys. Without keys the deciding tenant is `Tenant::"local"`, the parent of every session. |
+
+| Goal | Narrowed forbid + permit condition |
+| --- | --- |
+| Tenant `qa` may download files | `principal in AgentBrowser::Tenant::"qa"` on `downloads` |
+| Tenant `qa` may test a local app | `principal in AgentBrowser::Tenant::"qa"` on `request.loopback` |
+| Everyone may reach one internal subnet | `context has ip && context.ip.isInRange(ip("10.20.0.0/16"))` on `request.private` (add a tenant clause to scope it) |
+| Cookie handoff for one site | `context.domain == "example.com"` on `cookie.handoff` |
 
 ### Verify before and after every change
 
@@ -76,11 +99,8 @@ row's `unless` clause.
 | --- | --- |
 | A specific request | `agentbrowser policy-check request <host-or-ip>` |
 | The loaded policy and per-capability decisions | `GET /v1/policy` (or the read-only `policy` MCP tool) |
-| The file loads | start the server: any invalid document, unknown rule namespace or failed strict Cedar validation **refuses startup** |
-
-The starter is pinned by `packages/policy-engine/src/secure-starter.test.ts`. That test loads the
-file through the real loader, asserts every decision in the table above, and proves the
-downloads and internal-subnet recipes work as written.
+| The file loads | start the server: an invalid document, a reserved rule namespace or failed strict Cedar validation **refuses startup** |
+| The starter's decisions and recipes | `packages/policy-engine/src/secure-starter.test.ts` (it also proves the downloads and subnet recipes) |
 
 ## The policy file
 
@@ -92,8 +112,10 @@ refusal that names every conflict. The document carries:
 - `baseline` — `agentbrowser:baseline/v1` for a generated document, or `none` for a fully
   hand-written one (the server then warns that no public-egress permit exists — advisory only,
   since the floor permits public egress by default).
-- `unknownRisk` — `allow` (default) or `required`, for actions whose effect cannot be classified.
-- `approvalRules` — the approval rules, exactly as `AGENTBROWSER_APPROVAL_POLICY` accepts them.
+- `unknownRisk` — `allow` (default) or `required`. Kept for the export round trip; with a file the
+  Cedar rules decide `unknown` actions.
+- `approvalRules` — the approval rules, exactly as `AGENTBROWSER_APPROVAL_POLICY` accepts them;
+  they classify each action's effect before Cedar decides.
 - `policies` — the Cedar policy set: `{key, ruleId, cedar}` entries.
 - `limits` — `extractMaxBytes` and `maxResponseBytes`, replacing the embedder options.
 

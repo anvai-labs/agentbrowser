@@ -7,22 +7,29 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — a policy file's approval rules classify actions
+
+- With `AGENTBROWSER_POLICY_FILE`, the document's `approvalRules` were never applied: they fed
+  only the document version, and the environment approval policy is refused alongside a file.
+  So no rule could mark a control as a transaction and require approval. The file's rules now
+  classify every action before Cedar decides (pinned by `policy-file-approval-rules.test.ts`).
+
 ### Docs — a secure starter policy and how to configure policy
 
-- `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy file to copy.
-  - Public web allowed.
-  - Loopback and private networks denied.
-  - High-risk and unclassified actions need owner approval.
-  - Cookie export, cookie handoff, service workers, downloads and CDP attach denied.
-  - Headed sessions and cookie seeding allowed.
-  - Every decision is named by an `operator.*` rule id.
-- `docs/policy.md` opens with a "Start here" guide:
-  - a decision-flow diagram;
-  - a table of each decision and why;
-  - per-tenant loosening recipes;
-  - how to verify a change.
-- A test loads the starter through the real loader, pins every documented decision, and proves
-  the documented recipes work.
+- `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy to copy.
+  - Loopback and private networks denied; public web via the floor.
+  - Reads, local writes and unclassified actions allowed; actions your `approvalRules`
+    classify as high risk need owner approval.
+  - Cookie export, cookie handoff, service workers, downloads and CDP attach denied; headed
+    sessions and cookie seeding allowed.
+- `docs/policy.md` opens with "Start here": a decision-flow diagram (egress and actions), a
+  table of each decision and why, how to classify risky controls, per-tenant loosening
+  recipes, and how to verify.
+- A test loads the starter through the real loader, pins its decisions and rule ids, and
+  proves the documented recipes.
+- Release recovery (operations guide): when only the final publish fails, publish the draft by
+  hand and do not rerun; generate the winget manifests with `scripts/winget-manifests.mjs`. The
+  `release.yml` comment says immutability applies once the repository setting is on.
 
 ### Changed — release hardening R14 closed
 

@@ -257,7 +257,7 @@ versions identify one shipped product; they do not claim every package changed.
 | Draft, then publish | the Release is filled as a draft and published once every asset is uploaded |
 | Provenance | every asset has a signed build-provenance attestation: `gh attestation verify <file> -R anvai-labs/agentbrowser` |
 | Immutable releases (switched on before 1.20.0) | once published, assets and the tag cannot be changed; a bad release gets a new version |
-| Rerun after a failed publish | a partial draft is never overwritten. Upload failed: delete the draft, then rerun. Only the final publish failed: publish the draft by hand and **do not rerun** (the upload would refuse existing assets); submit the `winget-manifests` artifact by hand |
+| Rerun after a failed publish | a partial draft is never overwritten. Upload failed: delete the draft, then rerun. Only the final publish failed: publish the draft by hand and **do not rerun** (the upload would refuse existing assets); winget never ran, so generate its manifests with `node scripts/winget-manifests.mjs --version <x.y.z> --zip-sha256 <hash>` and submit them |
 
 ### Upgrading from 1.8.4 to the 1.8.5 candidate
 

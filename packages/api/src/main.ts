@@ -181,6 +181,14 @@ const server = await startServer({
           authorizer: policy.authorizer,
           version: policy.authorizer.version,
           limits: policy.limits,
+          ...(policy.kind === 'file'
+            ? {
+                approval: {
+                  rules: policy.document.approvalRules,
+                  unknownRisk: policy.document.unknownRisk,
+                },
+              }
+            : {}),
         },
       }
     : {}),
