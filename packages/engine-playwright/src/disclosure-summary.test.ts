@@ -155,15 +155,62 @@ describe('native disclosures (details/summary) in observe', () => {
     );
   }, 60_000);
 
-  it('a hostile page that breaks built-ins cannot fail observe: the scan degrades and says so', async () => {
+  it('a hostile page that breaks built-ins changes nothing: names and state come from the browser', async () => {
     await withPage(
       '<details><summary>S</summary><p>x</p></details><button>Still here</button>' +
         '<script>Array.from = () => { throw new Error("hostile"); };' +
+        'Array.prototype.map = () => [{ index: 0, name: { evil: 1 }, expanded: "x" }];' +
         'Object.defineProperty(HTMLDetailsElement.prototype, "open", { get() { throw new Error("hostile"); } });</script>',
       async (p) => {
         const state = await p.observe({});
         expect(state.elements.some((el) => el.name === 'Still here')).toBe(true);
-        expect(JSON.stringify(state)).toMatch(/disclosure scan failed/);
+        expect(state.elements.filter((el) => el.role === 'html-summary')).toEqual([
+          expect.objectContaining({ name: 'S', expanded: false }),
+        ]);
+      }
+    );
+  }, 60_000);
+
+  it('a script toggle is refused even when the details holds only text', async () => {
+    await withPage('<details id="d"><summary>T</summary>Just text</details>', async (p) => {
+      const [summary] = await summaries(p);
+      await (p as unknown as { backingPage(): import('playwright').Page })
+        .backingPage()
+        .evaluate(() => {
+          (document.getElementById('d') as HTMLDetailsElement).open = true;
+        });
+      const outcome = await p.act({ type: 'click', target: { ref: summary?.ref as string } }).then(
+        (result) => result.error?.code ?? 'ran',
+        (error: { code?: string }) => error.code
+      );
+      expect(outcome).toBe('STALE_TARGET');
+    });
+  }, 60_000);
+
+  it('live content changing inside an open details does not make its summary stale', async () => {
+    await withPage(
+      '<details id="d" open><summary>Live</summary><span id="n">0</span></details>',
+      async (p) => {
+        const [summary] = await summaries(p);
+        await (p as unknown as { backingPage(): import('playwright').Page })
+          .backingPage()
+          .evaluate(() => {
+            (document.getElementById('n') as HTMLElement).textContent = '1';
+          });
+        await p.act({ type: 'click', target: { ref: summary?.ref as string } });
+        expect((await summaries(p))[0]?.expanded).toBe(false);
+      }
+    );
+  }, 60_000);
+
+  it('switching include:["formControls"] does not bump the revision on a menu summary page', async () => {
+    await withPage(
+      '<details><summary aria-haspopup="menu">Menu</summary><div>items</div></details><button>B</button>',
+      async (p) => {
+        const first = (await p.observe({})).revision;
+        const withControls = (await p.observe({ include: ['formControls'] })).revision;
+        const again = (await p.observe({})).revision;
+        expect([withControls, again]).toEqual([first, first]);
       }
     );
   }, 60_000);
@@ -201,6 +248,10 @@ describe('native disclosures (details/summary) in observe', () => {
 
   it('accessible names match Chromium for the tricky cases', async () => {
     const cases = [
+      '<summary><h3>Title</h3><span>Sub</span></summary>',
+      '<summary>Qty <input value="5" aria-label="quantity"></summary>',
+      '<summary role="none">Presented</summary>',
+      '<summary><span class="after">Base</span></summary>',
       '<summary>Visible <span style="display:none">HIDDEN</span> end</summary>',
       '<summary>T<style>.x{color:red}</style><script>var a=1</script></summary>',
       '<summary aria-labelledby="la">ignored</summary>',
@@ -209,7 +260,9 @@ describe('native disclosures (details/summary) in observe', () => {
       '<summary>a<br>b</summary>',
     ];
     await withPage(
-      cases.map((c, i) => `<details data-i="${i}">${c}<p>.</p></details>`).join('') +
+      '<style>.after::after{content:" Extra"}</style>' +
+        cases.map((c, i) => `<details data-i="${i}">${c}<p>.</p></details>`).join('') +
+        '<details><summary role="foo button">Fallback</summary><p>.</p></details>' +
         // The labelledby target lives outside the (closed) details, as on real pages.
         '<span id="la" aria-label="LabelOfA">textA</span>',
       async (p) => {
@@ -221,6 +274,11 @@ describe('native disclosures (details/summary) in observe', () => {
           .map((n) => String(n.name?.value ?? ''));
         const ours = (await summaries(p)).map((s) => s.name ?? '');
         expect(ours).toEqual(chromium);
+        // "foo button" resolves to the first valid role: one button, no disclosure row.
+        const state = await p.observe({});
+        expect(state.elements.filter((el) => el.name === 'Fallback').map((el) => el.role)).toEqual([
+          'button',
+        ]);
       }
     );
   }, 60_000);
@@ -244,4 +302,32 @@ describe('native disclosures (details/summary) in observe', () => {
       }
     );
   }, 60_000);
+
+  it('validates page-function rows in Node (untrusted page data)', async () => {
+    const { validateSummaryInfos } = await import('./index.js');
+    const good = {
+      index: 0,
+      name: 'A',
+      expanded: false,
+      visible: true,
+      explicitRole: false,
+      hasPopup: false,
+    };
+    expect(validateSummaryInfos([good], 1)).toEqual({ valid: [good], dropped: 0 });
+    // Wrong types, an out-of-range index and a duplicate index are dropped; extra rows beyond
+    // the real match count count as dropped too.
+    const result = validateSummaryInfos(
+      [
+        { ...good, name: { evil: 1 } },
+        { ...good, index: 1 },
+        { ...good, index: 1 },
+        { ...good, index: 2, expanded: 'x' },
+        { ...good, index: 9 },
+      ],
+      4
+    );
+    expect(result.valid.map((row) => row.index)).toEqual([1]);
+    expect(result.dropped).toBe(4);
+    expect(validateSummaryInfos('nope', 2)).toEqual({ valid: [], dropped: 2 });
+  });
 });

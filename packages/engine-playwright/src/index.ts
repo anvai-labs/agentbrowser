@@ -113,6 +113,11 @@ interface StoredElement {
    * cannot emit): binds by ordinal over SUMMARY_SELECTOR.
    */
   summaryIndex?: number;
+  /**
+   * An aria-haspopup summary: include:["formControls"] mints it as `control` instead, so it
+   * never counts toward the base rows (switching the include must not bump the revision).
+   */
+  menuSummary?: boolean;
   /** Expanded state of a disclosure control (html-summary: its details' `open`). */
   expanded?: boolean;
   attributes?: Record<string, string>;
@@ -245,6 +250,50 @@ function summaryInfoPageFunction(nodes: SummaryDomNode[]): SummaryInfo[] {
   }) as SummaryInfo[];
 }
 
+/**
+ * The page function runs in the page's world, so its output is untrusted: a page that patches
+ * built-ins can return anything. Rows are kept only when every field has the right type and the
+ * index is a real position among the `count` matches; names are clamped like any element name.
+ */
+export function validateSummaryInfos(
+  raw: unknown,
+  count: number
+): { valid: SummaryInfo[]; dropped: number } {
+  if (!Array.isArray(raw)) return { valid: [], dropped: count };
+  const valid: SummaryInfo[] = [];
+  const seen = new Set<number>();
+  let dropped = 0;
+  for (const row of raw.slice(0, count)) {
+    const candidate = row as Partial<Record<keyof SummaryInfo, unknown>> | null;
+    const ok =
+      candidate !== null &&
+      typeof candidate === 'object' &&
+      Number.isInteger(candidate.index) &&
+      (candidate.index as number) >= 0 &&
+      (candidate.index as number) < count &&
+      !seen.has(candidate.index as number) &&
+      typeof candidate.name === 'string' &&
+      typeof candidate.expanded === 'boolean' &&
+      typeof candidate.visible === 'boolean' &&
+      typeof candidate.explicitRole === 'boolean' &&
+      typeof candidate.hasPopup === 'boolean';
+    if (!ok) {
+      dropped += 1;
+      continue;
+    }
+    seen.add(candidate.index as number);
+    valid.push({
+      index: candidate.index as number,
+      name: (candidate.name as string).slice(0, 512),
+      expanded: candidate.expanded as boolean,
+      visible: candidate.visible as boolean,
+      explicitRole: candidate.explicitRole as boolean,
+      hasPopup: candidate.hasPopup as boolean,
+    });
+  }
+  return { valid, dropped: dropped + Math.max(0, raw.length - count) };
+}
+
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
 interface FileInputInfo {
   index: number;
@@ -279,10 +328,10 @@ interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
   /**
-   * Where the semantic evidence is read when it differs from the target: a summary's own snapshot
-   * omits its disclosure state, so its evidence is the parent details (which changes on toggle).
+   * A disclosure's observed state: its own snapshot omits it, so an act re-reads the parent
+   * details' `open` attribute (in Playwright's isolated world) and refuses on a change.
    */
-  evidenceLocator?: Locator;
+  expectedOpen?: boolean;
   formEvidence?: Record<string, string>;
   /** Owning child frame for frame-scoped form-identity evidence (T6). */
   frame?: import('playwright').Frame;
@@ -777,6 +826,8 @@ const FORM_CONTROL_SELECTOR = [
  * browser, which still exposes the disclosure, so that one is minted).
  */
 const SUMMARY_SELECTOR = 'details > summary:first-of-type';
+/** Light DOM only: matches CDP DOM.querySelectorAll's document order exactly. */
+const SUMMARY_LOCATOR = `css:light=${SUMMARY_SELECTOR}`;
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
@@ -3112,10 +3163,26 @@ class PlaywrightPage implements EnginePage {
             : frameIdentity(root as import('playwright').Frame, scanRoots.indexOf(root));
         let found: SummaryInfo[];
         try {
-          // The page function runs in the page's world: its output is untrusted page data, and a
-          // page that breaks built-ins can make it throw. That must never fail the observation:
-          // the scan degrades to a disclosed coverage entry, main frame included.
-          found = await root.locator(SUMMARY_SELECTOR).evaluateAll(summaryInfoPageFunction);
+          // Chromium main frame: the browser's own accessibility tree (exact names, roles and
+          // state; unaffected by page scripts). Elsewhere: the page function, whose output is
+          // untrusted page data and is validated in Node. A failure never fails the observation:
+          // it degrades to a disclosed coverage entry.
+          const viaBrowser = root === this.page ? await this.disclosuresFromBrowser() : undefined;
+          if (viaBrowser !== undefined) found = viaBrowser;
+          else {
+            const raw: unknown = await root
+              .locator(SUMMARY_LOCATOR)
+              .evaluateAll(summaryInfoPageFunction);
+            const count = await root.locator(SUMMARY_LOCATOR).count();
+            const checked = validateSummaryInfos(raw, count);
+            found = checked.valid;
+            if (checked.dropped > 0)
+              frameCoverage.push({
+                frame: identity,
+                status: 'unavailable',
+                reason: `disclosure scan returned ${checked.dropped} invalid rows`,
+              });
+          }
         } catch {
           frameCoverage.push({
             frame: identity,
@@ -3147,6 +3214,7 @@ class PlaywrightPage implements EnginePage {
             enabled: true,
             expanded: info.expanded,
             summaryIndex: info.index,
+            ...(info.hasPopup ? { menuSummary: true } : {}),
             ...(block !== undefined ? { block } : {}),
             attributes: { tag: 'summary' },
           });
@@ -3338,7 +3406,10 @@ class PlaywrightPage implements EnginePage {
       role: string;
       formControlIndex?: number;
       fileInputIndex?: number;
-    }): boolean => row.formControlIndex !== undefined || row.fileInputIndex !== undefined;
+    }): boolean =>
+      row.formControlIndex !== undefined ||
+      row.fileInputIndex !== undefined ||
+      (row as { menuSummary?: boolean }).menuSummary === true;
     const countEnrichment = (
       rows: Array<{ role: string; formControlIndex?: number; fileInputIndex?: number }>,
       kind: 'formControl' | 'fileInput'
@@ -3429,15 +3500,11 @@ class PlaywrightPage implements EnginePage {
             : element.formControlIndex !== undefined
               ? scanRoot.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
               : element.summaryIndex !== undefined
-                ? scanRoot.locator(SUMMARY_SELECTOR).nth(element.summaryIndex)
+                ? scanRoot.locator(SUMMARY_LOCATOR).nth(element.summaryIndex)
                 : locatorRoot
                     .getByRole(element.role as never, { name: element.name ?? '', exact: true })
                     .nth(ordinal));
-        // A summary's snapshot is only its text; its parent details changes when it opens or
-        // closes, so that is the evidence an act re-checks.
-        const evidenceLocator =
-          element.summaryIndex !== undefined ? locator.locator('xpath=..') : undefined;
-        return { element, ref, ownerFrame, fallback, locator, evidenceLocator };
+        return { element, ref, ownerFrame, fallback, locator };
       });
       // F2: binding is one round trip per step per element (resolve, aria snapshot, identity
       // check); run sequentially it dominated observation (~90% on a 120-element page). Each
@@ -3449,7 +3516,7 @@ class PlaywrightPage implements EnginePage {
       const bindOne = async (planIndex: number): Promise<void> => {
         const plan = plans[planIndex];
         if (plan === undefined) return;
-        const { element, ref, ownerFrame, fallback, locator, evidenceLocator } = plan;
+        const { element, ref, ownerFrame, fallback, locator } = plan;
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
         // elementHandles() resolves without waiting (as count() + elementHandle() did) in one
         // round trip; an nth() locator yields at most one node.
@@ -3468,7 +3535,7 @@ class PlaywrightPage implements EnginePage {
         const binding: NodeBinding = {
           handle,
           locator,
-          ...(evidenceLocator !== undefined ? { evidenceLocator } : {}),
+          ...(element.expanded !== undefined ? { expectedOpen: element.expanded } : {}),
           snapshot: undefined,
           documentSnapshot,
           // frameOfElement tags only non-page scan roots, so the cast is
@@ -3489,9 +3556,7 @@ class PlaywrightPage implements EnginePage {
           element.fileInputIndex !== undefined ||
           element.formControlIndex !== undefined ||
           element.summaryIndex !== undefined
-            ? await snapshotBudget
-                .capture(evidenceLocator ?? locator, ELEMENT_CAPTURE_SLICE_MS)
-                .catch(() => undefined)
+            ? await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS).catch(() => undefined)
             : await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS);
         binding.snapshot = snapshotDigest(captured);
         const prior = previous.get(ref);
@@ -4014,6 +4079,55 @@ class PlaywrightPage implements EnginePage {
   }
 
   /**
+   * A details' first summaries as Chromium's accessibility tree sees them, in light-DOM document
+   * order (the order of SUMMARY_LOCATOR). Undefined when the engine has no CDP (Firefox, WebKit),
+   * so the caller falls back to the page function. A row is minted only where Chromium exposes a
+   * disclosure (role DisclosureTriangle, not ignored): an explicit valid role, an unrendered
+   * summary or one inside a closed details is skipped exactly as the browser decides.
+   */
+  private async disclosuresFromBrowser(): Promise<SummaryInfo[] | undefined> {
+    let cdp: import('playwright').CDPSession;
+    try {
+      cdp = await this.page.context().newCDPSession(this.page);
+    } catch {
+      return undefined;
+    }
+    try {
+      const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+      const { nodeIds } = await cdp.send('DOM.querySelectorAll', {
+        nodeId: root.nodeId,
+        selector: SUMMARY_SELECTOR,
+      });
+      return await Promise.all(
+        nodeIds.map(async (nodeId, index): Promise<SummaryInfo> => {
+          const { node } = await cdp.send('DOM.describeNode', { nodeId });
+          const { nodes } = await cdp.send('Accessibility.getPartialAXTree', {
+            backendNodeId: node.backendNodeId,
+            fetchRelatives: false,
+          });
+          const ax = nodes[0];
+          const property = (name: string) =>
+            ax?.properties?.find((candidate) => candidate.name === name)?.value?.value;
+          const attributes = node.attributes ?? [];
+          const hasPopup = attributes.some((value, i) => i % 2 === 0 && value === 'aria-haspopup');
+          const disclosure =
+            ax !== undefined && !ax.ignored && ax.role?.value === 'DisclosureTriangle';
+          return {
+            index,
+            name: String(ax?.name?.value ?? ''),
+            expanded: property('expanded') === true,
+            visible: disclosure,
+            explicitRole: !disclosure,
+            hasPopup,
+          };
+        })
+      );
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
+  }
+
+  /**
    * One batched round-trip describing interactive controls that carry no ARIA
    * role (div/span widget triggers, automation-attributed containers) - the
    * elements locator.ariaSnapshot() cannot emit, so observe would otherwise
@@ -4138,10 +4252,19 @@ class PlaywrightPage implements EnginePage {
       }
       // Evidence provenance is fixed at observation. A failed fresh element check
       // cannot switch to document evidence or substitute the old value.
+      if (binding.expectedOpen !== undefined) {
+        const open = (await binding.locator.locator('xpath=..').getAttribute('open')) !== null;
+        if (open !== binding.expectedOpen) {
+          throw new EngineError(
+            'STALE_TARGET',
+            'Observed disclosure state changed; observe again.',
+            true,
+            this.refusalDetails(target.ref, stored)
+          );
+        }
+      }
       const semanticLocator =
-        binding.snapshot !== undefined
-          ? (binding.evidenceLocator ?? binding.locator)
-          : this.page.locator('body');
+        binding.snapshot !== undefined ? binding.locator : this.page.locator('body');
       const liveSnapshot = snapshotDigest(
         await semanticLocator.ariaSnapshot({
           timeout: this.snapshotTimeoutMs,

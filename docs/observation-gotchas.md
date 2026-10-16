@@ -25,15 +25,16 @@ comes from the browser or from the observation layer.
 | Cause | HTML-AAM gives `summary` **no ARIA role** (computed role `html-summary`); Playwright's snapshot computes ARIA roles and drops it |
 | Regression? | No. The behaviour is the same on Playwright 1.62.1 (AgentBrowser ≤ 1.17.0) and 1.64.0 (1.17.1–1.19.0) |
 | Fix | the first `summary` of each `details` is minted as role `html-summary`, never forced to `button`, with its accessible name and `expanded` from `details.open` |
-| Accessible name | matches Chromium's own AX name (pinned): `aria-labelledby` targets, then `aria-label`, then rendered text (hidden, `aria-hidden`, script/style excluded; a nested `aria-label` replaces its text; img `alt`; `<br>` as a space; `::before`/`::after`), then `title`. An empty summary is still targetable with name `""` |
-| Not minted | a summary with a **valid** explicit `role` (already in the snapshot under it; an empty or unknown role is minted, as Chromium still exposes it); a second `summary`; content of a closed `details`; a `details` with no `summary` (the default control lives in a shadow root); summaries in **closed** shadow roots |
+| Source | **Chromium:** the browser's own accessibility tree (CDP), so name, role and state are exactly what Chromium exposes, and page scripts cannot change them. **Other engines and child frames:** a DOM scan whose output is untrusted page data, validated in Node (wrong types or indexes are dropped and reported) |
+| Minted when | Chromium exposes a disclosure (`DisclosureTriangle`, not ignored). So an empty, unknown or `none` role is minted, while a valid explicit role (e.g. `button`) is left to the snapshot. Content of a closed `details` is not rendered, so it is not minted |
+| Not covered | summaries inside shadow roots (light DOM only); a `details` with no `summary` (the default control lives in a shadow root) |
 | Interaction | `click` the ref, or `press` Enter / Space on it, toggles it; re-observe for the new state and refs |
-| Protections | refs are revision-bound; an act also re-checks the parent `details` snapshot, so a disclosure **toggled by page script** since the observation is refused as `STALE_TARGET`; approval and redaction apply unchanged |
-| Hostile pages | the scan runs in the page's JavaScript world, so its output is untrusted page data like any name. A page that breaks built-ins only degrades the scan: `observe` still succeeds and reports `disclosure scan failed` in its coverage |
+| Protections | refs are revision-bound; an act re-reads the parent `details`' `open` attribute, so a disclosure **toggled by page script** since the observation is refused as `STALE_TARGET` (content changing inside it is not); approval and redaction apply unchanged |
+| Failure | the scan never fails `observe`: an error degrades to a coverage entry (`disclosure scan failed`) |
 | Limits | at most 200 rendered summaries per frame; more is reported as `disclosures capped at 200 of N`. Summary rows follow the snapshot's rows (no depth), so `scopeRef` on a container does not include them |
 | Approval rules | a rule keyed on `role: "button"` does not match `html-summary`; key on `name` (and `hostname`) or on `role: "html-summary"` |
-| With `include:["formControls"]` | an `aria-haspopup` summary (menu pattern) is minted once, as `control` with its row context |
-| Pinned by | `packages/engine-playwright/src/disclosure-summary.test.ts` (real Chromium): name parity with Chromium, expanded state, click, keyboard, nested, unnamed, roles, frames, stale and script-toggled refs, hostile page, cap |
+| With `include:["formControls"]` | an `aria-haspopup` summary (menu pattern) is minted once, as `control` with its row context; switching the include does not move the revision |
+| Pinned by | `packages/engine-playwright/src/disclosure-summary.test.ts` (real Chromium, 18 tests): names equal Chromium's AX names, expanded state, click, keyboard, nested, unnamed, roles, frames, stale and script-toggled refs, live content, hostile page, cap, include switching, Node-side validation |
 
 ```sh
 agentbrowser --json observe <session> <page> | jq '.elements[] | select(.role=="html-summary")'
