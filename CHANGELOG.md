@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — release hardening R14 closed
+
+- `v*` tags: only repository admins can create, move or delete them (ruleset).
+- npm publish: pauses for the owner's approval; deploys only from a `v*` tag.
+- Every release asset gets a signed build-provenance attestation
+  (`gh attestation verify <file> -R anvai-labs/agentbrowser`).
+- Releases are drafted, filled, then published, so repository immutable releases can be switched
+  on (planned after the next promotion, before 1.20.0).
+- With the main-ancestry tag guard this closes R14; the operations guide's release section has
+  the table of gates.
+
 ### Docs — the 1.19.0 release record
 
 - `docs/spec/evidence/release-1.19.0.md` records the release and the post-run verification of
