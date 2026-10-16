@@ -1,7 +1,7 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table records the delivered state as of 2026-10-15, reconciled item by item against the
+The table records the delivered state as of 2026-10-16, reconciled item by item against the
 packets' acceptance lists (published baseline 1.20.0, promoted to main via #536). "Complete"
 means the manifest dependency gate is satisfied; open follow-ons are named in the row.
 Reading this task list alone does not authorize implementation or publication;
