@@ -43,10 +43,8 @@ workflow and production qualification gates remain open.
 AgentBrowser 1.8.19 extends the existing autofill strategy registry with explicit
 `react-select` and `chip-multiselect` strategies. Both reuse the same scoped field
 resolution, action executor, receipt assembly and verification loop; they do not add a
-second bulk orchestrator. This is a bounded T6 slice, not completion of T6. Since delivered:
-reusable mapping (#238), removal and exact chip sets (W2, #502) and cross-engine qualification
-(W3b, #507); rollback beyond receipt reporting and broader async/recycled-option coverage remain
-open.
+second bulk orchestrator. A bounded slice: mapping (#238), chip removal (#502) and cross-engine
+(#507) came later; rollback and async/recycled-option coverage remain open.
 
 The [Q0 commitment repair](../evidence/t6-widget-commitment.md) shipped in 1.9.1 through PR #232.
 It restores four dormant tests, shares each strategy's commitment predicate between
@@ -93,8 +91,7 @@ rollback or reusable mapping claim follows.
 The [mapping foundation](../design/t6-form-mapping.md), merged in PR #238, adds a pure protocol join,
 offline CLI preparation and exact-URL/all-field preflight inside the same executor.
 See [evidence](../evidence/t6-form-mapping.md). This is one fully present stage;
-conditional stages are since delivered (W3a, #511); business/job identity and live workflow
-qualification remain open.
+stages came later (#511); business/job identity and live qualification remain open.
 
 The [verified upload and draft slice](../design/t6-verified-upload-draft.md), merged in PR #239,
 reuses the upload action and a shared bounded file reader, then qualifies a synthetic

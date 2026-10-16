@@ -33,7 +33,7 @@ declared files and budgets without contacting a service.
 
 Published baseline **1.18.0** (TD-BROWSER-15/16, data-review fixes, tag-ancestry gate); records
 in ../evidence/release-1.16.0.md through release-1.18.0.md. Everything merged since the #483
-back-sync is unreleased (CHANGELOG `[Unreleased]`, #477–#523), ending with J3c part 2, J3d and
+back-sync is unreleased (CHANGELOG `[Unreleased]`), ending with J3c part 2, J3d and
 B-dur. Every agent-actionable item of the 2026-10-15 reconciliation is delivered; what remains
 is below.
 
