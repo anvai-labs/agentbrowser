@@ -160,4 +160,8 @@ recovery, B1).
    the primitives exist and are pinned; B-dur-2 wires them into the dispatch boundary.
 2. **B-dur-2:** the protocol field with parity and `ephemeral` normalization, the browser dispatch
    qualification through the page guard, the terminal mapping, a real-store crash row per owner
-   (before the marker, after the marker), and the capacity note in the operations guide.
+   (before the marker, after the marker), and the capacity note in the operations guide. Split
+   in two: **B-dur-2a** (control layer: the browser selection, the once-per-operation async guard
+   after the marker, the terminal mapping) is **delivered 2026-10-15**
+   ([evidence](../evidence/t5-journal-runtime.md#b-dur-2a-the-browser-journal-in-the-control-layer-2026-10-15));
+   **B-dur-2b** wires it through the service and protocol.

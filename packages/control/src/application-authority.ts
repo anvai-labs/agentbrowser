@@ -7,6 +7,7 @@ import {
   VERIFICATION_SNAPSHOT_LIMITS,
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
+import { RESERVED_BROWSER_ADAPTER_ID } from './browser-journal.js';
 import { canonicalJson } from './canonical-json.js';
 import {
   type OperationPublication,
@@ -20,6 +21,8 @@ import {
   type SessionPrincipal,
 } from './session-authority.js';
 import { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
+
+export { RESERVED_BROWSER_ADAPTER_ID };
 
 export interface ApplicationScope {
   readonly sessionId: string;
@@ -338,13 +341,6 @@ function assertApplicationAuthorized(
   }
   throw new ControlError('CONTROL_REQUIRED', 'Application scope is not permitted');
 }
-
-/**
- * T5 B-dur (B5): the application identity browser-operation journal records use (adapter
- * `browser`, resource `act` | `plan` | `autofill`). Reserved: no application adapter may register
- * it, so lookup can always tell a browser record apart and reconcile always refuses one.
- */
-export const RESERVED_BROWSER_ADAPTER_ID = 'browser';
 
 /** Opt-in trusted adapters. This port owns no browser, planner, network client or database. */
 export class ApplicationAuthority {

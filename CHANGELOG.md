@@ -18,6 +18,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Added — the browser journal in the control layer (T5 B-dur-2a)
+
+- The session authority can journal a durable browser operation as one record under the
+  reserved `browser` identity (its own fingerprint domain): the marker at the first page
+  dispatch, then the owner's recheck once, then the effects. A failed recheck crosses no effect
+  (`failed`, dispatched); a known failure keeps its report; an operation with nothing to dispatch
+  keeps its result. Not yet used by the service (B-dur-2b).
+
 ### Added — browser-durability revalidation primitives (T5 B-dur-1)
 
 - The application adapter id `browser` is reserved for browser-operation journal records.
