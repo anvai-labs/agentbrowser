@@ -444,16 +444,26 @@ green with no expectation changed).
   `ApprovalGate.validateReviewedApproval` is the new non-consuming twin of
   `consumeReviewedApproval` (identical checks, including the snapshot refusal of a mismatched
   session).
-  - Pinned: no token → `APPROVAL_REQUIRED` at prepare with nothing dispatched; a plain token, a
+  - Pinned: no token, an invalid or already-spent plain token, and a reviewed token still pending
+    the operator's decision are each refused by `prepareApproval` itself (an approval round trip
+    never reaches a marker; dropping the prepare-time validation fails these); a plain token, a
     reviewed approval and a lease each spent by a concurrent act during the wait fail both
-    `revalidate` and `commit` with nothing dispatched; `revalidate` never spends.
+    `revalidate` and `commit` with nothing dispatched; `revalidate` never spends. A spent lease at
+    commit is `POLICY_DENIED` (fail-closed; a plain act never reaches that branch).
 - **Target recheck (B6).** `ActionExecutor.revalidateTarget` re-runs `execute`'s own target checks
-  after the wait: re-resolve the ref, still visible (except `upload`) and enabled, same
-  fingerprint as observed. Pinned: changed element (`STALE_TARGET`), hidden, disabled, no longer
-  resolvable (`STALE_TARGET`), and the upload exemption.
-- **Autofill recheck (B6).** `runAutofill` offers its own scoped recheck once through an optional
-  `onRecheck` port: a fresh observation that re-validates the stage URL and the pinned node and
-  block identities and readiness, throwing the run's own typed failures. Pinned: passes on the
-  pinned page without dispatching, `STALE_TARGET` when a pinned control is replaced,
+  after the wait with the CURRENT page revision: the revision staleness check first, then
+  re-resolve the ref (engine failures mapped exactly as `execute` maps them — a crash stays
+  `ENGINE_CRASHED`, no raw engine text), still visible (except `upload`) and enabled, same
+  fingerprint as observed. Pinned: a revision that moved during the wait (`STALE_TARGET`, nothing
+  resolved), changed element, hidden, disabled, crash parity with `execute`, the upload exemption,
+  and an untargeted action (revision only).
+- **Autofill recheck (B6).** `runAutofill` offers a recheck once through an optional `onRecheck`
+  port. It is READ-ONLY: it never writes the run's state (scope validity, pins), so a recheck
+  passing inside a dispatch can never re-authorize the raw snapshot the dispatch revoked (pinned:
+  a passing recheck inside a failed dispatch leaves the snapshot uncaptured; the old
+  state-writing form fails that test). With a scope it compares a fresh, complete observation
+  with the preflight's pins (URL, node and block identities, readiness) and refuses before any
+  pins exist; without a scope it re-resolves every mapped field. Pinned: passes on the pinned page
+  without dispatching, `STALE_TARGET` for a replaced control or a recheck before preflight,
   `FORM_SCOPE_MISMATCH` when the page left the stage.
 

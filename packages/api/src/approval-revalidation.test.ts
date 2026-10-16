@@ -142,3 +142,31 @@ it('a plain act still decides and consumes at once (unchanged): one use, then re
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 });
+
+it('an invalid or burned token is refused at prepare itself — it never reaches a marker (review M1)', async () => {
+  const gate = new ApprovalGate();
+  await fixture(gate, async ({ service, internals, sessionId, pageId, ref, dispatch }) => {
+    const action = { action: 'click' as const, target: { ref } };
+    const page = internals.requirePage(sessionId, pageId);
+    await expect(
+      internals.prepareApproval(sessionId, pageId, page, {
+        ...action,
+        approvalToken: 'not-a-token',
+      })
+    ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    // A genuine token, already spent by an earlier act, is equally refused at prepare.
+    const tokenId = await tokenFor(() => service.act(sessionId, pageId, action));
+    await service.act(sessionId, pageId, { ...action, approvalToken: tokenId });
+    const again = (await service.observe(sessionId, pageId, {})).elements[0]?.ref;
+    if (!again) throw new Error('Missing target after re-observe');
+    dispatch.mockClear();
+    await expect(
+      internals.prepareApproval(sessionId, pageId, internals.requirePage(sessionId, pageId), {
+        action: 'click',
+        target: { ref: again },
+        approvalToken: tokenId,
+      })
+    ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});

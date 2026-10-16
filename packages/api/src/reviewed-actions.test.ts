@@ -620,6 +620,22 @@ describe('B-dur (B6): approval currency re-validated after a wait, consumed only
     expect(f.dispatch).toHaveBeenCalledTimes(1);
   });
 
+  it('a reviewed token still pending the operator decision is refused at prepare (review M1)', async () => {
+    const f = await markedFixture();
+    const generated = vi.spyOn(f.gate, 'generateReviewedApproval');
+    f.raw.setElements([{ role: 'button', name: 'Pay now', risk: 'transaction' }]);
+    const ref = await f.refOf('Pay now');
+    const first = await refused(f.act(ref));
+    const tokenId = (first.details as { tokenId: string }).tokenId;
+    const identity = (generated.mock.calls[0]?.[0] as { action: { identity?: string } } | undefined)
+      ?.action.identity;
+    // Not approved yet: prepare itself refuses (an approval round trip never reaches a marker).
+    const pending = await refused(prepare(f, ref, tokenId, identity));
+    expect(pending.code).toBe('APPROVAL_REQUIRED');
+    expect(pending.details).toMatchObject({ review: 'operator' });
+    expect(f.dispatch).not.toHaveBeenCalled();
+  });
+
   it('a reviewed approval consumed during the wait fails revalidate and commit', async () => {
     const f = await markedFixture();
     const generated = vi.spyOn(f.gate, 'generateReviewedApproval');

@@ -5553,12 +5553,6 @@ export class AgentBrowserService {
     return lease?.hosts.some((entry) => covers(entry, host).ok) === true;
   }
 
-  /**
-   * Spend one leased action for an unknown-effect act on a covered host.
-   * Returns false when there is no live lease, the host is not covered, or
-   * the count is spent — the caller then falls back to review (fail closed,
-   * never to allow).
-   */
   /** T5 B-dur: whether the live lease would admit one action on `host`, without spending it. */
   private leaseCoversAction(sessionId: string, host: string): boolean {
     const lease = this.activeLeaseFor(sessionId);
@@ -5569,6 +5563,13 @@ export class AgentBrowserService {
     );
   }
 
+  /**
+   * Spend one leased action for an unknown-effect act on a covered host.
+   * Returns false when there is no live lease, the host is not covered, or
+   * the count is spent — the caller then falls back to review (fail closed,
+   * never to allow). A durable operation's commit refuses a spent lease with POLICY_DENIED
+   * instead (the decision was already taken at prepare).
+   */
   private consumeLeasedAction(sessionId: string, host: string): boolean {
     const lease = this.activeLeaseFor(sessionId);
     if (lease === undefined) return false;

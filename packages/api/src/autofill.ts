@@ -441,8 +441,40 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     }
     return view.elements;
   };
+  // T5 B-dur (B6): a READ-ONLY recheck. It never writes the run's state (scope validity, pins,
+  // preflight index): a recheck passing inside a dispatch must never re-authorize anything the
+  // dispatch deliberately revoked (raw artifact capture needs a complete observation AFTER the
+  // dispatch). It compares a fresh, complete observation with the pins the preflight recorded;
+  // before preflight there is nothing to compare, which is refused. Without a scope it re-resolves
+  // every mapped field.
   ports.onRecheck?.(async () => {
-    await observe();
+    guard();
+    const view = await ports.observe();
+    guard();
+    if (view.truncated || view.degraded)
+      throw new AutofillFailure(
+        'OUTPUT_TRUNCATED',
+        'Autofill requires complete, non-degraded observations'
+      );
+    if (!request.scope) {
+      for (const field of request.fields) resolve(view.elements, field.match, blocks);
+      return;
+    }
+    if (view.url !== request.scope.url)
+      throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Page URL does not match the mapped stage');
+    for (const [index, field] of request.fields.entries()) {
+      const pin = scopePins.get(index);
+      if (!pin) throw new AutofillFailure('STALE_TARGET', 'Mapped stage was not preflighted');
+      const element = resolve(view.elements, field.match, blocks);
+      if (
+        element.attributes?.['autofill-node'] !== pin.node ||
+        element.attributes?.['autofill-block'] !== pin.block ||
+        !element.visible ||
+        !element.enabled ||
+        !strategyFor(element, field)
+      )
+        throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
+    }
   });
   let preflightFailed = false;
   if (request.scope) {

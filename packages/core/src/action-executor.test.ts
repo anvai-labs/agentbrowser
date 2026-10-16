@@ -866,12 +866,25 @@ describe('ActionExecutor', () => {
       name: 'Submit',
       fingerprint: 'button_Submit_visible_true_enabled_true',
     };
+    const recheck = (
+      action: ActionRequest['action'] = { type: 'click', target: { ref: 'e1_0' } },
+      revision = 1
+    ) =>
+      executor.revalidateTarget(req(action), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+        currentRevision: revision,
+      });
 
-    it('is current when the target still resolves to the same element', async () => {
+    it('is current when the target still resolves to the same element at the same revision', async () => {
       vi.mocked(mockEnginePage.resolve).mockResolvedValue(current as ResolvedTarget);
-      await expect(
-        executor.revalidateTarget(mockEnginePage, 'e1_0', 'click', mockObservation)
-      ).resolves.toBeNull();
+      await expect(recheck()).resolves.toBeNull();
+    });
+
+    it('refuses with STALE_TARGET when the page revision moved during the wait (review M3)', async () => {
+      vi.mocked(mockEnginePage.resolve).mockResolvedValue(current as ResolvedTarget);
+      await expect(recheck(undefined, 2)).resolves.toMatchObject({ code: 'STALE_TARGET' });
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -884,16 +897,25 @@ describe('ActionExecutor', () => {
       ['the element became disabled', { ...current, enabled: false }, 'TARGET_DISABLED'],
     ] as const)('refuses when %s during the wait', async (_name, resolved, code) => {
       vi.mocked(mockEnginePage.resolve).mockResolvedValue(resolved as unknown as ResolvedTarget);
-      await expect(
-        executor.revalidateTarget(mockEnginePage, 'e1_0', 'click', mockObservation)
-      ).resolves.toMatchObject({ code });
+      await expect(recheck()).resolves.toMatchObject({ code });
     });
 
-    it('refuses with STALE_TARGET when the ref no longer resolves at all', async () => {
-      vi.mocked(mockEnginePage.resolve).mockRejectedValue(new Error('detached'));
-      await expect(
-        executor.revalidateTarget(mockEnginePage, 'e1_0', 'click', mockObservation)
-      ).resolves.toMatchObject({ code: 'STALE_TARGET' });
+    it('maps engine failures exactly as execute does: a crash stays ENGINE_CRASHED, no raw text (review M3)', async () => {
+      const { EngineError } = await import('@agentbrowser/engine');
+      vi.mocked(mockEnginePage.resolve).mockRejectedValue(
+        new EngineError('ENGINE_CRASHED', 'Target page, context or browser has been closed', false)
+      );
+      const viaRecheck = await recheck();
+      vi.mocked(mockEnginePage.resolve).mockRejectedValue(
+        new EngineError('ENGINE_CRASHED', 'Target page, context or browser has been closed', false)
+      );
+      const viaExecute = await executor.execute(req({ type: 'click', target: { ref: 'e1_0' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+        currentRevision: 1,
+      });
+      expect(viaRecheck).toEqual(viaExecute.error);
+      expect(viaRecheck?.code).toBe('ENGINE_CRASHED');
     });
 
     it('lets a hidden file input through for upload, as execute does', async () => {
@@ -901,13 +923,17 @@ describe('ActionExecutor', () => {
         ...current,
         visible: false,
       } as ResolvedTarget);
-      const result = await executor.revalidateTarget(
-        mockEnginePage,
-        'e1_0',
-        'upload',
-        mockObservation
-      );
+      const result = await recheck({
+        type: 'upload',
+        target: { ref: 'e1_0' },
+        paths: ['/tmp/x'],
+      } as never);
       expect(result?.code).not.toBe('TARGET_NOT_VISIBLE');
+    });
+
+    it('has nothing to recheck for an untargeted action beyond the revision', async () => {
+      await expect(recheck({ type: 'scroll', direction: 'down' } as never)).resolves.toBeNull();
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
     });
   });
 });

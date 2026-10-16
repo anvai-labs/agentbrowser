@@ -1288,6 +1288,47 @@ describe('mapped stage scope and preflight', () => {
     } as never);
     await expect(recheck()).rejects.toMatchObject({ code: 'FORM_SCOPE_MISMATCH' });
   });
+  it('the recheck is read-only: passing inside a failed dispatch never re-authorizes the snapshot (review M2)', async () => {
+    const f = scopedFixture();
+    let recheck: (() => Promise<void>) | undefined;
+    const act = f.act;
+    let first = true;
+    const report = await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+      act: async (wire, onDispatch) => {
+        if (first) {
+          first = false;
+          onDispatch();
+          // B-dur-2's placement: after the marker, inside the dispatch. The page is unchanged,
+          // so the recheck passes — and the effect then fails.
+          await recheck?.();
+          throw new Error('page handler threw after dispatch');
+        }
+        return act(wire, onDispatch);
+      },
+    });
+    expect(report.ok).toBe(false);
+    // The dispatch revoked scope validity; nothing re-observed after it, so no raw capture.
+    expect(f.snapshot).not.toHaveBeenCalled();
+  });
+  it('refuses a recheck before preflight recorded any pins (review M2)', async () => {
+    const f = scopedFixture();
+    let recheck: (() => Promise<void>) | undefined;
+    f.observe.mockImplementationOnce(async () => {
+      await expect(recheck?.()).rejects.toMatchObject({ code: 'STALE_TARGET' });
+      return { elements: [field('a', 'one'), field('b', 'two')], url };
+    });
+    await runAutofill(request(), {
+      ...f,
+      onRecheck: (offered) => {
+        recheck = offered;
+      },
+    });
+    expect(recheck).toBeDefined();
+  });
   it('preflights repeated labels in separate blocks and runs the existing executor', async () => {
     const f = scopedFixture();
     const report = await runAutofill(request(), f);

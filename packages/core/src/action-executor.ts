@@ -295,31 +295,32 @@ export class ActionExecutor {
   }
 
   /**
-   * Verify the resolved element still matches what the caller observed.
-   * Prefers the caller's per-observation index (O(1)) over the linear scan
-   * (TD-BROWSER-9, A7).
-   */
-  /**
    * T5 B-dur (B6): re-run, after a storage wait, the same target checks `execute` applies before
-   * the engine call — re-resolve the ref, require it still visible (except for `upload`) and
-   * enabled, and require its fingerprint to still match the observation. Returns the typed failure
-   * (`STALE_TARGET`, `TARGET_NOT_VISIBLE`, `TARGET_DISABLED`), or `null` when still current.
+   * the engine call, with the CURRENT page revision: the revision staleness check (the request's
+   * expected revision and the ref's own revision), then re-resolve the ref (engine failures
+   * normalized exactly as `execute` maps them — a crash stays `ENGINE_CRASHED`, no raw engine text
+   * escapes), then visibility (except `upload`), enabled and the fingerprint against the
+   * observation. Returns the typed failure, or `null` when still current.
    */
   async revalidateTarget(
-    enginePage: EnginePage,
-    ref: string,
-    actionType: string,
-    observation: PageState,
-    elementIndex?: ReadonlyMap<string, PageElement>
+    request: ActionRequest,
+    context: Pick<
+      ExecutionContext,
+      'enginePage' | 'observation' | 'currentRevision' | 'elementIndex'
+    >
   ): Promise<ApiErrorDetail | null> {
+    const { enginePage, observation, currentRevision, elementIndex } = context;
+    const target = targetOf(request.action);
+    const stale = this.checkStaleness(request, target, currentRevision ?? observation.revision);
+    if (stale) return stale;
+    if (!target) return null;
+    const ref = target.ref;
+    const actionType = request.action.type;
     let resolved: ResolvedTarget;
     try {
       resolved = await enginePage.resolve({ ref });
     } catch (error) {
-      return staleTarget(`Target ${ref} no longer resolves after the wait.`, {
-        ref,
-        reason: (error as Error)?.message ?? 'unresolved',
-      });
+      return this.mapEngineError(error);
     }
     if (!resolved.visible && actionType !== 'upload')
       return createApiErrorDetail(
@@ -334,6 +335,11 @@ export class ActionExecutor {
     return this.verifyFingerprint(ref, resolved, observation, elementIndex);
   }
 
+  /**
+   * Verify the resolved element still matches what the caller observed.
+   * Prefers the caller's per-observation index (O(1)) over the linear scan
+   * (TD-BROWSER-9, A7).
+   */
   private verifyFingerprint(
     ref: string,
     resolvedTarget: ResolvedTarget,
