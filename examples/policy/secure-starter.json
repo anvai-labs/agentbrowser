@@ -1,0 +1,73 @@
+{
+  "version": "agentbrowser-policy/v1",
+  "baseline": "none",
+  "unknownRisk": "required",
+  "approvalRules": [],
+  "policies": [
+    {
+      "key": "operator.public-egress",
+      "ruleId": "operator.public-egress",
+      "cedar": "@rule(\"operator.public-egress\") permit(principal, action == AgentBrowser::Action::\"request\", resource);"
+    },
+    {
+      "key": "operator.no-loopback",
+      "ruleId": "operator.no-loopback",
+      "cedar": "@rule(\"operator.no-loopback\") forbid(principal, action == AgentBrowser::Action::\"request.loopback\", resource);"
+    },
+    {
+      "key": "operator.no-private",
+      "ruleId": "operator.no-private",
+      "cedar": "@rule(\"operator.no-private\") forbid(principal, action == AgentBrowser::Action::\"request.private\", resource);"
+    },
+    {
+      "key": "operator.act.low-risk",
+      "ruleId": "operator.act.low-risk",
+      "cedar": "@rule(\"operator.act.low-risk\") permit(principal, action in [AgentBrowser::Action::\"act\", AgentBrowser::Action::\"act.unattended\"], resource) when { [\"read\", \"write-local\"].contains(context.effect) };"
+    },
+    {
+      "key": "operator.act.high-risk-attended",
+      "ruleId": "operator.act.high-risk-attended",
+      "cedar": "@rule(\"operator.act.high-risk-attended\") permit(principal, action == AgentBrowser::Action::\"act\", resource) when { [\"transaction\", \"account-security\", \"external-message\", \"destructive\", \"unknown\"].contains(context.effect) };"
+    },
+    {
+      "key": "operator.act.high-risk-needs-approval",
+      "ruleId": "operator.act.high-risk-needs-approval",
+      "cedar": "@rule(\"operator.act.high-risk-needs-approval\") forbid(principal, action == AgentBrowser::Action::\"act.unattended\", resource) when { [\"transaction\", \"account-security\", \"external-message\", \"destructive\", \"unknown\"].contains(context.effect) };"
+    },
+    {
+      "key": "operator.capability.headed",
+      "ruleId": "operator.capability.headed",
+      "cedar": "@rule(\"operator.capability.headed\") permit(principal, action == AgentBrowser::Action::\"session.headed\", resource);"
+    },
+    {
+      "key": "operator.capability.cookie-seed",
+      "ruleId": "operator.capability.cookie-seed",
+      "cedar": "@rule(\"operator.capability.cookie-seed\") permit(principal, action == AgentBrowser::Action::\"cookie.seed\", resource);"
+    },
+    {
+      "key": "operator.capability.no-cookie-export",
+      "ruleId": "operator.capability.no-cookie-export",
+      "cedar": "@rule(\"operator.capability.no-cookie-export\") forbid(principal, action == AgentBrowser::Action::\"cookie.export\", resource);"
+    },
+    {
+      "key": "operator.capability.no-cookie-handoff",
+      "ruleId": "operator.capability.no-cookie-handoff",
+      "cedar": "@rule(\"operator.capability.no-cookie-handoff\") forbid(principal, action == AgentBrowser::Action::\"cookie.handoff\", resource);"
+    },
+    {
+      "key": "operator.capability.no-service-workers",
+      "ruleId": "operator.capability.no-service-workers",
+      "cedar": "@rule(\"operator.capability.no-service-workers\") forbid(principal, action == AgentBrowser::Action::\"serviceWorkers\", resource);"
+    },
+    {
+      "key": "operator.capability.no-downloads",
+      "ruleId": "operator.capability.no-downloads",
+      "cedar": "@rule(\"operator.capability.no-downloads\") forbid(principal, action == AgentBrowser::Action::\"downloads\", resource);"
+    },
+    {
+      "key": "operator.capability.no-cdp-attach",
+      "ruleId": "operator.capability.no-cdp-attach",
+      "cedar": "@rule(\"operator.capability.no-cdp-attach\") forbid(principal, action == AgentBrowser::Action::\"cdp.attach\", resource);"
+    }
+  ]
+}

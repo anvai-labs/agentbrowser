@@ -7,6 +7,23 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — a secure starter policy and how to configure policy
+
+- `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy file to copy.
+  - Public web allowed.
+  - Loopback and private networks denied.
+  - High-risk and unclassified actions need owner approval.
+  - Cookie export, cookie handoff, service workers, downloads and CDP attach denied.
+  - Headed sessions and cookie seeding allowed.
+  - Every decision is named by an `operator.*` rule id.
+- `docs/policy.md` opens with a "Start here" guide:
+  - a decision-flow diagram;
+  - a table of each decision and why;
+  - per-tenant loosening recipes;
+  - how to verify a change.
+- A test loads the starter through the real loader, pins every documented decision, and proves
+  the documented recipes work.
+
 ### Docs — the 1.19.0 release record
 
 - `docs/spec/evidence/release-1.19.0.md` records the release and the post-run verification of
