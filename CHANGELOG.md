@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-10-16
+
+Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**
+
+| Who | What changes |
+| --- | --- |
+| Scoped sessions, Chromium | redirects after POST/PUT/PATCH are checked hop by hop; each request pauses twice more (about 1.5× page-load time measured on a 51-request page); a popup whose first request is a POST (`target=_blank` form) is refused (`REDIRECT_UNCHECKABLE`) |
+| Scoped sessions, Firefox/WebKit | POST/PUT/PATCH are refused (`REDIRECT_UNCHECKABLE`): their redirects cannot be checked there |
+| Session create with a scope | `cdpAttach`, `allowServiceWorkers: true` and a `scope` outside `policy` are refused (`400 INVALID_REQUEST`) |
+| MCP clients | the `create` tool's `scope` description names the service-worker refusal (catalog digest changed) |
+| Engine embedders | `RequestPolicy.requireRedirectGuard` is a new optional port field, set by `EngagementScopePolicy`; an engine that cannot check redirects after POST/PUT/PATCH must refuse those requests rather than ignore it. In scoped Playwright sessions `newPage` returns once the page's guard is armed |
+| Unscoped sessions | unchanged |
+
 ### Tests — engagement-scope release smoke (T10 M1)
 
 - `scripts/scope-consumer-smoke.mjs` runs against local fixtures, from a checkout or an extracted
