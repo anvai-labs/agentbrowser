@@ -26,6 +26,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 const CHILD = fileURLToPath(
   new URL('./test-support/journal-process-loss-child.mjs', import.meta.url)
 );
+const BROWSER_CHILD = fileURLToPath(
+  new URL('./test-support/browser-process-loss-child.mjs', import.meta.url)
+);
 const cleanup: string[] = [];
 afterEach(() => {
   for (const path of cleanup.splice(0)) rmSync(path, { recursive: true, force: true });
@@ -58,10 +61,11 @@ function layout() {
  */
 async function runChild(
   args: { env: Record<string, string>; mode: string; counterFile: string; operationId: string },
-  kill: boolean
+  kill: boolean,
+  script = CHILD
 ) {
   const signalFile = `${args.counterFile}.signal-${args.mode}`;
-  const child = fork(CHILD, [JSON.stringify({ ...args, signalFile })], {
+  const child = fork(script, [JSON.stringify({ ...args, signalFile })], {
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });
   let stderr = '';
@@ -237,4 +241,56 @@ describe('process loss through the service (real store, SIGKILL)', () => {
     },
     120_000
   );
+});
+
+describe('process loss during a durable browser act (B-dur-2c; real store, SIGKILL)', () => {
+  const browser = { adapter: 'browser', resource: 'act' };
+  it.each([
+    // [kill point, expected rows, effects]
+    ['before-marker', [{ revision: 1, dispatched: false, terminal: undefined, ...browser }], 0],
+    ['after-marker', [{ revision: 2, dispatched: true, terminal: undefined, ...browser }], 0],
+    ['after-effect', [{ revision: 2, dispatched: true, terminal: undefined, ...browser }], 1],
+  ] as const)(
+    'killed %s: the browser record holds the expected state, the click ran at most once, and the next process reopens without replaying',
+    async (mode, expected, expectedEffects) => {
+      const l = layout();
+      const killed = await runChild(
+        { env: l.env, mode, counterFile: l.counter, operationId: `browser-${mode}` },
+        true,
+        BROWSER_CHILD
+      );
+      expect(killed.message.phase).toBe(mode);
+      expect(killed.message.rows).toEqual(expected);
+      expect(killed.signal).toBe('SIGKILL');
+      expect(effects(l.counter)).toBe(expectedEffects);
+
+      const { AGENTBROWSER_JOURNAL_INITIALIZE: _first, ...later } = l.env;
+      const reopened = await runChild(
+        { env: later, mode: 'reopen', counterFile: l.counter, operationId: 'unused' },
+        false,
+        BROWSER_CHILD
+      );
+      expect(reopened.message).toMatchObject({ phase: 'reopened', health: 'open' });
+      // Nothing replayed: the reopened service sees exactly the record the kill left.
+      expect(reopened.message.rows).toEqual(expected);
+      expect(reopened.code).toBe(0);
+      expect(effects(l.counter)).toBe(expectedEffects);
+    },
+    120_000
+  );
+
+  it('an uninterrupted durable act ends completed with exactly one click', async () => {
+    const l = layout();
+    const done = await runChild(
+      { env: l.env, mode: 'complete', counterFile: l.counter, operationId: 'browser-whole' },
+      false,
+      BROWSER_CHILD
+    );
+    expect(done.message.phase).toBe('done');
+    expect(done.code).toBe(0);
+    expect(rows(l.store)).toEqual([
+      { revision: 3, dispatched: true, terminal: { status: 'completed', evidenceRefIds: [] } },
+    ]);
+    expect(effects(l.counter)).toBe(1);
+  }, 120_000);
 });

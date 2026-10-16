@@ -689,6 +689,8 @@ const afterEffect = (error: unknown): unknown => {
   return error;
 };
 
+const isPostEffectFailure = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && postEffectFailures.has(error);
 const carryAfterEffect = <T>(from: unknown, to: T): T =>
   typeof from === 'object' && from !== null && postEffectFailures.has(from)
     ? (afterEffect(to) as T)
@@ -2322,7 +2324,10 @@ export class AgentBrowserService {
           ordinal !== undefined &&
           /STALE_TARGET|revision|fingerprint/i.test(message) &&
           // T5 B-dur: a refused durable operation never self-heals; the refusal is the answer.
-          !this.authority.browserOperationRefusedInScope(sessionId)
+          !this.authority.browserOperationRefusedInScope(sessionId) &&
+          // A failure AFTER the step's effect (its follow-up read) is never retried: healing
+          // would run the effect a second time.
+          !isPostEffectFailure(error)
         ) {
           this.bumpChurn(churnKey);
           const mode = this.churnMode(churnKey);

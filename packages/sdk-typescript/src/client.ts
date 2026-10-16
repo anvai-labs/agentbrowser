@@ -63,6 +63,24 @@ export interface MutationOptions {
   operationId?: string;
 }
 
+/** T5 B-dur: `act`, `plan` and `autofill` may be journaled as one durable browser operation. */
+export interface BrowserMutationOptions extends MutationOptions {
+  /**
+   * `'durable'` journals the call for classification only (never replay); it needs a controlled
+   * session, an `operationId` and an open journal (`CONTROL_REQUIRED` otherwise).
+   * `'ephemeral'` is identical to omitting it.
+   */
+  executionRequirement?: 'ephemeral' | 'durable';
+}
+
+const browserMutation = <T extends object>(
+  body: T,
+  { executionRequirement, ...options }: BrowserMutationOptions
+): { body: T; options: MutationOptions } => ({
+  body: executionRequirement === undefined ? body : { ...body, executionRequirement },
+  options,
+});
+
 export interface ClientOptions {
   baseUrl?: string;
   timeout?: number;
@@ -740,12 +758,13 @@ export class SessionsClient {
     sessionId: string,
     pageId: string,
     request: AutofillRequest,
-    options: MutationOptions = {}
+    mutation: BrowserMutationOptions = {}
   ): Promise<AutofillReport> {
     const expectedFields = request.fields.length;
+    const { body, options } = browserMutation(request, mutation);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/autofill`, {
       method: 'POST',
-      body: request,
+      body,
       ...options,
       timeoutMs: Math.min(240000, request.policy?.timeoutMs ?? 240000) + 30000,
       parseResponse: (input) => parseAutofillReport(input, expectedFields),
@@ -756,12 +775,13 @@ export class SessionsClient {
     sessionId: string,
     pageId: string,
     actions: Array<Record<string, unknown>>,
-    options: MutationOptions = {}
+    mutation: BrowserMutationOptions = {}
   ): Promise<PlanReport> {
     const parseResponse = createPlanReportParser(actions);
+    const { body, options } = browserMutation({ actions }, mutation);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
-      body: { actions },
+      body,
       ...options,
       parseResponse,
     });
@@ -834,12 +854,13 @@ export class SessionsClient {
     sessionId: string,
     pageId: string,
     request: ActionRequest,
-    options: MutationOptions = {}
+    mutation: BrowserMutationOptions = {}
   ): Promise<ActionResult> {
+    const { body, options } = browserMutation(request, mutation);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/act`, {
       ...options,
       method: 'POST',
-      body: request,
+      body,
     });
   }
 

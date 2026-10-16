@@ -436,6 +436,9 @@ export function buildCli(deps: CliDependencies): Cli {
             ...(act.opts().approvalToken
               ? { approvalToken: String(act.opts().approvalToken) }
               : {}),
+            ...(act.opts().executionRequirement !== undefined
+              ? { actExecutionRequirement: String(act.opts().executionRequirement) }
+              : {}),
             ...(operatorKey !== undefined ? { operatorKey } : {}),
             baseUrl: globals.baseUrl ?? 'http://localhost:5709',
             ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
@@ -1602,21 +1605,38 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<stepsJson>', 'JSON array of plan steps: inline, @file, or - for stdin')
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
+        )
         .action(
-          action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
-            const steps = parsePlanSteps(await readCommandJson(plan, stepsJson, 'plan steps'));
-            const parseResponse = createPlanReportParser(steps);
-            const result = parseResponse(await ctx.client.sessions.plan(sessionId, pageId, steps));
-            if (!result.ok) exitCode = 1;
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              stepsJson: string,
+              options: { executionRequirement?: string }
+            ) => {
+              const execution = browserExecution(options.executionRequirement);
+              const steps = parsePlanSteps(await readCommandJson(plan, stepsJson, 'plan steps'));
+              const parseResponse = createPlanReportParser(steps);
+              const result = parseResponse(
+                await (execution.executionRequirement === undefined
+                  ? ctx.client.sessions.plan(sessionId, pageId, steps)
+                  : ctx.client.sessions.plan(sessionId, pageId, steps, execution))
+              );
+              if (!result.ok) exitCode = 1;
 
-            ctx.emit(result, () => [
-              `${result.ok ? 'ok' : 'failed'}: ${result.completed}/${steps.length} steps completed (mode: ${result.mode ?? 'stable'})`,
-              ...result.results.map(
-                (r) => `  step ${r.step}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
-              ),
-              ...(result.error ? [`  ${result.error.code}: ${result.error.message}`] : []),
-            ]);
-          })
+              ctx.emit(result, () => [
+                `${result.ok ? 'ok' : 'failed'}: ${result.completed}/${steps.length} steps completed (mode: ${result.mode ?? 'stable'})`,
+                ...result.results.map(
+                  (r) => `  step ${r.step}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
+                ),
+                ...(result.error ? [`  ${result.error.code}: ${result.error.message}`] : []),
+              ]);
+            }
+          )
         );
 
       advertiseWireSchema(plan, { input: PlanActionsSchema, output: PlanReportSchema });
@@ -1664,6 +1684,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--approval-token <token>',
           'consume a previously approved action token; does not grant approval'
+        )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
         );
 
       act
@@ -2671,6 +2695,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .argument('<requestJson>')
         .option('--policy <json>', 'replace the request policy object wholesale')
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
+        )
         .action(
           action(
             async (
@@ -2678,8 +2706,9 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               pageId: string,
               requestJson: string,
-              options: { policy?: string }
+              options: { policy?: string; executionRequirement?: string }
             ) => {
+              const execution = browserExecution(options.executionRequirement);
               if (requestJson === '-' && options.policy === '-') {
                 throw new UsageError('Stdin can be used only once per command.');
               }
@@ -2700,7 +2729,9 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const expectedFields = parsed.fields.length;
               const report = parseAutofillReport(
-                await ctx.client.sessions.autofill(sessionId, pageId, parsed),
+                await (execution.executionRequirement === undefined
+                  ? ctx.client.sessions.autofill(sessionId, pageId, parsed)
+                  : ctx.client.sessions.autofill(sessionId, pageId, parsed, execution)),
                 expectedFields
               );
               if (!report.ok) exitCode = 1;
@@ -2954,6 +2985,8 @@ interface CommandContext {
   client: CliClient;
   json: boolean;
   approvalToken?: string;
+  /** T5 B-dur: `act --execution-requirement`, validated where it is used. */
+  actExecutionRequirement?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
   /** TD-BROWSER-16: the human-operator key for approval commands; never env. */
@@ -2996,12 +3029,25 @@ async function runAction(
       `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
     );
   const request = validated.value;
-  const result = await ctx.client.sessions.executeAction(sessionId, pageId, request);
+  const execution = browserExecution(ctx.actExecutionRequirement);
+  const result = await (execution.executionRequirement === undefined
+    ? ctx.client.sessions.executeAction(sessionId, pageId, request)
+    : ctx.client.sessions.executeAction(sessionId, pageId, request, execution));
 
   ctx.emit(result, () => [
     `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
   ]);
+}
+
+/** T5 B-dur: `--execution-requirement` for act, plan and autofill; omitted means unchanged. */
+function browserExecution(requirement: string | undefined): {
+  executionRequirement?: 'ephemeral' | 'durable';
+} {
+  if (requirement === undefined) return {};
+  if (requirement !== 'ephemeral' && requirement !== 'durable')
+    throw new UsageError('--execution-requirement must be ephemeral or durable');
+  return { executionRequirement: requirement };
 }
 
 /**

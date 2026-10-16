@@ -18,6 +18,21 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Fixed — a plan no longer re-runs a step whose follow-up read failed
+
+- A plan step whose effect ran but whose follow-up read failed (for example a click that closed
+  its page, then `observe: 'after'`) could be retried by the stale-target self-heal when the
+  error message matched, running the effect a second time. Such a failure is never healed now.
+
+### Added — durable browser parity and crash rows (T5 B-dur-2c)
+
+- SDK (`executeAction`, `plan`, `autofill` mutation options), CLI (`--execution-requirement` on
+  `act`, `plan` and `autofill`) and MCP (`executionRequirement` on the `act`, `plan` and
+  `autofill` tools) carry the durable browser requirement; omitted, every request is unchanged.
+- Process-loss rows for a durable browser act on a real store: killed before the marker, after
+  it, and after the click, the record holds the expected state, the click ran at most once, and
+  nothing is replayed on reopen.
+
 ### Added — durable act, plan and autofill (T5 B-dur-2b)
 
 - `act`, `plan` and `autofill` accept `executionRequirement` over REST (OpenAPI documented).
@@ -28,7 +43,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   before any effect keep their response (`failed`); anything else (a lost step result, an
   unverified fill, an uncertain field) is recorded `settled_unknown`, and its report is still
   returned. `ephemeral` is identical to omitting the field; other routes refuse the field.
-  SDK, CLI and MCP parity follow (B-dur-2c).
+  SDK, CLI and MCP parity: B-dur-2c.
 
 ### Added — the browser journal in the control layer (T5 B-dur-2a)
 

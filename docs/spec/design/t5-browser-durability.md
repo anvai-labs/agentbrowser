@@ -167,4 +167,6 @@ recovery, B1).
    **B-dur-2b** wires it through the service and REST (with the OpenAPI field and the capacity
    note), **delivered 2026-10-15**
    ([evidence](../evidence/t5-journal-runtime.md#b-dur-2b-durable-act-plan-and-autofill-through-the-service-2026-10-15));
-   **B-dur-2c** adds SDK, CLI and MCP parity and the real-store crash rows.
+   **B-dur-2c** adds SDK, CLI and MCP parity and the real-store crash rows, **delivered
+   2026-10-15**
+   ([evidence](../evidence/t5-journal-runtime.md#b-dur-2c-parity-and-the-crash-rows-2026-10-15)).

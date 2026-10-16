@@ -571,3 +571,39 @@ HTTP (`browser-durable-http.test.ts`, the lookup route reading the record back).
   happen to fire) inherits the guard's context, so a dispatch it makes is refused and seals the
   operation. That fails closed (never an unsafe effect). The guards here are a re-resolve, an
   approval read and a re-observe; none of them fires a dispatching listener today.
+
+## B-dur-2c: parity and the crash rows (2026-10-15)
+
+- **Parity (B1).** The SDK's `executeAction`, `plan` and `autofill` take
+  `executionRequirement` in their mutation options (sent in the body; the operation id stays a
+  header); omitted, the request is byte-identical to before. The CLI has
+  `act --execution-requirement`, `plan --execution-requirement` and
+  `autofill --execution-requirement` (refused locally unless `ephemeral` or `durable`; omitted,
+  the SDK call is unchanged). The MCP `act`, `plan` and `autofill` tools advertise the field
+  (exactly those three, pinned), forward it as the SDK option and never inside the action body,
+  and refuse another value before any call. The MCP catalog doc is regenerated; the release
+  artifact checks pass.
+- **Crash rows (B2), real store, SIGKILL** (`journal-process-loss.test.ts`, a durable browser act
+  through the compiled service, an independent fsynced click counter, the store read by the child
+  at the hold point while alive):
+
+  | Killed | Record | Clicks |
+  |---|---|---:|
+  | before the marker | rev 1, undispatched (`browser`/`act`) | 0 |
+  | after the marker, before the recheck and the click | rev 2, dispatched, no terminal | 0 |
+  | after the click | rev 2, dispatched, no terminal | 1 |
+  | not killed | rev 3, `completed` | 1 |
+
+  The next process reopens the namespace and sees exactly the record the kill left, with the
+  click count unchanged: nothing is replayed. A record left undispatched can be closed; one left
+  dispatched can only be settled, and reconcile refuses browser records (B5).
+- **No second effect from a self-heal (B-dur-2b review, informational residual, closed here).**
+  The plan's stale-target self-heal matched on the error message and could retry a step whose
+  failure came AFTER its effect (its follow-up read), running the effect twice — for every plan,
+  durable or not. A post-effect failure is now never healed (pinned: a click whose observe-after
+  fails with a matching message runs once; removing the guard makes it run twice).
+- **Disclosed residuals (from the same review, not reproduced):** inside the Playwright engine,
+  the post-fill `inputValue` read is classified by error message, so an unusual message could
+  map to a known code after the write (most map to `ACTION_TIMEOUT` or `INTERNAL`, which are
+  unknown); and an untyped error escaping autofill after a write is rewritten to
+  `INVALID_REQUEST`, a known code. Both would understate an effect as `failed`, never invent one.
