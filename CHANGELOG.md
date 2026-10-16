@@ -17,6 +17,7 @@ Entries are newest first. T10 milestone M1: an engagement scope without holes. *
 | Scoped sessions, Firefox/WebKit | POST/PUT/PATCH are refused (`REDIRECT_UNCHECKABLE`): their redirects cannot be checked there |
 | Session create with a scope | `cdpAttach`, `allowServiceWorkers: true` and a `scope` outside `policy` are refused (`400 INVALID_REQUEST`) |
 | MCP clients | the `create` tool's `scope` description names the service-worker refusal (catalog digest changed) |
+| Engine embedders | `RequestPolicy.requireRedirectGuard` is a new optional port field, set by `EngagementScopePolicy`; an engine that cannot check redirects after POST/PUT/PATCH must refuse those requests rather than ignore it. In scoped Playwright sessions `newPage` returns once the page's guard is armed |
 | Unscoped sessions | unchanged |
 
 ### Tests — engagement-scope release smoke (T10 M1)
