@@ -1,0 +1,331 @@
+import type { BrowserContext, CDPSession, Frame, Page, Request } from 'playwright';
+
+/**
+ * Redirects that follow a body-bearing request (POST/PUT/PATCH) are checked
+ * hop by hop in scoped sessions (T10 M1).
+ *
+ * Those requests go to the browser natively (`route.continue()` keeps upload
+ * bodies byte-exact; a Node-side re-issue does not), and Playwright never
+ * routes the redirected follow-up. Unchecked, a 307 re-sends the body to any
+ * host and a 302/303 sends a GET there.
+ *
+ * The guard holds its own CDP session per target (each page, and each
+ * out-of-process iframe it can attach to) with request- and response-stage
+ * `Fetch` interception. Chromium runs that interceptor before Playwright's
+ * route handler. Two rules follow:
+ *
+ * - **Every hop is checked.** Each body-bearing request the guard sees opens a
+ *   chain keyed by Chromium's `networkId`, which stays the same across every
+ *   redirect of that request (URLs do not: Chromium strips fragments and
+ *   re-encodes characters). Each 3xx in the chain gets a fresh policy verdict,
+ *   the shared hop cap and loop detection; a denied hop fails the request
+ *   before the browser follows it. This does not depend on the route handler.
+ * - **Unseen requests are refused.** `track()` reports true only when the
+ *   guard on the request's own target saw it at the request stage; otherwise
+ *   the caller refuses the request (fail closed).
+ *
+ * Every request and response in a guarded target pauses once each, so this
+ * runs only where a policy requires it (an engagement scope).
+ */
+
+export interface RedirectVerdict {
+  verdict: 'allow' | 'deny';
+  reason?: string;
+}
+
+export interface BodyRedirectGuardOptions {
+  verdictOf(
+    hostname: string,
+    url: string,
+    context: { method: string; headers: Record<string, string> }
+  ): Promise<RedirectVerdict>;
+  /**
+   * Record a blocked hop. `root` is the routed request that started the chain
+   * when the route handler claimed it.
+   */
+  onBlocked(
+    root: Request | undefined,
+    detail: { reason: string; redirect?: string; detail?: string }
+  ): void;
+  maxHops: number;
+  /** Live chains per target; past it new body-bearing requests are refused. */
+  maxChains?: number;
+}
+
+interface Chain {
+  networkId: string;
+  key: string;
+  root?: Request;
+  headers: Record<string, string>;
+  hops: number;
+  seen: Set<string>;
+}
+
+interface GuardTarget {
+  cdp: CDPSession;
+  /** Body-bearing chains this target saw, by Chromium network id (insertion-ordered). */
+  chains: Map<string, Chain>;
+  /** Network ids of chains not yet claimed by the route handler, by method and URL. */
+  unclaimed: Map<string, string[]>;
+}
+
+type PausedEvent = {
+  requestId: string;
+  networkId?: string;
+  request: { url: string; method: string; headers?: Record<string, string> };
+  responseStatusCode?: number;
+  responseErrorReason?: string;
+  responseHeaders?: Array<{ name: string; value: string }>;
+};
+
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+/**
+ * Live chains per target. A chain closes when its request finishes or fails;
+ * a full table refuses new body-bearing requests (fail closed) and never
+ * evicts a live chain, whose redirect would then go unchecked.
+ */
+export const MAX_TRACKED_CHAINS = 4096;
+
+const keyOf = (method: string, url: string): string => `${method.toUpperCase()} ${url}`;
+
+/** The method the browser uses for the next hop (Fetch standard, 4.4). */
+export function followMethod(status: number, method: string): string {
+  if (status === 307 || status === 308) return method;
+  if (status === 303) return method === 'HEAD' ? 'HEAD' : 'GET';
+  return method === 'POST' ? 'GET' : method;
+}
+
+export class BodyRedirectGuard {
+  private readonly pageTargets = new WeakMap<Page, GuardTarget>();
+  private readonly frameTargets = new WeakMap<Frame, GuardTarget>();
+  private readonly frameAttach = new WeakMap<Frame, Promise<void>>();
+  private readonly watched = new WeakSet<Page>();
+  private readonly pageReady = new WeakMap<Page, Promise<void>>();
+
+  constructor(
+    private readonly context: BrowserContext,
+    private readonly options: BodyRedirectGuardOptions
+  ) {
+    context.on('page', (page) => this.watchPage(page));
+    for (const page of context.pages()) this.watchPage(page);
+  }
+
+  /**
+   * Claim a body-bearing request before it is continued. True means the guard
+   * on this request's own target saw it at the request stage, so its
+   * redirects are checked; false means they would not be, and the caller
+   * must refuse the request.
+   */
+  track(request: Request): boolean {
+    let frame: Frame;
+    try {
+      frame = request.frame();
+    } catch {
+      return false; // no frame: no guarded target to attribute it to
+    }
+    const target = this.targetOf(frame);
+    if (target === undefined) return false;
+    const key = keyOf(request.method(), request.url());
+    const ids = target.unclaimed.get(key);
+    const networkId = ids?.shift();
+    if (ids !== undefined && ids.length === 0) target.unclaimed.delete(key);
+    const chain = networkId === undefined ? undefined : target.chains.get(networkId);
+    if (chain === undefined) return false;
+    chain.root = request;
+    return true;
+  }
+
+  /**
+   * Resolves once this page's guard is armed, so a page handed to a caller
+   * does not start with requests the guard cannot see (they would be refused).
+   */
+  ready(page: Page): Promise<void> {
+    this.watchPage(page);
+    return this.pageReady.get(page) ?? Promise.resolve();
+  }
+
+  /** The target that intercepts this frame's requests: its own if out of process. */
+  private targetOf(frame: Frame): GuardTarget | undefined {
+    for (let current: Frame | null = frame; current !== null; current = current.parentFrame()) {
+      const own = this.frameTargets.get(current);
+      if (own !== undefined) return own;
+      if (current.parentFrame() === null) return this.pageTargets.get(current.page());
+    }
+    return undefined;
+  }
+
+  private watchPage(page: Page): void {
+    if (this.watched.has(page)) return;
+    this.watched.add(page);
+    this.pageReady.set(
+      page,
+      this.attach(() => this.context.newCDPSession(page)).then(
+        (target) => {
+          this.pageTargets.set(page, target);
+        },
+        () => {}
+      )
+    );
+    const watchFrame = (frame: Frame) => {
+      if (frame.parentFrame() === null) return;
+      // Only an out-of-process iframe has its own target; the attempt fails
+      // for a same-process frame, which its parent's target covers. A
+      // navigation can move a frame between processes, so recheck on each.
+      const previous = this.frameAttach.get(frame) ?? Promise.resolve();
+      const next = previous.then(() =>
+        this.attach(() => this.context.newCDPSession(frame)).then(
+          (target) => {
+            this.frameTargets.set(frame, target);
+          },
+          () => {
+            this.frameTargets.delete(frame);
+          }
+        )
+      );
+      this.frameAttach.set(frame, next);
+    };
+    page.on('frameattached', watchFrame);
+    page.on('framenavigated', watchFrame);
+  }
+
+  private async attach(open: () => Promise<CDPSession>): Promise<GuardTarget> {
+    const cdp = await open();
+    const target: GuardTarget = { cdp, chains: new Map(), unclaimed: new Map() };
+    cdp.on('Fetch.requestPaused', (event: PausedEvent) => {
+      void this.paused(target, event).catch(() => {});
+    });
+    // A request that is aborted, hangs up or fails never reaches the response
+    // stage; the Network domain reports its end, which frees its chain.
+    const ended = (event: { requestId: string }) => {
+      const chain = target.chains.get(event.requestId);
+      if (chain !== undefined) this.close(target, chain);
+    };
+    cdp.on('Network.loadingFailed', ended);
+    cdp.on('Network.loadingFinished', ended);
+    await cdp.send('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0 });
+    await cdp.send('Fetch.enable', {
+      patterns: [
+        { urlPattern: '*', requestStage: 'Request' as const },
+        { urlPattern: '*', requestStage: 'Response' as const },
+      ],
+    });
+    return target;
+  }
+
+  private open(target: GuardTarget, event: PausedEvent, networkId: string): void {
+    const key = keyOf(event.request.method, event.request.url);
+    const chain: Chain = {
+      networkId,
+      key,
+      headers: { ...(event.request.headers ?? {}) },
+      hops: 0,
+      seen: new Set([event.request.url]),
+    };
+    target.chains.set(networkId, chain);
+    target.unclaimed.set(key, [...(target.unclaimed.get(key) ?? []), networkId]);
+  }
+
+  private close(target: GuardTarget, chain: Chain): void {
+    target.chains.delete(chain.networkId);
+    const ids = target.unclaimed.get(chain.key);
+    if (ids === undefined) return;
+    const remaining = ids.filter((id) => id !== chain.networkId);
+    if (remaining.length === 0) target.unclaimed.delete(chain.key);
+    else target.unclaimed.set(chain.key, remaining);
+  }
+
+  private async paused(target: GuardTarget, event: PausedEvent): Promise<void> {
+    const { cdp } = target;
+    const networkId = event.networkId;
+    if (event.responseStatusCode === undefined && event.responseErrorReason === undefined) {
+      // A redirect follow-up keeps its network id: it belongs to the open chain.
+      if (
+        networkId !== undefined &&
+        !target.chains.has(networkId) &&
+        BODY_METHODS.has(event.request.method.toUpperCase())
+      ) {
+        if (target.chains.size >= (this.options.maxChains ?? MAX_TRACKED_CHAINS)) {
+          // Full: refuse rather than track it without room (fail closed).
+          try {
+            this.options.onBlocked(undefined, {
+              reason: 'egress_policy',
+              detail: 'REDIRECT_UNCHECKABLE',
+            });
+          } catch {}
+          await cdp
+            .send('Fetch.failRequest', {
+              requestId: event.requestId,
+              errorReason: 'BlockedByClient',
+            })
+            .catch(() => {});
+          return;
+        }
+        this.open(target, event, networkId);
+      }
+      await cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+      return;
+    }
+    const proceed = () =>
+      (event.responseErrorReason !== undefined
+        ? cdp.send('Fetch.continueRequest', { requestId: event.requestId })
+        : cdp.send('Fetch.continueResponse', { requestId: event.requestId })
+      ).catch(() => {});
+    const chain = networkId === undefined ? undefined : target.chains.get(networkId);
+    if (chain === undefined) {
+      await proceed();
+      return;
+    }
+    const fail = (detail: { reason: string; redirect?: string; detail?: string }) => {
+      this.close(target, chain);
+      try {
+        this.options.onBlocked(chain.root, detail);
+      } catch {}
+      return cdp
+        .send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' })
+        .catch(() => {});
+    };
+    try {
+      const status = event.responseStatusCode ?? 0;
+      const location = event.responseHeaders?.find(
+        (header) => header.name.toLowerCase() === 'location'
+      )?.value;
+      if (
+        event.responseErrorReason !== undefined ||
+        !(status >= 300 && status < 400 && location !== undefined)
+      ) {
+        this.close(target, chain);
+        await proceed();
+        return;
+      }
+      const next = new URL(location, event.request.url);
+      const redirect = next.origin + next.pathname;
+      chain.hops += 1;
+      if (chain.hops > this.options.maxHops) {
+        await fail({
+          reason: 'egress_policy',
+          redirect,
+          detail: `MAX_REDIRECTS (${chain.hops - 1} hops)`,
+        });
+        return;
+      }
+      const hopKey = next.origin + next.pathname + next.search;
+      if (chain.seen.has(hopKey)) {
+        await fail({ reason: 'egress_policy', redirect, detail: 'REDIRECT_LOOP' });
+        return;
+      }
+      chain.seen.add(hopKey);
+      const hop = await this.options.verdictOf(next.hostname, next.href, {
+        method: followMethod(status, event.request.method),
+        headers: chain.headers,
+      });
+      if (hop.verdict === 'deny') {
+        await fail({ reason: hop.reason ?? 'egress_policy', redirect });
+        return;
+      }
+      await proceed();
+    } catch {
+      // Fail closed: a hop the guard could not judge is not followed.
+      await fail({ reason: 'egress_policy', detail: 'REDIRECT_UNCHECKABLE' });
+    }
+  }
+}

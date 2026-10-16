@@ -7,6 +7,79 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-10-16
+
+Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**
+
+| Who | What changes |
+| --- | --- |
+| Scoped sessions, Chromium | redirects after POST/PUT/PATCH are checked hop by hop; each request pauses twice more (about 1.5× page-load time measured on a 51-request page); a popup whose first request is a POST (`target=_blank` form) is refused (`REDIRECT_UNCHECKABLE`) |
+| Scoped sessions, Firefox/WebKit | POST/PUT/PATCH are refused (`REDIRECT_UNCHECKABLE`): their redirects cannot be checked there |
+| Session create with a scope | `cdpAttach`, `allowServiceWorkers: true` and a `scope` outside `policy` are refused (`400 INVALID_REQUEST`) |
+| MCP clients | the `create` tool's `scope` description names the service-worker refusal (catalog digest changed) |
+| Engine embedders | `RequestPolicy.requireRedirectGuard` is a new optional port field, set by `EngagementScopePolicy`; an engine that cannot check redirects after POST/PUT/PATCH must refuse those requests rather than ignore it. In scoped Playwright sessions `newPage` returns once the page's guard is armed |
+| Unscoped sessions | unchanged |
+
+### Tests — engagement-scope release smoke (T10 M1)
+
+- `scripts/scope-consumer-smoke.mjs` runs against local fixtures, from a checkout or an extracted
+  release candidate (`--server-root …`):
+
+  | Check | Surfaces |
+  | --- | --- |
+  | the out-of-scope host is reachable (control) | Node fetch |
+  | service workers, `cdpAttach` and a top-level scope are refused with a scope | REST (rule ids); CLI and MCP (service workers) |
+  | an out-of-scope navigation is a policy denial and never reaches the wire | REST, SDK, CLI, MCP |
+  | a form POST redirected out of scope never arrives and is recorded as a blocked `request.failed` | browser session via the SDK; events via REST |
+
+- Recorded gap, scheduled in M2: CLI and MCP navigate refusals report `egress_policy`, not the
+  `SCOPE_*` sub-code REST and the SDK carry (`navigationFailureDetail()` keeps only the reason).
+
+### Security — a scope refuses the lanes it cannot check (T10 M1)
+
+| Create request | Before | After |
+| --- | --- | --- |
+| `cdpAttach` + `scope` | passed the options floor; the attach lane ignores the scope | refused, `400 INVALID_REQUEST` (`floor.cdp.options`) |
+| `allowServiceWorkers: true` + `scope` | session created; service-worker fetches bypass the scope | refused, `400 INVALID_REQUEST` (`scope.lane.serviceWorkers`) |
+| `scope` alone | unchanged | unchanged (service workers blocked by default) |
+
+### Security — redirects after POST/PUT/PATCH are checked in scoped sessions (T10 M1)
+
+- **The hole:** body-bearing requests pass to the browser natively (byte-exact uploads), and
+  Playwright never routes their redirected follow-up. In a session with an engagement scope, a
+  307 from an in-scope form POST re-sent the body to an out-of-scope host; a 302/303 sent a GET
+  there.
+- **The fix:** on Chromium, a guard checks every redirect hop of those requests (fresh verdict,
+  hop cap, loop detection) and fails a denied hop before the browser follows it. Chains are
+  tracked by Chromium's network id, so a rewritten URL (fragment, re-encoding) or two chains
+  meeting at one URL cannot slip a hop. A body-bearing request its own target's guard did not
+  see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`), including a popup's first
+  request (a `target=_blank` form POST) and new ones while a target already tracks 4096
+  in-flight chains; a live chain is never evicted.
+  Policies opt in with `requireRedirectGuard`; `EngagementScopePolicy` sets it and the metadata
+  floor carries it.
+
+| Session | Before | After |
+| --- | --- | --- |
+| Scoped, Chromium | redirect hops after POST/PUT/PATCH unchecked | every hop checked; each request pauses twice more (about 1.5× load time on a 51-request page) |
+| Scoped, Firefox/WebKit | same hole | **POST/PUT/PATCH refused** (`REDIRECT_UNCHECKABLE`) |
+| Unscoped | native passthrough | unchanged |
+
+### Docs — T10 engagements plan and record hygiene
+
+- New task packet T10 (`docs/spec/tasks/t10-engagements.md`): engagements (scope without holes,
+  status and a metadata-only ledger, program scope and findings) and saved plan runs, each
+  milestone released (1.21.0–1.24.0). Registered in the task index and manifest.
+- Review findings R01, R02 and R12 annotated closed; stale lines fixed (T9 "develop unprotected",
+  the delivery audit row, the TD-BROWSER-12 status).
+
+### Docs — the 1.20.0 release record
+
+- `docs/spec/evidence/release-1.20.0.md` records the first release under the R14 gates and the
+  post-run verification of every channel (attestations on all 16 assets, immutability, owner
+  npm approval, Homebrew, the winget branch). The task README, T9 packet and R14 entry name
+  1.20.0 as the published baseline and immutable releases as on.
+
 ## [1.20.0] — 2026-10-16
 
 Entries are newest first. **Upgrading from 1.19.x:**
