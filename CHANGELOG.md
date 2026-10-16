@@ -7,6 +7,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — release hardening R14 closed
+
+- A `release tags` ruleset now restricts creating, moving and deleting `v*` tags to repository
+  admins, and the `npm` publish environment requires the owner's approval and deploys only from
+  `v*` tags. With the existing main-ancestry tag guard, R14 is closed; the operations guide's
+  release section says what each gate means when releasing (the npm job now waits for approval).
+
 ### Docs — the 1.19.0 release record
 
 - `docs/spec/evidence/release-1.19.0.md` records the release and the post-run verification of

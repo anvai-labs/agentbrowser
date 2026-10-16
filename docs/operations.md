@@ -249,6 +249,12 @@ and generated stamps together. `pnpm release:check` is read-only; after building
 CI rejects drift and release tags must equal `v<product-version>`. Matching package
 versions identify one shipped product; they do not claim every package changed.
 
+| Release gate (R14) | What it means for the person releasing |
+| --- | --- |
+| Tag on `main` | tag the promotion merge commit; `tag-guard` refuses any other commit |
+| `release tags` ruleset | only a repository admin can create, move or delete a `v*` tag |
+| `npm` environment | the npm publish job **waits for the owner's approval** in the run (Review deployments); it deploys only from a `v*` tag |
+
 ### Upgrading from 1.8.4 to the 1.8.5 candidate
 
 The owner retained the 1.8.5 release label after compatibility review. This is
