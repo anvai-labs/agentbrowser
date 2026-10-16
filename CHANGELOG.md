@@ -18,6 +18,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
 
+### Changed — T5 records reflect browser durability
+
+- `docs/spec/review.md` R08, the task README's T5 row, the T5 packet and the recovery design now
+  record the browser portion as narrowed to classification (never replay; receipt contents are
+  never journaled, so R08's autofill-receipt part stays open by design). T5's remaining items
+  are per-host deployment by the operator and the optional, unscheduled constrained-mount depth.
+- Process-loss rows now cover every durable browser owner (act, plan and autofill) at each
+  boundary, and pin the operator's recovery on the record each kill left: close for an
+  undispatched one, settle for an in-doubt one, reconcile refused.
+
 ### Fixed — a plan no longer re-runs a step whose follow-up read failed
 
 - A plan step whose effect ran but whose follow-up read failed (for example a click that closed

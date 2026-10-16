@@ -12,7 +12,14 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { journalConfigFromEnvironment, openServiceJournal } from '../../dist/journal-config.js';
 import { AgentBrowserService } from '../../dist/service.js';
 
-const { env, mode, counterFile, operationId } = JSON.parse(process.argv[2] ?? '{}');
+const {
+  env,
+  mode,
+  counterFile,
+  operationId,
+  kind = 'act',
+  recoverId,
+} = JSON.parse(process.argv[2] ?? '{}');
 const rows = () => {
   const database = new DatabaseSync(join(env.AGENTBROWSER_JOURNAL_DIR, 'journal.sqlite'), {
     readOnly: true,
@@ -73,12 +80,28 @@ const journal = Object.freeze({
 });
 const engine = new FakeEngine();
 const service = new AgentBrowserService({ engine, operationJournal: journal });
-if (mode === 'reopen') {
+if (mode === 'reopen' || mode === 'recover') {
+  // `recover`: the operator's recovery writes on the browser record the kill left. Reconcile is
+  // always refused for browser records (no adapter may own the reserved id); close ends a
+  // never-dispatched record; settle ends an in-doubt one as unknown. Each result is reported.
+  const recovery = {};
+  if (mode === 'recover') {
+    const human = { actor: 'human-operator', tenant: 'owner' };
+    const attempt = (call) =>
+      call().then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, code: error?.code })
+      );
+    recovery.reconcile = await attempt(() => service.journalReconcileOperation(recoverId, human));
+    recovery.close = await attempt(() => service.journalCloseOperation(recoverId, human));
+    recovery.settle = await attempt(() => service.journalSettleOperation(recoverId, human));
+  }
   process.send?.({
     phase: 'reopened',
     health: real.health,
     namespace: real.namespace.namespaceId,
     rows: rows(),
+    recovery,
   });
   await service.shutdown();
   await opened.close();
@@ -89,9 +112,18 @@ const run = (read) => service.authority.run(sessionId, operator, {}, read);
 const { pageId } = await run(() => service.createPage(sessionId));
 const page = engine.getFakePage(engine.getSessionIds()[0] ?? '', pageId);
 await page.navigate({ url: 'https://example.com/form' });
-page.setElements([{ role: 'button', name: 'Save' }]);
+if (kind === 'autofill')
+  page.seedElements([
+    {
+      ref: 'company',
+      role: 'textbox',
+      name: 'Company',
+      attributes: { tag: 'input', type: 'text', 'autofill-node': 'company', 'autofill-block': '' },
+    },
+  ]);
+else page.setElements([{ role: 'button', name: 'Save' }]);
 const view = await run(() => service.observe(sessionId, pageId, {}));
-const ref = view.elements.find((element) => element.name === 'Save').ref;
+const ref = view.elements.find((element) => element.name === 'Save')?.ref;
 const act = page.act.bind(page);
 page.act = async (action) => {
   const fd = openSync(counterFile, 'a');
@@ -111,14 +143,22 @@ await service.authority.run(
       version: 1,
       application: {
         adapterId: RESERVED_BROWSER_ADAPTER_ID,
-        resourceId: 'act',
+        resourceId: kind,
         bindingGeneration: pageId,
       },
       durable: true,
       browser: true,
     },
   },
-  () => service.act(sessionId, pageId, { action: 'click', target: { ref } }),
+  () =>
+    kind === 'plan'
+      ? service.executePlan(sessionId, pageId, [{ action: 'click', target: { ref } }])
+      : kind === 'autofill'
+        ? service.autofill(sessionId, pageId, {
+            fields: [{ match: { label: 'Company' }, value: 'Acme', strategy: 'native-input' }],
+            policy: { settleMs: 0 },
+          })
+        : service.act(sessionId, pageId, { action: 'click', target: { ref } }),
   () => false
 );
 process.send?.({ phase: 'done' });
