@@ -1175,6 +1175,8 @@ async function closeSessionResources(
   context?: BrowserContext,
   ownedBrowser?: Browser
 ): Promise<void> {
+  // T10 M2: chains whose end was never observed are recorded before the context goes.
+  if (context !== undefined) redirectGuards.get(context)?.recordUnfinished();
   try {
     await context?.close();
   } finally {

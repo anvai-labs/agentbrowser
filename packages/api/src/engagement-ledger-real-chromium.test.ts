@@ -28,11 +28,44 @@ async function fixture() {
     if (request.url === '/aborter') {
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(
-        "<html><body><script>const c = new AbortController(); fetch('/slow', {method:'POST', body:'y', signal: c.signal}).catch(()=>{}); setTimeout(() => c.abort(), 300);</script></body></html>"
+        "<html><body><script>const c = new AbortController(); fetch('/slow?token=abort-secret', {method:'POST', body:'y', signal: c.signal}).catch(()=>{}); setTimeout(() => c.abort(), 300);</script></body></html>"
       );
       return;
     }
-    if (request.url === '/slow') {
+    if (request.url?.startsWith('/slow')) {
+      request.resume();
+      return; // never answers
+    }
+    if (request.url === '/abort-after-hop') {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end(
+        "<html><body><script>const c = new AbortController(); fetch('/hop307', {method:'POST', body:'y', signal: c.signal}).catch(()=>{}); setTimeout(() => c.abort(), 300);</script></body></html>"
+      );
+      return;
+    }
+    if (request.url === '/hop307') {
+      request.resume();
+      response.writeHead(307, { location: '/stall?token=hop-secret' });
+      response.end();
+      return;
+    }
+    if (request.url?.startsWith('/stall')) {
+      request.resume();
+      return; // never answers
+    }
+    if (request.url === '/worker-abort') {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end("<html><body><script>new Worker('/abort-worker.js')</script></body></html>");
+      return;
+    }
+    if (request.url === '/abort-worker.js') {
+      response.writeHead(200, { 'content-type': 'text/javascript' });
+      response.end(
+        "const c = new AbortController(); fetch('/wslow', {method:'POST', body:'y', signal: c.signal}).catch(()=>{}); setTimeout(() => c.abort(), 300);"
+      );
+      return;
+    }
+    if (request.url === '/wslow') {
       request.resume();
       return; // never answers
     }
@@ -387,9 +420,73 @@ describe('engagement ledger (T10 M2)', () => {
             r.data.outcome === 'failed'
         )
       ).toBe(true);
+      expect(JSON.stringify(records)).not.toContain('abort-secret');
     } finally {
       await service.shutdown().catch(() => {});
       await site.close();
     }
+  }, 60_000);
+
+  async function ledgerAfter(path: string) {
+    const dir = await engagementDir();
+    const site = await fixture();
+    const service = new AgentBrowserService({
+      engine: new PlaywrightChromiumEngine(),
+      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
+      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
+    });
+    try {
+      const session = await service.createSession({
+        tenantId: 'one',
+        scope: { allowedHosts: ['127.0.0.1'], ledger: true },
+      });
+      const { pageId } = await service.createPage(session.sessionId);
+      await service.navigate(session.sessionId, pageId, { url: site.url(path) });
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      await service.closeSession(session.sessionId);
+      const text = await readLedger(dir);
+      return {
+        text,
+        records: text
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line)),
+      };
+    } finally {
+      await service.shutdown().catch(() => {});
+      await site.close();
+    }
+  }
+
+  it('records an aborted hop after a redirect against that hop, never its query', async () => {
+    const { text, records } = await ledgerAfter('/abort-after-hop');
+    expect(
+      records.some(
+        (r) => r.type === 'request' && r.data.url.endsWith('/hop307') && r.data.status === 307
+      )
+    ).toBe(true);
+    expect(
+      records.some(
+        (r) =>
+          r.type === 'request' &&
+          r.data.method === 'POST' &&
+          r.data.url.endsWith('/stall') &&
+          r.data.outcome === 'failed'
+      )
+    ).toBe(true);
+    expect(text).not.toContain('hop-secret');
+  }, 60_000);
+
+  it('records an aborted worker POST (its end is unobserved) when the session closes', async () => {
+    const { records } = await ledgerAfter('/worker-abort');
+    expect(
+      records.some(
+        (r) =>
+          r.type === 'request' &&
+          r.data.method === 'POST' &&
+          r.data.url.endsWith('/wslow') &&
+          r.data.outcome === 'failed'
+      )
+    ).toBe(true);
   }, 60_000);
 });

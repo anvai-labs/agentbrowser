@@ -115,6 +115,8 @@ export class BodyRedirectGuard {
   private readonly frameTargets = new WeakMap<Frame, GuardTarget>();
   private readonly frameAttach = new WeakMap<Frame, Promise<void>>();
   private readonly watched = new WeakSet<Page>();
+  /** Every target, so open chains can be reported when the session closes. */
+  private readonly allTargets = new Set<GuardTarget>();
   private readonly pageReady = new WeakMap<Page, Promise<void>>();
 
   constructor(
@@ -157,6 +159,33 @@ export class BodyRedirectGuard {
   ready(page: Page): Promise<void> {
     this.watchPage(page);
     return this.pageReady.get(page) ?? Promise.resolve();
+  }
+
+  /**
+   * Reports every chain still open as a failed outcome, then forgets it. Called
+   * before the browser context closes: a request whose end the guard never saw
+   * (an aborted worker POST — its loadingFailed fires on the worker target — or
+   * one in flight at close) is recorded rather than lost, with that said.
+   */
+  recordUnfinished(): void {
+    for (const target of this.allTargets) {
+      for (const chain of [...target.chains.values()]) {
+        const at = new URL(chain.current.url);
+        try {
+          this.options.onOutcome?.({
+            type: 'request.failed',
+            data: {
+              url: `${at.origin}${at.pathname}`,
+              hostname: at.hostname,
+              method: chain.current.method,
+              reason: 'engine_error',
+              detail: 'no outcome observed (recorded at close)',
+            },
+          });
+        } catch {}
+        this.close(target, chain);
+      }
+    }
   }
 
   /** The target that intercepts this frame's requests: its own if out of process. */
@@ -206,6 +235,7 @@ export class BodyRedirectGuard {
   private async attach(open: () => Promise<CDPSession>): Promise<GuardTarget> {
     const cdp = await open();
     const target: GuardTarget = { cdp, chains: new Map(), unclaimed: new Map() };
+    this.allTargets.add(target);
     cdp.on('Fetch.requestPaused', (event: PausedEvent) => {
       void this.paused(target, event).catch(() => {});
     });
