@@ -748,8 +748,11 @@ Program restrictions (T10 M3) only narrow. Each denial reuses an existing sub-co
 
 A scheme, port or exclusion rule that cannot be checked because a request carries no URL denies
 (fail closed). Exclusions match a canonical path: percent-escapes decoded, case folded, repeated
-`/` and `\` collapsed, `;params` cut and dot segments resolved, so `/%61dmin`, `/Admin`,
-`//admin` and `/admin;x=1` all fall under an `/admin` exclusion (over-matching only narrows).
+`/` and `\` collapsed, `;params` and NUL tails cut, trailing dots and spaces stripped per segment,
+and dot segments resolved, both with and without decoding an encoded `/` first. So `/%61dmin`,
+`/Admin`, `//admin`, `/admin;x=1`, `/admin.`, `/admin%00.php` and `/ADMIN%2F..%2Fpublic` all fall
+under an `/admin` exclusion (over-matching only narrows). Unicode format characters (for example
+a right-to-left override) are not stripped: a stated residual.
 Allow-side `pathRules` match the literal path, so those spellings fall outside them. `program` is
 recorded as given in the scope status and the ledger: keep personal data you do not want
 retained out of `authorizedBy`. A server older than 1.24.0 ignores unknown scope fields: confirm what is in effect

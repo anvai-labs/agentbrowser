@@ -8907,6 +8907,7 @@
                     "type": "array",
                     "items": {
                       "minLength": 1,
+                      "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
                       "type": "string"
                     }
                   },

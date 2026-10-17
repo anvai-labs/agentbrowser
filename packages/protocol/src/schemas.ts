@@ -111,6 +111,13 @@ export const ApprovalPolicySchema = Type.Object(
   { additionalProperties: false }
 );
 
+/**
+ * A configured scope host: a hostname or ".suffix" in ASCII (punycode for IDNs), or a
+ * bracketed IPv6 literal. No scheme, port or Unicode, any of which would bind no request host.
+ */
+export const SCOPE_HOST_PATTERN =
+  '^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$';
+
 export const ScopePathRuleSchema = Type.Object(
   {
     // Exact host or ".suffix" (subdomains only — the apex needs its own
@@ -121,7 +128,7 @@ export const ScopePathRuleSchema = Type.Object(
         minLength: 2,
         // A hostname or ".suffix" in ASCII (punycode for IDNs), or a bracketed IPv6 literal: no
         // scheme, port or Unicode, any of which would bind no request host.
-        pattern: '^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$',
+        pattern: SCOPE_HOST_PATTERN,
       })
     ),
     prefix: Type.String({ minLength: 1, pattern: '^/' }),
@@ -171,7 +178,9 @@ export const EngagementScopeSchema = Type.Object(
     // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
     ledger: Type.Optional(Type.Boolean()),
     // T10 M3: restrictive program fields. Each can only narrow the scope.
-    excludeHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    excludeHosts: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, pattern: SCOPE_HOST_PATTERN }), { minItems: 1 })
+    ),
     excludePaths: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
     allowedSchemes: Type.Optional(
       Type.Array(Type.String({ pattern: '^[A-Za-z][A-Za-z0-9+.-]*$' }), { minItems: 1 })

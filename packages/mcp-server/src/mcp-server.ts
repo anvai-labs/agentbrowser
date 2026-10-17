@@ -48,6 +48,7 @@ import {
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
+  SCOPE_HOST_PATTERN,
   ScopeToolResultSchema,
   ScreenshotRequestSchema,
   SessionClosedResultSchema,
@@ -334,7 +335,7 @@ export function buildTools(
                 items: {
                   type: 'object',
                   properties: {
-                    hostSuffix: { type: 'string', minLength: 2 },
+                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
                     prefix: { type: 'string', minLength: 1 },
                   },
                   required: ['prefix'],
@@ -368,7 +369,7 @@ export function buildTools(
               ledger: { type: 'boolean' },
               excludeHosts: {
                 type: 'array',
-                items: { type: 'string', minLength: 1 },
+                items: { type: 'string', minLength: 1, pattern: SCOPE_HOST_PATTERN },
                 minItems: 1,
               },
               excludePaths: {
@@ -376,7 +377,7 @@ export function buildTools(
                 items: {
                   type: 'object',
                   properties: {
-                    hostSuffix: { type: 'string', minLength: 2, pattern: '[A-Za-z0-9]' },
+                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
                     prefix: { type: 'string', minLength: 1, pattern: '^/' },
                   },
                   required: ['prefix'],
