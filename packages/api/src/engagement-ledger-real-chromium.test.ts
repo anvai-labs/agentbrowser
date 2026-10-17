@@ -61,11 +61,11 @@ async function fixture() {
     if (request.url === '/abort-worker.js') {
       response.writeHead(200, { 'content-type': 'text/javascript' });
       response.end(
-        "const c = new AbortController(); fetch('/wslow', {method:'POST', body:'y', signal: c.signal}).catch(()=>{}); setTimeout(() => c.abort(), 300);"
+        "const c = new AbortController(); fetch('/wslow?token=worker-secret', {method:'POST', body:'y', signal: c.signal}).catch(()=>{}); setTimeout(() => c.abort(), 300);"
       );
       return;
     }
-    if (request.url === '/wslow') {
+    if (request.url?.startsWith('/wslow')) {
       request.resume();
       return; // never answers
     }
@@ -478,7 +478,7 @@ describe('engagement ledger (T10 M2)', () => {
   }, 60_000);
 
   it('records an aborted worker POST (its end is unobserved) when the session closes', async () => {
-    const { records } = await ledgerAfter('/worker-abort');
+    const { text, records } = await ledgerAfter('/worker-abort');
     expect(
       records.some(
         (r) =>
@@ -488,5 +488,6 @@ describe('engagement ledger (T10 M2)', () => {
           r.data.outcome === 'failed'
       )
     ).toBe(true);
+    expect(text).not.toContain('worker-secret');
   }, 60_000);
 });
