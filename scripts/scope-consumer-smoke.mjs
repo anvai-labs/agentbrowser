@@ -244,6 +244,7 @@ try {
         const events = JSON.stringify(await replay.json());
         assert.match(events, /"blocked":true/);
         assert.match(events, /"redirect":"http:\/\/localhost:\d+\/leaked"/);
+        assert.match(events, /"scope":"SCOPE_HOST_DENIED"/);
         check('post redirect out of scope', { leaked: false, recorded: 'request.failed' });
       },
     });

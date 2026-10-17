@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   isNavigationFailureReason,
+  isScopeDenialCode,
   MAX_PLAN_STEPS,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
@@ -3776,6 +3777,9 @@ export class AgentBrowserService {
         redirectChain: result.redirectChain,
         ...(result.status !== 'success'
           ? { reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error' }
+          : {}),
+        ...(result.status === 'blocked' && isScopeDenialCode(result.scope)
+          ? { scope: result.scope }
           : {}),
       });
     });

@@ -714,10 +714,10 @@ charged once). Surfacing: service `navigate` preflights the scope, so
 its denials are typed `POLICY_DENIED` errors carrying `SCOPE_*`
 reasons (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
 `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`);
-traffic denied at the wire from other lanes (act-driven navigations,
-non-navigation subresources) surfaces the generic `egress_policy`
-reason — enforcement is identical, only the reason granularity
-differs. Identity
+traffic denied at the wire (a redirect hop, act-driven navigations,
+subresources) is reported with `reason: egress_policy` plus the same
+`scope` sub-code — on the navigate `blocked` result, on `request.failed`
+events, and on structured MCP errors (T10 M2). Identity
 bindings on well-known headers (`host`, `content-length`, ...) are an
 operator footgun — bind application identity headers only. CLI:
 `session create --scope-file scope.json`

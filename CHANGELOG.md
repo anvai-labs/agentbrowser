@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — wire-level scope denials carry the sub-code (T10 M2)
+
+| Where a scope denies | Now carries `scope: SCOPE_…` |
+| --- | --- |
+| a redirect hop of a navigation (GET walker) | the navigate `blocked` result (REST, SDK, CLI, MCP), and the `request.failed` event |
+| a redirect hop after POST/PUT/PATCH (the guard) | the `request.failed` event |
+| the initial request (subresources, act-driven navigation) | the `request.failed` event |
+| any tool error carrying a scope denial (`act`, `page_create`, …) | the MCP structured error (`scope`, allowlisted) |
+
+- Only a code from the protocol's `SCOPE_DENIAL_CODES` is carried; the navigate result schema
+  (`NavigationStatus.scope`) is a closed union of those codes. OpenAPI and the MCP catalog are
+  regenerated.
+
 ### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
 
 - A `navigate` (command or tool) refused by the scope preflight now reports which rule fired

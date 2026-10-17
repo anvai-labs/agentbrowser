@@ -49,8 +49,10 @@ import {
   DELIVERED_OBSERVATION_MODES,
   headedDisplayWarnings,
   isNavigationFailureReason,
+  isScopeDenialCode,
   MAX_FORM_CONTROLS_PER_ROOT,
   type NavigationFailureReason,
+  type ScopeDenialCode,
   type SessionDiagnostics,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
@@ -1002,7 +1004,7 @@ function canonicalFingerprint(element: StoredElement): string {
 export interface RequestEventSink {
   readonly navigationFailures: WeakMap<
     import('playwright').Request,
-    { kind: 'blocked' | 'failed'; reason: NavigationFailureReason }
+    { kind: 'blocked' | 'failed'; reason: NavigationFailureReason; scope?: ScopeDenialCode }
   >;
   emit:
     | ((event: {
@@ -1819,9 +1821,15 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       hostname: string,
       url: string,
       context?: { method?: string; headers?: Record<string, string> }
-    ): Promise<{ verdict: 'allow' | 'deny'; reason?: NavigationFailureReason }> => {
+    ): Promise<{
+      verdict: 'allow' | 'deny';
+      reason?: NavigationFailureReason;
+      scope?: ScopeDenialCode;
+    }> => {
       let verdict: 'allow' | 'deny';
       let reason: NavigationFailureReason | undefined;
+      // T10 M2: an engagement-scope denial says which rule fired.
+      let scope: ScopeDenialCode | undefined;
       try {
         await egress.checkRequest({
           hostname,
@@ -1838,7 +1846,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         verdict = 'allow';
       } catch (error) {
         verdict = 'deny';
-        const err = error as { code?: string; details?: { reason?: unknown } };
+        const err = error as { code?: string; details?: { reason?: unknown; scope?: unknown } };
+        const code = err.details?.scope;
+        if (isScopeDenialCode(code)) scope = code;
         reason = isNavigationFailureReason(err.details?.reason)
           ? err.details.reason
           : ['POLICY_DENIED', 'RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'].includes(
@@ -1847,7 +1857,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             ? 'egress_policy'
             : 'engine_error';
       }
-      return reason !== undefined ? { verdict, reason } : { verdict };
+      return {
+        verdict,
+        ...(reason !== undefined ? { reason } : {}),
+        ...(scope !== undefined ? { scope } : {}),
+      };
     };
 
     /** Emit a request lifecycle event through the sink (spec 5.1 evidence). */
@@ -1928,10 +1942,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               const reason = isNavigationFailureReason(detail.reason)
                 ? detail.reason
                 : 'egress_policy';
-              sink.navigationFailures.set(root, { kind: 'blocked', reason });
+              const scope = isScopeDenialCode(detail.scope) ? detail.scope : undefined;
+              sink.navigationFailures.set(root, {
+                kind: 'blocked',
+                reason,
+                ...(scope !== undefined ? { scope } : {}),
+              });
               emitRequest('request.failed', root, {
                 blocked: true,
                 reason,
+                ...(scope !== undefined ? { scope } : {}),
                 ...(detail.redirect !== undefined ? { redirect: detail.redirect } : {}),
                 ...(detail.detail !== undefined ? { detail: detail.detail } : {}),
               });
@@ -1959,8 +1979,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         return route.continue();
       };
 
-      const deny = async (reason: NavigationFailureReason) => {
-        sink.navigationFailures.set(request, { kind: 'blocked', reason });
+      const deny = async (reason: NavigationFailureReason, scope?: ScopeDenialCode) => {
+        sink.navigationFailures.set(request, {
+          kind: 'blocked',
+          reason,
+          ...(scope !== undefined ? { scope } : {}),
+        });
         await fulfill(BLOCKED_RESPONSE);
       };
 
@@ -1971,8 +1995,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         const requestHeaders = request.headers();
         const initial = await verdictOf(hostname, url, { method, headers: requestHeaders });
         if (initial.verdict === 'deny') {
-          emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
-          await deny(initial.reason ?? 'engine_error');
+          emitRequest('request.failed', request, {
+            blocked: true,
+            reason: initial.reason,
+            ...(initial.scope !== undefined ? { scope: initial.scope } : {}),
+          });
+          await deny(initial.reason ?? 'engine_error', initial.scope);
           return;
         }
 
@@ -2052,9 +2080,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               emitRequest('request.failed', request, {
                 blocked: true,
                 reason: hop.reason,
+                ...(hop.scope !== undefined ? { scope: hop.scope } : {}),
                 redirect: absolute.origin + absolute.pathname,
               });
-              await deny(hop.reason ?? 'engine_error');
+              await deny(hop.reason ?? 'engine_error', hop.scope);
               return;
             }
             // This walker only handles body-less requests (the body-bearing
@@ -2992,7 +3021,13 @@ class PlaywrightPage implements EnginePage {
       throw new EngineError('INTERNAL', 'Navigation failed', false, { reason: failure.reason });
     }
     if (failure) {
-      return { status: 'blocked', url: request.url, redirectChain: [], reason: failure.reason };
+      return {
+        status: 'blocked',
+        url: request.url,
+        redirectChain: [],
+        reason: failure.reason,
+        ...(failure.scope !== undefined ? { scope: failure.scope } : {}),
+      };
     }
 
     // A resolved goto is not proof that target content loaded. Chromium can
