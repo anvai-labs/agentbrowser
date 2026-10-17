@@ -44,4 +44,40 @@ describe('scope commands (T10 M2)', () => {
     });
     expect(out.join('\n')).toContain('denied by the scope: SCOPE_METHOD_DENIED');
   });
+
+  it('session scope human output lists every rule, never a marker value', async () => {
+    const scopeStatus = vi.fn().mockResolvedValue({
+      allowedHosts: ['in.example'],
+      pathRules: [{ prefix: '/api' }],
+      allowedMethods: ['GET'],
+      identityBindings: [{ header: 'x-id', allowedHosts: ['in.example'] }],
+      expiresAt: 0,
+      expired: true,
+      budget: { limit: 5, spent: 5, remaining: 0 },
+      denials: { SCOPE_BUDGET_EXHAUSTED: 2 },
+    });
+    const { code, out } = await run(['session', 'scope', 'ses_1'], { scopeStatus });
+    const text = out.join('\n');
+    expect(code).toBe(0);
+    for (const line of [
+      'hosts:   in.example',
+      'path:    /api',
+      'methods: GET',
+      'identity: x-id bound to in.example',
+      'budget:  5/5 spent (0 left)',
+      '(expired)',
+      'denied:  SCOPE_BUDGET_EXHAUSTED x2',
+    ])
+      expect(text).toContain(line);
+  });
+
+  it('session scope-check prints an allowed verdict', async () => {
+    const checkScope = vi.fn().mockResolvedValue({ allowed: true });
+    const { code, out } = await run(['session', 'scope-check', 'ses_1', 'https://in.example/'], {
+      checkScope,
+    });
+    expect(code).toBe(0);
+    expect(checkScope).toHaveBeenCalledWith('ses_1', { url: 'https://in.example/' });
+    expect(out.join('\n')).toContain('allowed by the scope');
+  });
 });

@@ -5,7 +5,7 @@
  * All types in this file should be kept in sync with types.ts
  */
 
-import { type TSchema, Type } from '@sinclair/typebox';
+import { type Static, type TSchema, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { NavigationFailureReasonSchema } from './navigation-failure.js';
 import {
@@ -176,6 +176,10 @@ export const ScopeCheckResultSchema = Type.Union([
     { additionalProperties: false }
   ),
 ]);
+
+/** T10 M2: the scope status and dry-run verdict, derived from the schemas (ADR-015). */
+export type EngagementScopeStatus = Static<typeof EngagementScopeStatusSchema>;
+export type ScopeCheckResult = Static<typeof ScopeCheckResultSchema>;
 
 export const SessionPolicySchema = Type.Object({
   // Optional since Phase 3: requiring allowedHosts meant a policy object

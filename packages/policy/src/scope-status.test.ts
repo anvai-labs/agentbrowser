@@ -54,6 +54,31 @@ describe('EngagementScopePolicy status and dry-run check', () => {
     expect(scope.status().denials).toEqual({ SCOPE_HOST_DENIED: 2, SCOPE_METHOD_DENIED: 1 });
   });
 
+  it('returns a copy: mutating the status cannot widen the live scope', () => {
+    const scope = new EngagementScopePolicy(base(), {
+      allowedHosts: ['in.example'],
+      pathRules: [{ prefix: '/api' }],
+      allowedMethods: ['GET'],
+    });
+    const status = scope.status();
+    status.allowedHosts.push('out.example');
+    status.pathRules.push({ prefix: '/' });
+    status.allowedMethods?.push('DELETE');
+    (status.pathRules[0] as { prefix: string }).prefix = '/';
+    expect(scope.check({ url: 'http://out.example/api' })).toEqual({
+      allowed: false,
+      scope: 'SCOPE_HOST_DENIED',
+    });
+    expect(scope.check({ url: 'http://in.example/admin' })).toEqual({
+      allowed: false,
+      scope: 'SCOPE_PATH_DENIED',
+    });
+    expect(scope.check({ url: 'http://in.example/api', method: 'DELETE' })).toEqual({
+      allowed: false,
+      scope: 'SCOPE_METHOD_DENIED',
+    });
+  });
+
   it('never reports an identity marker value', () => {
     const scope = new EngagementScopePolicy(base(), {
       allowedHosts: ['in.example'],

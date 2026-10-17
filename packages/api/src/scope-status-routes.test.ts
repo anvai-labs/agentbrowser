@@ -84,6 +84,11 @@ describe('scope status and dry-run check (T10 M2)', () => {
         const response = await call('GET', `${base}?url=${encodeURIComponent(bad)}`);
         expect(response.statusCode).toBe(400);
       }
+      const good = encodeURIComponent('https://in.example/a');
+      for (const method of ['', 'G-T', 'GET%20', 'GET&method=POST']) {
+        const response = await call('GET', `${base}?url=${good}&method=${method}`);
+        expect(response.statusCode, method).toBe(400);
+      }
     } finally {
       await app.close();
     }
@@ -105,6 +110,13 @@ describe('scope status and dry-run check (T10 M2)', () => {
       const other = await call('GET', `/v1/sessions/${scoped.sessionId}/scope`, 'key-two');
       expect([403, 404]).toContain(other.statusCode);
       expect(other.body).not.toContain('in.example');
+      const otherCheck = await call(
+        'GET',
+        `/v1/sessions/${scoped.sessionId}/scope/check?url=${encodeURIComponent('https://in.example/')}`,
+        'key-two'
+      );
+      expect([403, 404]).toContain(otherCheck.statusCode);
+      expect(otherCheck.body).not.toContain('allowed');
     } finally {
       await app.close();
     }

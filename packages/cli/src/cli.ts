@@ -497,7 +497,14 @@ export function buildCli(deps: CliDependencies): Cli {
             ctx.emit(status, () => [
               `Scope for ${sessionId}`,
               `  hosts:   ${status.allowedHosts.join(', ')}`,
+              ...status.pathRules.map(
+                (rule) => `  path:    ${rule.hostSuffix ? `${rule.hostSuffix} ` : ''}${rule.prefix}`
+              ),
               ...(status.allowedMethods ? [`  methods: ${status.allowedMethods.join(', ')}`] : []),
+              ...status.identityBindings.map(
+                (binding) =>
+                  `  identity: ${binding.header} bound to ${binding.allowedHosts.join(', ')}`
+              ),
               ...(status.budget
                 ? [
                     `  budget:  ${status.budget.spent}/${status.budget.limit} spent (${status.budget.remaining} left)`,

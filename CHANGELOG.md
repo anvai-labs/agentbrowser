@@ -14,8 +14,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 | the scope in effect, budget used/remaining, expiry, denials by sub-code | `GET /v1/sessions/{id}/scope` | `sessions.scopeStatus` | `session scope` |
 | would the scope rules allow this request now? | `GET /v1/sessions/{id}/scope/check?url&method` | `sessions.checkScope` | `session scope-check` |
 
-- The dry run spends no budget and records no denial; it judges the scope rules only (the base
-  policy and DNS still apply at the wire). `404 NOT_FOUND` when the session has no scope.
+- The dry run spends no budget and records no denial. It judges the host, path, method (default
+  `GET`), expiry and budget rules; it does not evaluate identity bindings (it takes no headers),
+  and the base policy and DNS still apply at the wire. `404 NOT_FOUND` when the session has no
+  scope.
 - Identity bindings report `{header, allowedHosts}` only: a marker value is never returned. The
   protocol's `EngagementScopeStatus` schema is closed, and a test validates the policy's real
   status against it.
