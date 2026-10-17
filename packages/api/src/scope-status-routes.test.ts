@@ -149,4 +149,54 @@ describe('scope status contract (ADR-015)', () => {
       })
     ).toBe(false);
   });
+
+  // A scope may only narrow: a field this server cannot enforce must be refused,
+  // never ignored (an ignored exclusion silently widens the engagement).
+  it.each([
+    ['top level', { allowedHosts: ['in.example'], excludeHosts: ['admin.in.example'] }],
+    ['path rule', { allowedHosts: ['in.example'], pathRules: [{ prefix: '/api', exclude: true }] }],
+    [
+      'identity binding',
+      {
+        allowedHosts: ['in.example'],
+        identityBindings: [
+          { header: 'x-id', value: 'v', allowedHosts: ['in.example'], scope: 'x' },
+        ],
+      },
+    ],
+  ])('refuses an unknown scope field (%s) instead of ignoring it', async (_where, scope) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope },
+      });
+      expect(created.statusCode).toBe(400);
+      expect((await call('GET', '/v1/sessions')).json().sessions ?? []).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('still accepts every known scope field', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['in.example', '.in.example'],
+            pathRules: [{ hostSuffix: 'in.example', prefix: '/api' }],
+            allowedMethods: ['GET'],
+            expiresAt: Date.now() + 60_000,
+            requestBudget: 10,
+            identityBindings: [{ header: 'x-id', value: 'v', allowedHosts: ['in.example'] }],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
 });

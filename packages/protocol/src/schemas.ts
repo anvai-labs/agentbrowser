@@ -108,37 +108,48 @@ export const ApprovalPolicySchema = Type.Object({
   ),
 });
 
-export const ScopePathRuleSchema = Type.Object({
-  // Exact host or ".suffix" (subdomains only — the apex needs its own
-  // exact entry, matching SessionHostRules semantics). Absent = the rule
-  // binds every allowed host.
-  hostSuffix: Type.Optional(Type.String({ minLength: 2 })),
-  prefix: Type.String({ minLength: 1 }),
-});
+export const ScopePathRuleSchema = Type.Object(
+  {
+    // Exact host or ".suffix" (subdomains only — the apex needs its own
+    // exact entry, matching SessionHostRules semantics). Absent = the rule
+    // binds every allowed host.
+    hostSuffix: Type.Optional(Type.String({ minLength: 2 })),
+    prefix: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
 
-export const ScopeIdentityBindingSchema = Type.Object({
-  header: Type.String({ minLength: 1 }),
-  value: Type.String({ minLength: 1 }),
-  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-});
+export const ScopeIdentityBindingSchema = Type.Object(
+  {
+    header: Type.String({ minLength: 1 }),
+    value: Type.String({ minLength: 1 }),
+    allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
 
 // T7 slice 2: engagement scope (authorized security testing). Enforced
 // per request and per redirect hop by EngagementScopePolicy over the
 // session's base policy; restrict-only — the base always runs.
-export const EngagementScopeSchema = Type.Object({
-  // Exhaustive when set: exact hosts and ".suffix" entries in scope.
-  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-  pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
-  allowedMethods: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
-  // Epoch ms; the scope is expired at or after this instant.
-  expiresAt: Type.Optional(Type.Number({ minimum: 0 })),
-  // Total choke-point requests in scope, redirect hops included.
-  requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
-  identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
-  // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
-  // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
-  ledger: Type.Optional(Type.Boolean()),
-});
+export const EngagementScopeSchema = Type.Object(
+  {
+    // Exhaustive when set: exact hosts and ".suffix" entries in scope.
+    allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
+    allowedMethods: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    // Epoch ms; the scope is expired at or after this instant.
+    expiresAt: Type.Optional(Type.Number({ minimum: 0 })),
+    // Total choke-point requests in scope, redirect hops included.
+    requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
+    identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
+    // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
+    // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
+    ledger: Type.Optional(Type.Boolean()),
+    // A scope may only narrow: a field this server cannot enforce is refused (400), never
+    // ignored — an ignored exclusion would silently widen the engagement.
+  },
+  { additionalProperties: false }
+);
 
 // T10 M2: the scope in effect for a session (GET /v1/sessions/{id}/scope).
 // Identity bindings report header and hosts only: the marker value is the
