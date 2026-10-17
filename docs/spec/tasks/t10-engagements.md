@@ -29,12 +29,17 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 
 ## Milestones and acceptance
 
+```
+1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 M2 denial reporting (develop)
+  ─▶ 1.25.0 M3 program scope + findings ─▶ 1.26.0 M4 automation runs
+```
+
 | Milestone | Release | Acceptance (each test-first; real Chromium where traffic is involved) |
 | --- | --- | --- |
 | M1 scope without holes | 1.21.0 | an in-scope POST/PUT/PATCH redirected out of scope is blocked and recorded; a scope with `cdpAttach` or `allowServiceWorkers` is refused; worker traffic is checked or the session refused; release smoke covers a scoped session |
-| M2 status and ledger | 1.22.0 (status, sub-codes); 1.23.0 (ledger, export, offline verify) | scope status (in-effect scope, budget used/remaining, expiry, denials by sub-code) and a no-budget dry-run check on REST/SDK/CLI/MCP; `SCOPE_*` sub-codes in request events and wire-level denials (blocked redirects, `page_create`, `act`/`plan`); the `navigate` preflight refusal already carries one on all four surfaces; an opt-in append-only hash-chained ledger that is exportable after close, refuses when full, never writes query strings, bodies or identity values, and fails verification when edited |
-| M3 program scope and findings | 1.24.0 | restrictive fields (excludes, ports, schemes, rate limit, program metadata); an importer for published program scope that maps `*.host` to subdomains only (the apex is in scope only when listed), refuses ambiguous wildcards and anything else it cannot express; findings bound to the engagement (out-of-scope evidence refused, confirmations cite ledger entries), SARIF draft export |
-| M4 automation runs | 1.25.0 | a saved plan file runs from the CLI with label targets, optional durable classification and JUnit/JSON results; the CI action accepts it. Released alongside: T6 rollback and async/recycled-option coverage, owned and recorded by [T6](t6-widget-strategies.md) |
+| M2 status and ledger | 1.22.0 (status, sub-codes); 1.23.0 (ledger, export, offline verify); 1.24.0 (denial reporting on page creation, downloads, completed actions) | scope status (in-effect scope, budget used/remaining, expiry, denials by sub-code) and a no-budget dry-run check on REST/SDK/CLI/MCP; `SCOPE_*` sub-codes in request events and wire-level denials (blocked redirects, `page_create`, `act`/`plan`); the `navigate` preflight refusal already carries one on all four surfaces; an opt-in append-only hash-chained ledger that is exportable after close, refuses when full, never writes query strings, bodies or identity values, and fails verification when edited |
+| M3 program scope and findings | 1.25.0 | restrictive fields (excludes, ports, schemes, rate limit, program metadata); an importer for published program scope that maps `*.host` to subdomains only (the apex is in scope only when listed), refuses ambiguous wildcards and anything else it cannot express; findings bound to the engagement (out-of-scope evidence refused, confirmations cite ledger entries), SARIF draft export |
+| M4 automation runs | 1.26.0 | a saved plan file runs from the CLI with label targets, optional durable classification and JUnit/JSON results; the CI action accepts it. Released alongside: T6 rollback and async/recycled-option coverage, owned and recorded by [T6](t6-widget-strategies.md) |
 
 ## Not in T10
 
@@ -50,7 +55,9 @@ automatic submission or outside communication of findings.
 | M1: workers | dedicated-worker POST redirects are checked (`body-redirect-guard.test.ts`; observed coverage, not a guarantee); service workers are refused with a scope (#541); shared workers and worker WebSockets stay a stated residual (not qualified) |
 | M1: released in 1.21.0 | [release record](../evidence/release-1.21.0.md): the smoke passed on the extracted release candidate |
 | M1: release smoke | `scripts/scope-consumer-smoke.mjs`: lane refusals (REST rule ids; CLI/MCP service workers), out-of-scope navigation on all four surfaces, POST redirect blocked and recorded; local fixtures, run against the extracted release candidate |
-| M2: engagement ledger (recorder, fail closed) | `engagement-ledger.ts`; operator guide "Engagement ledger"; export and verify surfaces next |
+| M2: engagement ledger (recorder, fail closed) | `engagement-ledger.ts`; operator guide "Engagement ledger" |
+| M2: released in 1.23.0 | [release record](../evidence/release-1.23.0.md): the ledger smoke passed on the extracted release candidate |
+| M2: denial reporting on page creation, downloads and completed actions | #566, #567, #568 on develop; #569 open; released in 1.24.0 once #569 merges |
 | M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors (#549); released in 1.22.0 |
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |
