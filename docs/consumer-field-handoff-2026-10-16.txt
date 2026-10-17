@@ -331,3 +331,27 @@ REVIEW FIX VALIDATION / RELEASE PREPARATION
   not a publication claim. Final-head CI, promotion to main, tag ancestry/version
   checks and the owner-gated npm environment must pass before release completion.
 - Publication must not replace or restart the active headed consumer service.
+
+DELIVERY UPDATE — 2026-10-17
+- Final candidate c76eca3c passed the complete local commit and push gates:
+  5,780 tests passed, 20 platform/optional skips; type-check, lint and build passed.
+  Release contracts passed at 1.22.0, including 23 release-smoke tests, all MCP
+  profile catalogs and 1,190 relative documentation links across 303 Markdown files.
+- PR #552 passed final-head CI, including Windows and macOS checks, and merged
+  into develop as 3f46314a. Promotion PR #553 passed all checks and merged into
+  main as 4eb78850. Independent review confirmed the promotion tree exactly
+  matched the reviewed candidate, version consistency and accurate release claims.
+- Tag v1.22.0 points to main 4eb78850. Its push passed the full local gates again.
+  GitHub accepted creation through the current account's configured release-tag
+  exception; no repository protection was changed. The workflow's package-version
+  and main-ancestry guard passed.
+- Release run: https://github.com/anvai-labs/agentbrowser/actions/runs/39008344538
+  All five binary builds, four packaged-server acceptance jobs and the Windows
+  bundle passed. Publication is waiting for the repository owner's protected npm
+  environment approval; GitHub release publication follows npm. No published-release
+  claim is made here. Post-publication assets/provenance and channel checks remain.
+- Back-sync PR #554 passed all CI and merged as 637656d7, restoring main's
+  promotion ancestry to develop: https://github.com/anvai-labs/agentbrowser/pull/554.
+- The active headed Fiverr session and installed service were not accessed,
+  upgraded or restarted. No credentials were printed and no verification challenge
+  was automated. Earlier remaining issues and qualification limits still apply.
