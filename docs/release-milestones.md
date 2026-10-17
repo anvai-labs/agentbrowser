@@ -7,7 +7,7 @@
 journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2+    M3     M4
 ```
 
-| Version | Date | main | Headline | Record |
+| Version | GitHub release | main | Headline | Record |
 | --- | --- | --- | --- | --- |
 | 1.23.0 | 2026-10-17 | `82b06ca` | T10 M2: engagement ledger, export and offline verify | [record](spec/evidence/release-1.23.0.md) |
 | 1.22.0 | 2026-10-17 | `4eb7885` | T10 M2: scope status, dry run, `SCOPE_*` sub-codes; compact capture output | owner-released (field handoff) |
@@ -26,7 +26,7 @@ journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2 
 
 | Planned | Milestone | Scope |
 | --- | --- | --- |
-| 1.24.0 | T10 M2 completion | denial reporting on page creation, downloads, completed actions and autofill; unknown scope and policy fields refused |
+| 1.24.0 | T10 M2 completion | denial reporting on page creation, downloads, completed actions and autofill; unknown or misplaced session-request fields refused (scope, policy, approval, and policy fields sent at the top level — **breaking** for that undocumented shape; send them under `policy`); path rules bind exactly the hosts they name |
 | 1.25.0 | T10 M3 | program-scope fields (excludes, schemes, ports, rate limit, program metadata), scope importer, findings bound to the engagement |
 | 1.26.0 | T10 M4 | saved plan runs from the CLI and CI action |
 
