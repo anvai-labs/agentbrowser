@@ -297,3 +297,7 @@ FOLLOW-UP VALIDATION / DELIVERY
   Remote CI, independent adversarial review, develop-to-main promotion, version
   synchronization and release publication remain gates; no release is claimed.
   No deployment or live service restart has occurred.
+
+- Pre-push release-smoke tests also pin an independent delegated-tool fixture.
+  Added the new artifact tool there after the gate rejected its stale catalog;
+  the built adapter/profile catalog check already passed. No gate was bypassed.
