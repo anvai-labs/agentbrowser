@@ -281,3 +281,19 @@ FOLLOW-UP: CONTEXT OUTPUT DEFAULTS (2026-10-17)
   binding also has a direct one-lookup assertion, avoiding a timing-only regression.
 - Validation of this follow-up and delivery status will be recorded below after gates.
   Live Fiverr session remains untouched; no challenge interaction or service restart.
+
+FOLLOW-UP VALIDATION / DELIVERY
+- Commit 01518d34 passed the required full pre-commit gate: all workspace type
+  checks, lint, builds, 5,776 passing tests and 20 platform/optional skips.
+- Focused follow-up results: CLI 347, MCP 214, cache 4, real-service MCP schema 11,
+  Chromium recovery 5, and real Chromium autofill 3 passing tests. These are subsets
+  of the workspace total, not additional distinct test counts.
+- Built release artifact/contracts gate passes, including the new 21-tool default
+  MCP catalog and delegated/profile catalogs. OpenAPI and MCP catalog regenerated.
+  All 1,189 relative documentation links across 303 Markdown files pass.
+- Current develop base remains 967aa86f. Consumer fix commits are 6a41f3a5,
+  27df9e54 and 01518d34; validation documentation follows separately.
+- Publication is proceeding on fix/consumer-recovery-2026-10-16 into develop.
+  Remote CI, independent adversarial review, develop-to-main promotion, version
+  synchronization and release publication remain gates; no release is claimed.
+  No deployment or live service restart has occurred.
