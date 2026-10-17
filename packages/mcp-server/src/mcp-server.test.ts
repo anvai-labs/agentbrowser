@@ -941,6 +941,32 @@ describe('AgentBrowser MCP server', () => {
       expect(JSON.stringify(response)).not.toContain('10.0.0.1');
     });
 
+    it('carries the engagement-scope sub-code of a scope-refused navigation (T10 M2)', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('SCOPE_HOST_DENIED: host out.example is outside the scope'), {
+          code: 'POLICY_DENIED',
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED', host: 'out.example' },
+        })
+      );
+      const response = JSON.parse(
+        await call('7-scope', 'navigate', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          url: 'https://out.example/',
+        })
+      ).result;
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toEqual({
+        error: {
+          code: 'POLICY_DENIED',
+          message: 'Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+          retryable: false,
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED' },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain('out.example');
+    });
+
     it('should observe and return the semantic observation', async () => {
       const response = JSON.parse(
         await call('8', 'observe', { sessionId: 'ses_1', pageId: 'pg_1' })
