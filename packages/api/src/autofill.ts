@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import {
   type AutofillMatch,
   type AutofillReceipt,
   type AutofillReport,
   type AutofillRequest,
+  ErrorCode,
   labelPattern,
   type PageElement,
   parseAutofillRequest,
@@ -18,6 +20,7 @@ export interface AutofillPorts {
     url?: string;
     truncated?: boolean;
     degraded?: boolean;
+    frameCoverage?: Array<{ status: string }>;
   }>;
   act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
@@ -349,6 +352,23 @@ function resolve(
   return candidates[0] as PageElement;
 }
 
+// Only stable protocol codes cross this boundary. Driver messages may contain
+// typed values, selectors, URLs, credentials or stacks that cannot be redacted reliably.
+const safeCodes = new Set<string>(Object.values(ErrorCode));
+function failureCode(error: unknown): string {
+  if (error instanceof AutofillFailure) return error.code;
+  if (
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    safeCodes.has(error.code)
+  )
+    return error.code;
+  if (error instanceof Error && error.name === 'TimeoutError') return 'ACTION_TIMEOUT';
+  return 'ACTION_FAILED';
+}
+
 /** One serial admission. Retry means repeat reads, never repeat a dispatched write. */
 export async function runAutofill(input: unknown, ports: AutofillPorts): Promise<AutofillReport> {
   const request = parseAutofillRequest(input);
@@ -361,6 +381,32 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     ...request.policy,
   };
   const started = performance.now();
+  const diagnostics: NonNullable<AutofillReport['diagnostics']> = {
+    correlationId: randomUUID(),
+    deadlineMode: 'cooperative',
+    timeoutMs: policy.timeoutMs,
+    overrunMs: 0,
+    stages: [],
+  };
+  type Stage = NonNullable<AutofillReport['diagnostics']>['stages'][number]['stage'];
+  const timed = async <T>(stage: Stage, operation: () => Promise<T>): Promise<T> => {
+    let entry = diagnostics.stages.find((item) => item.stage === stage);
+    if (!entry) {
+      entry = { stage, calls: 0, elapsedMs: 0, remainingMs: 0 };
+      diagnostics.stages.push(entry);
+    }
+    entry.calls++;
+    const start = performance.now();
+    try {
+      return await operation();
+    } catch (error) {
+      entry.errorCode = failureCode(error);
+      throw error;
+    } finally {
+      entry.elapsedMs += performance.now() - start;
+      entry.remainingMs = Math.max(0, policy.timeoutMs - (performance.now() - started));
+    }
+  };
   const expectedValues: string[] = [];
   const blocks = new Map<string, string>();
   const identities = new Map<number, string>();
@@ -392,55 +438,65 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       (s) =>
         (field.strategy === undefined || field.strategy === s.name) && s.supports(element, field)
     );
-  const observe = async () => {
-    preflightFieldIndex = 0;
-    if (request.scope) scopeValid = false;
-    guard();
-    const view = await ports.observe();
-    guard();
-    if (view.truncated || view.degraded)
-      throw new AutofillFailure(
-        'OUTPUT_TRUNCATED',
-        'Autofill requires complete, non-degraded observations'
-      );
-    if (request.scope) {
-      if (view.url !== request.scope.url)
+  const observe = (stage: Stage = 'discovery') =>
+    timed(stage, async () => {
+      preflightFieldIndex = 0;
+      if (request.scope) scopeValid = false;
+      guard();
+      const view = await ports.observe();
+      if (view.frameCoverage || diagnostics.frameReadiness)
+        diagnostics.frameReadiness = {
+          incomplete: view.frameCoverage?.length ?? 0,
+          loading: view.frameCoverage?.filter((frame) => frame.status === 'loading').length ?? 0,
+          timedOut:
+            view.frameCoverage?.filter((frame) =>
+              ['timeout', 'budget_exceeded'].includes(frame.status)
+            ).length ?? 0,
+        };
+      guard();
+      if (view.truncated || view.degraded)
         throw new AutofillFailure(
-          'FORM_SCOPE_MISMATCH',
-          'Page URL does not match the mapped stage'
+          'OUTPUT_TRUNCATED',
+          'Autofill requires complete, non-degraded observations'
         );
-      const nodes = new Set<string>();
-      for (const [index, field] of request.fields.entries()) {
-        preflightFieldIndex = index;
-        const element = resolve(view.elements, field.match, blocks);
-        const node = element.attributes?.['autofill-node'];
-        const block = element.attributes?.['autofill-block'];
-        if (
-          !node ||
-          block === undefined ||
-          !element.visible ||
-          !element.enabled ||
-          !strategyFor(element, field)
-        )
+      if (request.scope) {
+        if (view.url !== request.scope.url)
           throw new AutofillFailure(
-            'ENGINE_UNSUPPORTED',
-            'Mapped stage requires ready qualified controls and identity evidence'
+            'FORM_SCOPE_MISMATCH',
+            'Page URL does not match the mapped stage'
           );
-        if (nodes.has(node))
-          throw new AutofillFailure(
-            'TARGET_AMBIGUOUS',
-            'Mapped fields must identify distinct controls'
-          );
-        nodes.add(node);
-        const pin = scopePins.get(index);
-        if (pin && (pin.node !== node || pin.block !== block))
-          throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
-        scopePins.set(index, { node, block });
+        const nodes = new Set<string>();
+        for (const [index, field] of request.fields.entries()) {
+          preflightFieldIndex = index;
+          const element = resolve(view.elements, field.match, blocks);
+          const node = element.attributes?.['autofill-node'];
+          const block = element.attributes?.['autofill-block'];
+          if (
+            !node ||
+            block === undefined ||
+            !element.visible ||
+            !element.enabled ||
+            !strategyFor(element, field)
+          )
+            throw new AutofillFailure(
+              'ENGINE_UNSUPPORTED',
+              'Mapped stage requires ready qualified controls and identity evidence'
+            );
+          if (nodes.has(node))
+            throw new AutofillFailure(
+              'TARGET_AMBIGUOUS',
+              'Mapped fields must identify distinct controls'
+            );
+          nodes.add(node);
+          const pin = scopePins.get(index);
+          if (pin && (pin.node !== node || pin.block !== block))
+            throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
+          scopePins.set(index, { node, block });
+        }
+        scopeValid = true;
       }
-      scopeValid = true;
-    }
-    return view.elements;
-  };
+      return view.elements;
+    });
   // T5 B-dur (B6): a READ-ONLY recheck. It never writes the run's state (scope validity, scope or
   // block pins, preflight index): a recheck passing inside a dispatch must never re-authorize
   // anything the dispatch deliberately revoked (raw artifact capture needs a complete observation
@@ -498,7 +554,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         error instanceof AutofillFailure
           ? { code: error.code, message: error.message }
           : {
-              code: 'ACTION_FAILED',
+              code: failureCode(error),
               message: 'Mapped stage preflight failed; no write dispatched',
             };
     }
@@ -508,12 +564,13 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   if (!preflightFailed) {
     for (const field of request.fields) {
       guard();
-      const value =
+      const value = await timed('resolve_values', async () =>
         field.value !== undefined
           ? await (ports.resolveValue?.(field.value) ?? field.value)
           : field.options !== undefined
             ? JSON.stringify([...field.options.values].sort())
-            : (field.option?.value ?? '');
+            : (field.option?.value ?? '')
+      );
       if (value.length > 8192) throw new Error('Resolved autofill value exceeds 8192 characters');
       expectedValues.push(value);
     }
@@ -563,15 +620,26 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       identities.set(index, identity);
       selectedStrategies.set(index, strategy);
       guard();
-      const dispatch = async (action: ServiceActRequest) => {
-        guard();
-        // A dispatched page handler can invalidate scope even if the adapter then throws.
-        // Only a subsequent complete observation can authorize raw artifact capture again.
-        if (request.scope) scopeValid = false;
-        return ports.act(action, () => {
-          if (execution.state === 'not_started') execution.state = 'dispatched';
+      const dispatch = (action: ServiceActRequest) =>
+        timed('dispatch', async () => {
+          guard();
+          // A dispatched page handler can invalidate scope even if the adapter then throws.
+          // Only a subsequent complete observation can authorize raw artifact capture again.
+          if (request.scope) scopeValid = false;
+          Reflect.deleteProperty(receipt, 'actionId');
+          const effect = await ports.act(action, () => {
+            if (execution.state === 'not_started') execution.state = 'dispatched';
+          });
+          if (
+            effect &&
+            typeof effect === 'object' &&
+            'actionId' in effect &&
+            typeof effect.actionId === 'string'
+          )
+            receipt.actionId = effect.actionId;
+          guard();
+          return effect;
         });
-      };
       // A multi-step receipt identifies its final action, never an earlier setup step.
       let effect: unknown;
       if (strategy.run) {
@@ -643,7 +711,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       const expected = expectedValues[index] as string;
       for (let attempt = 0; ; attempt++) {
         await new Promise((r) => setTimeout(r, policy.settleMs));
-        const fresh = await observe();
+        const fresh = await observe('verification');
         const same = fresh.find((e) => e.attributes?.['autofill-node'] === identity);
         if (!same || same.attributes?.['autofill-block'] !== blockIdentity)
           throw new AutofillFailure(
@@ -687,7 +755,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         error instanceof AutofillFailure
           ? { code: error.code, message: error.message }
           : {
-              code: 'ACTION_FAILED',
+              code: failureCode(error),
               message: 'Operation failed; inspect current state before another write',
             };
       if (
@@ -704,7 +772,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   // Later input/change handlers can invalidate an earlier successful field.
   if (receipts.some((r) => r.verified)) {
     try {
-      const final = await observe();
+      const final = await observe('final_verification');
       for (const receipt of receipts.filter((r) => r.verified)) {
         const field = request.fields[receipt.field] as AutofillRequest['fields'][number];
         try {
@@ -764,18 +832,24 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   const report: AutofillReport = {
     ok: receipts.every((r) => r.status === 'verified' || r.status === 'unverified'),
     receipts,
+    diagnostics,
     elapsedMs: performance.now() - started,
   };
   try {
-    guard();
-    if (!scopeValid) throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Mapped scope unavailable');
-    const artifact = await ports.snapshot();
+    const artifact = await timed('artifact', async () => {
+      guard();
+      if (!scopeValid) throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Mapped scope unavailable');
+      const result = await ports.snapshot();
+      guard();
+      return result;
+    });
     report.snapshot = { ...artifact };
-  } catch {
+  } catch (error) {
     ports.assert();
-    report.snapshotError = 'Final HTML capture failed or deadline reached; inspect field receipts';
+    report.snapshotError = `Final artifact unavailable (${failureCode(error)}); inspect diagnostics and field receipts`;
   }
   ports.assert();
   report.elapsedMs = performance.now() - started;
+  diagnostics.overrunMs = Math.max(0, report.elapsedMs - policy.timeoutMs);
   return report;
 }

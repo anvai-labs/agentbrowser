@@ -407,6 +407,7 @@ export const ContinuationCursorSchema = Type.Object({
 export const ProjectionEchoSchema = Type.Object({
   roles: Type.Optional(Type.Array(Type.String({ maxLength: 100 }), { maxItems: 32 })),
   name: Type.Optional(Type.String({ maxLength: 200 })),
+  text: Type.Optional(Type.String({ maxLength: 200 })),
   scopeRef: Type.Optional(Type.String({ pattern: REF_PATTERN.source })),
   matched: Type.Integer({ minimum: 0 }),
   total: Type.Integer({ minimum: 0 }),
@@ -777,6 +778,7 @@ export const ObservationRequestSchema = Type.Object(
       Type.Array(Type.String({ maxLength: 100 }), { minItems: 1, maxItems: 32 })
     ),
     name: Type.Optional(Type.String({ maxLength: 200 })),
+    text: Type.Optional(Type.String({ maxLength: 200 })),
     scopeRef: Type.Optional(Type.String({ pattern: REF_PATTERN.source })),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
     includeFields: Type.Optional(

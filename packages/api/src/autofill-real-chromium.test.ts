@@ -406,3 +406,68 @@ it.each(transports)(
   },
   45000
 );
+
+it('fills three native fields over a large background with an unrelated uncommitted frame', async () => {
+  const { AgentBrowserService } = await import('./service.js');
+  const fixture = createServer((req, res) => {
+    if (req.url === '/pending-frame') return;
+    res.setHeader('content-type', 'text/html');
+    res.end(`<main>${'<a href="#">Background</a>'.repeat(760)}</main>
+      <dialog open><label>First name<input></label><label>Last name<input></label>
+      <label>Work email<input type="email"></label></dialog>
+      <script>addEventListener('load', () => { const frame = document.createElement('iframe');
+      frame.src='/pending-frame'; document.body.append(frame); });</script>`);
+  });
+  await new Promise<void>((done) => fixture.listen(0, '127.0.0.1', done));
+  const engine = new PlaywrightChromiumEngine();
+  const service = new AgentBrowserService({
+    engine,
+    networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
+  });
+  try {
+    const session = await service.createSession({ tenantId: 'synthetic' });
+    const { pageId } = await service.createPage(session.sessionId);
+    const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
+    await service.navigate(session.sessionId, pageId, { url });
+    const report = await service.autofill(session.sessionId, pageId, {
+      scope: { url },
+      fields: [
+        {
+          match: { label: 'First name' },
+          strategy: 'native-input',
+          verify: 'exact',
+          value: 'Synthetic',
+        },
+        {
+          match: { label: 'Last name' },
+          strategy: 'native-input',
+          verify: 'exact',
+          value: 'Example',
+        },
+        {
+          match: { label: 'Work email' },
+          strategy: 'native-input',
+          verify: 'exact',
+          value: 'fixture@example.test',
+        },
+      ],
+      policy: { settleMs: 0, timeoutMs: 30000 },
+    });
+    expect(
+      report.ok,
+      JSON.stringify({
+        diagnostics: report.diagnostics,
+        receipts: report.receipts.map((r) => ({ status: r.status, error: r.error })),
+      })
+    ).toBe(true);
+    expect(report.receipts.map((r) => r.status)).toEqual(['verified', 'verified', 'verified']);
+    expect(report.diagnostics?.stages.find((s) => s.stage === 'dispatch')?.calls).toBe(3);
+    expect(report.diagnostics?.frameReadiness?.incomplete).toBeGreaterThan(0);
+    expect(JSON.stringify(report.diagnostics)).not.toContain('fixture@example.test');
+    expect(report.elapsedMs).toBeLessThan(30000);
+  } finally {
+    await engine.close();
+    fixture.closeAllConnections();
+    await new Promise<void>((done) => fixture.close(() => done()));
+  }
+}, 60000);

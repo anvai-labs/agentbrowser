@@ -72,6 +72,7 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
+import { readApiKeyFile } from './api-key-file.js';
 import { readCookieFile, writeCookieFile } from './cookie-file.js';
 import {
   createJsonArgumentReader,
@@ -399,6 +400,10 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
         .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
+        .option(
+          '--api-key-file <file>',
+          'owner-only API credential file; overrides env; exclusive with --api-key'
+        )
         // TD-BROWSER-16 phase 1 (ADR-025): an operator key is NEVER taken
         // from the environment — an env var is agent-reachable. Only the
         // approval commands read it, from the key file or a no-echo prompt.
@@ -418,51 +423,50 @@ export function buildCli(deps: CliDependencies): Cli {
         <A extends unknown[]>(handler: (ctx: CommandContext, ...args: A) => Promise<void>) =>
         async (...args: A) => {
           const globals = program.opts();
-          const apiKey = globals.apiKey ?? process.env.AGENTBROWSER_API_KEY;
-          // The operator key, when an approval command needs it: from the
-          // file, or a no-echo prompt — never an environment variable, and
-          // never for any other command.
-          // Only the approvals command resolves an operator key — never any
-          // other command whose argv merely contains the token.
-          const operatorKey: string | undefined = undefined;
-          const ctx: CommandContext = {
-            client: deps.createClient({
-              baseUrl: globals.baseUrl,
-              timeout: Number.parseInt(globals.timeout, 10),
-              ...(apiKey ? { apiKey } : {}),
-              ...(globals.operationId
-                ? { headers: { 'x-agentbrowser-operation-id': globals.operationId } }
-                : {}),
-            }),
-            json: Boolean(globals.json),
-            ...(act.opts().approvalToken
-              ? { approvalToken: String(act.opts().approvalToken) }
-              : {}),
-            ...(act.opts().executionRequirement !== undefined
-              ? { actExecutionRequirement: String(act.opts().executionRequirement) }
-              : {}),
-            ...(operatorKey !== undefined ? { operatorKey } : {}),
-            baseUrl: globals.baseUrl ?? 'http://localhost:5709',
-            ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
-            out: deps.out,
-            emit: (value: unknown, render: () => string[]) => {
-              if (globals.json) {
-                // Minified by default: --json output is machine-facing (agents,
-                // jq); --pretty restores indentation for human reading.
-                deps.out(globals.pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
-              } else {
-                for (const line of render()) {
-                  deps.out(line);
-                }
-              }
-            },
-          };
-
+          let apiKey: string | undefined;
           try {
+            if (globals.apiKeyFile && globals.apiKey)
+              throw new UsageError('Use only one of --api-key and --api-key-file.');
+            apiKey = globals.apiKeyFile
+              ? readApiKeyFile(globals.apiKeyFile)
+              : (globals.apiKey ?? process.env.AGENTBROWSER_API_KEY);
+            const ctx: CommandContext = {
+              client: deps.createClient({
+                baseUrl: globals.baseUrl,
+                timeout: Number.parseInt(globals.timeout, 10),
+                ...(apiKey ? { apiKey } : {}),
+                ...(globals.operationId
+                  ? { headers: { 'x-agentbrowser-operation-id': globals.operationId } }
+                  : {}),
+              }),
+              json: Boolean(globals.json),
+              ...(act.opts().approvalToken
+                ? { approvalToken: String(act.opts().approvalToken) }
+                : {}),
+              ...(act.opts().executionRequirement !== undefined
+                ? { actExecutionRequirement: String(act.opts().executionRequirement) }
+                : {}),
+              baseUrl: globals.baseUrl ?? 'http://localhost:5709',
+              ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
+              out: deps.out,
+              emit: (value: unknown, render: () => string[]) => {
+                if (globals.json) {
+                  // Minified by default: --json output is machine-facing (agents,
+                  // jq); --pretty restores indentation for human reading.
+                  deps.out(globals.pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
+                } else {
+                  for (const line of render()) {
+                    deps.out(line);
+                  }
+                }
+              },
+            };
+
             await handler(ctx, ...args);
           } catch (error) {
             exitCode = 1;
-            deps.err(formatError(error));
+            const message = formatError(error);
+            deps.err(apiKey ? message.split(apiKey).join('[REDACTED]') : message);
           }
         };
 
@@ -1435,6 +1439,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'compact projection: case-insensitive substring filter on element names (max 200 chars)'
         )
         .option(
+          '--text <substring>',
+          'explicit filter on visible names and public text values (max 200 chars)'
+        )
+        .option(
           '--scope-ref <ref>',
           'compact projection: scope to this element and its subtree (same frame block, deeper)'
         )
@@ -1476,6 +1484,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 sinceRevision?: string;
                 roles?: string[];
                 name?: string;
+                text?: string;
                 scopeRef?: string;
                 limit?: string;
                 includeFields?: string[];
@@ -1507,6 +1516,7 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.name !== undefined) {
                 request.name = options.name;
               }
+              if (options.text !== undefined) request.text = options.text;
               if (options.scopeRef !== undefined) {
                 request.scopeRef = options.scopeRef;
               }
@@ -1547,14 +1557,14 @@ export function buildCli(deps: CliDependencies): Cli {
                 const unknownProperty =
                   /[Uu]nrecognized (property|key|option)|[Uu]nexpected (property|key)/.test(
                     message
-                  ) || /"path":"\/(roles|scopeRef|includeFields|name|limit)"/.test(issues);
+                  ) || /"path":"\/(roles|scopeRef|includeFields|name|text|limit)"/.test(issues);
                 if (
                   (error as { code?: string }).code === 'INVALID_REQUEST' &&
                   unknownProperty &&
-                  /roles|scopeRef|includeFields|name|limit/.test(message + issues)
+                  /roles|scopeRef|includeFields|name|text|limit/.test(message + issues)
                 ) {
                   throw new UsageError(
-                    `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--scope-ref/--limit/--include-fields, or upgrade the server.`
+                    `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--text/--scope-ref/--limit/--include-fields, or upgrade the server.`
                   );
                 }
                 throw error;
@@ -2151,7 +2161,8 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--format <format>', 'png | jpeg | webp')
         .option('--quality <n>', 'jpeg/webp quality (0-100)')
         .option('--mask-sensitive', 'mask sensitive fields in the capture')
-        .option('--out <file>', 'save the screenshot bytes to a file')
+        .option('--out <file>', 'save bytes and print only a saved-artifact receipt')
+        .option('--inline', 'include screenshot bytes in the --out receipt (explicit opt-in)')
         .option(
           '--wait-until <until>',
           'readiness wait before capture: settled|domcontentloaded|load|networkidle|urlPattern|selectorVisible|minElements'
@@ -2172,6 +2183,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 quality?: string;
                 maskSensitive?: boolean;
                 out?: string;
+                inline?: boolean;
               } & WaitFlagOptions
             ) => {
               const request: ScreenshotRequest = {};
@@ -2198,16 +2210,36 @@ export function buildCli(deps: CliDependencies): Cli {
                 parseScreenshotRequest(request)
               );
 
-              ctx.emit(artifact, () => [
-                `Screenshot ${artifact.artifactId}`,
-                `  type:  ${artifact.contentType}`,
-                `  bytes: ${artifact.sizeBytes}`,
-                `  url:   ${artifact.url}`,
-              ]);
               if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
+                const saved = await saveArtifactBytes(
+                  ctx,
+                  sessionId,
+                  artifact,
+                  options.out,
+                  options.inline
+                );
+                // Emit only after the save succeeds. Inline bytes are an explicit opt-in
+                // for file output, regardless of the service's inline-size threshold.
+                ctx.emit(
+                  {
+                    artifactId: artifact.artifactId,
+                    contentType: artifact.contentType,
+                    ...(options.inline
+                      ? {
+                          inline: { contentBase64: saved.contentBase64, byteSize: saved.sizeBytes },
+                        }
+                      : {}),
+                    saved: saved.path,
+                    sizeBytes: saved.sizeBytes,
+                  },
+                  () => [`Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`]
+                );
+              } else {
+                ctx.emit(artifact, () => [
+                  `Screenshot ${artifact.artifactId}`,
+                  `  type:  ${artifact.contentType}`,
+                  `  bytes: ${artifact.sizeBytes}`,
+                  `  url:   ${artifact.url}`,
                 ]);
               }
             }
@@ -3126,8 +3158,9 @@ async function saveArtifactBytes(
   ctx: CommandContext,
   sessionId: string,
   artifact: ArtifactRef,
-  out: string
-): Promise<{ path: string; sizeBytes: number }> {
+  out: string,
+  includeInline = false
+): Promise<{ path: string; sizeBytes: number; contentBase64?: string }> {
   const stored = await ctx.client.sessions.artifact(sessionId, artifact.artifactId);
   if (!stored.contentBase64) {
     throw new UsageError(
@@ -3136,7 +3169,11 @@ async function saveArtifactBytes(
   }
   const bytes = Buffer.from(stored.contentBase64, 'base64');
   writeFileSync(out, bytes);
-  return { path: out, sizeBytes: bytes.length };
+  return {
+    path: out,
+    sizeBytes: bytes.length,
+    ...(includeInline ? { contentBase64: stored.contentBase64 } : {}),
+  };
 }
 
 function parseViewport(value: string): { width: number; height: number } {
@@ -3168,6 +3205,7 @@ function renderObservation(observation: ObservationResponse): string[] {
     const filters = [
       observation.projection.roles ? `roles=[${observation.projection.roles.join(',')}]` : null,
       observation.projection.name ? `name~"${observation.projection.name}"` : null,
+      observation.projection.text ? `text~"${observation.projection.text}"` : null,
       observation.projection.scopeRef ? `scope=${observation.projection.scopeRef}` : null,
     ].filter((part): part is string => part !== null);
     const prefix = filters.length > 0 ? `  projection: ${filters.join(' ')}` : '  projection:';

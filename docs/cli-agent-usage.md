@@ -634,3 +634,43 @@ needed for reconciliation. Read both exit status and the JSON; do not infer a bo
 or automatically repeat a navigation after an ambiguous timeout. The SDK and REST
 keep the corresponding result/error fields, and MCP marks failed navigation `isError`.
 See [reason definitions and limits](spec/design/navigation-failure-reasons.md).
+
+### Consumer recovery and bounded output
+
+`agentbrowser --json screenshot "$session_id" "$page_id" --out screenshot.png`
+prints one saved-file receipt (artifact ID, type, path and byte count), without
+inline base64 or the artifact's signed URL. Add `--inline` to explicitly include
+bytes alongside that receipt. Without `--out`, the artifact response is unchanged.
+
+Use `observe ... --text email` to match visible element names or public text values,
+including paragraph text. `--name` continues to match names only. Neither option
+searches hidden DOM text, establishes clickability, nor proves that a zero-match
+projection covers the whole page. Check projection counts, revision, truncation,
+frame coverage and optional `--include overlays` before treating underlying form
+text as available for interaction.
+
+The CLI accepts `--api-key-file /private/path/credential` for an existing API bearer
+credential. It must be an owner-only regular file (0600 on Unix), not a symlink,
+containing at most 4096 bytes and one nonempty ASCII credential with an optional
+final newline. Windows rejects this option until file ACL validation is available;
+use `AGENTBROWSER_API_KEY` there. The explicit file overrides `AGENTBROWSER_API_KEY`; combining it
+with `--api-key` is an error. This does not change server credentials, operator
+keys, delegated control tokens or session/page identifiers. Resource IDs are
+nonsecret addresses and never authenticate a caller. An already-running MCP
+process must receive its own environment configuration; CLI flags do not update it.
+
+A successful click reports dispatch, not successful signup or login. Session event
+replay now supplies main-frame `page.navigated` commit facts and popup
+`page.created` registration facts with public page handles. Popup phase
+`unavailable` means no operable target was registered (it may already have closed);
+it does not diagnose blocking or authentication failure. A later `page.destroyed`
+records disappearance of an adopted popup. Navigation lifecycle URLs omit query,
+fragment and userinfo; no expected destination or application outcome is inferred.
+
+For human verification, stop automated writes and let the user complete the
+challenge. Resume only after a fresh observation confirms available controls.
+A stalled frame scan reports incomplete coverage; a failed main read returns a
+bounded stage/correlation diagnostic. Retry a read to reconcile, not a submitted
+mutation. These reads do not reload tabs, clear storage or restart the service.
+If manual reload is necessary, inspect/preserve recoverable drafts first and
+reload only the affected tab with the user's authorization.

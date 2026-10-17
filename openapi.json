@@ -2804,6 +2804,118 @@
                       "minimum": 0,
                       "type": "number"
                     },
+                    "diagnostics": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "correlationId",
+                        "deadlineMode",
+                        "timeoutMs",
+                        "overrunMs",
+                        "stages"
+                      ],
+                      "properties": {
+                        "correlationId": {
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "deadlineMode": {
+                          "const": "cooperative",
+                          "type": "string"
+                        },
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "overrunMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "stages": {
+                          "maxItems": 6,
+                          "type": "array",
+                          "items": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "stage",
+                              "calls",
+                              "elapsedMs",
+                              "remainingMs"
+                            ],
+                            "properties": {
+                              "stage": {
+                                "anyOf": [
+                                  {
+                                    "const": "discovery",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "dispatch",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "verification",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "final_verification",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "artifact",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "resolve_values",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "calls": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "elapsedMs": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "remainingMs": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "errorCode": {
+                                "maxLength": 64,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "frameReadiness": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "incomplete",
+                            "loading",
+                            "timedOut"
+                          ],
+                          "properties": {
+                            "incomplete": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "loading": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timedOut": {
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    },
                     "snapshot": {
                       "additionalProperties": false,
                       "type": "object",
@@ -9428,6 +9540,10 @@
                 "maxLength": 200,
                 "type": "string"
               },
+              "text": {
+                "maxLength": 200,
+                "type": "string"
+              },
               "scopeRef": {
                 "pattern": "^e\\d+_\\d+$",
                 "type": "string"
@@ -9845,6 +9961,10 @@
             }
           },
           "name": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "text": {
             "maxLength": 200,
             "type": "string"
           },
@@ -12024,6 +12144,10 @@
                     }
                   },
                   "name": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "text": {
                     "maxLength": 200,
                     "type": "string"
                   },

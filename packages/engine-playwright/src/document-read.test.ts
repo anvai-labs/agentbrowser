@@ -66,3 +66,31 @@ it('captures all source links on a large index without constructing actionable r
     await engine.close();
   }
 }, 30000);
+
+it('bounds a stalled document read and leaves the draft available for a fresh read', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const page = await (await engine.createSession({ headless: true })).newPage();
+    const browser = native(page);
+    await browser.setContent('<title>Draft</title><input value="preserved">');
+    if (!page.readDocument) throw new Error('Missing document port');
+    const content = vi.spyOn(browser, 'content').mockImplementation(() => new Promise(() => {}));
+    const title = vi.spyOn(browser, 'title').mockResolvedValue('Draft');
+    vi.useFakeTimers();
+    try {
+      const failed = expect(page.readDocument()).rejects.toMatchObject({
+        code: 'ACTION_TIMEOUT',
+        details: { stage: 'html', reason: 'read_timeout' },
+      });
+      await vi.advanceTimersByTimeAsync(15001);
+      await failed;
+    } finally {
+      vi.useRealTimers();
+      content.mockRestore();
+      title.mockRestore();
+    }
+    expect((await page.readDocument()).content).toContain('value="preserved"');
+  } finally {
+    await engine.close();
+  }
+});

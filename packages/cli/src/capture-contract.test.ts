@@ -77,3 +77,15 @@ describe.each(['observe', 'screenshot'] as const)('%s capture CLI', (operation) 
       expect(out.join('\n')).toContain('empty-snapshot-nonempty-dom');
     });
 });
+
+it('forwards explicit text projection and advertises it in the shared observation schema', async () => {
+  const observe = vi.fn().mockResolvedValue({ elements: [], revision: 1 });
+  const cli = buildCli({
+    out: () => {},
+    err: () => {},
+    createClient: () => ({ sessions: { observe } }) as unknown as CliClient,
+  });
+  expect(await cli.run(['--json', 'observe', 'ses_1', 'pg_1', '--text', 'email'])).toBe(0);
+  expect(observe).toHaveBeenCalledWith('ses_1', 'pg_1', { text: 'email' });
+  expect(ObservationRequestSchema.properties.text.maxLength).toBe(200);
+});

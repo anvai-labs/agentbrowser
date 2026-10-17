@@ -167,3 +167,30 @@ identity, submission approval or atomic protection against hostile page scripts.
 This slice does not qualify arbitrary ATS sites, installed release binaries or recovery.
 See the [design](spec/design/t6-form-mapping.md) and
 [qualification evidence](spec/evidence/t6-form-mapping.md).
+
+### Timeout and partial-effect diagnostics
+
+Reports include bounded `diagnostics`: a nonsecret correlation ID, per-stage call
+counts, elapsed time and remaining budget, safe error codes, and counts of
+incomplete/loading/timed-out frames. Stages distinguish discovery, private value
+resolution, dispatch, field verification, final verification and artifact capture.
+Diagnostics contain no field values, page URLs or raw adapter exception text.
+The existing field receipts remain the source of truth for applied/uncertain
+prefixes and the not-attempted suffix. An artifact-only failure does not invalidate
+successfully verified fields; unavailable final value evidence still downgrades
+previously verified fields to uncertain.
+
+`timeoutMs` is a **cooperative** budget, checked between awaited operations; it is
+not hard cancellation. `overrunMs` reports time beyond that budget. A dispatched
+operation may finish after the deadline, and no subsequent field is dispatched.
+Do not automatically replay the payload. Reconcile current values and operation
+status first. Cancellation that fences late writes remains future work.
+
+Playwright observation uses bounded read-only stages, grouped role/name lookup,
+and shared full-document semantic evidence on pages with more than 300 elements.
+It still discovers the full semantic set and keeps duplicate-name ambiguity and
+node identity checks. Shared document evidence is conservative: any semantic page
+change can stale an action ref. Uncommitted frames remain explicitly incomplete;
+a form on a missing frame is not proved absent. This is an optimization of the
+existing observation/autofill path, not a new form executor or a truncated-form
+shortcut.
