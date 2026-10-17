@@ -75,7 +75,22 @@ const hostMatches = (hostname: string, pattern: string): boolean => {
   return host === pattern;
 };
 
-const scopeDenial = (subCode: string, detail: string): NetworkPolicyError =>
+/**
+ * Every sub-code this policy raises. `scopeDenial` accepts only these, and a
+ * contract test pins the list to the protocol's SCOPE_DENIAL_CODES, so a new
+ * code cannot reach clients without the projection knowing it (ADR-015).
+ */
+export const SCOPE_SUBCODES = Object.freeze([
+  'SCOPE_HOST_DENIED',
+  'SCOPE_PATH_DENIED',
+  'SCOPE_METHOD_DENIED',
+  'SCOPE_IDENTITY_DENIED',
+  'SCOPE_EXPIRED',
+  'SCOPE_BUDGET_EXHAUSTED',
+] as const);
+export type ScopeSubCode = (typeof SCOPE_SUBCODES)[number];
+
+const scopeDenial = (subCode: ScopeSubCode, detail: string): NetworkPolicyError =>
   new NetworkPolicyError(DENIED, `${subCode}: ${detail}`, false, { scope: subCode });
 
 /**
