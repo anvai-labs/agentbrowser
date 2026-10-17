@@ -984,7 +984,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           operationId: 'autofillPage',
           summary: 'Fill structured fields serially and return verification receipts',
           description:
-            'One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.',
+            'One controlled mutation for native inputs/selects and explicitly selected qualified react-select/chip-multiselect widgets. Unique fieldset scope and bounded read-only retries. Uncertain writes or observed blocked navigation stop remaining actions and fields without replay. A navigationObservation reports a denial during dispatch, not causation or field verification; absence does not imply navigation success. Includes a raw HTML artifact; no explicit submit action.',
           tags: ['pages'],
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {

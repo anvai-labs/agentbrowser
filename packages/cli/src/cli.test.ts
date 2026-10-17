@@ -1546,6 +1546,52 @@ describe('AgentBrowser CLI', () => {
       expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
     });
 
+    it.each([false, true])(
+      'retains a stopped autofill navigation receipt (json=%s)',
+      async (json) => {
+        const report = {
+          ok: false,
+          receipts: [
+            {
+              field: 0,
+              match: { label: 'Name' },
+              status: 'uncertain',
+              verified: false,
+              actionId: 'act_completed',
+              navigationObservation: {
+                status: 'blocked',
+                reason: 'egress_policy',
+                scope: 'SCOPE_PATH_DENIED',
+                observedDuring: 'action',
+              },
+              error: {
+                code: 'AUTOFILL_NAVIGATION_BLOCKED',
+                message: 'Inspect current state before another write',
+              },
+            },
+          ],
+          elapsedMs: 10,
+        };
+        sessions.autofill.mockResolvedValue(report);
+        expect(
+          await run(
+            ...(json ? ['--json'] : []),
+            'autofill',
+            'ses_1',
+            'pg_1',
+            JSON.stringify(payload)
+          )
+        ).toBe(1);
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+        expect(err).toEqual([]);
+        if (json) expect(lastJson()).toEqual(report);
+        else {
+          expect(out.join('\n')).toContain('navigation blocked during action (SCOPE_PATH_DENIED)');
+          expect(out.join('\n')).toContain('inspect current state before another write');
+        }
+      }
+    );
+
     it('rejects contradictory autofill success without echoing it or retrying', async () => {
       sessions.autofill.mockResolvedValue({
         ok: true,

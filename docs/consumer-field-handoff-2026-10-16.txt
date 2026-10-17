@@ -477,3 +477,39 @@ ACTION NAVIGATION FOLLOW-UP — 2026-10-17
 - Work used isolated fixtures and parallel implementation plus independent review.
   No active headed Fiverr session, installed service or verification challenge was
   accessed, restarted or automated; no live credentials were read or printed.
+
+AUTOFILL NAVIGATION AND POPUP LIFECYCLE FOLLOW-UP — 2026-10-17
+- Continued from develop after action-navigation PR #567 merged as 238d4219.
+  Autofill now retains bounded navigationObservation/actionId evidence on field
+  receipts and stops remaining widget actions and fields. Successful actions with
+  this evidence stop with AUTOFILL_NAVIGATION_BLOCKED; post-effect action errors
+  preserve their original bounded code. Skip/retry policies cannot resume writes.
+- An action completing does not prove exact field verification: interrupted exact
+  or multi-action widget fields remain uncertain. A completed native verify:none
+  action remains unverified, with ok:false for the run. Confirmed chip effects are
+  preserved; later fields remain not_attempted. Earlier verified fields still get
+  a final read-only recheck or uncertain downgrade. Durable unknown classification
+  remains intact for uncertain fields. CLI text and both MCP versions preserve the
+  stop reason; shared protocol/OpenAPI schemas accept the additive evidence.
+- Popup registration now rejects pages that close before or during adoption, with
+  cleanup initialized before synchronous removal can execute. It avoids false
+  creation announcements, phantom page/download inventory and retained engine
+  handlers. Browser-owned closure follows named-handler cleanup, preserving caller
+  listeners and ownership boundaries.
+- Validation reproduced failures before implementation: real Chromium GET/POST
+  autofill redirects lost the navigation evidence; CLI/MCP rejected the new receipt;
+  closed-page registration raised the onDownload initialization ReferenceError.
+  Focused validation passed: 144 API runner/service/durable tests, 48 protocol tests,
+  155 CLI tests, 90 MCP tests and two real Chromium REST tests. Real redirects
+  produced exactly one effect, zero denied-target hits and zero subsequent writes.
+  Popup/ownership/action suites passed 55 tests; the final popup regressions passed
+  7/7. Workspace build and API/engine type-check passed. Required commit/push gates
+  and final-head CI are recorded in the associated PR before merge.
+- Limits: navigation evidence still covers only a single unambiguous request chain
+  during action dispatch; absence is not navigation success. No hard cancellation
+  or navigation settlement wait was added. Original compact identifier, streaming,
+  token benchmark and live-site qualification follow-ups remain. Broader T10 M3/M4
+  work and distribution follow-ups are separate from these two fixes.
+- All browser validation uses isolated fixtures. The active headed Fiverr session,
+  installed service and verification challenges remain untouched; no live API
+  credentials were read, printed, shortened or mixed with page/session identifiers.

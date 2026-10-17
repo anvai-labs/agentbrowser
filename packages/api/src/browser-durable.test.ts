@@ -312,6 +312,60 @@ describe('durable autofill (B-dur-2b)', () => {
     policy: { settleMs: 0 },
   };
 
+  it.each(['exact', 'none'] as const)(
+    'journals an observed navigation stop with %s verification honestly',
+    async (verify) => {
+      const f = await fixture();
+      f.raw.seedElements([company('company'), { ...company('next'), name: 'Next' }] as never);
+      const original = f.raw.act.bind(f.raw);
+      const writes = vi.spyOn(f.raw, 'act').mockImplementation(async (action) => ({
+        ...(await original(action)),
+        navigationObservation: {
+          status: 'blocked',
+          reason: 'egress_policy',
+          scope: 'SCOPE_HOST_DENIED',
+          observedDuring: 'action',
+        },
+      }));
+      let report: Awaited<ReturnType<typeof f.service.autofill>> | undefined;
+      await f.durable(
+        'autofill',
+        `navigation-${verify}`,
+        async () => {
+          report = await f.service.autofill(f.sessionId, f.pageId, {
+            fields: [
+              { ...request.fields[0], verify },
+              { match: { label: 'Next' }, value: 'later', verify },
+            ],
+            policy: { settleMs: 0, onVerifyFail: 'skip' },
+          });
+          return report;
+        },
+        () => (browserReportOutcomeUnknown(report) ? true : 'rejected')
+      );
+      expect(report).toMatchObject({
+        ok: false,
+        receipts: [
+          {
+            status: verify === 'exact' ? 'uncertain' : 'unverified',
+            navigationObservation: { scope: 'SCOPE_HOST_DENIED' },
+          },
+          { status: 'not_attempted' },
+        ],
+      });
+      expect(writes).toHaveBeenCalledOnce();
+      expect(await f.records(`navigation-${verify}`)).toEqual([
+        {
+          revision: 3,
+          dispatched: true,
+          status: verify === 'exact' ? 'outcome_unknown' : 'failed',
+          kind: 'autofill',
+        },
+      ]);
+    },
+    60_000
+  );
+
   it('journals one browser/autofill record for the whole fill', async () => {
     const f = await fixture();
     f.raw.seedElements([company('company')] as never);

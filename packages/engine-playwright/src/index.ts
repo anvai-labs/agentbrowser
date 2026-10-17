@@ -2403,6 +2403,18 @@ class PlaywrightSession implements EngineSession {
         return;
       }
       const popup = await this.registerPlaywrightPage(playwrightPage);
+      // Registration yields to its caller. A popup or its opener may already
+      // have closed; do not announce a page the operator cannot subsequently use.
+      if (
+        this.closed ||
+        playwrightPage.isClosed() ||
+        opener.isClosed() ||
+        this.pageMap.get(popup.id) !== popup ||
+        this.pageMap.get(openerPage.id) !== openerPage
+      ) {
+        await popup.close().catch(() => {});
+        return;
+      }
       openerPage.emitExternalEvent({
         type: 'page.created',
         timestamp: new Date().toISOString(),
@@ -2443,6 +2455,8 @@ class PlaywrightSession implements EngineSession {
       await playwrightPage.setViewportSize(viewport);
     }
     if (this.closed) throw new Error('Session is closed');
+    if (playwrightPage.isClosed())
+      throw new EngineError('PAGE_NOT_FOUND', 'Page closed during registration');
 
     const pageId = `page-${this.pageCounter++}`;
     this.ownedPlaywrightPages.add(playwrightPage);
@@ -2454,16 +2468,6 @@ class PlaywrightSession implements EngineSession {
       this.requestSink?.navigationFailures,
       this.attached?.navigationPreflight
     );
-    this.pageMap.set(pageId, page);
-    page.registerRemoval(() => {
-      this.pageMap.delete(pageId);
-      this.downloads.delete(pageId);
-      if (this.attached === undefined) playwrightPage.off('download', onDownload);
-    });
-    if (this.attached === undefined) {
-      this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
-    }
-
     // In-page download interception (spec 10): accept the download, hold
     // its bytes, and surface created/finished events on the page stream.
     const onDownload = (download: import('playwright').Download) => {
@@ -2511,9 +2515,24 @@ class PlaywrightSession implements EngineSession {
         )
         .finally(() => download.delete().catch(() => {}));
     };
+    this.pageMap.set(pageId, page);
     // Existing-profile download behavior belongs to the operator browser.
     // Do not intercept, cancel, retain, or claim attached-profile downloads.
-    if (this.attached === undefined) playwrightPage.on('download', onDownload);
+    if (this.attached === undefined) {
+      this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
+      playwrightPage.on('download', onDownload);
+    }
+    // registerRemoval may run synchronously for a page that has already closed.
+    // Initialize and attach every owned resource before exposing its cleanup.
+    page.registerRemoval(() => {
+      this.pageMap.delete(pageId);
+      this.downloads.delete(pageId);
+      if (this.attached === undefined) playwrightPage.off('download', onDownload);
+    });
+    if (playwrightPage.isClosed()) {
+      await page.close().catch(() => {});
+      throw new EngineError('PAGE_NOT_FOUND', 'Page closed during registration');
+    }
 
     return page;
   }
@@ -2798,13 +2817,9 @@ class PlaywrightPage implements EnginePage {
     // The browser can close pages without PlaywrightPage.close() running
     // (engine.close()); Playwright's own close event ends the iterator.
     this.onPageClose = () => {
-      this.removeSelf();
-      this.eventsClosed = true;
-      const waiters = this.eventWaiters;
-      this.eventWaiters = [];
-      for (const wake of waiters) {
-        wake();
-      }
+      // Use the same cleanup as an explicit close: remove only our named
+      // handlers, release refs, and end the stream even for self-closing popups.
+      void this.close().catch(() => {});
     };
     this.page.on('close', this.onPageClose);
 
