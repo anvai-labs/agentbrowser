@@ -5,7 +5,11 @@ import { NetworkPolicy } from './network-policy.js';
 import { EngagementScopePolicy } from './scope-policy.js';
 
 const base = () => new NetworkPolicy({ blockLoopback: false });
-const deny = (promise: Promise<unknown>) => promise.then(() => 'allowed', () => 'denied');
+const deny = (promise: Promise<unknown>) =>
+  promise.then(
+    () => 'allowed',
+    () => 'denied'
+  );
 
 describe('EngagementScopePolicy status and dry-run check', () => {
   it('reports the scope in effect, budget used/remaining and expiry', async () => {
@@ -53,7 +57,9 @@ describe('EngagementScopePolicy status and dry-run check', () => {
   it('never reports an identity marker value', () => {
     const scope = new EngagementScopePolicy(base(), {
       allowedHosts: ['in.example'],
-      identityBindings: [{ header: 'X-Test-Identity', value: 'secret-token', allowedHosts: ['in.example'] }],
+      identityBindings: [
+        { header: 'X-Test-Identity', value: 'secret-token', allowedHosts: ['in.example'] },
+      ],
     });
     const status = scope.status();
     expect(status.identityBindings).toEqual([

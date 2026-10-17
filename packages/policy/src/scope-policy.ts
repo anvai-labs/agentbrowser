@@ -193,9 +193,11 @@ export class EngagementScopePolicy {
    * and records no denial. The base policy (SSRF, host lists) and DNS still
    * apply when the request is actually made.
    */
-  check(request: { url: string; method?: string; headers?: Record<string, string> }):
-    | { allowed: true }
-    | { allowed: false; scope: string } {
+  check(request: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+  }): { allowed: true } | { allowed: false; scope: string } {
     try {
       this.rules({
         hostname: new URL(request.url).hostname,
