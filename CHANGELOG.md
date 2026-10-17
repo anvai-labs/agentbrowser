@@ -20,6 +20,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Not yet carried (M2 follow-up): denials at the wire — a redirect blocked mid-navigation
   (`status: blocked`, `reason: egress_policy`), `page_create` with a url, and `act`/`plan`.
 
+### Docs — the 1.21.0 release record
+
+- `docs/spec/evidence/release-1.21.0.md`: post-run verification of every channel and the scope
+  smoke run on the extracted release candidate. The task README, T9 packet and T10 evidence name
+  1.21.0 as the published baseline.
+
 ## [1.21.0] — 2026-10-16
 
 Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**
