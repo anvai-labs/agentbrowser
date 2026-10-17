@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.23.0] — 2026-10-17
+
+Entries are newest first. T10 milestone M2 completes: the engagement ledger. **Upgrading from 1.22.x:**
+
+| Who | What changes |
+| --- | --- |
+| Operators | opt in with `AGENTBROWSER_ENGAGEMENT_DIR` (an existing, canonical, owner-only `0700` directory; refused on Windows) and optionally `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` (default 64 MiB); an invalid directory aborts startup. Unset: no ledger, nothing written |
+| Session create with `policy.scope.ledger: true` | refused `400` when no directory is configured, with `allowDownloads`, or on an engine without request recording; otherwise the session view carries `engagementId` |
+| Ledgered sessions | fail closed: a full or unwritable ledger stops all traffic with `SCOPE_LEDGER_UNAVAILABLE` |
+| REST / SDK / CLI clients | new `GET /v1/engagements/{id}` (tenant-scoped; keyless `401`), SDK `engagements.export`, CLI `engagement export` and offline `engagement verify` |
+| Engine embedders | `EngineSessionOptions.requestRecorder` and the `requestRecording` capability are new optional fields |
+| Sessions without a ledger | unchanged |
+
 ### Fixed — an engine crash keeps the ledger's close-time records (T10 M2)
 
 - On an engine crash the session now stops the scope, terminates the engine session, and only
