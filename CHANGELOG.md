@@ -14,6 +14,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   (for example an exclusion a newer client sends to an older server) would silently widen it.
   Servers before this release still ignore unknown scope fields: verify what is in effect with
   `GET /v1/sessions/{id}/scope` (CLI `scope status`).
+- The same rule now covers `policy` and `policy.approval`: an unknown field is refused (`400`).
+  Unknown top-level request keys are still ignored (they restrict nothing).
+- In-process embedders (`AgentBrowserService.createSession`) validate the scope too, and refuse
+  an invalid or unknown-field scope with `INVALID_REQUEST` (`scope.invalid`), since a scope
+  built at runtime never crosses the REST validator.
 
 ### Fixed — page creation failures and compact download receipts
 

@@ -199,4 +199,32 @@ describe('scope status contract (ADR-015)', () => {
       await app.close();
     }
   });
+
+  it.each([
+    ['policy', { allowedHosts: ['in.example'], notARealPolicyField: true }],
+    ['approval', { approval: { transactions: 'deny', notARealApprovalField: true } }],
+  ])('refuses an unknown %s field instead of ignoring it', async (_where, policy) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', { tenantId: 'one', policy });
+      expect(created.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('refuses an unknown scope field from an in-process embedder too', async () => {
+    const { AgentBrowserService } = await import('./service.js');
+    const service = new AgentBrowserService({ engine: new FakeEngine() });
+    try {
+      // Built at runtime (as from JSON), so TypeScript's excess-property check cannot catch it.
+      const scope = JSON.parse('{"allowedHosts":["in.example"],"notARealScopeField":["x"]}');
+      await expect(service.createSession({ tenantId: 'one', scope })).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+      expect(service.listSessions()).toHaveLength(0);
+    } finally {
+      await service.shutdown();
+    }
+  });
 });

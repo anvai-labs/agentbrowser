@@ -17,6 +17,7 @@ import {
   ActionSchema,
   CookieHandoffRequestSchema,
   DeliveredWaitConditionSchema,
+  EngagementScopeSchema,
   ObservationRequestSchema,
   PlanStepSchema,
   ScreenshotRequestSchema,
@@ -25,6 +26,7 @@ import {
 import type {
   CookieHandoffRequest,
   DeliveredWaitCondition,
+  EngagementScope,
   ObservationRequest,
   ScreenshotRequest,
   SessionRequest,
@@ -74,6 +76,24 @@ export function validateSessionRequest(body: unknown): Validated<SessionRequest>
   }
   const issues: ValidationIssue[] = [];
   for (const error of sessionRequest.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
+
+const engagementScope = TypeCompiler.Compile(EngagementScopeSchema);
+
+/**
+ * Validate an engagement scope on its own. The service runs this for in-process
+ * embedders, whose scope never crosses the REST validator: an unknown field must be
+ * refused, never ignored (an ignored restriction silently widens the engagement).
+ */
+export function validateEngagementScope(body: unknown): Validated<EngagementScope> {
+  if (engagementScope.Check(body)) {
+    return { ok: true, value: body as EngagementScope };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of engagementScope.Errors(body)) {
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };

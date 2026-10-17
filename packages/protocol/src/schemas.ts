@@ -98,15 +98,18 @@ export const EngineTypeSchema = Type.Union([
   Type.Literal('auto'),
 ]);
 
-export const ApprovalPolicySchema = Type.Object({
-  review: Type.Optional(Type.Literal('operator')),
-  transactions: Type.Optional(
-    Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
-  ),
-  externalMessages: Type.Optional(
-    Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
-  ),
-});
+export const ApprovalPolicySchema = Type.Object(
+  {
+    review: Type.Optional(Type.Literal('operator')),
+    transactions: Type.Optional(
+      Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
+    ),
+    externalMessages: Type.Optional(
+      Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
+    ),
+  },
+  { additionalProperties: false }
+);
 
 export const ScopePathRuleSchema = Type.Object(
   {
@@ -198,25 +201,29 @@ export const ScopeCheckResultSchema = Type.Union([
 export type EngagementScopeStatus = Static<typeof EngagementScopeStatusSchema>;
 export type ScopeCheckResult = Static<typeof ScopeCheckResultSchema>;
 
-export const SessionPolicySchema = Type.Object({
-  // Optional since Phase 3: requiring allowedHosts meant a policy object
-  // carrying ONLY blockedHosts (or only download rules) could not be
-  // expressed - every restrict-only combination is legitimate.
-  allowedHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
-  blockedHosts: Type.Optional(Type.Array(Type.String())),
-  allowDownloads: Type.Optional(Type.Boolean()),
-  maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
-  approval: Type.Optional(ApprovalPolicySchema),
-  // ADR-019: off by default. Explicit per-session acceptance that service
-  // workers bypass this session's egress choke point (Playwright cannot
-  // route service-worker-originated requests), needed by destinations whose
-  // anti-fraud tooling keys off service-worker presence.
-  allowServiceWorkers: Type.Optional(Type.Boolean()),
-  // T7 slice 2a: engagement scope (hosts/paths/methods/identities/time/
-  // budget) enforced on top of every other layer of the session's policy
-  // chain.
-  scope: Type.Optional(EngagementScopeSchema),
-});
+export const SessionPolicySchema = Type.Object(
+  {
+    // Optional since Phase 3: requiring allowedHosts meant a policy object
+    // carrying ONLY blockedHosts (or only download rules) could not be
+    // expressed - every restrict-only combination is legitimate.
+    allowedHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    blockedHosts: Type.Optional(Type.Array(Type.String())),
+    allowDownloads: Type.Optional(Type.Boolean()),
+    maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
+    approval: Type.Optional(ApprovalPolicySchema),
+    // ADR-019: off by default. Explicit per-session acceptance that service
+    // workers bypass this session's egress choke point (Playwright cannot
+    // route service-worker-originated requests), needed by destinations whose
+    // anti-fraud tooling keys off service-worker presence.
+    allowServiceWorkers: Type.Optional(Type.Boolean()),
+    // T7 slice 2a: engagement scope (hosts/paths/methods/identities/time/
+    // budget) enforced on top of every other layer of the session's policy
+    // chain.
+    scope: Type.Optional(EngagementScopeSchema),
+    // Restrict-only: an unknown policy field is refused (400), never ignored.
+  },
+  { additionalProperties: false }
+);
 
 export const SessionCookieSchema = Type.Object({
   name: Type.String({ minLength: 1 }),
