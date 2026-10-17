@@ -146,6 +146,25 @@ export interface EngagementScope {
   identityBindings?: ScopeIdentityBinding[];
   /** T10 M2: record the engagement in a hash-chained, metadata-only ledger (needs AGENTBROWSER_ENGAGEMENT_DIR). */
   ledger?: boolean;
+  /** T10 M3: hosts (exact or ".suffix") removed from scope even when allowed. */
+  excludeHosts?: string[];
+  /** T10 M3: segment-bounded path prefixes removed from scope (optionally host-bound). */
+  excludePaths?: ScopePathRule[];
+  /** T10 M3: URL schemes in scope, without ":" (absent = any). */
+  allowedSchemes?: string[];
+  /** T10 M3: ports in scope; an absent URL port means the scheme's default (absent = any). */
+  allowedPorts?: number[];
+  /** T10 M3: the program this engagement runs under (metadata only). */
+  program?: ScopeProgram;
+}
+
+/** T10 M3: who authorized the engagement, under which published program scope. */
+export interface ScopeProgram {
+  id: string;
+  version?: string;
+  authorizedBy: string;
+  /** ISO 8601 timestamp of the authorization. */
+  authorizedAt: string;
 }
 
 /**

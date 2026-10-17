@@ -19,6 +19,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   would leave that host's paths unrestricted. The MCP catalog digest changed (the `create` tool's
   scope schema).
 
+### Added — program-scope restrictions (T10 M3)
+
+| Field | Narrows by | Denial |
+| --- | --- | --- |
+| `excludeHosts` | exact / `.suffix` hosts removed from an allowed set | `SCOPE_HOST_DENIED` |
+| `excludePaths` | segment-bounded path prefixes, optionally host-bound | `SCOPE_PATH_DENIED` |
+| `allowedSchemes`, `allowedPorts` | origin (a URL without a port uses the scheme default) | `SCOPE_HOST_DENIED` |
+| `program` | metadata only: `{id, version?, authorizedBy, authorizedAt}` | — |
+
+- No new sub-codes. Each field can only narrow, and fails closed when a request carries no URL.
+- Exclusions match a canonical path (percent-decoded, case-folded, `//` and `\` collapsed,
+  `;params` and NUL tails cut, trailing dots and spaces stripped, dot segments resolved — with and
+  without decoding an encoded `/` first), so re-spelled paths cannot slip past them. Exclusion
+  hosts are normalized like every configured host, and `excludeHosts` entries must be ASCII
+  hostnames, `.suffix`es or bracketed IPv6 literals (no scheme, port or Unicode). `program.authorizedAt` must be an ISO 8601
+  date or date-time.
+- All five fields are reported by the scope status (REST, SDK, CLI `session scope`, MCP `scope`)
+  and in the ledger's `engagement.opened` snapshot.
+- Accepted on `POST /v1/sessions`, MCP `create`, and CLI `--scope-file`.
+- Gates: policy unit tests and a real-Chromium test where an excluded path and a disallowed port
+  never reach the fixture.
+
 ### Docs — the site matches 1.23.0 and the T10 plan
 
 - Home: the 1.21–1.23 engagement features, a "testing beyond what is authorized" row, T0–T10
