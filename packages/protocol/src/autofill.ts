@@ -1,5 +1,6 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { ActionNavigationObservationSchema } from './action-navigation.js';
 import { parseExecutionReport } from './validators.js';
 
 const text = () => Type.String({ minLength: 1, maxLength: 512 });
@@ -105,6 +106,7 @@ export const AutofillReceiptSchema = Type.Object(
     resolvedRef: Type.Optional(Type.String()),
     blockIdentity: Type.Optional(Type.String()),
     actionId: Type.Optional(Type.String()),
+    navigationObservation: Type.Optional(ActionNavigationObservationSchema),
     status: Type.Union(
       (['verified', 'unverified', 'skipped', 'failed', 'uncertain', 'not_attempted'] as const).map(
         (value) => Type.Literal(value)
@@ -137,11 +139,55 @@ export const AutofillReceiptSchema = Type.Object(
   },
   strict
 );
+/** Bounded service-authored diagnostics; never adapter prose, field values or URLs. */
+export const AutofillDiagnosticsSchema = Type.Object(
+  {
+    correlationId: Type.String({ maxLength: 64 }),
+    deadlineMode: Type.Literal('cooperative'),
+    timeoutMs: Type.Number({ minimum: 0 }),
+    overrunMs: Type.Number({ minimum: 0 }),
+    stages: Type.Array(
+      Type.Object(
+        {
+          stage: Type.Union(
+            [
+              'discovery',
+              'dispatch',
+              'verification',
+              'final_verification',
+              'artifact',
+              'resolve_values',
+            ].map((value) => Type.Literal(value))
+          ),
+          calls: Type.Integer({ minimum: 1 }),
+          elapsedMs: Type.Number({ minimum: 0 }),
+          remainingMs: Type.Number({ minimum: 0 }),
+          errorCode: Type.Optional(Type.String({ maxLength: 64 })),
+        },
+        strict
+      ),
+      { maxItems: 6 }
+    ),
+    frameReadiness: Type.Optional(
+      Type.Object(
+        {
+          incomplete: Type.Integer({ minimum: 0 }),
+          loading: Type.Integer({ minimum: 0 }),
+          timedOut: Type.Integer({ minimum: 0 }),
+        },
+        strict
+      )
+    ),
+  },
+  strict
+);
+
 export const AutofillReportSchema = Type.Object(
   {
     ok: Type.Boolean(),
     receipts: Type.Array(AutofillReceiptSchema, { maxItems: 50 }),
     elapsedMs: Type.Number({ minimum: 0 }),
+    diagnostics: Type.Optional(AutofillDiagnosticsSchema),
     snapshot: Type.Optional(
       Type.Object(
         {
@@ -252,6 +298,7 @@ export function parseAutofillReport(input: unknown, expectedFields?: number): Au
         report.receipts.every(
           (receipt, index) =>
             receipt.field === index &&
+            receipt.navigationObservation === undefined &&
             receipt.error === undefined &&
             ((receipt.status === 'verified' && receipt.verified) ||
               (receipt.status === 'unverified' && !receipt.verified))

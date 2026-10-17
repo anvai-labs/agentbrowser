@@ -249,6 +249,16 @@ and generated stamps together. `pnpm release:check` is read-only; after building
 CI rejects drift and release tags must equal `v<product-version>`. Matching package
 versions identify one shipped product; they do not claim every package changed.
 
+| Release gate (R14) | What it means for the person releasing |
+| --- | --- |
+| Tag on `main` | tag the promotion merge commit; `tag-guard` refuses a commit not reachable from `main` |
+| `release tags` ruleset | only a repository admin can create, move or delete a `v*` tag |
+| `npm` environment | the npm publish job pauses for the owner's approval (Review deployments; an admin can bypass); deploys only from a `v*` tag |
+| Draft, then publish | the Release is filled as a draft and published once every asset is uploaded |
+| Provenance | every asset has a signed build-provenance attestation: `gh attestation verify <file> -R anvai-labs/agentbrowser` |
+| Immutable releases (switched on before 1.20.0) | once published, assets and the tag cannot be changed; a bad release gets a new version |
+| Rerun after a failed publish | a partial draft is never overwritten. Upload failed: delete the draft, then rerun. Only the final publish failed: publish the draft by hand and **do not rerun** (the upload would refuse existing assets); winget never ran, so generate its manifests with `node scripts/winget-manifests.mjs --version <x.y.z> --zip-sha256 <hash>` and submit them |
+
 ### Upgrading from 1.8.4 to the 1.8.5 candidate
 
 The owner retained the 1.8.5 release label after compatibility review. This is
@@ -393,7 +403,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | Variable | Who reads it | Meaning |
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. An explicitly empty, malformed or conflicting key list aborts startup; unset the variable for intentional trusted-local mode. |
-| `AGENTBROWSER_POLICY_FILE` | service entrypoint | **Policy-bearing**: load a Cedar policy document and make it every operator decision (approvals, egress exceptions, capabilities, limits). Combining it with any policy-bearing variable (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`) or embedder option is a startup refusal naming every conflict. See [policy](policy.md). |
+| `AGENTBROWSER_POLICY_FILE` | service entrypoint | **Policy-bearing**: load a Cedar policy document and make it every operator decision (approvals, egress exceptions, capabilities, limits). Start from the [secure starter policy](policy.md#start-here-the-secure-starter-policy). Combining it with any policy-bearing variable (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`) or embedder option is a startup refusal naming every conflict. See [policy](policy.md). |
 | `AGENTBROWSER_POLICY_SHADOW` | service entrypoint | **Policy-bearing**: `1` evaluates the document this environment would generate alongside the legacy decisions — legacy decides, divergences warn with both rule ids. Preview a migration without changing behavior. See [policy — shadow mode](policy.md#shadow-mode). |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
@@ -704,16 +714,85 @@ charged once). Surfacing: service `navigate` preflights the scope, so
 its denials are typed `POLICY_DENIED` errors carrying `SCOPE_*`
 reasons (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
 `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`);
-traffic denied at the wire from other lanes (act-driven navigations,
-non-navigation subresources) surfaces the generic `egress_policy`
-reason — enforcement is identical, only the reason granularity
-differs. Identity
+traffic denied at the wire (a redirect hop, act-driven navigations,
+subresources) is reported with `reason: egress_policy` plus the same
+`scope` sub-code on the navigate `blocked` result and on `request.failed`
+events (T10 M2). Downloads and `page_create` redirects do not carry it
+yet. Identity
 bindings on well-known headers (`host`, `content-length`, ...) are an
 operator footgun — bind application identity headers only. CLI:
 `session create --scope-file scope.json`
 (1 MiB bound, no symlink follow). See
 [the design record](spec/design/t7-scope-enforcement.md) for the model
 and its stated residuals.
+
+| Scoped create request | Result |
+| --- | --- |
+| `scope` under `policy` | validated; the session is scoped |
+| `scope` at the top level | refused, `400 INVALID_REQUEST` (it would skip validation) |
+| `+ cdpAttach` | refused, `400 INVALID_REQUEST`, `floor.cdp.options` |
+| `+ allowServiceWorkers: true` | refused, `400 INVALID_REQUEST`, `scope.lane.serviceWorkers` |
+
+| Read the scope (T10 M2) | REST | SDK | CLI |
+| --- | --- | --- | --- |
+| scope in effect, budget used/remaining, expiry, denials by sub-code | `GET /v1/sessions/{id}/scope` | `sessions.scopeStatus(id)` | `session scope <id>` |
+| dry run: would the scope rules allow this now? (no budget, no denial counted) | `GET /v1/sessions/{id}/scope/check?url=…&method=…` | `sessions.checkScope(id, {url, method})` | `session scope-check <id> <url> [--method M]` |
+
+Identity bindings report header and hosts only; a marker value is never returned. The dry run
+judges the host, path, method (default `GET`), expiry and budget rules; it does not evaluate
+identity bindings (no headers are taken), and the base policy and DNS still apply when the
+request is made.
+
+**Engagement ledger (T10 M2).** A scoped session created with `policy.scope.ledger: true`
+writes an append-only, hash-chained record of its traffic decisions — metadata only.
+
+| Setting | Meaning |
+| --- | --- |
+| `AGENTBROWSER_ENGAGEMENT_DIR` | existing private local directory (absolute, a real directory, not group/world writable). Unset: `scope.ledger` is refused (`400`, `scope.ledger.unconfigured`) |
+| `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` | per-engagement cap, 1 MiB–1 GiB (default 64 MiB) |
+
+```
+<dir>/<sha256(tenant)[:32]>/eng_<24 hex>.jsonl     file 0600, directories 0700
+{seq, at, type, data, prev, hash}    hash = sha256(prev + "\n" + {seq,at,type,data})
+engagement.opened → request … preflight.denied … → engagement.closed
+```
+
+| Record | Data |
+| --- | --- |
+| `engagement.opened` | engagement and session ids, tenant, product version, the scope status (no identity values) |
+| `request` | outcome, method, origin+path, host, resource type, status, bytes, blocked, reason, scope sub-code, redirect |
+| `preflight.denied` | a navigation the scope refused before the wire |
+| `engagement.closed` | the scope status at close, record count, dropped count, state |
+
+- **Never written:** request or response bodies, query strings, identity marker values.
+- **Fails closed:** within 64 KiB of the cap (or on a write error) the scope stops all further
+  traffic (`SCOPE_LEDGER_UNAVAILABLE`); records still in flight are written up to the cap and any
+  beyond it are counted in the closing record.
+- **Records what it allows:** an engine request recorder feeds the ledger before page
+  attribution (popups not yet adopted, workers), and for POST/PUT/PATCH the redirect guard
+  records each response of the chain (status, allowed redirect, block). Lanes it cannot
+  record are refused: `allowDownloads` (`scope.ledger.downloads`) and engines without request
+  recording (`scope.ledger.engine`). At close the scope stops first, then the file is closed.
+- **The session view** carries `engagementId`. Files stay after the session closes; retention and
+  deletion are the operator's.
+
+| Limit (stated, not hidden) | Meaning |
+| --- | --- |
+| Not keyed, not anchored | the chain detects edits, removals, reorderings and reformatting that do not rewrite it; whoever can write the file can rewrite and re-hash it. Keep the directory owner-only (enforced: mode 0700, owned by the server user, no symlinked component) and copy exports elsewhere |
+| Truncation | a ledger cut short (or a crash) verifies with `closed: false` — treat a missing `engagement.closed` as incomplete |
+| Durability | writes are flushed to the file as they happen; `fsync` runs at close only |
+| Paths | origin+path is recorded; a secret carried in a path segment (e.g. `/reset/<token>`) is written |
+| Close race | a GET already in flight at the instant the browser context closes can reach the target without a recorded outcome (Playwright/Chromium teardown; observed 0–7 of ~140 in a stress test, never out of scope). POST/PUT/PATCH whose end was never observed (in flight at close, or aborted inside a worker) are recorded at close as `failed`, `detail: no outcome observed (recorded at close)`. The scope stops new traffic first |
+| Platforms | refused on Windows: directory privacy is checked with POSIX mode and owner |
+
+| Read it back | Surface |
+| --- | --- |
+| export (NDJSON, verbatim; during or after the session, across restarts) | `GET /v1/engagements/{engagementId}` · SDK `engagements.export(id)` · CLI `engagement export <id> [--out FILE]` |
+| verify offline (recomputes the chain; exit 1 if broken) | CLI `engagement verify FILE` |
+
+Export takes a tenant API key or the operator key and is scoped to that tenant (another tenant's
+id is `404`; a delegated agent grant is `403`); keyless deployments get `401` — read the files
+directly. `--json` does not change `export` output: it is the NDJSON itself.
 
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an

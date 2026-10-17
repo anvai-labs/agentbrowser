@@ -44,7 +44,8 @@
     "task-t6": {"path": "tasks/t6-widget-strategies.md", "requires": ["task-protocol", "execution", "grounding", "contracts"]},
     "task-t7": {"path": "tasks/t7-audit-security.md", "requires": ["task-protocol", "security", "contracts", "quality-ci"]},
     "task-t8": {"path": "tasks/t8-harness-qualification.md", "requires": ["task-protocol", "interfaces", "state-memory", "quality-ci", "review"]},
-    "task-t9": {"path": "tasks/t9-release-hardening.md", "requires": ["task-protocol", "quality-ci", "delivery", "review"]}
+    "task-t9": {"path": "tasks/t9-release-hardening.md", "requires": ["task-protocol", "quality-ci", "delivery", "review"]},
+    "task-t10": {"path": "tasks/t10-engagements.md", "requires": ["task-protocol", "security", "contracts", "quality-ci"]}
   },
   "modes": {
     "qa": {"module": "mode-qa", "purpose": "Web development and deterministic regression"},
@@ -73,6 +74,7 @@
     "t6": {"module": "task-t6", "status": "active", "dependsOn": ["t2"], "modes": ["forms"]},
     "t7": {"module": "task-t7", "status": "complete", "dependsOn": ["t3"], "conditionalDependencies": [{"modes": ["appsec", "bounty"], "dependsOn": ["t4"], "gate": "Qualified test-scope enforcement and explicit testing authority"}], "modes": ["audit", "appsec", "bounty"]},
     "t8": {"module": "task-t8", "status": "active", "dependsOn": ["t0"], "conditionalDependencies": [{"slice": "profiles-and-runs", "dependsOn": ["t1", "t3"]}], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
-    "t9": {"module": "task-t9", "status": "active", "dependsOn": ["t0"], "gate": "Changed-task acceptance and explicit promotion/publication authorization", "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]}
+    "t9": {"module": "task-t9", "status": "active", "dependsOn": ["t0"], "gate": "Changed-task acceptance and explicit promotion/publication authorization", "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t10": {"module": "task-t10", "status": "active", "dependsOn": ["t7"], "gate": "Local fixtures only until explicit testing authority names a live target; no T4 application-security parity claim", "conditionalDependencies": [{"slice": "automation-runs", "dependsOn": ["t5"]}], "modes": ["qa", "operations", "appsec", "bounty"]}
   }
 }

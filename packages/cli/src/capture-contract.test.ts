@@ -8,7 +8,17 @@ import { buildCli, type CliClient } from './cli.js';
 
 describe.each(['observe', 'screenshot'] as const)('%s capture CLI', (operation) => {
   function setup() {
-    const invoke = vi.fn().mockResolvedValue({ elements: [], revision: 1 });
+    const invoke = vi.fn().mockResolvedValue(
+      operation === 'observe'
+        ? { elements: [], revision: 1 }
+        : {
+            artifactId: 'a',
+            type: 'screenshot',
+            contentType: 'image/png',
+            sizeBytes: 1,
+            inline: { contentBase64: 'YQ==', byteSize: 1 },
+          }
+    );
     const out: string[] = [];
     const err: string[] = [];
     const cli = buildCli({
@@ -76,4 +86,16 @@ describe.each(['observe', 'screenshot'] as const)('%s capture CLI', (operation) 
       expect(await cli.run(['observe', 'ses_1', 'pg_1'])).toBe(0);
       expect(out.join('\n')).toContain('empty-snapshot-nonempty-dom');
     });
+});
+
+it('forwards explicit text projection and advertises it in the shared observation schema', async () => {
+  const observe = vi.fn().mockResolvedValue({ elements: [], revision: 1 });
+  const cli = buildCli({
+    out: () => {},
+    err: () => {},
+    createClient: () => ({ sessions: { observe } }) as unknown as CliClient,
+  });
+  expect(await cli.run(['--json', 'observe', 'ses_1', 'pg_1', '--text', 'email'])).toBe(0);
+  expect(observe).toHaveBeenCalledWith('ses_1', 'pg_1', { text: 'email' });
+  expect(ObservationRequestSchema.properties.text.maxLength).toBe(200);
 });

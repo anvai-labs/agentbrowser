@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/core",
-  "version": "1.19.0",
+  "version": "1.23.0",
   "private": true,
   "description": "Core session management, action execution, and observation normalization",
   "main": "./dist/index.js",
@@ -24,5 +24,19 @@
   "devDependencies": {
     "vitest": "^5.0.4"
   },
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./private-file": {
+      "types": "./dist/private-file.d.ts",
+      "import": "./dist/private-file.js"
+    },
+    "./local-artifacts": {
+      "types": "./dist/local-artifacts.d.ts",
+      "import": "./dist/local-artifacts.js"
+    }
+  }
 }

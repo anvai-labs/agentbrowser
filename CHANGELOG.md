@@ -7,6 +7,387 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — page creation failures and compact download receipts
+
+- Page creation with a URL now fails when initial navigation returns blocked or timed out.
+  Policy denials return HTTP 403, timeouts 504, and other navigation failures 500, with only a
+  bounded reason and recognized scope code. Cleanup removes only the newly created page;
+  human takeover retains its ownership. No automatic retry is introduced.
+- CLI `download` and `download collect` with `--out` emit one compact receipt after the private
+  file save completes. Artifact retrieval or save failures emit no success record. Empty files
+  are valid, and the saved byte count reflects the written content. Download errors use bounded
+  messages and validated details, including JSON on stderr under `--json`.
+
+### Fixed — autofill stops on observed navigation denials
+
+- Autofill preserves bounded `navigationObservation` evidence and the action ID on the affected
+  field receipt, then stops remaining widget actions and fields with `AUTOFILL_NAVIGATION_BLOCKED`.
+  Skip and retry policies cannot resume writes. Completed actions do not establish exact field
+  verification: interrupted exact or multi-action fields remain `uncertain`; a completed native
+  `verify: none` action remains `unverified`, while the overall report fails. Post-effect action
+  errors retain their original bounded error code alongside any navigation evidence.
+- Previously verified fields still receive a final read-only check, and confirmed chip effects
+  remain in partial receipts. Durable operations preserve unknown outcomes for uncertain fields.
+  CLI and both MCP protocols retain the evidence; CLI text explains the stop without field values.
+  Evidence is limited to the action dispatch window and does not establish navigation causation.
+
+### Fixed — popup closure during adoption
+
+- Pages that close during registration are refused without leaving page inventory, download
+  state or engine listeners. Cleanup is initialized before synchronous removal can run.
+- Popups that close before adoption finishes are not announced as available pages. Browser-owned
+  closure uses the same named-handler cleanup as explicit closure and preserves caller handlers.
+
+### Added — observed navigation denials on completed actions
+
+- Playwright actions can return a bounded `navigationObservation` containing `status: blocked`,
+  `reason: egress_policy`, a recognized scope code, and `observedDuring: action`. This reports
+  a main-document request observed during dispatch; it does not prove the action caused it.
+  No URLs, bodies, headers, or driver messages are included. Stale requests, other frames/pages,
+  ambiguous chains, overlapping actions, and concurrent direct navigation are excluded.
+- Completed actions keep `status: success` and their action ID. Follow-up waits/observations are
+  skipped when this evidence is present. Required fill verification still takes precedence:
+  missing verification evidence retains its nonretryable post-effect unknown outcome.
+- Plans and action batches retain the completed step, count it in `completed`, and stop before
+  the next step with `PLAN_NAVIGATION_BLOCKED`; they do not replay the action. Outcome runs
+  cannot report a pass for that stopped plan. REST, SDK, CLI and MCP preserve the evidence.
+- Observation adds no settlement wait. A denial arriving after dispatch is not reported on that
+  action or a later one; absence is not a navigation-success claim. Explicit navigation and wait
+  actions retain their existing behavior.
+
+### Fixed — scope denial reporting for page creation and downloads
+
+- Creating a page with an initially allowed URL that redirects outside its scope now returns
+  `POLICY_DENIED` with a validated scope sub-code and removes the new page. Sibling pages remain
+  available. Generic blocked and timeout outcomes now use the same failure cleanup path.
+- CLI `page create --json` emits bounded JSON navigation errors on stderr and exits 1. MCP
+  `page_create` uses the same bounded navigation-error projection on both supported protocols;
+  neither projection includes raw driver prose, URLs, or arbitrary error details.
+- Direct download errors retain recognized scope sub-codes through connection and transfer
+  sanitization, including redirect denials. Existing stages and generic messages remain.
+- CLI download errors use the bounded formatting described above.
+
+## [1.23.0] — 2026-10-17
+
+Entries are newest first. T10 milestone M2 completes: the engagement ledger. **Upgrading from 1.22.x:**
+
+| Who | What changes |
+| --- | --- |
+| Operators | opt in with `AGENTBROWSER_ENGAGEMENT_DIR` (an existing, canonical, owner-only `0700` directory; refused on Windows) and optionally `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` (integer 1 MiB–1 GiB, default 64 MiB; needs the directory); an invalid value of either aborts startup. Unset: no ledger, nothing written |
+| Session create with `policy.scope.ledger: true` (new field) | refused `400` when no directory is configured, with `allowDownloads`, or on an engine without request recording; `500 INTERNAL` (`scope.ledger.unavailable`, session closed) when the ledger file cannot be created, e.g. the directory was removed or re-permissioned after startup; otherwise the session view carries `engagementId` |
+| Ledgered sessions | fail closed: a full or unwritable ledger stops all traffic with `SCOPE_LEDGER_UNAVAILABLE`; `GET /v1/sessions/{id}/scope` gains an optional `stopped` reason |
+| TypeScript consumers | `SCOPE_LEDGER_UNAVAILABLE` is a new member of the scope sub-code and navigation-failure unions: exhaustive `switch`es need a case |
+| REST / SDK / CLI clients | new `GET /v1/engagements/{id}` (tenant-scoped; keyless `401`), SDK `engagements.export`, CLI `engagement export` and offline `engagement verify` |
+| Engine embedders and capability readers | `EngineSessionOptions.requestRecorder` and the `requestRecording` capability are new optional fields; the Playwright engine reports `requestRecording: true` |
+| Sessions without a ledger | unchanged |
+
+### Fixed — an engine crash keeps the ledger's close-time records (T10 M2)
+
+- On an engine crash the session now stops the scope, terminates the engine session, and only
+  then closes the ledger, so the engine's close-time records (POST/PUT/PATCH outcomes never
+  observed) are written. The closing record carries `crashed: true` and `scope.stopped:
+  "engine crashed"`. Previously the ledger closed first and those records were lost uncounted.
+- The crash-path close is tracked like any ledger close: `closeSession` and service shutdown that
+  start during crash recovery wait for it. (A crash detected while an explicit close is already
+  in progress can still close the ledger before that engine close's sweep.)
+
+### Tests — the release smoke covers the engagement ledger (T10 M2)
+
+- `scripts/scope-consumer-smoke.mjs` runs a ledgered session (in-scope navigation and a POST
+  redirected out of scope), exports it over REST, verifies it with the released CLI
+  (`engagement verify`), and checks that an edited copy is refused.
+
+### Added — export and verify engagement ledgers (T10 M2)
+
+| Need | Surface |
+| --- | --- |
+| export a ledger (NDJSON, verbatim; open or closed; across restarts) | `GET /v1/engagements/{id}`, SDK `engagements.export`, CLI `engagement export [--out]` |
+| verify a ledger offline | CLI `engagement verify FILE` (exit 1 when the chain is broken) |
+
+- Tenant-scoped: the file path is derived from the caller's tenant, so another tenant's id is
+  `404`. Keyless deployments get `401` (no credential names a tenant). `--out` creates the file exclusively, mode
+  0600, and verifies it.
+- The chain format and verifier now live in `@agentbrowser/core`, shared by the server-side writer
+  and the CLI.
+
+### Added — the engagement ledger (T10 M2)
+
+- `policy.scope.ledger: true` records a scoped session's traffic decisions in an append-only,
+  hash-chained JSONL file under the operator's `AGENTBROWSER_ENGAGEMENT_DIR`
+  (`AGENTBROWSER_ENGAGEMENT_MAX_BYTES`, default 64 MiB). Metadata only: no bodies, no query
+  strings, no identity marker values. Records: `engagement.opened`, `request`,
+  `preflight.denied`, `engagement.closed`. The hash chain detects edits, removals and reorderings
+  that do not rewrite it from that point; it is not keyed or anchored, so whoever can write the
+  file can rewrite it (see the operator guide's limits).
+- Fed by an engine request recorder that sees every outcome before page attribution (popups not
+  yet adopted, workers); the redirect guard records each response of a POST/PUT/PATCH chain.
+  A POST/PUT/PATCH whose end was never observed (aborted in a worker, or in flight at close) is
+  recorded at close as `no outcome observed`; a GET in flight at the instant the context closes
+  can go unrecorded (stated limit).
+  Refused when it cannot record a lane:
+  `allowDownloads` (`scope.ledger.downloads`) and engines without request recording
+  (`scope.ledger.engine`).
+- Fails closed: when the ledger is nearly full or cannot be written, the scope denies all further
+  traffic with the new sub-code `SCOPE_LEDGER_UNAVAILABLE`; nothing is dropped silently.
+- Refused with `400 scope.ledger.unconfigured` when the operator configured no directory; an
+  invalid directory aborts startup. The session view gains `engagementId`.
+
+## [1.22.0] — 2026-10-17
+
+Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options where needed.
+
+### Changed — compact capture output and private artifact caching
+
+- CLI screenshot, PDF, `page html`, and `artifact get` now save private files by default and
+  return one compact receipt. **Upgrade:** pass `--inline` explicitly for content; HTML also
+  accepts an explicit `--max-bytes`. Explicit `--out` files are created exclusively and are
+  never overwritten. Signed artifact URLs are omitted from capture, trace and download receipts.
+- The cache defaults to `~/.abrowser/artifacts`; `AGENTBROWSER_ARTIFACT_DIR` selects an explicit
+  alternative, including a repo-local `.abrowser/artifacts`. Prune on save bounds recognized
+  captures to 24 hours, 100 files and 128 MiB; `cache prune [--all]` supports manual cleanup.
+  Private ownership records preserve user files and replacements, including matching names;
+  parallel pruning tolerates already-removed entries. Limits are best-effort across processes;
+  stale records and ownership-unknown partial files may need manual cleanup.
+- MCP screenshot/PDF/HTML default to compact artifact references. A configured local artifact
+  directory enables file receipts. The new `artifact` tool retrieves existing session artifacts
+  with explicit bounded ranges (8 KiB default, 64 KiB maximum); image/PDF inline evidence uses
+  media/resource blocks without duplicating base64 in metadata. Default QA catalogs now expose
+  21 unbound tools and 18 delegated tools.
+- REST/SDK capture transport is unchanged and may still transfer base64 to adapters. Canonical
+  session/page IDs and credential strength are unchanged; no public ID acts as a bearer secret.
+
+### Fixed — consumer recovery and partial-result evidence
+
+- Autofill carries bounded stage diagnostics, cooperative timeout accounting and honest partial
+  or uncertain outcomes. Completed writes are not replayed after ambiguous interruption.
+- Observation and document reads use deadlines, clean up late handles and invalidate stale refs;
+  fresh reads can recover after human verification without reloading or closing the browser.
+  Duplicate-role binding is grouped, native checkbox state is verified, and visible text can
+  be projected with `observe --text`.
+- Popup receipts use canonical public page IDs and distinguish registered from unavailable
+  outcomes. Navigation events report sanitized commit facts without claiming application success.
+- CLI `--api-key-file` reads an owner-only existing credential on POSIX, with bounded validation
+  and redacted errors; Windows fails closed for that option. Credentials are never shortened.
+- Regression coverage includes large capture receipts, modern MCP media output, cache ownership
+  and concurrent pruning, browser read recovery, large synthetic forms and authorization boundaries.
+  [Consumer handoff](docs/consumer-field-handoff-2026-10-16.txt) records remaining limits: hard write
+  cancellation, live-site qualification, shorter ID aliases and streaming transport remain open.
+
+### Added — the MCP `scope` tool (T10 M2)
+
+- `scope {sessionId}` returns the engagement scope in effect, budget used/remaining, expiry and
+  denials by sub-code; `scope {sessionId, url, method?}` runs the dry-run check (no budget, no
+  denial counted, identity bindings not evaluated). Structured output
+  `urn:agentbrowser:scope-tool:v1`.
+- In every browser profile (the final QA catalog has 21 unbound tools and 18 delegated tools); not in the application profile. The
+  release smoke's pinned tool lists include it; the catalog is regenerated.
+
+### Changed — wire-level scope denials carry the sub-code (T10 M2)
+
+| Where a scope denies | Now carries `scope: SCOPE_…` |
+| --- | --- |
+| a redirect hop of a navigation (GET walker) | the navigate `blocked` result (REST, SDK, CLI, MCP), and the `request.failed` event |
+| a redirect hop after POST/PUT/PATCH (the guard) | the `request.failed` event |
+| the initial request (subresources, act-driven navigation) | the `request.failed` event |
+| `page_create` with an out-of-scope url (its preflight) | REST/SDK `details.scope`; the MCP structured error at `error.details.scope`, the same place as `navigate`'s |
+
+- Only a code from the protocol's `SCOPE_DENIAL_CODES` is carried; the navigate result schema
+  (`NavigationStatus.scope`) is a closed union of those codes. OpenAPI and the MCP catalog are
+  regenerated.
+- An `act` that navigates out of scope still returns `success`; the denial shows in its events.
+- Still without the sub-code (M2 follow-up): `page_create` with an in-scope url that redirects
+  out (the create succeeds; only the event has it), downloads (`stage`/`transferFailed` only),
+  and CLI `page create --json` (plain-text error).
+
+### Added — scope status and a dry-run check (T10 M2)
+
+| Need | REST | SDK | CLI |
+| --- | --- | --- | --- |
+| the scope in effect, budget used/remaining, expiry, denials by sub-code | `GET /v1/sessions/{id}/scope` | `sessions.scopeStatus` | `session scope` |
+| would the scope rules allow this request now? | `GET /v1/sessions/{id}/scope/check?url&method` | `sessions.checkScope` | `session scope-check` |
+
+- The dry run spends no budget and records no denial. It judges the host, path, method (default
+  `GET`), expiry and budget rules; it does not evaluate identity bindings (it takes no headers),
+  and the base policy and DNS still apply at the wire. `404 NOT_FOUND` when the session has no
+  scope.
+- Identity bindings report `{header, allowedHosts}` only: a marker value is never returned. The
+  protocol's `EngagementScopeStatus` schema is closed, and a test validates the policy's real
+  status against it.
+- `EngagementScopePolicy` gains `status()` and `check()`; denials are counted by sub-code on the
+  wire and in the navigation preflight. The MCP `scope` tool projects the same status and check.
+
+### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
+
+- A `navigate` (command or tool) refused by the scope preflight now reports which rule fired
+  on every surface: `details.scope` (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
+  `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`) and the message
+  `Navigation failed: egress_policy (SCOPE_…)`. REST and the SDK already did; the CLI and MCP
+  projection (`navigationFailureDetail()`) dropped it.
+- The projection stays bounded: only a code from the protocol's `SCOPE_DENIAL_CODES` list is
+  carried, read once; anything else is dropped as before. The policy's `SCOPE_SUBCODES` is
+  pinned to that list.
+- Remaining M2 gaps are listed in the wire-level scope-denial section above.
+
+### Docs — the 1.21.0 release record
+
+- `docs/spec/evidence/release-1.21.0.md`: post-run verification of every channel and the scope
+  smoke run on the extracted release candidate. The task README, T9 packet and T10 evidence name
+  1.21.0 as the published baseline.
+
+## [1.21.0] — 2026-10-16
+
+Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**
+
+| Who | What changes |
+| --- | --- |
+| Scoped sessions, Chromium | redirects after POST/PUT/PATCH are checked hop by hop; each request pauses twice more (about 1.5× page-load time measured on a 51-request page); a popup whose first request is a POST (`target=_blank` form) is refused (`REDIRECT_UNCHECKABLE`) |
+| Scoped sessions, Firefox/WebKit | POST/PUT/PATCH are refused (`REDIRECT_UNCHECKABLE`): their redirects cannot be checked there |
+| Session create with a scope | `cdpAttach`, `allowServiceWorkers: true` and a `scope` outside `policy` are refused (`400 INVALID_REQUEST`) |
+| MCP clients | the `create` tool's `scope` description names the service-worker refusal (catalog digest changed) |
+| Engine embedders | `RequestPolicy.requireRedirectGuard` is a new optional port field, set by `EngagementScopePolicy`; an engine that cannot check redirects after POST/PUT/PATCH must refuse those requests rather than ignore it. In scoped Playwright sessions `newPage` returns once the page's guard is armed |
+| Unscoped sessions | unchanged |
+
+### Tests — engagement-scope release smoke (T10 M1)
+
+- `scripts/scope-consumer-smoke.mjs` runs against local fixtures, from a checkout or an extracted
+  release candidate (`--server-root …`):
+
+  | Check | Surfaces |
+  | --- | --- |
+  | the out-of-scope host is reachable (control) | Node fetch |
+  | service workers, `cdpAttach` and a top-level scope are refused with a scope | REST (rule ids); CLI and MCP (service workers) |
+  | an out-of-scope navigation is a policy denial and never reaches the wire | REST, SDK, CLI, MCP |
+  | a form POST redirected out of scope never arrives and is recorded as a blocked `request.failed` | browser session via the SDK; events via REST |
+
+- Recorded gap, scheduled in M2: CLI and MCP navigate refusals report `egress_policy`, not the
+  `SCOPE_*` sub-code REST and the SDK carry (`navigationFailureDetail()` keeps only the reason).
+
+### Security — a scope refuses the lanes it cannot check (T10 M1)
+
+| Create request | Before | After |
+| --- | --- | --- |
+| `cdpAttach` + `scope` | passed the options floor; the attach lane ignores the scope | refused, `400 INVALID_REQUEST` (`floor.cdp.options`) |
+| `allowServiceWorkers: true` + `scope` | session created; service-worker fetches bypass the scope | refused, `400 INVALID_REQUEST` (`scope.lane.serviceWorkers`) |
+| `scope` alone | unchanged | unchanged (service workers blocked by default) |
+
+### Security — redirects after POST/PUT/PATCH are checked in scoped sessions (T10 M1)
+
+- **The hole:** body-bearing requests pass to the browser natively (byte-exact uploads), and
+  Playwright never routes their redirected follow-up. In a session with an engagement scope, a
+  307 from an in-scope form POST re-sent the body to an out-of-scope host; a 302/303 sent a GET
+  there.
+- **The fix:** on Chromium, a guard checks every redirect hop of those requests (fresh verdict,
+  hop cap, loop detection) and fails a denied hop before the browser follows it. Chains are
+  tracked by Chromium's network id, so a rewritten URL (fragment, re-encoding) or two chains
+  meeting at one URL cannot slip a hop. A body-bearing request its own target's guard did not
+  see is refused (`request.failed`, `detail: REDIRECT_UNCHECKABLE`), including a popup's first
+  request (a `target=_blank` form POST) and new ones while a target already tracks 4096
+  in-flight chains; a live chain is never evicted.
+  Policies opt in with `requireRedirectGuard`; `EngagementScopePolicy` sets it and the metadata
+  floor carries it.
+
+| Session | Before | After |
+| --- | --- | --- |
+| Scoped, Chromium | redirect hops after POST/PUT/PATCH unchecked | every hop checked; each request pauses twice more (about 1.5× load time on a 51-request page) |
+| Scoped, Firefox/WebKit | same hole | **POST/PUT/PATCH refused** (`REDIRECT_UNCHECKABLE`) |
+| Unscoped | native passthrough | unchanged |
+
+### Docs — T10 engagements plan and record hygiene
+
+- New task packet T10 (`docs/spec/tasks/t10-engagements.md`): engagements (scope without holes,
+  status and a metadata-only ledger, program scope and findings) and saved plan runs, each
+  milestone released (1.21.0–1.24.0). Registered in the task index and manifest.
+- Review findings R01, R02 and R12 annotated closed; stale lines fixed (T9 "develop unprotected",
+  the delivery audit row, the TD-BROWSER-12 status).
+
+### Docs — the 1.20.0 release record
+
+- `docs/spec/evidence/release-1.20.0.md` records the first release under the R14 gates and the
+  post-run verification of every channel (attestations on all 16 assets, immutability, owner
+  npm approval, Homebrew, the winget branch). The task README, T9 packet and R14 entry name
+  1.20.0 as the published baseline and immutable releases as on.
+
+## [1.20.0] — 2026-10-16
+
+Entries are newest first. **Upgrading from 1.19.x:**
+
+| Who | What changes |
+| --- | --- |
+| Agents | Pages with `<details>` now return `html-summary` rows on every `observe`. Element counts change. Rows from `include:["fileInputs"]` / `include:["formControls"]` get new ref numbers (they follow the new rows). Under a tight `maxElements`, the new interactive rows can displace rows 1.19.0 returned. Re-observe; never reuse refs across versions. |
+| Operators with a policy file | Its `approvalRules` now take effect: rules classifying a control as high risk now require approval. Startup now **refuses** a rule id that is invalid, reserved or duplicated, and a rule `decision` that no policy reads. |
+| Release consumers | Releases are drafted, then published. Every asset carries a signed build-provenance attestation (`gh attestation verify`). Releases are immutable from 1.20.0. npm publication pauses for the owner's approval. |
+
+### Fixed — a disclosure whose state cannot be read refuses fast
+
+- The act-time `open` re-check is bounded to one second. An engine that cannot resolve the
+  parent (Obscura) refuses with `STALE_TARGET` instead of waiting 30 seconds for the action
+  timeout. The cap coverage entry no longer claims the frame snapshot is complete.
+
+### Fixed — disclosure scan follow-ups
+
+- When a CDP accessibility call fails, the disclosure scan now falls back to the validated page
+  scan instead of minting nothing. This happens on CDP engines without those domains (Obscura)
+  and on a Chromium page whose DOM changed mid-scan.
+- Coverage entries about the main frame are labelled `main`, not by URL. The cap entry says the
+  frame snapshot itself is complete.
+
+### Fixed — native disclosures are targetable controls
+
+- `observe` now reports each `<details>` element's first `<summary>` as role `html-summary`
+  (HTML-AAM's computed role; never forced to `button`). It carries its accessible name and an
+  `expanded` state from `details.open`, and binds a ref that `click` or `press Enter` / `Space`
+  toggles.
+  - Before, Playwright's snapshot dropped the summary, so only `{role:"group", value:"…"}`
+    remained.
+  - Not a regression: Playwright 1.62.1 and 1.64.0 behave the same.
+- On Chromium, name, role and state come from the browser's own accessibility tree, so they
+  match what Chromium exposes and page scripts cannot change them. Other engines and frames use a
+  DOM scan validated in Node.
+- A disclosure toggled by page script since the observation is refused (`STALE_TARGET`).
+- The scan never fails `observe`; more than 200 per frame is reported. The CLI shows
+  `[expanded]` / `[collapsed]`.
+- Protocol: page elements gain an optional `expanded` boolean (also in `sinceRevision` diffs).
+- New docs page "Observation gotchas" catalogues where `observe` differs from the browser's
+  accessibility tree, starting with this case.
+
+### Fixed — a policy file's approval rules classify actions
+
+- With `AGENTBROWSER_POLICY_FILE`, the document's `approvalRules` were never applied: they fed
+  only the document version, and the environment approval policy is refused alongside a file.
+  So no rule could mark a control as a transaction and require approval. The file's rules now
+  classify every action before Cedar decides (pinned by `policy-file-approval-rules.test.ts`).
+- Compatibility: a policy file now refuses startup when an approval rule's id is invalid,
+  reserved or duplicated (it was never checked before), or when a rule carries a `decision` that
+  no policy reads through `context.matchedRule` (it was silently ignored).
+
+### Docs — a secure starter policy and how to configure policy
+
+- `examples/policy/secure-starter.json`: an opinionated, deny-leaning Cedar policy to copy.
+  - Loopback and private networks denied; public web via the floor.
+  - Reads, local writes and unclassified actions allowed; actions your `approvalRules`
+    classify as high risk need owner approval.
+  - Cookie export, cookie handoff, service workers, downloads and CDP attach denied; headed
+    sessions and cookie seeding allowed.
+- `docs/policy.md` opens with "Start here": a decision-flow diagram (egress and actions), a
+  table of each decision and why, how to classify risky controls, per-tenant loosening
+  recipes, and how to verify.
+- A test loads the starter through the real loader, pins its decisions and rule ids, and
+  proves the documented recipes.
+- Release recovery (operations guide): when only the final publish fails, publish the draft by
+  hand and do not rerun; generate the winget manifests with `scripts/winget-manifests.mjs`. The
+  `release.yml` comment says immutability applies once the repository setting is on.
+
+### Changed — release hardening R14 closed
+
+- `v*` tags: only repository admins can create, move or delete them (ruleset).
+- npm publish: pauses for the owner's approval; deploys only from a `v*` tag.
+- Every release asset gets a signed build-provenance attestation
+  (`gh attestation verify <file> -R anvai-labs/agentbrowser`).
+- Releases are drafted, filled, then published; repository immutable releases are on from
+  1.20.0.
+- With the main-ancestry tag guard this closes R14; the operations guide's release section has
+  the table of gates.
+
 ### Docs — the 1.19.0 release record
 
 - `docs/spec/evidence/release-1.19.0.md` records the release and the post-run verification of

@@ -1,9 +1,11 @@
 import type {
+  EngagementScopeStatus,
   OperationReplay,
   OperatorApprovalView,
   OutcomeRunReport,
   OutcomeRunRequest,
   PlanReport,
+  ScopeCheckResult,
 } from '@agentbrowser/protocol';
 import {
   createOutcomeRunReportParser,
@@ -148,6 +150,7 @@ export { validateWireAction } from '@agentbrowser/protocol';
 
 export interface ActionResult {
   status: string;
+  navigationObservation?: import('@agentbrowser/protocol').ActionNavigationObservation;
   actionId?: string;
   newRevision?: number;
   observation?: ObservationResponse;
@@ -168,8 +171,10 @@ export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
+  downloadFailureDetail,
   formatErrorForUser,
   navigationFailureDetail,
+  parseActionNavigationObservation,
   parseAutofillRequest,
   parseExtractMaxBytesText,
   parseRef,
@@ -300,6 +305,8 @@ class HttpClient {
       operationId?: string;
       timeoutMs?: number;
       parseResponse?: (input: unknown) => T;
+      /** Return the success body as text (NDJSON exports) instead of parsing JSON. */
+      text?: boolean;
     } = {}
   ): Promise<T> {
     const operationId =
@@ -338,12 +345,25 @@ class HttpClient {
       if (!response.ok) {
         let error: ApiError;
         try {
-          const data = (await response.json()) as { error?: ApiError };
-          error = data.error || {
-            code: 'UNKNOWN_ERROR',
-            message: 'Unknown error',
-            retryable: false,
-          };
+          const data = (await response.json()) as { error?: unknown };
+          // Only a structured ApiError is trusted as one; anything else (a proxy or
+          // framework body such as 431 {"error":"Request Header Fields Too Large"})
+          // reports the HTTP status instead of an undefined code and message.
+          const candidate = data.error as Partial<ApiError> | undefined;
+          error =
+            candidate !== null &&
+            typeof candidate === 'object' &&
+            typeof candidate.code === 'string' &&
+            typeof candidate.message === 'string'
+              ? (candidate as ApiError)
+              : {
+                  code: 'UNKNOWN_ERROR',
+                  message:
+                    data.error === undefined
+                      ? 'Unknown error'
+                      : `HTTP ${response.status}: ${typeof data.error === 'string' ? data.error : response.statusText}`,
+                  retryable: false,
+                };
         } catch (cause) {
           if (controller.signal.aborted) throw cause;
           error = {
@@ -362,6 +382,7 @@ class HttpClient {
         );
       }
 
+      if (init.text === true) return (await response.text()) as T;
       const result: unknown = await response.json();
       const invalidResponse = () =>
         new AgentBrowserError(
@@ -455,11 +476,40 @@ export interface CookieHandoffResult {
   lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
 }
 
+/** T10 M2: engagement ledgers. */
+export class EngagementsClient {
+  constructor(private readonly http: HttpClient) {}
+
+  /** The ledger as NDJSON text, verbatim (verify it offline with `agentbrowser engagement verify`). */
+  async export(engagementId: string): Promise<string> {
+    return this.http.requestJson<string>(`/v1/engagements/${encodeURIComponent(engagementId)}`, {
+      text: true,
+    });
+  }
+}
+
 export class SessionsClient {
   constructor(private readonly http: HttpClient) {}
 
   async control(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control`);
+  }
+
+  /** T10 M2: the engagement scope in effect, budget and denials (never a marker value). */
+  async scopeStatus(sessionId: string): Promise<EngagementScopeStatus> {
+    return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/scope`);
+  }
+
+  /** T10 M2: dry run of the scope rules; spends no budget and records no denial. */
+  async checkScope(
+    sessionId: string,
+    request: { url: string; method?: string }
+  ): Promise<ScopeCheckResult> {
+    const query = new URLSearchParams({ url: request.url });
+    if (request.method !== undefined) query.set('method', request.method);
+    return this.http.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/scope/check?${query}`
+    );
   }
   async takeover(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/takeover`, { method: 'POST' });
@@ -939,6 +989,8 @@ export class AgentBrowserClient {
   readonly baseUrl: string;
   readonly timeout: number;
   readonly sessions: SessionsClient;
+  /** T10 M2: engagement ledgers (export). */
+  readonly engagements: EngagementsClient;
   private customHeaders: Record<string, string>;
   private readonly http: HttpClient;
 
@@ -957,6 +1009,7 @@ export class AgentBrowserClient {
       options.requestSignal
     );
     this.sessions = new SessionsClient(this.http);
+    this.engagements = new EngagementsClient(this.http);
   }
 
   /**

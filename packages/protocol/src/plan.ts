@@ -1,4 +1,5 @@
 import { type Static, Type } from '@sinclair/typebox';
+import { ActionNavigationObservationSchema } from './action-navigation.js';
 import { UsageError } from './errors.js';
 import { PlanStepSchema } from './schemas.js';
 import { parseExecutionReport, validatePlanStep } from './validators.js';
@@ -23,6 +24,7 @@ export const PlanReportSchema = Type.Object(
         step: Type.Integer({ minimum: 0 }),
         ok: Type.Boolean(),
         actionId: Type.Optional(Type.String()),
+        navigationObservation: Type.Optional(ActionNavigationObservationSchema),
         remap: Type.Optional(Type.Object({ from: Type.String(), to: Type.String() })),
         result: Type.Optional(Type.Unknown()),
         error: Type.Optional(Type.String()),
@@ -87,6 +89,7 @@ function validPlanReport(
           result.ok &&
           result.step === index &&
           result.error === undefined &&
+          result.navigationObservation === undefined &&
           (requiresVerification?.[index] !== true || hasVerifiedFillEvidence(result.result))
       ))
   );
@@ -123,6 +126,9 @@ export function createPlanReportParser(
           ok: result.ok,
           ...(result.actionId !== undefined ? { actionId: result.actionId } : {}),
           ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          ...(result.navigationObservation !== undefined
+            ? { navigationObservation: result.navigationObservation }
+            : {}),
           ...(safeEvidence ? { result: { verified: true } } : {}),
           ...(result.error !== undefined ? { error: result.error } : {}),
         };

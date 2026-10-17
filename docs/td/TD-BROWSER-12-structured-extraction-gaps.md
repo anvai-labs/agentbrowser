@@ -1,6 +1,6 @@
 # TD-BROWSER-12: Structured Extraction Gaps on Real List Pages
 
-**Status:** Observed live against 1.8.6 (`/extract` shipped earlier); gaps open
+**Status:** Implemented 2026-09-08 (`records` format, DOM-parsed `links`); per-record container refs and the `schema` repeated-container warning deferred
 **Context:** 2026-09-08, Dice.com job-search result pages (≈30 card components
 per page, each a nested anchor + sibling metadata), via the brew-installed
 server

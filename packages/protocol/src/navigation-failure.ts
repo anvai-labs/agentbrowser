@@ -20,28 +20,73 @@ export function isNavigationFailureReason(value: unknown): value is NavigationFa
   return typeof value === 'string' && reasons.has(value);
 }
 
+/**
+ * Engagement-scope denial sub-codes (T7, `EngagementScopePolicy`). A scope
+ * denial's bounded reason is `egress_policy`; the sub-code says which rule
+ * fired, and is the only extra detail the client projection carries.
+ */
+export const SCOPE_DENIAL_CODES = Object.freeze([
+  'SCOPE_HOST_DENIED',
+  'SCOPE_PATH_DENIED',
+  'SCOPE_METHOD_DENIED',
+  'SCOPE_IDENTITY_DENIED',
+  'SCOPE_EXPIRED',
+  'SCOPE_BUDGET_EXHAUSTED',
+  'SCOPE_LEDGER_UNAVAILABLE',
+] as const);
+export type ScopeDenialCode = (typeof SCOPE_DENIAL_CODES)[number];
+const scopeCodes = new Set<string>(SCOPE_DENIAL_CODES);
+
+export function isScopeDenialCode(value: unknown): value is ScopeDenialCode {
+  return typeof value === 'string' && scopeCodes.has(value);
+}
+
+/**
+ * The bounded navigation-failure envelope, built from parts. The REST surface
+ * (createPage's teardown path) and the client projection (below) share this
+ * one constructor so the same blocked navigation can never render one message
+ * over REST and another through the CLI/MCP projection of that error.
+ */
+export function navigationFailureDetailFromParts(input: {
+  reason: NavigationFailureReason;
+  scope?: ScopeDenialCode;
+  code?: ErrorCode;
+  operationId?: string;
+}): ApiErrorDetail {
+  return {
+    code: input.code ?? ErrorCode.INTERNAL,
+    message: `Navigation failed: ${input.reason}${input.scope !== undefined ? ` (${input.scope})` : ''}`,
+    retryable: false,
+    details: {
+      reason: input.reason,
+      ...(input.scope !== undefined ? { scope: input.scope } : {}),
+      ...(input.operationId !== undefined && CONTROL_OPERATION_ID.test(input.operationId)
+        ? { operationId: input.operationId }
+        : {}),
+    },
+  };
+}
+
 /** Shared bounded client projection: no adapter prose, addresses or arbitrary details. */
 export function navigationFailureDetail(error: unknown): ApiErrorDetail | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const candidate = error as {
     code?: unknown;
-    details?: { reason?: unknown; operationId?: unknown };
+    details?: { reason?: unknown; operationId?: unknown; scope?: unknown };
   };
   const reason = candidate.details?.reason;
   if (!isNavigationFailureReason(reason)) return undefined;
   const code = Object.values(ErrorCode).includes(candidate.code as ErrorCode)
     ? (candidate.code as ErrorCode)
-    : ErrorCode.INTERNAL;
+    : undefined;
   const operationId = candidate.details?.operationId;
-  return {
-    code,
-    message: `Navigation failed: ${reason}`,
-    retryable: false,
-    details: {
-      reason,
-      ...(typeof operationId === 'string' && CONTROL_OPERATION_ID.test(operationId)
-        ? { operationId }
-        : {}),
-    },
-  };
+  // Read once: a getter must not pass the check and then return something else.
+  const scopeValue = candidate.details?.scope;
+  const scope = isScopeDenialCode(scopeValue) ? scopeValue : undefined;
+  return navigationFailureDetailFromParts({
+    reason,
+    ...(code !== undefined ? { code } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(typeof operationId === 'string' ? { operationId } : {}),
+  });
 }

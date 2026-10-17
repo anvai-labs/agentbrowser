@@ -8,6 +8,7 @@
  */
 
 import {
+  ActionNavigationObservationSchema,
   ActionResultSchema,
   AgentModeSchema,
   ApiErrorDetailSchema,
@@ -25,6 +26,7 @@ import {
   ControlViewSchema,
   DELIVERED_EXTRACT_FORMATS,
   ElementTargetSchema,
+  EngagementScopeStatusSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   EVENT_REPLAY_MIN_SINCE,
@@ -45,6 +47,7 @@ import {
   PlanReportSchema,
   PlanRequestSchema,
   PlanStepSchema,
+  ScopeCheckResultSchema,
   ScreenshotRequestSchema,
   SessionDiagnosticsSchema,
   SessionEventsPageSchema,
@@ -682,6 +685,71 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/engagements/{engagementId}': {
+        get: {
+          operationId: 'exportEngagement',
+          summary: "Export one of the caller's engagement ledgers (NDJSON, verbatim)",
+          description:
+            'T10 M2. The hash-chained, metadata-only ledger of a scoped session created with policy.scope.ledger; readable after the session closes and across restarts. Tenant API key or operator key; verify offline with `agentbrowser engagement verify`.',
+          tags: ['sessions'],
+          parameters: [
+            {
+              name: 'engagementId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^eng_[0-9a-f]{24}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The ledger, one JSON record per line.',
+              content: { 'application/x-ndjson': { schema: { type: 'string' } } },
+            },
+            '401': errorResponse('A valid bearer credential is required.'),
+            '403': errorResponse('A delegated agent grant, or a credential that names no tenant.'),
+            '404': errorResponse("No such engagement for the caller's tenant."),
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/scope': {
+        get: {
+          operationId: 'getSessionScope',
+          summary: 'Read the engagement scope in effect, its budget and denials',
+          description:
+            'T10 M2. Identity bindings report header and hosts only; a marker value is never returned. 404 when the session has no engagement scope.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          responses: {
+            '200': {
+              description: 'The scope status.',
+              content: json(ref('EngagementScopeStatus')),
+            },
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/scope/check': {
+        get: {
+          operationId: 'checkSessionScope',
+          summary: 'Dry run: would the scope rules allow this request now?',
+          description:
+            'T10 M2. Spends no budget and records no denial. Judges the scope rules only; the base policy and DNS still apply when the request is made.',
+          tags: ['sessions'],
+          parameters: [
+            sessionIdParam,
+            { name: 'url', in: 'query', required: true, schema: { type: 'string' } },
+            { name: 'method', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'The verdict.', content: json(ref('ScopeCheckResult')) },
+            '400': errorResponse('url is not an absolute http(s) URL, or method is invalid.'),
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
       '/v1/sessions/{sessionId}': {
         get: {
           operationId: 'getSession',
@@ -916,7 +984,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           operationId: 'autofillPage',
           summary: 'Fill structured fields serially and return verification receipts',
           description:
-            'One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.',
+            'One controlled mutation for native inputs/selects and explicitly selected qualified react-select/chip-multiselect widgets. Unique fieldset scope and bounded read-only retries. Uncertain writes or observed blocked navigation stop remaining actions and fields without replay. A navigationObservation reports a denial during dispatch, not causation or field verification; absence does not imply navigation success. Includes a raw HTML artifact; no explicit submit action.',
           tags: ['pages'],
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
@@ -1131,7 +1199,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           description:
             'Sessions are page-less by default; create pages through this endpoint. ' +
             'An optional url lands the new page on it (validated like navigate); ' +
-            'without it the page starts on about:blank.',
+            'without it the page starts on about:blank. Blocked or timed-out initial navigation ' +
+            'returns a bounded error and removes only the new page, except when human takeover ' +
+            'retains ownership. Do not automatically retry creation after a failure.',
           tags: ['pages'],
           parameters: [sessionIdParam],
           requestBody: {
@@ -1144,8 +1214,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           responses: {
             '201': { description: 'Page created.', content: json(ref('PageSummary')) },
             '400': INVALID_REQUEST,
+            '403': errorResponse(
+              'Navigation was denied by policy; includes a bounded reason and any recognized scope code.'
+            ),
             '404': NOT_FOUND,
             '500': INTERNAL,
+            '504': errorResponse(
+              'Initial navigation timed out; the error does not imply the request had no effect.'
+            ),
           },
         },
       },
@@ -2092,6 +2168,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       schemas: {
         // Straight from the protocol - these are already JSON Schema 2020-12.
         ControlView: ControlViewSchema,
+        EngagementScopeStatus: EngagementScopeStatusSchema,
+        ScopeCheckResult: ScopeCheckResultSchema,
         ControlReview: ControlReviewSchema,
         ControlGrant: ControlGrantSchema,
         OperatorApprovalDecision: OperatorApprovalDecisionSchema,
@@ -2143,6 +2221,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           type: 'object',
           required: ['status'],
           properties: {
+            navigationObservation: ActionNavigationObservationSchema,
             status: { type: 'string', examples: ['success'] },
             actionId: { type: 'string' },
             newRevision: {

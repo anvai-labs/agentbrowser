@@ -11,6 +11,59 @@ import type { McpClient, McpDependencies } from './mcp-server';
 import { buildMcpServer } from './mcp-server';
 
 describe('AgentBrowser MCP server', () => {
+  it.each(['2024-11-05', '2025-06-18'])(
+    'keeps completed action evidence and stopped plan receipts (%s)',
+    async (protocolVersion) => {
+      await request('init-navigation', 'initialize', {
+        protocolVersion,
+        capabilities: {},
+        clientInfo: { name: 'fixture', version: '1' },
+      });
+      const navigationObservation = {
+        status: 'blocked',
+        reason: 'egress_policy',
+        scope: 'SCOPE_PATH_DENIED',
+        observedDuring: 'action',
+      };
+      const effect = { status: 'success', actionId: 'once', newRevision: 2, navigationObservation };
+      sessions.executeAction.mockResolvedValue(effect);
+      const act = JSON.parse(
+        (await call('act-navigation', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'press',
+          key: 'Enter',
+        }))!
+      );
+      expect(act.result.isError).toBeUndefined();
+      expect(textOf(act)).toEqual(effect);
+      const plan = {
+        ok: false,
+        completed: 1,
+        results: [{ step: 0, ok: true, actionId: 'once', navigationObservation }],
+        error: {
+          code: 'PLAN_NAVIGATION_BLOCKED',
+          message: 'Navigation was blocked; action completed.',
+        },
+      };
+      sessions.plan.mockResolvedValue(plan);
+      const planned = JSON.parse(
+        (await call('plan-navigation', 'plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [
+            { action: 'press', key: 'Enter' },
+            { action: 'press', key: 'Tab' },
+          ],
+        }))!
+      );
+      expect(planned.result.isError).toBe(true);
+      expect(textOf(planned)).toEqual(plan);
+      expect(sessions.executeAction).toHaveBeenCalledOnce();
+      expect(sessions.plan).toHaveBeenCalledOnce();
+    }
+  );
+
   let sessions: Record<string, ReturnType<typeof vi.fn>>;
   let deps: McpDependencies;
   let server: ReturnType<typeof buildMcpServer>;
@@ -238,6 +291,38 @@ describe('AgentBrowser MCP server', () => {
       expect(JSON.stringify(result.structuredContent)).not.toContain('privateReason');
     });
 
+    it('carries a bounded scope sub-code on structured errors, and nothing unlisted (T10 M2)', async () => {
+      await initialize('2025-06-18');
+      sessions.executeAction = vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('SCOPE_METHOD_DENIED: method DELETE is outside the scope'), {
+            code: 'POLICY_DENIED',
+            details: { reason: 'egress_policy', scope: 'SCOPE_METHOD_DENIED' },
+          })
+        )
+        .mockRejectedValueOnce(
+          Object.assign(new Error('denied'), {
+            code: 'POLICY_DENIED',
+            details: { scope: 'SCOPE_INVENTED host=10.0.0.1' },
+          })
+        );
+      const act = () =>
+        call('act-scope', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'click',
+          target: { ref: 'e1_0' },
+        }).then((text) => JSON.parse(text).result);
+      expect((await act()).structuredContent.error).toMatchObject({
+        code: 'POLICY_DENIED',
+        details: { scope: 'SCOPE_METHOD_DENIED' },
+      });
+      const unlisted = await act();
+      expect(unlisted.structuredContent.error.details).toBeUndefined();
+      expect(JSON.stringify(unlisted.structuredContent)).not.toContain('SCOPE_INVENTED');
+    });
+
     it.each([true, false])(
       'retains complete receipts and text for a report with ok=%s',
       async (ok) => {
@@ -254,6 +339,41 @@ describe('AgentBrowser MCP server', () => {
         expect(result.structuredContent).toEqual(receiptReport);
         expect(JSON.parse(result.content[0].text)).toEqual(receiptReport);
         expect(result.isError).toBe(ok ? undefined : true);
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it.each(['2024-11-05', '2025-06-18'])(
+      'preserves stopped autofill navigation receipts on %s without replay',
+      async (version) => {
+        await initialize(version);
+        const stopped = {
+          ...report,
+          ok: false,
+          receipts: [
+            {
+              ...report.receipts[0],
+              status: 'uncertain',
+              verified: false,
+              actionId: 'act_completed',
+              navigationObservation: {
+                status: 'blocked',
+                reason: 'egress_policy',
+                scope: 'SCOPE_PATH_DENIED',
+                observedDuring: 'action',
+              },
+              error: {
+                code: 'AUTOFILL_NAVIGATION_BLOCKED',
+                message: 'Inspect current state before another write',
+              },
+            },
+          ],
+        };
+        sessions.autofill = vi.fn().mockResolvedValue(stopped);
+        const result = JSON.parse(await call('navigation-stopped', 'autofill', args)).result;
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.content[0].text)).toEqual(stopped);
+        expect(result.structuredContent).toEqual(version === '2025-06-18' ? stopped : undefined);
         expect(sessions.autofill).toHaveBeenCalledTimes(1);
       }
     );
@@ -703,6 +823,61 @@ describe('AgentBrowser MCP server', () => {
   });
 
   describe('tools/list', () => {
+    it('T10 M2: the scope tool reads status, runs a dry-run check, and stays out of the application profile', async () => {
+      const status = {
+        allowedHosts: ['a.example'],
+        pathRules: [],
+        identityBindings: [],
+        expired: false,
+        denials: {},
+      };
+      sessions.scopeStatus = vi.fn().mockResolvedValue(status);
+      sessions.checkScope = vi
+        .fn()
+        .mockResolvedValue({ allowed: false, scope: 'SCOPE_HOST_DENIED' });
+      const read = JSON.parse(await call('scope-status', 'scope', { sessionId: 'ses_1' })).result;
+      expect(JSON.parse(read.content[0].text)).toEqual({ sessionId: 'ses_1', status });
+      expect(sessions.scopeStatus).toHaveBeenCalledWith('ses_1');
+      const check = JSON.parse(
+        await call('scope-check', 'scope', {
+          sessionId: 'ses_1',
+          url: 'https://b.example/',
+          method: 'POST',
+        })
+      ).result;
+      expect(JSON.parse(check.content[0].text)).toEqual({
+        sessionId: 'ses_1',
+        check: { allowed: false, scope: 'SCOPE_HOST_DENIED' },
+      });
+      expect(sessions.checkScope).toHaveBeenCalledWith('ses_1', {
+        url: 'https://b.example/',
+        method: 'POST',
+      });
+      const methodOnly = JSON.parse(
+        await call('scope-bad', 'scope', { sessionId: 'ses_1', method: 'POST' })
+      ).result;
+      expect(methodOnly.isError).toBe(true);
+      const numericMethod = JSON.parse(
+        await call('scope-num', 'scope', {
+          sessionId: 'ses_1',
+          url: 'https://b.example/',
+          method: 123,
+        })
+      ).result;
+      expect(numericMethod.isError).toBe(true);
+      expect(sessions.checkScope).toHaveBeenCalledTimes(1);
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'application' });
+      const names = JSON.parse(await request('scope-app', 'tools/list')).result.tools.map(
+        (tool: { name: string }) => tool.name
+      );
+      expect(names).not.toContain('scope');
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'bounty' });
+      const bounty = JSON.parse(await request('scope-bounty', 'tools/list')).result.tools.map(
+        (tool: { name: string }) => tool.name
+      );
+      expect(bounty).toContain('scope');
+    });
+
     it('projects a fixed connection profile and rejects direct calls to omitted tools', async () => {
       sessions.autofill = vi.fn();
       server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'audit' });
@@ -939,6 +1114,32 @@ describe('AgentBrowser MCP server', () => {
       expect(response.structuredContent).toEqual(expected);
       expect(JSON.stringify(response)).not.toContain('secret');
       expect(JSON.stringify(response)).not.toContain('10.0.0.1');
+    });
+
+    it('carries the engagement-scope sub-code of a scope-refused navigation (T10 M2)', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('SCOPE_HOST_DENIED: host out.example is outside the scope'), {
+          code: 'POLICY_DENIED',
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED', host: 'out.example' },
+        })
+      );
+      const response = JSON.parse(
+        await call('7-scope', 'navigate', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          url: 'https://out.example/',
+        })
+      ).result;
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toEqual({
+        error: {
+          code: 'POLICY_DENIED',
+          message: 'Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+          retryable: false,
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED' },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain('out.example');
     });
 
     it('should observe and return the semantic observation', async () => {
@@ -1182,7 +1383,7 @@ describe('AgentBrowser MCP server', () => {
     describe('html', () => {
       it('returns inline decoded HTML with the untrusted-content warning', async () => {
         const response = JSON.parse(
-          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
         );
         const result = textOf(response);
 
@@ -1254,7 +1455,7 @@ describe('AgentBrowser MCP server', () => {
         });
 
         const response = JSON.parse(
-          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
         );
         const result = textOf(response);
 

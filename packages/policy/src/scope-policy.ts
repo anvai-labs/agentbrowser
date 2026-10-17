@@ -48,6 +48,22 @@ export interface EngagementScopeOptions {
   identityBindings?: ScopeIdentityBinding[];
 }
 
+/** The scope in effect, as `EngagementScopePolicy.status()` reports it (T10 M2). */
+export interface EngagementScopeStatus {
+  allowedHosts: string[];
+  pathRules: ScopePathRule[];
+  allowedMethods?: string[];
+  /** Header and hosts only: a marker's value is never reported. */
+  identityBindings: Array<{ header: string; allowedHosts: string[] }>;
+  expiresAt?: number;
+  expired: boolean;
+  budget?: { limit: number; spent: number; remaining: number };
+  /** Denials on the wire and in the navigation preflight, by sub-code. */
+  denials: Record<string, number>;
+  /** Why all traffic stopped (the ledger is full or failed, or the session is closing). */
+  stopped?: string;
+}
+
 const DENIED = 'POLICY_DENIED' as const;
 
 const hostMatches = (hostname: string, pattern: string): boolean => {
@@ -61,7 +77,23 @@ const hostMatches = (hostname: string, pattern: string): boolean => {
   return host === pattern;
 };
 
-const scopeDenial = (subCode: string, detail: string): NetworkPolicyError =>
+/**
+ * Every sub-code this policy raises. `scopeDenial` accepts only these, and a
+ * contract test pins the list to the protocol's SCOPE_DENIAL_CODES, so a new
+ * code cannot reach clients without the projection knowing it (ADR-015).
+ */
+export const SCOPE_SUBCODES = Object.freeze([
+  'SCOPE_HOST_DENIED',
+  'SCOPE_PATH_DENIED',
+  'SCOPE_METHOD_DENIED',
+  'SCOPE_IDENTITY_DENIED',
+  'SCOPE_EXPIRED',
+  'SCOPE_BUDGET_EXHAUSTED',
+  'SCOPE_LEDGER_UNAVAILABLE',
+] as const);
+export type ScopeSubCode = (typeof SCOPE_SUBCODES)[number];
+
+const scopeDenial = (subCode: ScopeSubCode, detail: string): NetworkPolicyError =>
   new NetworkPolicyError(DENIED, `${subCode}: ${detail}`, false, { scope: subCode });
 
 /**
@@ -74,6 +106,8 @@ const scopeDenial = (subCode: string, detail: string): NetworkPolicyError =>
 export const CHAIN_SPENT_BOUND = 4096;
 
 export class EngagementScopePolicy {
+  /** A scope never lets a redirect hop go unchecked (T10 M1). */
+  readonly requireRedirectGuard = true;
   private readonly allowed: string[];
   private readonly paths: ScopePathRule[];
   private readonly methods: Set<string> | undefined;
@@ -125,12 +159,101 @@ export class EngagementScopePolicy {
     this.budget = scope.requestBudget;
   }
 
+  /** Denials raised on the wire or in the navigation preflight, by sub-code. */
+  private readonly denials = new Map<string, number>();
+  /** Set once the engagement ledger cannot take more traffic (T10 M2): fail closed. */
+  private stopped: string | undefined;
+
+  /**
+   * Stops all further traffic in this scope (the engagement ledger is full or
+   * failed). One-way: a stopped scope never reopens.
+   */
+  stop(reason: string): void {
+    this.stopped ??= reason;
+  }
+
+  /** The rules, counted: a denial is recorded by sub-code before it is thrown. */
   private denyIf(request: {
     hostname: string;
     url?: string;
     method?: string;
     headers?: Record<string, string>;
   }): void {
+    try {
+      this.rules(request);
+    } catch (error) {
+      const code = (error as { details?: { scope?: unknown } }).details?.scope;
+      if (typeof code === 'string') this.denials.set(code, (this.denials.get(code) ?? 0) + 1);
+      throw error;
+    }
+  }
+
+  /**
+   * The scope in effect, budget and denials (T10 M2). Identity marker values
+   * are never reported: they are the credential the binding protects.
+   */
+  status(): EngagementScopeStatus {
+    return {
+      allowedHosts: [...this.allowed],
+      pathRules: this.paths.map((rule) => ({ ...rule })),
+      ...(this.methods !== undefined ? { allowedMethods: [...this.methods] } : {}),
+      identityBindings: this.identities.map((binding) => ({
+        header: binding.header.toLowerCase(),
+        allowedHosts: [...binding.allowedHosts],
+      })),
+      ...(this.expiresAt !== undefined ? { expiresAt: this.expiresAt } : {}),
+      expired: this.expiresAt !== undefined && this.now() >= this.expiresAt,
+      ...(this.budget !== undefined
+        ? {
+            budget: {
+              limit: this.budget,
+              spent: this.spent,
+              remaining: Math.max(0, this.budget - this.spent),
+            },
+          }
+        : {}),
+      denials: Object.fromEntries(this.denials),
+      ...(this.stopped !== undefined ? { stopped: this.stopped } : {}),
+    };
+  }
+
+  /**
+   * Dry run: would the scope rules allow this request now? Spends no budget
+   * and records no denial. The base policy (SSRF, host lists) and DNS still
+   * apply when the request is actually made.
+   */
+  check(request: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+  }): { allowed: true } | { allowed: false; scope: string } {
+    try {
+      this.rules({
+        hostname: new URL(request.url).hostname,
+        url: request.url,
+        method: request.method ?? 'GET',
+        ...(request.headers !== undefined ? { headers: request.headers } : {}),
+      });
+      return { allowed: true };
+    } catch (error) {
+      const code = (error as { details?: { scope?: unknown } }).details?.scope;
+      if (typeof code !== 'string') throw error;
+      return { allowed: false, scope: code };
+    }
+  }
+
+  private rules(request: {
+    hostname: string;
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+  }): void {
+    if (this.stopped !== undefined) {
+      throw scopeDenial(
+        'SCOPE_LEDGER_UNAVAILABLE',
+        `the engagement ledger cannot record more traffic (${this.stopped})`
+      );
+    }
     if (this.expiresAt !== undefined && this.now() >= this.expiresAt) {
       throw scopeDenial('SCOPE_EXPIRED', `engagement scope expired at ${this.expiresAt}`);
     }

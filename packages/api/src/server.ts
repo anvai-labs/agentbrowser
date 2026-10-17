@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
@@ -65,6 +66,7 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 import Fastify from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { artifactStoreFromEnvironment } from './artifact-config.js';
+import { engagementConfigFromEnvironment } from './engagement-config.js';
 import {
   createHttpPublication,
   type HttpResponseDraft,
@@ -152,6 +154,12 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
     version: string;
     /** Limits replacing extractMaxBytes / maxResponseBytes (files only). */
     limits: import('@agentbrowser/protocol').PolicyLimits;
+    /**
+     * The document's `approvalRules` and `unknownRisk` (files only): its rules classify each
+     * action's effect before the authorizer decides. The environment approval policy is
+     * refused alongside a file, so without this a file's rules would never classify anything.
+     */
+    approval?: import('@agentbrowser/core').ActionRiskPolicyOptions;
   };
   /** Trusted embedding source selection for private evidence-backed approval records. */
   evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
@@ -572,6 +580,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   // Validated before the service exists: an invalid ceiling aborts startup.
   const artifactStore = artifactStoreFromEnvironment(process.env);
+  // T10 M2: an invalid engagement directory aborts startup; unset refuses scope.ledger.
+  const engagement = await engagementConfigFromEnvironment(process.env);
   // T5 J-d: a configured durable journal opens before the service exists, and any refusal to
   // open it aborts startup. Durable work is never served ephemerally: with no open journal it is
   // refused. Unconfigured: nothing changes.
@@ -621,6 +631,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       extractMaxBytes,
       engine,
       ...(artifactStore !== undefined ? { artifactStore } : {}),
+      ...(engagement !== undefined ? { engagement } : {}),
       // TD-BROWSER-16 phase 6: the handoff reads through the login browser
       // (constructed above; enabled encodes operator keys being configured).
       loginBrowser: options.loginBrowserPort ?? loginBrowser,
@@ -653,7 +664,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               options.approvalPolicy ??
               JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
           }
-        : {}),
+        : policyIsFile && policyLimiter?.approval !== undefined
+          ? { approvalPolicy: policyLimiter.approval }
+          : {}),
       ...(options.engines ? { engines: options.engines } : {}),
       metrics,
       tracer,
@@ -1020,6 +1033,40 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         status: number,
         retryable = false
       ) => reply.code(status).send({ error: { code, message, retryable } });
+
+      // T10 M2: export one of the caller's engagement ledgers as NDJSON (the
+      // file, verbatim, so it verifies offline). Same credential rule as the
+      // journal: a tenant API key or the operator key; keyless deployments have
+      // no surface (no credential names a tenant).
+      v1.get(
+        '/engagements/:engagementId',
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (!principal)
+            return reply.code(401).send({
+              error: {
+                code: 'UNAUTHORIZED',
+                message: 'A valid bearer credential is required',
+                retryable: false,
+              },
+            });
+          if (principal.tenant === undefined)
+            return reply.code(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'Engagement export needs a credential that names a tenant',
+                retryable: false,
+              },
+            });
+          const { engagementId } = request.params as { engagementId: string };
+          const file = await service.engagementLedgerFile(principal.tenant, engagementId);
+          return reply
+            .header('content-type', 'application/x-ndjson')
+            .header('content-length', String(file.bytes))
+            .send(createReadStream(file.path, { start: 0, end: Math.max(0, file.bytes - 1) }));
+        }
+      );
 
       v1.get(
         '/journal',
@@ -1788,6 +1835,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             'INVALID_REQUEST',
             'credentialSource is server-assigned (the cookie handoff), never session input.'
           );
+        // The wire passes unknown keys through unvalidated: a scope outside
+        // `policy` would reach the service without schema validation.
+        if ('scope' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'An engagement scope belongs under policy.scope, where it is validated.'
+          );
         if (validated.value.cdpAttach === true) {
           const address = fastify.server.address();
           if (
@@ -2194,6 +2248,43 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
 
           return responseDraft(session);
+        },
+        { capability: 'session.control' }
+      );
+
+      // T10 M2: the engagement scope in effect, and a dry-run check that
+      // spends no budget and records no denial.
+      on(
+        'GET',
+        '/sessions/:sessionId/scope',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          return responseDraft(service.getScopeStatus(sessionId));
+        },
+        { capability: 'session.control' }
+      );
+
+      on(
+        'GET',
+        '/sessions/:sessionId/scope/check',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          const query = (request.query ?? {}) as { url?: unknown; method?: unknown };
+          if (typeof query.url !== 'string' || query.url.length === 0)
+            throw new ServiceError('INVALID_REQUEST', 'url is required');
+          if (
+            query.method !== undefined &&
+            (typeof query.method !== 'string' || !/^[A-Za-z]{1,16}$/.test(query.method))
+          )
+            throw new ServiceError('INVALID_REQUEST', 'method must be an HTTP method name');
+          return responseDraft(
+            service.checkScope(sessionId, {
+              url: query.url,
+              ...(typeof query.method === 'string' ? { method: query.method } : {}),
+            })
+          );
         },
         { capability: 'session.control' }
       );

@@ -242,6 +242,26 @@ describe('observe compact projection', () => {
     expect(changed.revision).toBeGreaterThan(baseline.revision);
   });
 
+  it('sinceRevision reports a disclosure whose expanded state changed', async () => {
+    const { service, session, pageId, fakePage } = await setup();
+    fakePage?.setElements([
+      { ref: 'e1_0', role: 'link', name: 'Nav 0' },
+      { ref: 'e1_1', role: 'html-summary', name: 'Details', expanded: false } as never,
+    ]);
+    const baseline = await service.observe(session.sessionId, pageId, {});
+    fakePage?.setElements([
+      { ref: 'e1_0', role: 'link', name: 'Nav 0' },
+      { ref: 'e1_1', role: 'html-summary', name: 'Details', expanded: true } as never,
+    ]);
+    await service.act(session.sessionId, pageId, { action: 'click', target: { ref: 'e1_0' } });
+    await service.observe(session.sessionId, pageId, {});
+    const diff = await service.observe(session.sessionId, pageId, {
+      sinceRevision: baseline.revision,
+    });
+    const change = (diff.changes ?? []).find((c) => c.properties?.expanded !== undefined);
+    expect(change?.properties?.expanded).toEqual({ old: false, new: true });
+  });
+
   it('a removed element matching the filter appears in the projected diff', async () => {
     const { service, session, pageId, fakePage } = await setup();
 
@@ -362,4 +382,19 @@ describe('observe compact projection', () => {
     // "2 of 3" would wrongly conclude a control was truncated away.
     expect(withControls.controlsProjection).toEqual({ matched: 2, total: 2 });
   });
+});
+
+it('forwards text projection through the service without renaming native paragraph semantics', async () => {
+  const { service, session, pageId, fakePage } = await setup();
+  try {
+    fakePage.seedElements([
+      { ref: 'e1_0', role: 'paragraph', value: 'Or sign up using email' },
+      { ref: 'e1_1', role: 'button', name: 'Continue' },
+    ]);
+    const result = await service.observe(session.sessionId, pageId, { text: 'email' });
+    expect(result.elements.map((e) => e.role)).toEqual(['paragraph']);
+    expect(result.projection).toMatchObject({ text: 'email', matched: 1, total: 21 });
+  } finally {
+    await service.closeSession(session.sessionId);
+  }
 });

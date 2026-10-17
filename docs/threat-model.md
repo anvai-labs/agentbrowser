@@ -62,6 +62,12 @@ proves the control works. Residual risks are named, not hidden.
 
 ## Open gaps and residual risks
 
+- **Engagement ledger integrity (T10 M2, stated):** the ledger's hash chain is unkeyed and
+  unanchored. It detects accidental and partial edits (any change that does not rewrite the chain
+  from that point), not a deliberate full rewrite by someone with write access to the engagement
+  directory. Controls: an owner-only directory (enforced at startup), exports for safekeeping,
+  and `closed: false` treated as incomplete. A keyed or externally anchored chain is future work.
+
 - **ADR-025 residuals (accepted):** the login profile is protected by file permissions only and
   must stay out of synced/backed-up paths; the login-browser read route returns raw cookie values
   over the transport to the human operator (operator-only route, ADR-025 s2 tension, carried);
@@ -128,7 +134,8 @@ proves the control works. Residual risks are named, not hidden.
   service-worker-originated requests bypass `context.route()` entirely (a
   still-open Playwright limitation), so any session with a request policy
   attached blocks service workers by default — an unblocked one would be a
-  hole in the choke point. This restriction was identified while investigating
+  hole in the choke point. A session with an engagement scope refuses the
+  opt-in outright (T10 M1, rule `scope.lane.serviceWorkers`). This restriction was identified while investigating
   Ashby ATS rejections affecting both automated and human clicks in the same
   browser session; its contribution to those rejections remains unproven. `allowServiceWorkers` (ADR-019) is an explicit,
   off-by-default per-session option a caller sets to accept this trade-off

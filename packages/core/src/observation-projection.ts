@@ -35,6 +35,7 @@ import { clampUtf16 } from './canonical-json.js';
 export interface ObservationProjection {
   roles?: string[] | undefined;
   name?: string | undefined;
+  text?: string | undefined;
   scopeRef?: string | undefined;
   limit?: number | undefined;
   includeFields?: Array<'href' | 'attributes' | 'required'> | undefined;
@@ -66,6 +67,7 @@ export function projectionActive(projection: ObservationProjection | undefined):
   return (
     rolesActive ||
     nameActive ||
+    (projection.text !== undefined && projection.text.trim().length > 0) ||
     projection.scopeRef !== undefined ||
     projection.limit !== undefined ||
     fieldsActive
@@ -133,10 +135,19 @@ export function projectObservation(
   const needle =
     trimmedName !== undefined && trimmedName.length > 0 ? trimmedName.toLowerCase() : undefined;
 
+  const textNeedle = projection.text?.trim().toLowerCase() || undefined;
   const matchesFilter = (element: PageElement): boolean => {
     if (allowedRefs !== undefined && !allowedRefs.has(element.ref)) return false;
     if (roles !== undefined && !roles.has(element.role)) return false;
     if (needle !== undefined && !(element.name ?? '').toLowerCase().includes(needle)) return false;
+    if (
+      textNeedle !== undefined &&
+      (!element.visible ||
+        ![element.name ?? '', element.valueRedacted ? '' : (element.value ?? '')].some((value) =>
+          value.toLowerCase().includes(textNeedle)
+        ))
+    )
+      return false;
     return true;
   };
 
@@ -167,6 +178,7 @@ export function projectObservation(
   const echo: ObservationProjectionEcho = {
     ...(projection.roles !== undefined ? { roles: projection.roles } : {}),
     ...(projection.name !== undefined ? { name: projection.name } : {}),
+    ...(projection.text !== undefined ? { text: projection.text } : {}),
     ...(projection.scopeRef !== undefined ? { scopeRef: projection.scopeRef } : {}),
     // The PREDICATE match count, not the windowed length: "matched 100 of
     // 373" with a limit window and continuation.remaining stays honest about
@@ -257,6 +269,7 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
   if (element.value !== undefined) shaped.value = element.value;
   if (element.valueRedacted !== undefined) shaped.valueRedacted = element.valueRedacted;
   if (element.checked !== undefined) shaped.checked = element.checked;
+  if (element.expanded !== undefined) shaped.expanded = element.expanded;
   if (element.risk !== undefined) shaped.risk = element.risk;
   if (element.focused !== undefined) shaped.focused = element.focused;
   if (element.depth !== undefined) shaped.depth = element.depth;

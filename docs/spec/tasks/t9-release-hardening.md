@@ -40,9 +40,9 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The published baseline is **1.19.0** (released 2026-10-16 from main `c963d4f`, release run
-38859766439, all 14 jobs green; see [release-1.19.0](../evidence/release-1.19.0.md)). Records for
-1.16.0 through 1.18.0 sit beside it; [release-1.11.0](../evidence/release-1.11.0.md)
+The published baseline is **1.23.0** (released 2026-10-17 from main `82b06ca`, release run
+39028240408, all 14 jobs green; see [release-1.23.0](../evidence/release-1.23.0.md)). Records for
+1.16.0 through 1.21.0 sit beside it (1.22.0 was owner-released, run 39008344538, recorded in the field handoff); [release-1.11.0](../evidence/release-1.11.0.md)
 and earlier per-release records remain historical references. Both `main` and `develop` are
 protected with the same 11 strict required contexts and require a pull request (zero approving
 reviews); `main` also enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
@@ -52,10 +52,8 @@ external-harness qualification and production use-case completion are not implie
 
 ## Current implementation state
 
-Main is protected with required checks, admin enforcement and force-push/deletion
-blocks. Develop is currently unprotected, so each develop merge additionally requires
-an explicit operational review and all eight required checks on the exact candidate;
-do not infer equivalent branch enforcement. The previous **1.9.0** checkpoint used exact
+Main and develop are protected (see the checkpoint above). Historically develop
+was unprotected, and each develop merge required an explicit operational review. The previous **1.9.0** checkpoint used exact
 main/tag commit `02f263f3764b41f923553c69c11dff69c819fae5`. Promotion PR 210, all eight main
 checks and all twelve release jobs passed; published asset, checksum, npm and
 package acceptance completed. Main was synchronized back to develop by PR 211
@@ -76,8 +74,16 @@ The 1.9.1 candidate's tag ancestry and delivery are verified. The reusable ances
 gate now exists (2026-10-15): `scripts/check-tag-ancestry.mjs` runs in the release
 `tag-guard` job, which every other release job depends on, and refuses a tag whose commit
 is not reachable from `main`. Because GitHub runs the workflow *of the tagged commit*, the
-gate does not bind a tag on an older or modified commit; R14 closes only once the owner
-applies the tag-creation ruleset and `npm` environment protection.
+gate does not bind a tag on an older or modified commit. **R14 closed 2026-10-16:**
+
+| Gate | Setting |
+| --- | --- |
+| Release ancestry | `tag-guard` refuses a commit not reachable from `main` (#475) |
+| Tag ruleset `release tags` (25241502) | `refs/tags/v*`: creation, deletion, update, non-fast-forward restricted; admin role bypasses |
+| `npm` environment | owner is a required reviewer (self-review allowed; admins can bypass); deploys only from `v*` tags |
+| Provenance | `actions/attest-build-provenance` signs every release asset; npm keeps `--provenance` |
+| Immutability | the Release is drafted, filled, then published. Repository immutable releases are on since 1.20.0 (switched on after the promotion, before the tag) |
+| First exercised | 1.20.0: the `v*` deployment policy and owner approval, attestations on all 16 assets, an immutable release |
 
 **Least privilege and pinning (2026-10-15, S1c).** Every workflow now defaults to
 `contents: read` at the top level (`ci.yml` previously inherited the repository default);

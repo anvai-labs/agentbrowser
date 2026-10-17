@@ -1,9 +1,14 @@
 import { createHash } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
 import {
   isNavigationFailureReason,
+  isScopeDenialCode,
   MAX_PLAN_STEPS,
+  type NavigationFailureReason,
+  navigationFailureDetailFromParts,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
+import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
 import {
   attachRequestHasOptions,
   type CdpAttachAdmission,
@@ -11,8 +16,10 @@ import {
   FLOOR_OPERATOR_REQUIRED,
   handoffFloor,
   requireCdpAttachAdmission,
+  SCOPE_SERVICE_WORKERS,
   withMetadataFloor,
 } from './floor.js';
+import { PRODUCT_VERSION } from './product-version.js';
 import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
@@ -98,6 +105,7 @@ import {
   type BrowserEngine,
   type EngineEvent,
   type EnginePage,
+  type EngineRequestRecord,
   type EngineSession,
   type EngineSessionOptions,
   HANDOFF_RTC_REMOVAL_INIT_SCRIPT,
@@ -121,7 +129,12 @@ import {
   RecordsSelectorError,
   SchemaExtractor,
 } from '@agentbrowser/extraction';
-import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import {
+  EngagementScopePolicy,
+  type EngagementScopeStatus,
+  type NetworkPolicy,
+  SessionHostPolicy,
+} from '@agentbrowser/policy';
 import {
   type Authorizer,
   approvalModeOf,
@@ -131,6 +144,7 @@ import {
   TenantBindingAuthorizer,
 } from '@agentbrowser/policy-engine';
 import type {
+  ActionNavigationObservation,
   ObservationRequest,
   OperatorApprovalView,
   OutcomeRunReport,
@@ -151,6 +165,7 @@ import {
   type DeliveredExtractFormat,
   decodeWireAction,
   MAX_FORM_CONTROLS_PER_ROOT,
+  parseActionNavigationObservation,
   parseExtractMaxBytes,
   parseOutcomeRunRequest,
   parseRef,
@@ -283,6 +298,31 @@ function hostOf(url: string): string {
 
 export type ServiceSessionView = import('@agentbrowser/protocol').SessionView;
 
+/** The ledger's `request` record: an allowlist of already-redacted, origin+path-only fields. */
+const LEDGER_REQUEST_FIELDS = [
+  'method',
+  'url',
+  'hostname',
+  'resourceType',
+  'status',
+  'bytes',
+  'blocked',
+  'reason',
+  'scope',
+  'redirect',
+  'detail',
+  'passthrough',
+] as const;
+
+function ledgerRecord(ledger: EngagementLedger, record: EngineRequestRecord): void {
+  const out: Record<string, unknown> = {
+    outcome: record.type === 'request.failed' ? 'failed' : 'finished',
+  };
+  for (const key of LEDGER_REQUEST_FIELDS)
+    if (record.data[key] !== undefined) out[key] = record.data[key];
+  ledger.append('request', out);
+}
+
 export interface ServicePageView {
   pageId: string;
   sessionId: string;
@@ -365,6 +405,8 @@ export interface ServiceActResult {
   remap?: { from: string; to: string } | undefined;
   /** Evidence payload, present only for actions that produce one (upload: attached files). */
   result?: unknown;
+  /** A scoped navigation was blocked while the completed action was running. */
+  navigationObservation?: ActionNavigationObservation;
 }
 
 /** One step's outcome inside a batch (F3); failures are in-band. */
@@ -376,6 +418,7 @@ export interface ServiceBatchStepResult {
   remap?: { from: string; to: string } | undefined;
   /** Per-action evidence (upload: attached files), matching single-act. */
   result?: unknown;
+  navigationObservation?: ActionNavigationObservation;
   error?: string;
 }
 
@@ -515,6 +558,8 @@ export interface ServiceDependencies {
   maxResponseBytes?: string | undefined;
   /** Artifact retention store; defaults to a bounded in-memory store. */
   artifactStore?: ArtifactStore;
+  /** T10 M2: where engagement ledgers are written; unset refuses `scope.ledger`. */
+  engagement?: import('./engagement-config.js').EngagementConfig;
   /** Payload fetcher for downloads; injectable for tests. */
   downloader?(
     url: string,
@@ -639,6 +684,7 @@ export type PartialObservation = {
   /** Compact projection (opt-in): roles/name/scopeRef/limit/includeFields. */
   roles?: string[] | undefined;
   name?: string | undefined;
+  text?: string | undefined;
   scopeRef?: string | undefined;
   limit?: number | undefined;
   includeFields?: ObservationRequest['includeFields'] | undefined;
@@ -734,6 +780,12 @@ export function browserReportOutcomeUnknown(body: unknown): boolean {
   );
 }
 
+interface AdoptedPopup {
+  pageId: string;
+  enginePage: EnginePage;
+  startPump: boolean;
+}
+
 export class AgentBrowserService {
   readonly authority: SessionAuthority;
   /**
@@ -790,6 +842,13 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  /** Each scoped session's engagement scope, for status and dry-run checks (T10 M2). */
+  private readonly sessionScopes = new Map<string, EngagementScopePolicy>();
+  /** Each ledgered session's engagement ledger (T10 M2). */
+  private readonly sessionLedgers = new Map<string, EngagementLedger>();
+  /** Ledger closes in progress, awaited by closeSession and shutdown. */
+  private readonly ledgerClosings = new Map<string, Promise<void>>();
+  private readonly engagement: import('./engagement-config.js').EngagementConfig | undefined;
   /** TD-15 phase 4: per-session memo disposers, cleared at close. */
   private readonly sessionPolicyDisposers = new Map<string, () => void>();
   private readonly sessionApprovalPolicies = new Map<
@@ -975,6 +1034,7 @@ export class AgentBrowserService {
     // output boundary (observations, error messages, error details).
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
+    this.engagement = deps.engagement;
     this.downloader = deps.downloader;
     this.verifierRegistry = deps.verifierRegistry;
     // Telemetry is opt-in per concern: each is wired only when provided.
@@ -1057,6 +1117,20 @@ export class AgentBrowserService {
     this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
+    const ledger = this.sessionLedgers.get(sessionId);
+    if (ledger !== undefined) {
+      this.sessionLedgers.delete(sessionId);
+      const scope = this.sessionScopes.get(sessionId);
+      // No traffic the ledger could miss: stop the scope before the file closes.
+      scope?.stop('session closed');
+      const status = scope?.status();
+      const closing = ledger
+        .close({ ...(status !== undefined ? { scope: status } : {}) })
+        .catch(() => {})
+        .finally(() => this.ledgerClosings.delete(sessionId));
+      this.ledgerClosings.set(sessionId, closing);
+    }
+    this.sessionScopes.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
     this.sessionCredentialSources.delete(sessionId);
     this.sessionHostAllowlists.delete(sessionId);
@@ -1178,7 +1252,30 @@ export class AgentBrowserService {
    * first-unknown-page selection. Chained per session, adoptions run in
    * event order and observe each other's registrations.
    */
-  private readonly adoptionChains = new Map<string, Promise<void>>();
+  private readonly adoptionChains = new Map<string, Promise<AdoptedPopup | undefined>>();
+
+  /**
+   * T10 M2: the ledger file of one of this tenant's engagements, open or closed
+   * (survives the session and restarts). NOT_FOUND for another tenant's id: the
+   * path is derived from the caller's tenant, so it cannot name someone else's file.
+   */
+  async engagementLedgerFile(
+    tenantId: string,
+    engagementId: string
+  ): Promise<{ path: string; bytes: number }> {
+    if (this.engagement === undefined || !ENGAGEMENT_ID.test(engagementId))
+      throw new ServiceError('NOT_FOUND', 'Engagement not found');
+    const path = engagementPath(this.engagement.directory, tenantId, engagementId);
+    const info = await lstat(path).catch(() => undefined);
+    if (info === undefined || !info.isFile())
+      throw new ServiceError('NOT_FOUND', 'Engagement not found');
+    return { path, bytes: info.size };
+  }
+
+  private engagementIdOf(sessionId: string): { engagementId: string } | undefined {
+    const ledger = this.sessionLedgers.get(sessionId);
+    return ledger !== undefined ? { engagementId: ledger.engagementId } : undefined;
+  }
 
   private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
@@ -1304,7 +1401,7 @@ export class AgentBrowserService {
       try {
         for await (const event of enginePage.events()) {
           if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted) break;
-          const stamped: EngineEvent = this.secretManager.redact({
+          let stamped: EngineEvent = this.secretManager.redact({
             ...event,
             sessionId,
             pageId,
@@ -1313,9 +1410,25 @@ export class AgentBrowserService {
               : {}),
           });
           if (stamped.type === 'page.created') {
-            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
-              // Adoption is best-effort; the popup stays engine-side only.
-            });
+            const adopted = await this.adoptPopupSerialized(sessionId, event.data).catch(
+              () => undefined
+            );
+            // Public lifecycle evidence uses service handles, never adapter IDs.
+            // No target is invented when an immediate-close popup is already gone.
+            stamped = {
+              ...stamped,
+              pageId: adopted?.pageId ?? pageId,
+              data: {
+                openerPageId: pageId,
+                phase: adopted ? 'registered' : 'unavailable',
+                ...(adopted ? { pageId: adopted.pageId } : {}),
+              },
+            };
+            if (adopted?.startPump)
+              queueMicrotask(() => {
+                if (this.coordinator.get(sessionId) === owner && this.pages.has(adopted.pageId))
+                  this.pumpEvents(sessionId, adopted.pageId, adopted.enginePage);
+              });
           } else if (stamped.type === 'page.destroyed') {
             sawDestroyed = true;
             this.reapPage(sessionId, pageId);
@@ -1386,7 +1499,10 @@ export class AgentBrowserService {
    * previous one settles, in event order, so concurrent popups cannot race
    * on the engine page list. Never throws; the pump keeps flowing.
    */
-  private adoptPopupSerialized(sessionId: string, data: unknown): Promise<void> {
+  private adoptPopupSerialized(
+    sessionId: string,
+    data: unknown
+  ): Promise<AdoptedPopup | undefined> {
     const previous = this.adoptionChains.get(sessionId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
@@ -1400,7 +1516,8 @@ export class AgentBrowserService {
     return next;
   }
 
-  private async adoptPopup(sessionId: string, data: unknown): Promise<void> {
+  private async adoptPopup(sessionId: string, data: unknown): Promise<AdoptedPopup | undefined> {
+    const owner = this.requireSession(sessionId);
     const payload = data as { openerPageId?: unknown; pageId?: unknown } | null;
     const openerEnginePageId = payload?.openerPageId;
     const popupEnginePageId = payload?.pageId;
@@ -1413,9 +1530,9 @@ export class AgentBrowserService {
       return; // Opener already gone; nothing to attach the popup under.
     }
     // Idempotence: a replayed or raced page.created must not double-register.
-    if (owned.some(([, page]) => page.enginePage.id === popupEnginePageId)) {
-      return;
-    }
+    const existing = owned.find(([, page]) => page.enginePage.id === popupEnginePageId);
+    if (existing)
+      return { pageId: existing[0], enginePage: existing[1].enginePage, startPump: false };
     // Cap: runaway popup storms are closed engine-side, never adopted.
     const popupCount = owned.filter(([, page]) => page.openerPageId !== undefined).length;
     if (popupCount >= AgentBrowserService.MAX_POPUPS_PER_SESSION) {
@@ -1440,7 +1557,12 @@ export class AgentBrowserService {
     } catch {
       return; // The engine session is gone; nothing to adopt.
     }
-    if (popup === undefined) {
+    if (
+      popup === undefined ||
+      this.coordinator.get(sessionId) !== owner ||
+      owner.signal.aborted ||
+      this.pages.get(opener[0]) !== opener[1]
+    ) {
       return;
     }
     const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
@@ -1451,7 +1573,7 @@ export class AgentBrowserService {
       history: new Map(),
       openerPageId: opener[0],
     });
-    this.pumpEvents(sessionId, popupPageId, popup);
+    return { pageId: popupPageId, enginePage: popup, startPump: true };
   }
 
   /** Drop a page's registry and churn state (page.destroyed or pump end). */
@@ -1482,10 +1604,34 @@ export class AgentBrowserService {
     reason: string,
     errorDetail?: string
   ): Promise<void> {
+    // T10 M2: a ledgered session keeps its ledger open until the engine session is
+    // gone, so the engine's close-time records (outcomes never observed) are kept.
+    // The scope stops first: no new traffic while the session is torn down.
+    const ledger = this.sessionLedgers.get(sessionId);
+    const scope = this.sessionScopes.get(sessionId);
+    if (ledger !== undefined) {
+      scope?.stop('engine crashed');
+      this.sessionLedgers.delete(sessionId);
+    }
     this.deleteSessionState(sessionId);
-    await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
-      // The session may already be gone; the audit entry stands.
-    });
+    const terminate = () =>
+      this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
+        // The session may already be gone; the audit entry stands.
+      });
+    if (ledger === undefined) {
+      await terminate();
+    } else {
+      // Tracked like any ledger close, so closeSession and shutdown wait for it.
+      const closing = (async () => {
+        await terminate();
+        const status = scope?.status();
+        await ledger
+          .close({ crashed: true, ...(status !== undefined ? { scope: status } : {}) })
+          .catch(() => {});
+      })().finally(() => this.ledgerClosings.delete(sessionId));
+      this.ledgerClosings.set(sessionId, closing);
+      await closing;
+    }
     this.metrics?.incrementCounter('sessions_crashed_total');
     this.logger?.error('session.crashed', { sessionId, reason, errorDetail });
     this.crashLog.push({
@@ -1559,6 +1705,36 @@ export class AgentBrowserService {
 
   // ---- sessions -----------------------------------------------------------
 
+  private scopeOf(sessionId: string): EngagementScopePolicy {
+    if (!this.coordinator.get(sessionId))
+      throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} not found`);
+    const scope = this.sessionScopes.get(sessionId);
+    if (scope === undefined) throw new ServiceError('NOT_FOUND', 'Session has no engagement scope');
+    return scope;
+  }
+
+  /** The scope in effect, budget and denials (T10 M2); never an identity marker value. */
+  getScopeStatus(sessionId: string): EngagementScopeStatus {
+    return this.scopeOf(sessionId).status();
+  }
+
+  /** Dry run: would the scope rules allow this request now? Spends nothing, counts nothing. */
+  checkScope(
+    sessionId: string,
+    request: { url: string; method?: string }
+  ): { allowed: true } | { allowed: false; scope: string } {
+    const scope = this.scopeOf(sessionId);
+    let parsed: URL;
+    try {
+      parsed = new URL(request.url);
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'url must be an absolute http(s) URL');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      throw new ServiceError('INVALID_REQUEST', 'url must be an absolute http(s) URL');
+    return scope.check({ url: parsed.href, ...(request.method ? { method: request.method } : {}) });
+  }
+
   async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
     const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
     if (
@@ -1568,6 +1744,24 @@ export class AgentBrowserService {
         !request.tenantId)
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
+    if (request.scope !== undefined && request.allowServiceWorkers === true)
+      throw new ServiceError(...SCOPE_SERVICE_WORKERS);
+    if (request.scope?.ledger === true && this.engagement === undefined)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'An engagement ledger needs the operator to configure AGENTBROWSER_ENGAGEMENT_DIR.',
+        false,
+        { rule: 'scope.ledger.unconfigured' }
+      );
+    // Fail closed: a lane the ledger cannot record is refused, not left unrecorded.
+    if (request.scope?.ledger === true && request.allowDownloads === true)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'An engagement ledger does not record service-side downloads; create the ledgered session without allowDownloads.',
+        false,
+        { rule: 'scope.ledger.downloads' }
+      );
+
     if (request.cdpAttach === true) {
       if (attachRequestHasOptions(request, this.engine.name))
         throw new ServiceError(...FLOOR_ATTACH_OPTIONS);
@@ -1607,6 +1801,33 @@ export class AgentBrowserService {
         maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       };
       const engine = this.resolveEngine(request.engine);
+      // T10 M2: the ledger is fed by the engine's request recorder, which sees every
+      // outcome (any page, popup or worker) before page attribution. Records that
+      // arrive before the ledger file is open are held and flushed in order.
+      const ledgerFeed =
+        request.scope?.ledger === true
+          ? {
+              ledger: undefined as EngagementLedger | undefined,
+              pending: [] as EngineRequestRecord[],
+            }
+          : undefined;
+      if (ledgerFeed !== undefined) {
+        if ((await engine.capabilities()).requestRecording !== true)
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'The selected engine cannot record every request outcome, so it cannot keep an engagement ledger.',
+            false,
+            { rule: 'scope.ledger.engine' }
+          );
+        engineRequest.requestRecorder = (record) => {
+          const redacted: EngineRequestRecord = {
+            ...record,
+            data: this.secretManager.redactUntrusted(record.data) as Record<string, unknown>,
+          };
+          if (ledgerFeed.ledger !== undefined) ledgerRecord(ledgerFeed.ledger, redacted);
+          else ledgerFeed.pending.push(redacted);
+        };
+      }
       // TD-BROWSER-15: every capability this session asks for must be granted.
       // After the shutdown check and engine resolution, so those refusals keep
       // their precedence, and inside the trace, so denials are recorded.
@@ -1720,6 +1941,42 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (scopedPolicy instanceof EngagementScopePolicy)
+          this.sessionScopes.set(session.sessionId, scopedPolicy);
+        if (
+          request.scope?.ledger === true &&
+          this.engagement !== undefined &&
+          scopedPolicy instanceof EngagementScopePolicy
+        ) {
+          const scope = scopedPolicy;
+          const ledger = await EngagementLedger.open(
+            {
+              directory: this.engagement.directory,
+              maxBytes: this.engagement.maxBytes,
+              tenantId: request.tenantId ?? '',
+              onUnavailable: (reason) => scope.stop(reason === 'full' ? 'full' : 'write failed'),
+            },
+            {
+              sessionId: session.sessionId,
+              ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
+              product: PRODUCT_VERSION,
+              scope: scope.status(),
+            }
+          ).catch(async () => {
+            await this.closeSession(session.sessionId).catch(() => {});
+            throw new ServiceError(
+              'INTERNAL',
+              'The engagement ledger could not be opened; the session was closed.',
+              false,
+              { rule: 'scope.ledger.unavailable' }
+            );
+          });
+          this.sessionLedgers.set(session.sessionId, ledger);
+          if (ledgerFeed !== undefined) {
+            for (const record of ledgerFeed.pending.splice(0)) ledgerRecord(ledger, record);
+            ledgerFeed.ledger = ledger;
+          }
+        }
         if (sessionDisposer !== undefined)
           this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
@@ -1828,6 +2085,7 @@ export class AgentBrowserService {
       ...(this.sessionCredentialSources.get(context.id) !== undefined
         ? { credentialSource: 'operator' as const }
         : {}),
+      ...(this.engagementIdOf(context.id) ?? {}),
       ...(this.projectActionLease(context.id) ?? {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
@@ -1849,12 +2107,17 @@ export class AgentBrowserService {
 
   async closeSession(sessionId: string): Promise<void> {
     this.authority.remove(sessionId);
+    // T10 M2: a ledgered scope takes no new traffic while the session closes;
+    // outcomes of requests already in flight still reach the ledger.
+    if (this.sessionLedgers.has(sessionId))
+      this.sessionScopes.get(sessionId)?.stop('session closing');
     try {
       await this.coordinator.close(sessionId);
     } catch (error) {
       throw this.mapError(error);
     } finally {
       this.deleteSessionState(sessionId);
+      await this.ledgerClosings.get(sessionId);
     }
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
@@ -2262,6 +2525,34 @@ export class AgentBrowserService {
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
+    const recordEffect = (index: number, effect: ServiceActResult) => {
+      this.decayChurn(churnKey);
+      const navigationObservation = parseActionNavigationObservation(effect.navigationObservation);
+      results.push({
+        step: index,
+        ok: true,
+        actionId: effect.actionId,
+        ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
+        ...(effect.result !== undefined ? { result: effect.result } : {}),
+        ...(navigationObservation !== undefined ? { navigationObservation } : {}),
+      });
+      if (navigationObservation !== undefined) {
+        // The effect completed. Keep its receipt and stop before dispatching another
+        // step; this is not a failed binding to heal or an action to replay.
+        return {
+          ok: false,
+          completed: index + 1,
+          results,
+          mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
+          error: {
+            code: 'PLAN_NAVIGATION_BLOCKED',
+            message: `Action completed; a navigation was blocked during the action (${navigationObservation.scope}). Remaining steps were not attempted.`,
+          },
+        };
+      }
+      return undefined;
+    };
     for (const [index, step] of steps.entries()) {
       // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
       // prior step. A caller cannot know the ref of an element that does
@@ -2309,14 +2600,8 @@ export class AgentBrowserService {
       }
       try {
         const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
-        this.decayChurn(churnKey);
-        results.push({
-          step: index,
-          ok: true,
-          actionId: effect.actionId,
-          ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
-          ...(effect.result !== undefined ? { result: effect.result } : {}),
-        });
+        const stopped = recordEffect(index, effect);
+        if (stopped) return stopped;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
@@ -2406,17 +2691,8 @@ export class AgentBrowserService {
                 ...effectiveStep,
                 target: { ref: remapped },
               })) as ServiceActResult;
-              // Fix: the primary success path decays churn (below); the
-              // remap-retry success path did not, so a plan of repeated
-              // remapped steps never cooled back down out of VERIFIED mode.
-              this.decayChurn(churnKey);
-              results.push({
-                step: index,
-                ok: true,
-                actionId: retry.actionId,
-                ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
-                ...(retry.result !== undefined ? { result: retry.result } : {}),
-              });
+              const stopped = recordEffect(index, retry);
+              if (stopped) return stopped;
               continue;
             } catch (retryError) {
               const retryMessage =
@@ -3594,7 +3870,36 @@ export class AgentBrowserService {
     // of silently ignoring the field.
     if (request?.url !== undefined) {
       try {
-        await this.navigate(sessionId, pageId, { url: request.url });
+        const navigation = await this.navigate(sessionId, pageId, { url: request.url });
+        if (navigation.status === 'blocked' || navigation.status === 'timeout') {
+          // Engines may return a failed outcome instead of throwing. Creation
+          // must not turn that outcome into a ready page; use the same bounded
+          // error and teardown path as a thrown navigation failure.
+          const scopeValue = navigation.scope;
+          const scope =
+            navigation.status === 'blocked' && isScopeDenialCode(scopeValue)
+              ? scopeValue
+              : undefined;
+          // navigate() is the single reason normalization point: every
+          // non-success result it returns already carries a valid reason
+          // (its own 'engine_error' fallback included), so no re-validation.
+          const reason = (
+            scope !== undefined ? 'egress_policy' : navigation.reason
+          ) as NavigationFailureReason;
+          const code =
+            navigation.status === 'timeout'
+              ? 'NAVIGATION_TIMEOUT'
+              : reason === 'egress_policy'
+                ? 'POLICY_DENIED'
+                : 'INTERNAL';
+          // One envelope (protocol) for the message and details; the wire
+          // code stays the service-level ProtocolErrorCode above.
+          const detail = navigationFailureDetailFromParts({
+            reason,
+            ...(scope !== undefined ? { scope } : {}),
+          });
+          throw new ServiceError(code, detail.message, detail.retryable, detail.details);
+        }
       } catch (error) {
         if (this.authority.get(sessionId)?.view().state === 'PAUSE_REQUESTED') throw error;
         // Runtime navigate failures (DNS, refused, egress policy) happen
@@ -3737,6 +4042,18 @@ export class AgentBrowserService {
           );
           this.tracer?.endSpan(policySpan);
         }
+        // T10 M2: a navigation the scope refused before the wire is part of the record.
+        const scopeCode = (error as { details?: { scope?: unknown } }).details?.scope;
+        if (isScopeDenialCode(scopeCode)) {
+          const target = new URL(url);
+          this.sessionLedgers.get(sessionId)?.append('preflight.denied', {
+            method: 'GET',
+            url: `${target.origin}${target.pathname}`,
+            hostname,
+            scope: scopeCode,
+            pageId,
+          });
+        }
         throw this.mapError(error);
       }
 
@@ -3773,6 +4090,9 @@ export class AgentBrowserService {
         redirectChain: result.redirectChain,
         ...(result.status !== 'success'
           ? { reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error' }
+          : {}),
+        ...(result.status === 'blocked' && isScopeDenialCode(result.scope)
+          ? { scope: result.scope }
           : {}),
       });
     });
@@ -3967,6 +4287,7 @@ export class AgentBrowserService {
         'visible',
         'enabled',
         'checked',
+        'expanded',
         'context',
       ] as const) {
         const old = before[field];
@@ -4007,6 +4328,7 @@ export class AgentBrowserService {
       const projection = {
         ...(request.roles !== undefined ? { roles: request.roles } : {}),
         ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.text !== undefined ? { text: request.text } : {}),
         ...(request.scopeRef !== undefined ? { scopeRef: request.scopeRef } : {}),
         ...(request.limit !== undefined ? { limit: request.limit } : {}),
         ...(request.includeFields !== undefined ? { includeFields: request.includeFields } : {}),
@@ -4303,6 +4625,11 @@ export class AgentBrowserService {
       page.revision = result.newRevision;
       // T5 B-dur (B2): the effect is done; anything that fails from here on followed it.
       try {
+        const navigationObservation = parseActionNavigationObservation(
+          result.navigationObservation
+        );
+        // Navigation evidence does not satisfy a requested value verification.
+        // Keep the existing post-effect failure and durable unknown classification.
         if (
           request.action === 'fill' &&
           request.expectValue !== undefined &&
@@ -4311,8 +4638,30 @@ export class AgentBrowserService {
           throw new ServiceError(
             'ENGINE_UNSUPPORTED',
             'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
-            false
+            false,
+            navigationObservation !== undefined
+              ? { navigationObservation, actionId: result.actionId }
+              : undefined
           );
+        const receipt: ServiceActResult = {
+          status: 'success',
+          actionId: result.actionId,
+          newRevision: result.newRevision,
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          ...(navigationObservation !== undefined ? { navigationObservation } : {}),
+          // Only publish the comparison boolean, never a field value.
+          ...(request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified === true
+            ? { result: { verified: true } }
+            : {}),
+          ...(request.action === 'upload' && result.result != null
+            ? { result: result.result }
+            : {}),
+        };
+        // Follow-up waits or reads could mask the completed action and its observed
+        // refusal. Return that evidence first so the caller can inspect current state.
+        if (navigationObservation !== undefined) return receipt;
 
         // Post-action wait (spec 11.1): an explicit wait runs to its deadline
         // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
@@ -4334,22 +4683,9 @@ export class AgentBrowserService {
         }
 
         return {
-          status: 'success',
-          actionId: result.actionId,
-          newRevision: result.newRevision,
+          ...receipt,
           observation,
           waitReason,
-          ...(result.remap !== undefined ? { remap: result.remap } : {}),
-          // Only publish the comparison boolean, never a field value.
-          ...(request.action === 'fill' &&
-          request.expectValue !== undefined &&
-          (result.result as { verified?: unknown } | undefined)?.verified === true
-            ? { result: { verified: true } }
-            : {}),
-          // Upload reports its separate attached-file evidence.
-          ...(request.action === 'upload' && result.result != null
-            ? { result: result.result }
-            : {}),
         };
       } catch (error) {
         throw afterEffect(error);
@@ -5272,6 +5608,7 @@ export class AgentBrowserService {
     }
     await this.coordinator.shutdown();
     for (const sessionId of this.sessionDownloadPolicy.keys()) this.deleteSessionState(sessionId);
+    await Promise.allSettled([...this.ledgerClosings.values()]);
     this.pages.clear();
     await this.approvalGate.shutdown();
     // Registry aliases may point to the same engine instance. Every distinct

@@ -15,6 +15,37 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionExecutor } from './action-executor';
 
 describe('ActionExecutor', () => {
+  it('preserves bounded navigation evidence while keeping the completed action successful', async () => {
+    const navigationObservation = {
+      status: 'blocked',
+      reason: 'egress_policy',
+      scope: 'SCOPE_PATH_DENIED',
+      observedDuring: 'action',
+    };
+    vi.mocked(mockEnginePage.act).mockResolvedValue(
+      effect({
+        navigationObservation: {
+          ...navigationObservation,
+          url: 'https://private.invalid/?fixture=hidden',
+        },
+      })
+    );
+    vi.mocked(mockEnginePage.observe).mockRejectedValue(new Error('follow-up read failed'));
+    const result = await executor.execute(
+      req({ type: 'press', key: 'Tab' }, { observeAfter: true }),
+      {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+        currentRevision: 1,
+      }
+    );
+    expect(result).toMatchObject({ actionId: 'act_1', navigationObservation });
+    expect(result.error).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('private.invalid');
+    expect(mockEnginePage.act).toHaveBeenCalledOnce();
+    expect(mockEnginePage.observe).not.toHaveBeenCalled();
+  });
+
   let executor: ActionExecutor;
   let mockEnginePage: EnginePage;
   let mockObservation: PageState;

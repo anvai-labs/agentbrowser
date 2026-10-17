@@ -36,7 +36,20 @@ export type {
 /**
  * Engine session creation options
  */
+/** One request outcome, origin+path only (T10 M2 engagement ledger). */
+export interface EngineRequestRecord {
+  type: 'request.finished' | 'request.failed';
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
 export interface EngineSessionOptions {
+  /**
+   * T10 M2: called for every request outcome in the session — any page,
+   * popup or worker, before any page attribution — so an engagement ledger
+   * misses nothing. Engines advertising `requestRecording` honour it.
+   */
+  requestRecorder?: (record: EngineRequestRecord) => void;
   /** Use the explicitly configured local-operator CDP attachment lane. */
   cdpAttach?: boolean;
   downloadPolicy?: { allow: boolean; maxBytes: number };
@@ -105,6 +118,13 @@ export interface RequestPolicy {
     method?: string;
     headers?: Record<string, string>;
   }): Promise<void>;
+  /**
+   * True when every redirect hop must be checked, including those after a
+   * body-bearing request (POST/PUT/PATCH) that engines hand to the browser
+   * natively. An engine that cannot watch such a request's redirects refuses
+   * the request instead of letting a hop go unchecked. Engagement scopes set it.
+   */
+  readonly requireRedirectGuard?: boolean;
   /** Redirect targets, excluding the initial request; throw before following. */
   checkRedirectChain?(
     requests: Array<{ url: string; hostname?: string; method?: string }>
@@ -153,6 +173,8 @@ export interface NavigationResult {
   url: string;
   redirectChain: string[];
   reason?: import('@agentbrowser/protocol').NavigationFailureReason;
+  /** T10 M2: the engagement-scope sub-code when a scope blocked the navigation. */
+  scope?: import('@agentbrowser/protocol').ScopeDenialCode;
 }
 
 /**
@@ -237,6 +259,8 @@ export interface RawElement {
   hrefTruncated?: boolean;
   /** Checked state for checkbox/radio/switch roles; absent when unknowable (e.g. tri-state mixed). */
   checked?: boolean | undefined;
+  /** Expanded state of a disclosure control (html-summary: whether its details is open). */
+  expanded?: boolean | undefined;
   /**
    * 0-based nesting depth within the element's snapshot block (the a11y tree
    * flattened in document order). Absent means 0 (top level of the block).

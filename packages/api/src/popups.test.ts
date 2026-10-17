@@ -219,3 +219,36 @@ describe('popup lifecycle (F10)', () => {
     expect(ledgers.has(session.sessionId)).toBe(false);
   });
 });
+
+it('reports popup registration with canonical public handles and no OAuth query', async () => {
+  const { service, session, pageId, fakePage } = await setup();
+  try {
+    await fakePage.openPopup();
+    const event = await waitFor(
+      () => service.getSessionEvents(session.sessionId, 'page.created')[0]
+    );
+    const popup = (await service.listPages(session.sessionId)).find(
+      (page) => page.openerPageId === pageId
+    );
+    expect(event.pageId).toBe(popup?.pageId);
+    expect(event.data).toEqual({
+      openerPageId: pageId,
+      pageId: popup?.pageId,
+      phase: 'registered',
+    });
+    fakePage.emitEvent('page.created', {
+      openerPageId: fakePage.id,
+      pageId: 'already-closed',
+      url: 'https://auth.test/?code=private-code&state=private-state',
+    });
+    const gone = await waitFor(() =>
+      service
+        .getSessionEvents(session.sessionId, 'page.created')
+        .find((event) => event.data?.phase === 'unavailable')
+    );
+    expect(gone.data).toEqual({ openerPageId: pageId, phase: 'unavailable' });
+    expect(JSON.stringify(gone)).not.toContain('private');
+  } finally {
+    await service.closeSession(session.sessionId);
+  }
+});

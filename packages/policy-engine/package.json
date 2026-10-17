@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/policy-engine",
-  "version": "1.19.0",
+  "version": "1.23.0",
   "private": true,
   "type": "module",
   "description": "Server policy decisions behind one Authorizer seam (ADR-024)",

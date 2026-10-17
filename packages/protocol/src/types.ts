@@ -144,6 +144,8 @@ export interface EngagementScope {
   /** Total choke-point requests in scope, redirect hops included. */
   requestBudget?: number;
   identityBindings?: ScopeIdentityBinding[];
+  /** T10 M2: record the engagement in a hash-chained, metadata-only ledger (needs AGENTBROWSER_ENGAGEMENT_DIR). */
+  ledger?: boolean;
 }
 
 /**
@@ -222,6 +224,8 @@ export interface EngineCapabilities {
   supportsAccessibilityTree: boolean;
   supportsCdp: boolean;
   supportsCdpAttach?: boolean;
+  /** T10 M2: reports every request outcome through `EngineSessionOptions.requestRecorder`. */
+  requestRecording?: boolean;
   supportedObservationModes: ObservationMode[];
   supportedActionTypes: ActionType[];
   /**
@@ -378,6 +382,8 @@ export interface PageElement {
    * (tri-state mixed, or degraded observations without bound handles).
    */
   checked?: boolean | undefined;
+  /** Disclosure state: role html-summary reports whether its details is open (HTML-AAM). */
+  expanded?: boolean;
   /**
    * 0-based nesting depth within the element's snapshot block (the flattened
    * a11y tree in document order). Absent means 0 (top level of the block).
@@ -864,6 +870,8 @@ export interface ObservationRequest {
    * redaction side channel). Max 200 chars.
    */
   name?: string;
+  /** Explicit substring filter on visible names and non-withheld public values. */
+  text?: string;
   /**
    * Compact projection: scope to this element's subtree — the scope element
    * plus following elements in the same snapshot block with greater depth.
@@ -890,6 +898,8 @@ export interface ObservationRequest {
 export interface ObservationProjectionEcho {
   roles?: string[];
   name?: string;
+  /** Explicit substring filter on visible names and non-withheld public values. */
+  text?: string;
   scopeRef?: string;
   matched: number;
   total: number;
@@ -918,6 +928,8 @@ export interface ActionResult {
   newRevision: number;
   result: unknown;
   navigationStatus?: NavigationStatus;
+  /** A bounded navigation denial observed during dispatch; not a causal assertion. */
+  navigationObservation?: import('./action-navigation.js').ActionNavigationObservation;
   targetFingerprint?: string;
   policyDecision?: PolicyDecision;
   approvalDecision?: ApprovalDecision;
@@ -936,6 +948,7 @@ export interface NavigationStatus {
   url: string;
   redirectChain: string[];
   reason?: import('./navigation-failure.js').NavigationFailureReason;
+  scope?: import('./navigation-failure.js').ScopeDenialCode;
 }
 
 /**
@@ -962,6 +975,7 @@ export interface ApprovalDecision {
  * Artifact reference
  */
 export interface ArtifactRef {
+  file?: { path: string; bytes: number; expiresAt?: number };
   artifactId: string;
   type: 'screenshot' | 'pdf' | 'trace' | 'download' | 'html' | 'dom';
   contentType: string;

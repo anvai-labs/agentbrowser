@@ -217,6 +217,8 @@ export const SessionViewSchema = Type.Object({
    * credentials, where high-risk and unknown actions are operator-reviewed.
    */
   credentialSource: Type.Optional(Type.Literal('operator')),
+  /** T10 M2: this session's engagement ledger, when `policy.scope.ledger` opened one. */
+  engagementId: Type.Optional(Type.String({ pattern: '^eng_[0-9a-f]{24}$' })),
   /** The operator-granted action lease, projected with its remaining count. */
   actionLease: Type.Optional(ActionLeaseSchema),
   /** Derived from the action lease at projection time; never stored as a countdown. */
