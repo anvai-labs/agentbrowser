@@ -238,6 +238,38 @@ describe('AgentBrowser MCP server', () => {
       expect(JSON.stringify(result.structuredContent)).not.toContain('privateReason');
     });
 
+    it('carries a bounded scope sub-code on structured errors, and nothing unlisted (T10 M2)', async () => {
+      await initialize('2025-06-18');
+      sessions.executeAction = vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('SCOPE_METHOD_DENIED: method DELETE is outside the scope'), {
+            code: 'POLICY_DENIED',
+            details: { reason: 'egress_policy', scope: 'SCOPE_METHOD_DENIED' },
+          })
+        )
+        .mockRejectedValueOnce(
+          Object.assign(new Error('denied'), {
+            code: 'POLICY_DENIED',
+            details: { scope: 'SCOPE_INVENTED host=10.0.0.1' },
+          })
+        );
+      const act = () =>
+        call('act-scope', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'click',
+          target: { ref: 'e1_0' },
+        }).then((text) => JSON.parse(text).result);
+      expect((await act()).structuredContent.error).toMatchObject({
+        code: 'POLICY_DENIED',
+        details: { scope: 'SCOPE_METHOD_DENIED' },
+      });
+      const unlisted = await act();
+      expect(unlisted.structuredContent.error.details).toBeUndefined();
+      expect(JSON.stringify(unlisted.structuredContent)).not.toContain('SCOPE_INVENTED');
+    });
+
     it.each([true, false])(
       'retains complete receipts and text for a report with ok=%s',
       async (ok) => {

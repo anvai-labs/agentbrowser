@@ -7,7 +7,7 @@
 
 import { type Static, type TSchema, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { NavigationFailureReasonSchema } from './navigation-failure.js';
+import { NavigationFailureReasonSchema, SCOPE_DENIAL_CODES } from './navigation-failure.js';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_INCLUDES,
@@ -817,6 +817,8 @@ export const NavigationStatusSchema = Type.Object({
   url: Type.String({ pattern: '^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$' }),
   redirectChain: Type.Array(Type.String()),
   reason: Type.Optional(NavigationFailureReasonSchema),
+  // T10 M2: which engagement-scope rule blocked the navigation, when one did.
+  scope: Type.Optional(Type.Union(SCOPE_DENIAL_CODES.map((code) => Type.Literal(code)))),
 });
 
 /**

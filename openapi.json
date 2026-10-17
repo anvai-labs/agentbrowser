@@ -11670,6 +11670,34 @@
                     "type": "string"
                   }
                 ]
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "SCOPE_HOST_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_PATH_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_METHOD_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_IDENTITY_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_EXPIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                    "type": "string"
+                  }
+                ]
               }
             }
           },
@@ -12426,6 +12454,34 @@
               },
               {
                 "const": "engine_error",
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "const": "SCOPE_HOST_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_PATH_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_METHOD_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_IDENTITY_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_EXPIRED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_BUDGET_EXHAUSTED",
                 "type": "string"
               }
             ]

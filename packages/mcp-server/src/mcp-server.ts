@@ -27,6 +27,7 @@ import {
   formatErrorForUser,
   formatSessionTerminalFailure,
   INTERACTION_GUIDANCE,
+  isScopeDenialCode,
   NavigationStatusSchema,
   navigationFailureDetail,
   ObservationRequestSchema,
@@ -1278,6 +1279,8 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             // the redacted message text.
             const operationId = (err as { details?: { operationId?: unknown } }).details
               ?.operationId;
+            // T10 M2: a bounded engagement-scope sub-code is safe structured detail.
+            const scope = (err as { details?: { scope?: unknown } }).details?.scope;
             return ok(
               message.id,
               errorResult(
@@ -1287,6 +1290,8 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
                       code,
                       message: formatErrorForUser(err),
                       ...(typeof operationId === 'string' ? { operationId } : {}),
+                      // Same place as navigate's refusal: error.details.scope.
+                      ...(isScopeDenialCode(scope) ? { details: { scope } } : {}),
                     }
                   : undefined,
                 protocolVersion === STRUCTURED_PROTOCOL_VERSION
@@ -1349,7 +1354,12 @@ function navigationErrorResult(detail: NonNullable<ReturnType<typeof navigationF
 
 function errorResult(
   message: string,
-  structuredError?: { code: string; message: string; operationId?: string },
+  structuredError?: {
+    code: string;
+    message: string;
+    operationId?: string;
+    details?: { scope: string };
+  },
   structuredProtocol = false
 ) {
   return {

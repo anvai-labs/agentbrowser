@@ -325,4 +325,42 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
       await closeFixture(fixture);
     }
   }, 60_000);
+
+  it('T10 M2: a wire-level scope denial carries its sub-code — blocked navigation and request event', async () => {
+    const fixture = await startFixture();
+    try {
+      const scope = new EngagementScopePolicy(new NetworkPolicy({ blockLoopback: false }), {
+        allowedHosts: [IN_HOST],
+      });
+      await withSession(scope, async (page) => {
+        const failures: Array<Record<string, unknown>> = [];
+        const collector = (async () => {
+          for await (const event of page.events()) {
+            if (event.type === 'request.failed')
+              failures.push((event.data ?? {}) as Record<string, unknown>);
+          }
+        })();
+        collector.catch(() => {});
+        // An in-scope GET redirected out of scope: the walker's hop verdict.
+        const blocked = await page.navigate({ url: fixture.url('/redirect-out') });
+        expect(blocked).toMatchObject({
+          status: 'blocked',
+          reason: 'egress_policy',
+          scope: 'SCOPE_HOST_DENIED',
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(failures.some((failure) => failure.scope === 'SCOPE_HOST_DENIED')).toBe(true);
+        // A subresource denied at its initial request: an in-scope page whose
+        // frame points out of scope (the initial verdict, not a hop).
+        failures.length = 0;
+        await page.navigate({ url: fixture.url('/frame-out') });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const initial = failures.find((failure) => String(failure.url).endsWith('/frame-leak'));
+        expect(initial).toMatchObject({ blocked: true, scope: 'SCOPE_HOST_DENIED' });
+        expect(initial?.redirect).toBeUndefined();
+      });
+    } finally {
+      await closeFixture(fixture);
+    }
+  }, 60_000);
 });

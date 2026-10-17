@@ -160,6 +160,8 @@ export interface NavigationResult {
   url: string;
   redirectChain: string[];
   reason?: import('@agentbrowser/protocol').NavigationFailureReason;
+  /** T10 M2: the engagement-scope sub-code when a scope blocked the navigation. */
+  scope?: import('@agentbrowser/protocol').ScopeDenialCode;
 }
 
 /**
