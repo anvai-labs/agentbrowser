@@ -114,3 +114,20 @@ describe('EngagementScopePolicy status and dry-run check', () => {
     expect(scope.status().denials).toEqual({});
   });
 });
+
+describe('stop: the ledger fails the scope closed (T10 M2)', () => {
+  it('denies every later request and the dry run, and never reopens', async () => {
+    const scope = new EngagementScopePolicy(base(), { allowedHosts: ['in.example'] });
+    await scope.checkRequest({ hostname: 'in.example', url: 'http://in.example/a' });
+    scope.stop('full');
+    scope.stop('later reason is ignored');
+    await expect(
+      scope.checkRequest({ hostname: 'in.example', url: 'http://in.example/b' })
+    ).rejects.toMatchObject({ details: { scope: 'SCOPE_LEDGER_UNAVAILABLE' } });
+    expect(scope.check({ url: 'http://in.example/c' })).toEqual({
+      allowed: false,
+      scope: 'SCOPE_LEDGER_UNAVAILABLE',
+    });
+    expect(scope.status().denials).toEqual({ SCOPE_LEDGER_UNAVAILABLE: 1 });
+  });
+});

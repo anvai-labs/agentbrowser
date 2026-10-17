@@ -60,6 +60,8 @@ export interface EngagementScopeStatus {
   budget?: { limit: number; spent: number; remaining: number };
   /** Denials on the wire and in the navigation preflight, by sub-code. */
   denials: Record<string, number>;
+  /** Why all traffic stopped (the ledger is full or failed, or the session is closing). */
+  stopped?: string;
 }
 
 const DENIED = 'POLICY_DENIED' as const;
@@ -87,6 +89,7 @@ export const SCOPE_SUBCODES = Object.freeze([
   'SCOPE_IDENTITY_DENIED',
   'SCOPE_EXPIRED',
   'SCOPE_BUDGET_EXHAUSTED',
+  'SCOPE_LEDGER_UNAVAILABLE',
 ] as const);
 export type ScopeSubCode = (typeof SCOPE_SUBCODES)[number];
 
@@ -158,6 +161,16 @@ export class EngagementScopePolicy {
 
   /** Denials raised on the wire or in the navigation preflight, by sub-code. */
   private readonly denials = new Map<string, number>();
+  /** Set once the engagement ledger cannot take more traffic (T10 M2): fail closed. */
+  private stopped: string | undefined;
+
+  /**
+   * Stops all further traffic in this scope (the engagement ledger is full or
+   * failed). One-way: a stopped scope never reopens.
+   */
+  stop(reason: string): void {
+    this.stopped ??= reason;
+  }
 
   /** The rules, counted: a denial is recorded by sub-code before it is thrown. */
   private denyIf(request: {
@@ -200,6 +213,7 @@ export class EngagementScopePolicy {
           }
         : {}),
       denials: Object.fromEntries(this.denials),
+      ...(this.stopped !== undefined ? { stopped: this.stopped } : {}),
     };
   }
 
@@ -234,6 +248,12 @@ export class EngagementScopePolicy {
     method?: string;
     headers?: Record<string, string>;
   }): void {
+    if (this.stopped !== undefined) {
+      throw scopeDenial(
+        'SCOPE_LEDGER_UNAVAILABLE',
+        `the engagement ledger cannot record more traffic (${this.stopped})`
+      );
+    }
     if (this.expiresAt !== undefined && this.now() >= this.expiresAt) {
       throw scopeDenial('SCOPE_EXPIRED', `engagement scope expired at ${this.expiresAt}`);
     }

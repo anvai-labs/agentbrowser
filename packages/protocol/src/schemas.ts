@@ -134,6 +134,9 @@ export const EngagementScopeSchema = Type.Object({
   // Total choke-point requests in scope, redirect hops included.
   requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
   identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
+  // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
+  // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
+  ledger: Type.Optional(Type.Boolean()),
 });
 
 // T10 M2: the scope in effect for a session (GET /v1/sessions/{id}/scope).
@@ -164,6 +167,8 @@ export const EngagementScopeStatusSchema = Type.Object(
     ),
     // Denials on the wire and in the navigation preflight, by sub-code.
     denials: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+    // T10 M2: why all traffic stopped (ledger full or failed, session closing).
+    stopped: Type.Optional(Type.String()),
   },
   { additionalProperties: false }
 );
@@ -302,6 +307,7 @@ export const EngineCapabilitiesSchema = Type.Object({
   supportsAccessibilityTree: Type.Boolean(),
   supportsCdp: Type.Boolean(),
   supportsCdpAttach: Type.Optional(Type.Boolean()),
+  requestRecording: Type.Optional(Type.Boolean()),
   supportedObservationModes: Type.Array(ObservationModeSchema, { minItems: 1 }),
   supportedActionTypes: Type.Array(ActionTypeSchema, { minItems: 1 }),
 });

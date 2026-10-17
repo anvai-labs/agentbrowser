@@ -743,6 +743,48 @@ judges the host, path, method (default `GET`), expiry and budget rules; it does 
 identity bindings (no headers are taken), and the base policy and DNS still apply when the
 request is made.
 
+**Engagement ledger (T10 M2).** A scoped session created with `policy.scope.ledger: true`
+writes an append-only, hash-chained record of its traffic decisions — metadata only.
+
+| Setting | Meaning |
+| --- | --- |
+| `AGENTBROWSER_ENGAGEMENT_DIR` | existing private local directory (absolute, a real directory, not group/world writable). Unset: `scope.ledger` is refused (`400`, `scope.ledger.unconfigured`) |
+| `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` | per-engagement cap, 1 MiB–1 GiB (default 64 MiB) |
+
+```
+<dir>/<sha256(tenant)[:32]>/eng_<24 hex>.jsonl     file 0600, directories 0700
+{seq, at, type, data, prev, hash}    hash = sha256(prev + "\n" + {seq,at,type,data})
+engagement.opened → request … preflight.denied … → engagement.closed
+```
+
+| Record | Data |
+| --- | --- |
+| `engagement.opened` | engagement and session ids, tenant, product version, the scope status (no identity values) |
+| `request` | outcome, method, origin+path, host, resource type, status, bytes, blocked, reason, scope sub-code, redirect |
+| `preflight.denied` | a navigation the scope refused before the wire |
+| `engagement.closed` | the scope status at close, record count, dropped count, state |
+
+- **Never written:** request or response bodies, query strings, identity marker values.
+- **Fails closed:** within 64 KiB of the cap (or on a write error) the scope stops all further
+  traffic (`SCOPE_LEDGER_UNAVAILABLE`); records still in flight are written up to the cap and any
+  beyond it are counted in the closing record.
+- **Records what it allows:** an engine request recorder feeds the ledger before page
+  attribution (popups not yet adopted, workers), and for POST/PUT/PATCH the redirect guard
+  records each response of the chain (status, allowed redirect, block). Lanes it cannot
+  record are refused: `allowDownloads` (`scope.ledger.downloads`) and engines without request
+  recording (`scope.ledger.engine`). At close the scope stops first, then the file is closed.
+- **The session view** carries `engagementId`. Files stay after the session closes; retention and
+  deletion are the operator's.
+
+| Limit (stated, not hidden) | Meaning |
+| --- | --- |
+| Not keyed, not anchored | the chain detects edits, removals, reorderings and reformatting that do not rewrite it; whoever can write the file can rewrite and re-hash it. Keep the directory owner-only (enforced: mode 0700, owned by the server user, no symlinked component) and copy exports elsewhere |
+| Truncation | a ledger cut short (or a crash) verifies with `closed: false` — treat a missing `engagement.closed` as incomplete |
+| Durability | writes are flushed to the file as they happen; `fsync` runs at close only |
+| Paths | origin+path is recorded; a secret carried in a path segment (e.g. `/reset/<token>`) is written
+| Close race | a request already in flight at the instant the browser context closes can reach the target without a recorded outcome (Playwright/Chromium teardown; observed 0–7 of ~140 in a stress test, never out of scope). The scope stops new traffic first |
+| Platforms | refused on Windows: directory privacy is checked with POSIX mode and owner |
+
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an
 engine-construction option with no REST/MCP/env surface, and selecting
