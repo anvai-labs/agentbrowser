@@ -340,12 +340,25 @@ class HttpClient {
       if (!response.ok) {
         let error: ApiError;
         try {
-          const data = (await response.json()) as { error?: ApiError };
-          error = data.error || {
-            code: 'UNKNOWN_ERROR',
-            message: 'Unknown error',
-            retryable: false,
-          };
+          const data = (await response.json()) as { error?: unknown };
+          // Only a structured ApiError is trusted as one; anything else (a proxy or
+          // framework body such as 431 {"error":"Request Header Fields Too Large"})
+          // reports the HTTP status instead of an undefined code and message.
+          const candidate = data.error as Partial<ApiError> | undefined;
+          error =
+            candidate !== null &&
+            typeof candidate === 'object' &&
+            typeof candidate.code === 'string' &&
+            typeof candidate.message === 'string'
+              ? (candidate as ApiError)
+              : {
+                  code: 'UNKNOWN_ERROR',
+                  message:
+                    data.error === undefined
+                      ? 'Unknown error'
+                      : `HTTP ${response.status}: ${typeof data.error === 'string' ? data.error : response.statusText}`,
+                  retryable: false,
+                };
         } catch (cause) {
           if (controller.signal.aborted) throw cause;
           error = {
@@ -466,7 +479,7 @@ export class SessionsClient {
 
   /** T10 M2: the engagement scope in effect, budget and denials (never a marker value). */
   async scopeStatus(sessionId: string): Promise<EngagementScopeStatus> {
-    return this.http.requestJson(`/v1/sessions/${sessionId}/scope`);
+    return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/scope`);
   }
 
   /** T10 M2: dry run of the scope rules; spends no budget and records no denial. */
@@ -476,7 +489,9 @@ export class SessionsClient {
   ): Promise<ScopeCheckResult> {
     const query = new URLSearchParams({ url: request.url });
     if (request.method !== undefined) query.set('method', request.method);
-    return this.http.requestJson(`/v1/sessions/${sessionId}/scope/check?${query}`);
+    return this.http.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/scope/check?${query}`
+    );
   }
   async takeover(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/takeover`, { method: 'POST' });

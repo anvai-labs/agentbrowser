@@ -769,6 +769,15 @@ describe('AgentBrowser MCP server', () => {
         await call('scope-bad', 'scope', { sessionId: 'ses_1', method: 'POST' })
       ).result;
       expect(methodOnly.isError).toBe(true);
+      const numericMethod = JSON.parse(
+        await call('scope-num', 'scope', {
+          sessionId: 'ses_1',
+          url: 'https://b.example/',
+          method: 123,
+        })
+      ).result;
+      expect(numericMethod.isError).toBe(true);
+      expect(sessions.checkScope).toHaveBeenCalledTimes(1);
       server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'application' });
       const names = JSON.parse(await request('scope-app', 'tools/list')).result.tools.map(
         (tool: { name: string }) => tool.name

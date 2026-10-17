@@ -42,3 +42,35 @@ describe('scope status and check (T10 M2)', () => {
     expect(url.searchParams.get('method')).toBe('POST');
   });
 });
+
+describe('non-standard error bodies (T10 M2)', () => {
+  const original = global.fetch;
+  afterEach(() => {
+    global.fetch = original;
+  });
+
+  it('reports the HTTP status, not undefined, for a framework 431 body', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 431,
+      statusText: 'Request Header Fields Too Large',
+      json: async () => ({ error: 'Request Header Fields Too Large', statusCode: 431 }),
+    }) as unknown as typeof fetch;
+    const client = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
+    await expect(
+      client.sessions.checkScope('ses_1', { url: `https://a.example/${'x'.repeat(10)}` })
+    ).rejects.toMatchObject({
+      code: 'UNKNOWN_ERROR',
+      message: 'UNKNOWN_ERROR: HTTP 431: Request Header Fields Too Large',
+    });
+  });
+
+  it('encodes the session id in the path', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await new AgentBrowserClient({ baseUrl: 'http://localhost:5709' }).sessions.scopeStatus(
+      'a/../b'
+    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:5709/v1/sessions/a%2F..%2Fb/scope');
+  });
+});

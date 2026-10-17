@@ -1026,6 +1026,8 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         const sessionId = requireSessionId(args);
         if (args.method !== undefined && args.url === undefined)
           throw new UsageError('method needs url');
+        if (args.method !== undefined && typeof args.method !== 'string')
+          throw new UsageError('method must be a string');
         if (args.url !== undefined) {
           if (typeof args.url !== 'string') throw new UsageError('url must be a string');
           if (!client.sessions.checkScope)
