@@ -455,11 +455,38 @@ export interface CookieHandoffResult {
   lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
 }
 
+/** T10 M2: GET /v1/sessions/{sessionId}/scope. */
+export interface EngagementScopeStatus {
+  allowedHosts: string[];
+  pathRules: Array<{ hostSuffix?: string; prefix: string }>;
+  allowedMethods?: string[];
+  identityBindings: Array<{ header: string; allowedHosts: string[] }>;
+  expiresAt?: number;
+  expired: boolean;
+  budget?: { limit: number; spent: number; remaining: number };
+  denials: Record<string, number>;
+}
+
 export class SessionsClient {
   constructor(private readonly http: HttpClient) {}
 
   async control(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control`);
+  }
+
+  /** T10 M2: the engagement scope in effect, budget and denials (never a marker value). */
+  async scopeStatus(sessionId: string): Promise<EngagementScopeStatus> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/scope`);
+  }
+
+  /** T10 M2: dry run of the scope rules; spends no budget and records no denial. */
+  async checkScope(
+    sessionId: string,
+    request: { url: string; method?: string }
+  ): Promise<{ allowed: true } | { allowed: false; scope: string }> {
+    const query = new URLSearchParams({ url: request.url });
+    if (request.method !== undefined) query.set('method', request.method);
+    return this.http.requestJson(`/v1/sessions/${sessionId}/scope/check?${query}`);
   }
   async takeover(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/takeover`, { method: 'POST' });

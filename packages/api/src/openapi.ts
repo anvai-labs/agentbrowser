@@ -25,6 +25,7 @@ import {
   ControlViewSchema,
   DELIVERED_EXTRACT_FORMATS,
   ElementTargetSchema,
+  EngagementScopeStatusSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   EVENT_REPLAY_MIN_SINCE,
@@ -45,6 +46,7 @@ import {
   PlanReportSchema,
   PlanRequestSchema,
   PlanStepSchema,
+  ScopeCheckResultSchema,
   ScreenshotRequestSchema,
   SessionDiagnosticsSchema,
   SessionEventsPageSchema,
@@ -682,6 +684,44 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/scope': {
+        get: {
+          operationId: 'getSessionScope',
+          summary: 'Read the engagement scope in effect, its budget and denials',
+          description:
+            'T10 M2. Identity bindings report header and hosts only; a marker value is never returned. 404 when the session has no engagement scope.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          responses: {
+            '200': {
+              description: 'The scope status.',
+              content: json(ref('EngagementScopeStatus')),
+            },
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/scope/check': {
+        get: {
+          operationId: 'checkSessionScope',
+          summary: 'Dry run: would the scope rules allow this request now?',
+          description:
+            'T10 M2. Spends no budget and records no denial. Judges the scope rules only; the base policy and DNS still apply when the request is made.',
+          tags: ['sessions'],
+          parameters: [
+            sessionIdParam,
+            { name: 'url', in: 'query', required: true, schema: { type: 'string' } },
+            { name: 'method', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'The verdict.', content: json(ref('ScopeCheckResult')) },
+            '400': errorResponse('url is not an absolute http(s) URL, or method is invalid.'),
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
       '/v1/sessions/{sessionId}': {
         get: {
           operationId: 'getSession',
@@ -2092,6 +2132,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       schemas: {
         // Straight from the protocol - these are already JSON Schema 2020-12.
         ControlView: ControlViewSchema,
+        EngagementScopeStatus: EngagementScopeStatusSchema,
+        ScopeCheckResult: ScopeCheckResultSchema,
         ControlReview: ControlReviewSchema,
         ControlGrant: ControlGrantSchema,
         OperatorApprovalDecision: OperatorApprovalDecisionSchema,

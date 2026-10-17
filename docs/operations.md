@@ -732,6 +732,14 @@ and its stated residuals.
 | `+ cdpAttach` | refused, `400 INVALID_REQUEST`, `floor.cdp.options` |
 | `+ allowServiceWorkers: true` | refused, `400 INVALID_REQUEST`, `scope.lane.serviceWorkers` |
 
+| Read the scope (T10 M2) | REST | SDK | CLI |
+| --- | --- | --- | --- |
+| scope in effect, budget used/remaining, expiry, denials by sub-code | `GET /v1/sessions/{id}/scope` | `sessions.scopeStatus(id)` | `session scope <id>` |
+| dry run: would the scope rules allow this now? (no budget, no denial counted) | `GET /v1/sessions/{id}/scope/check?url=…&method=…` | `sessions.checkScope(id, {url, method})` | `session scope-check <id> <url> [--method M]` |
+
+Identity bindings report header and hosts only; a marker value is never returned. The dry run
+judges the scope rules only: the base policy and DNS still apply when the request is made.
+
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an
 engine-construction option with no REST/MCP/env surface, and selecting
