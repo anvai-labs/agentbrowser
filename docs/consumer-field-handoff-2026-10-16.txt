@@ -321,3 +321,13 @@ INDEPENDENT ADVERSARIAL REVIEW (PR #552)
   No other confirmed blocker in read recovery, autofill uncertainty or popup IDs.
 - PR: https://github.com/anvai-labs/agentbrowser/pull/552. New head validation and
   remote CI follow the review fix; publication still uses existing release gates.
+
+REVIEW FIX VALIDATION / RELEASE PREPARATION
+- 038f857e passed full type-check, lint, build and workspace tests: 5,780 passing,
+  20 platform/optional skips. Cache tests: 6; MCP tests: 216. Independent review
+  is complete with both confirmed P2 blockers resolved and no remaining blockers.
+- Preparing product version 1.22.0 in PR #552, including CLI migration notes and
+  the scope-reporting changes already on develop. This is a release candidate,
+  not a publication claim. Final-head CI, promotion to main, tag ancestry/version
+  checks and the owner-gated npm environment must pass before release completion.
+- Publication must not replace or restart the active headed consumer service.
