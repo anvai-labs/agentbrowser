@@ -231,6 +231,10 @@ describe('scope status contract (ADR-015)', () => {
         },
       });
       expect(dots.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
 
   it('accepts the T10 M3 program fields, echoes them in status, and the dry run applies them', async () => {
     const { app, call } = await harness();
@@ -300,8 +304,13 @@ describe('scope status contract (ADR-015)', () => {
     ],
     [
       'an unknown program field',
-      { program: { id: 'p', authorizedBy: 'r', authorizedAt: 'x', scopeUrl: 'u' } },
+      { program: { id: 'p', authorizedBy: 'r', authorizedAt: '2026-10-17', scopeUrl: 'u' } },
     ],
+    [
+      'a program authorizedAt that is not a date',
+      { program: { id: 'p', authorizedBy: 'r', authorizedAt: 'yesterday' } },
+    ],
+    ['an exclusion prefix without "/"', { excludePaths: [{ prefix: 'admin' }] }],
   ])('refuses %s', async (_what, extra) => {
     const { app, call } = await harness();
     try {

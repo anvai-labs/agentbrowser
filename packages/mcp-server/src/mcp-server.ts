@@ -376,10 +376,11 @@ export function buildTools(
                 items: {
                   type: 'object',
                   properties: {
-                    hostSuffix: { type: 'string', minLength: 2 },
-                    prefix: { type: 'string', minLength: 1 },
+                    hostSuffix: { type: 'string', minLength: 2, pattern: '[A-Za-z0-9]' },
+                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
                   },
                   required: ['prefix'],
+                  additionalProperties: false,
                 },
                 minItems: 1,
               },
@@ -396,12 +397,18 @@ export function buildTools(
               program: {
                 type: 'object',
                 properties: {
-                  id: { type: 'string', minLength: 1 },
-                  version: { type: 'string', minLength: 1 },
-                  authorizedBy: { type: 'string', minLength: 1 },
-                  authorizedAt: { type: 'string', minLength: 1 },
+                  id: { type: 'string', minLength: 1, maxLength: 200 },
+                  version: { type: 'string', minLength: 1, maxLength: 200 },
+                  authorizedBy: { type: 'string', minLength: 1, maxLength: 200 },
+                  authorizedAt: {
+                    type: 'string',
+                    maxLength: 64,
+                    pattern:
+                      '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
+                  },
                 },
                 required: ['id', 'authorizedBy', 'authorizedAt'],
+                additionalProperties: false,
               },
             },
             required: ['allowedHosts'],

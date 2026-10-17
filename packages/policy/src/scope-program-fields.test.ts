@@ -171,4 +171,47 @@ describe('EngagementScopePolicy program fields (T10 M3)', () => {
       expect(status).not.toHaveProperty(key);
     }
   });
+
+  it('an exclusion catches re-spelled paths: encoding, case, separators, parameters', async () => {
+    const scope = new EngagementScopePolicy(base(), {
+      allowedHosts: ['app.example'],
+      excludePaths: [{ prefix: '/admin' }, { prefix: '/Private/' }],
+    });
+    for (const path of [
+      '/%61dmin',
+      '/%2561dmin',
+      '/Admin',
+      '/ADMIN/users',
+      '//admin',
+      '/admin;x=1',
+      '/admin;jsessionid=1/users',
+      '/admin%2f',
+      '/admin%2Fusers',
+      '/x/..%2fadmin',
+      '/private/a',
+      '/%70rivate/a',
+    ]) {
+      await expect(
+        scope.checkRequest(req(`https://app.example${path}`)),
+        path
+      ).rejects.toMatchObject(denied('SCOPE_PATH_DENIED'));
+    }
+    // Segment boundary still holds after canonicalization.
+    await scope.checkRequest(req('https://app.example/administrator'));
+    await scope.checkRequest(req('https://app.example/%61dministrator'));
+  });
+
+  it('exclusion hosts bind regardless of case or a trailing dot', async () => {
+    const scope = new EngagementScopePolicy(base(), {
+      allowedHosts: ['app.example', 'other.example'],
+      excludeHosts: ['OTHER.example.'],
+      excludePaths: [{ prefix: '/x', hostSuffix: 'APP.example.' }],
+    });
+    await expect(scope.checkRequest(req('https://other.example/'))).rejects.toMatchObject(
+      denied('SCOPE_HOST_DENIED')
+    );
+    await expect(scope.checkRequest(req('https://app.example/x'))).rejects.toMatchObject(
+      denied('SCOPE_PATH_DENIED')
+    );
+  });
 });

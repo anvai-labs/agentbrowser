@@ -51,6 +51,10 @@ session request can no longer carry a restriction the server ignores. **Upgradin
 | `program` | metadata only: `{id, version?, authorizedBy, authorizedAt}` | — |
 
 - No new sub-codes. Each field can only narrow, and fails closed when a request carries no URL.
+- Exclusions match a canonical path (percent-decoded, case-folded, `//` and `\` collapsed,
+  `;params` cut, dot segments resolved), so re-spelled paths cannot slip past them; exclusion
+  hosts are normalized like every configured host. `program.authorizedAt` must be an ISO 8601
+  date or date-time.
 - All five fields are reported by the scope status (REST, SDK, CLI `session scope`, MCP `scope`)
   and in the ledger's `engagement.opened` snapshot.
 - Accepted on `POST /v1/sessions`, MCP `create`, and CLI `--scope-file`.

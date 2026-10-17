@@ -6947,10 +6947,12 @@
               "properties": {
                 "hostSuffix": {
                   "minLength": 2,
+                  "pattern": "[A-Za-z0-9]",
                   "type": "string"
                 },
                 "prefix": {
                   "minLength": 1,
+                  "pattern": "^/",
                   "type": "string"
                 }
               }
@@ -6993,8 +6995,8 @@
                 "type": "string"
               },
               "authorizedAt": {
-                "minLength": 1,
                 "maxLength": 64,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$",
                 "type": "string"
               }
             }
@@ -8920,10 +8922,12 @@
                       "properties": {
                         "hostSuffix": {
                           "minLength": 2,
+                          "pattern": "[A-Za-z0-9]",
                           "type": "string"
                         },
                         "prefix": {
                           "minLength": 1,
+                          "pattern": "^/",
                           "type": "string"
                         }
                       }
@@ -8971,8 +8975,8 @@
                         "type": "string"
                       },
                       "authorizedAt": {
-                        "minLength": 1,
                         "maxLength": 64,
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$",
                         "type": "string"
                       }
                     }

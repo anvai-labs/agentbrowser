@@ -90,6 +90,32 @@ export interface EngagementScopeStatus {
 
 const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 };
 
+/**
+ * The path an exclusion is matched against: every spelling a server might route to the
+ * same resource collapses to one form. Percent-escapes are decoded (repeatedly, for
+ * double encoding), case is folded, "\\" and repeated "/" become one "/", ";params" are
+ * cut from each segment and dot segments resolved. Over-matching only narrows the scope,
+ * so exclusions err toward matching; allow-side rules keep the literal path.
+ */
+const canonicalPath = (pathname: string): string => {
+  let path = pathname;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const decoded = path.replace(/%([0-9A-Fa-f]{2})/g, (_m, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16))
+    );
+    if (decoded === path) break;
+    path = decoded;
+  }
+  const segments: string[] = [];
+  for (const raw of path.toLowerCase().replace(/\\/g, '/').split('/')) {
+    const segment = raw.split(';')[0] ?? '';
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') segments.pop();
+    else segments.push(segment);
+  }
+  return `/${segments.join('/')}`;
+};
+
 /** Segment-bounded prefix: "/api" admits "/api" and "/api/x", never "/apix". */
 const underPrefix = (pathname: string, prefix: string): boolean =>
   pathname === prefix ||
@@ -233,8 +259,11 @@ export class EngagementScopePolicy {
     this.expiresAt = scope.expiresAt;
     this.now = scope.now ?? Date.now;
     this.budget = scope.requestBudget;
-    this.excludedHosts = (scope.excludeHosts ?? []).map((host) => host.toLowerCase());
-    this.excludedPaths = scope.excludePaths ?? [];
+    this.excludedHosts = (scope.excludeHosts ?? []).map(normalizeHost);
+    this.excludedPaths = (scope.excludePaths ?? []).map((rule) => ({
+      ...rule,
+      ...(rule.hostSuffix !== undefined ? { hostSuffix: normalizeHost(rule.hostSuffix) } : {}),
+    }));
     this.schemes =
       scope.allowedSchemes !== undefined
         ? new Set(scope.allowedSchemes.map((s) => s.toLowerCase()))
@@ -414,11 +443,12 @@ export class EngagementScopePolicy {
         throw scopeDenial('SCOPE_PATH_DENIED', `path on ${hostname} cannot be checked (no URL)`);
       }
       const pathname = new URL(request.url).pathname;
-      const excluded = this.excludedPaths.some(
-        (rule) =>
-          (rule.hostSuffix === undefined || hostMatches(hostname, rule.hostSuffix)) &&
-          underPrefix(pathname, rule.prefix)
-      );
+      const canonical = canonicalPath(pathname);
+      const excluded = this.excludedPaths.some((rule) => {
+        if (rule.hostSuffix !== undefined && !hostMatches(hostname, rule.hostSuffix)) return false;
+        const prefix = canonicalPath(rule.prefix);
+        return prefix === '/' || underPrefix(canonical, prefix);
+      });
       if (excluded) {
         throw scopeDenial(
           'SCOPE_PATH_DENIED',
