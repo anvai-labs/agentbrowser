@@ -142,6 +142,7 @@ import {
   TenantBindingAuthorizer,
 } from '@agentbrowser/policy-engine';
 import type {
+  ActionNavigationObservation,
   ObservationRequest,
   OperatorApprovalView,
   OutcomeRunReport,
@@ -162,6 +163,7 @@ import {
   type DeliveredExtractFormat,
   decodeWireAction,
   MAX_FORM_CONTROLS_PER_ROOT,
+  parseActionNavigationObservation,
   parseExtractMaxBytes,
   parseOutcomeRunRequest,
   parseRef,
@@ -401,6 +403,8 @@ export interface ServiceActResult {
   remap?: { from: string; to: string } | undefined;
   /** Evidence payload, present only for actions that produce one (upload: attached files). */
   result?: unknown;
+  /** A scoped navigation was blocked while the completed action was running. */
+  navigationObservation?: ActionNavigationObservation;
 }
 
 /** One step's outcome inside a batch (F3); failures are in-band. */
@@ -412,6 +416,7 @@ export interface ServiceBatchStepResult {
   remap?: { from: string; to: string } | undefined;
   /** Per-action evidence (upload: attached files), matching single-act. */
   result?: unknown;
+  navigationObservation?: ActionNavigationObservation;
   error?: string;
 }
 
@@ -2518,6 +2523,34 @@ export class AgentBrowserService {
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
+    const recordEffect = (index: number, effect: ServiceActResult) => {
+      this.decayChurn(churnKey);
+      const navigationObservation = parseActionNavigationObservation(effect.navigationObservation);
+      results.push({
+        step: index,
+        ok: true,
+        actionId: effect.actionId,
+        ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
+        ...(effect.result !== undefined ? { result: effect.result } : {}),
+        ...(navigationObservation !== undefined ? { navigationObservation } : {}),
+      });
+      if (navigationObservation !== undefined) {
+        // The effect completed. Keep its receipt and stop before dispatching another
+        // step; this is not a failed binding to heal or an action to replay.
+        return {
+          ok: false,
+          completed: index + 1,
+          results,
+          mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
+          error: {
+            code: 'PLAN_NAVIGATION_BLOCKED',
+            message: `Action completed; a navigation was blocked during the action (${navigationObservation.scope}). Remaining steps were not attempted.`,
+          },
+        };
+      }
+      return undefined;
+    };
     for (const [index, step] of steps.entries()) {
       // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
       // prior step. A caller cannot know the ref of an element that does
@@ -2565,14 +2598,8 @@ export class AgentBrowserService {
       }
       try {
         const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
-        this.decayChurn(churnKey);
-        results.push({
-          step: index,
-          ok: true,
-          actionId: effect.actionId,
-          ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
-          ...(effect.result !== undefined ? { result: effect.result } : {}),
-        });
+        const stopped = recordEffect(index, effect);
+        if (stopped) return stopped;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
@@ -2662,17 +2689,8 @@ export class AgentBrowserService {
                 ...effectiveStep,
                 target: { ref: remapped },
               })) as ServiceActResult;
-              // Fix: the primary success path decays churn (below); the
-              // remap-retry success path did not, so a plan of repeated
-              // remapped steps never cooled back down out of VERIFIED mode.
-              this.decayChurn(churnKey);
-              results.push({
-                step: index,
-                ok: true,
-                actionId: retry.actionId,
-                ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
-                ...(retry.result !== undefined ? { result: retry.result } : {}),
-              });
+              const stopped = recordEffect(index, retry);
+              if (stopped) return stopped;
               continue;
             } catch (retryError) {
               const retryMessage =
@@ -4587,6 +4605,11 @@ export class AgentBrowserService {
       page.revision = result.newRevision;
       // T5 B-dur (B2): the effect is done; anything that fails from here on followed it.
       try {
+        const navigationObservation = parseActionNavigationObservation(
+          result.navigationObservation
+        );
+        // Navigation evidence does not satisfy a requested value verification.
+        // Keep the existing post-effect failure and durable unknown classification.
         if (
           request.action === 'fill' &&
           request.expectValue !== undefined &&
@@ -4595,8 +4618,30 @@ export class AgentBrowserService {
           throw new ServiceError(
             'ENGINE_UNSUPPORTED',
             'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
-            false
+            false,
+            navigationObservation !== undefined
+              ? { navigationObservation, actionId: result.actionId }
+              : undefined
           );
+        const receipt: ServiceActResult = {
+          status: 'success',
+          actionId: result.actionId,
+          newRevision: result.newRevision,
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          ...(navigationObservation !== undefined ? { navigationObservation } : {}),
+          // Only publish the comparison boolean, never a field value.
+          ...(request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified === true
+            ? { result: { verified: true } }
+            : {}),
+          ...(request.action === 'upload' && result.result != null
+            ? { result: result.result }
+            : {}),
+        };
+        // Follow-up waits or reads could mask the completed action and its observed
+        // refusal. Return that evidence first so the caller can inspect current state.
+        if (navigationObservation !== undefined) return receipt;
 
         // Post-action wait (spec 11.1): an explicit wait runs to its deadline
         // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
@@ -4618,22 +4663,9 @@ export class AgentBrowserService {
         }
 
         return {
-          status: 'success',
-          actionId: result.actionId,
-          newRevision: result.newRevision,
+          ...receipt,
           observation,
           waitReason,
-          ...(result.remap !== undefined ? { remap: result.remap } : {}),
-          // Only publish the comparison boolean, never a field value.
-          ...(request.action === 'fill' &&
-          request.expectValue !== undefined &&
-          (result.result as { verified?: unknown } | undefined)?.verified === true
-            ? { result: { verified: true } }
-            : {}),
-          // Upload reports its separate attached-file evidence.
-          ...(request.action === 'upload' && result.result != null
-            ? { result: result.result }
-            : {}),
         };
       } catch (error) {
         throw afterEffect(error);
