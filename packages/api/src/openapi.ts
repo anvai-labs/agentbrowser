@@ -684,6 +684,33 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/engagements/{engagementId}': {
+        get: {
+          operationId: 'exportEngagement',
+          summary: "Export one of the caller's engagement ledgers (NDJSON, verbatim)",
+          description:
+            'T10 M2. The hash-chained, metadata-only ledger of a scoped session created with policy.scope.ledger; readable after the session closes and across restarts. Tenant API key or operator key; verify offline with `agentbrowser engagement verify`.',
+          tags: ['sessions'],
+          parameters: [
+            {
+              name: 'engagementId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^eng_[0-9a-f]{24}$' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The ledger, one JSON record per line.',
+              content: { 'application/x-ndjson': { schema: { type: 'string' } } },
+            },
+            '401': errorResponse('A valid bearer credential is required.'),
+            '403': errorResponse('The credential names no tenant.'),
+            '404': errorResponse("No such engagement for the caller's tenant."),
+            '500': INTERNAL,
+          },
+        },
+      },
       '/v1/sessions/{sessionId}/scope': {
         get: {
           operationId: 'getSessionScope',

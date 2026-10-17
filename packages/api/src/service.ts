@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
 import {
   isNavigationFailureReason,
   isScopeDenialCode,
   MAX_PLAN_STEPS,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
-import { EngagementLedger } from './engagement-ledger.js';
+import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
 import {
   attachRequestHasOptions,
   type CdpAttachAdmission,
@@ -1245,6 +1246,21 @@ export class AgentBrowserService {
    * event order and observe each other's registrations.
    */
   private readonly adoptionChains = new Map<string, Promise<AdoptedPopup | undefined>>();
+
+  /**
+   * T10 M2: the ledger file of one of this tenant's engagements, open or closed
+   * (survives the session and restarts). NOT_FOUND for another tenant's id: the
+   * path is derived from the caller's tenant, so it cannot name someone else's file.
+   */
+  async engagementLedgerFile(tenantId: string, engagementId: string): Promise<{ path: string; bytes: number }> {
+    if (this.engagement === undefined || !ENGAGEMENT_ID.test(engagementId))
+      throw new ServiceError('NOT_FOUND', 'Engagement not found');
+    const path = engagementPath(this.engagement.directory, tenantId, engagementId);
+    const info = await lstat(path).catch(() => undefined);
+    if (info === undefined || !info.isFile())
+      throw new ServiceError('NOT_FOUND', 'Engagement not found');
+    return { path, bytes: info.size };
+  }
 
   private engagementIdOf(sessionId: string): { engagementId: string } | undefined {
     const ledger = this.sessionLedgers.get(sessionId);

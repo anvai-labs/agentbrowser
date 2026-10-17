@@ -302,6 +302,8 @@ class HttpClient {
       operationId?: string;
       timeoutMs?: number;
       parseResponse?: (input: unknown) => T;
+      /** Return the success body as text (NDJSON exports) instead of parsing JSON. */
+      text?: boolean;
     } = {}
   ): Promise<T> {
     const operationId =
@@ -377,6 +379,7 @@ class HttpClient {
         );
       }
 
+      if (init.text === true) return (await response.text()) as T;
       const result: unknown = await response.json();
       const invalidResponse = () =>
         new AgentBrowserError(
@@ -468,6 +471,18 @@ export interface CookieHandoffResult {
   domains: string[];
   counts: Record<string, number>;
   lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
+}
+
+/** T10 M2: engagement ledgers. */
+export class EngagementsClient {
+  constructor(private readonly http: HttpClient) {}
+
+  /** The ledger as NDJSON text, verbatim (verify it offline with `agentbrowser engagement verify`). */
+  async export(engagementId: string): Promise<string> {
+    return this.http.requestJson<string>(`/v1/engagements/${encodeURIComponent(engagementId)}`, {
+      text: true,
+    });
+  }
 }
 
 export class SessionsClient {
@@ -971,6 +986,8 @@ export class AgentBrowserClient {
   readonly baseUrl: string;
   readonly timeout: number;
   readonly sessions: SessionsClient;
+  /** T10 M2: engagement ledgers (export). */
+  readonly engagements: EngagementsClient;
   private customHeaders: Record<string, string>;
   private readonly http: HttpClient;
 
@@ -989,6 +1006,7 @@ export class AgentBrowserClient {
       options.requestSignal
     );
     this.sessions = new SessionsClient(this.http);
+    this.engagements = new EngagementsClient(this.http);
   }
 
   /**

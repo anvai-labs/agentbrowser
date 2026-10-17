@@ -1,3 +1,4 @@
+import { createReadStream } from 'node:fs';
 import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
@@ -1032,6 +1033,40 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         status: number,
         retryable = false
       ) => reply.code(status).send({ error: { code, message, retryable } });
+
+      // T10 M2: export one of the caller's engagement ledgers as NDJSON (the
+      // file, verbatim, so it verifies offline). Same credential rule as the
+      // journal: a tenant API key or the operator key; keyless deployments have
+      // no surface (no credential names a tenant).
+      v1.get(
+        '/engagements/:engagementId',
+        { config: { publication: 'lifecycle' } },
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (!principal)
+            return reply.code(401).send({
+              error: {
+                code: 'UNAUTHORIZED',
+                message: 'A valid bearer credential is required',
+                retryable: false,
+              },
+            });
+          if (principal.tenant === undefined)
+            return reply.code(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'Engagement export needs a credential that names a tenant',
+                retryable: false,
+              },
+            });
+          const { engagementId } = request.params as { engagementId: string };
+          const file = await service.engagementLedgerFile(principal.tenant, engagementId);
+          return reply
+            .header('content-type', 'application/x-ndjson')
+            .header('content-length', String(file.bytes))
+            .send(createReadStream(file.path, { start: 0, end: Math.max(0, file.bytes - 1) }));
+        }
+      );
 
       v1.get(
         '/journal',

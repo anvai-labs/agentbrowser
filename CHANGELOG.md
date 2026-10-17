@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — export and verify engagement ledgers (T10 M2)
+
+| Need | Surface |
+| --- | --- |
+| export a ledger (NDJSON, verbatim; open or closed; across restarts) | `GET /v1/engagements/{id}`, SDK `engagements.export`, CLI `engagement export [--out]` |
+| verify a ledger offline | CLI `engagement verify FILE` (exit 1 when the chain is broken) |
+
+- Tenant-scoped: the file path is derived from the caller's tenant, so another tenant's id is
+  `404`. Keyless deployments have no export route. `--out` creates the file exclusively, mode
+  0600, and verifies it.
+- The chain format and verifier now live in `@agentbrowser/core`, shared by the server-side writer
+  and the CLI.
+
 ### Added — the engagement ledger (T10 M2)
 
 - `policy.scope.ledger: true` records a scoped session's traffic decisions in an append-only,
