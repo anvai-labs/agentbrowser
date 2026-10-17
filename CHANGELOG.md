@@ -13,11 +13,12 @@ Entries are newest first. T10 milestone M2 completes: the engagement ledger. **U
 
 | Who | What changes |
 | --- | --- |
-| Operators | opt in with `AGENTBROWSER_ENGAGEMENT_DIR` (an existing, canonical, owner-only `0700` directory; refused on Windows) and optionally `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` (default 64 MiB); an invalid directory aborts startup. Unset: no ledger, nothing written |
-| Session create with `policy.scope.ledger: true` | refused `400` when no directory is configured, with `allowDownloads`, or on an engine without request recording; otherwise the session view carries `engagementId` |
-| Ledgered sessions | fail closed: a full or unwritable ledger stops all traffic with `SCOPE_LEDGER_UNAVAILABLE` |
+| Operators | opt in with `AGENTBROWSER_ENGAGEMENT_DIR` (an existing, canonical, owner-only `0700` directory; refused on Windows) and optionally `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` (integer 1 MiB–1 GiB, default 64 MiB; needs the directory); an invalid value of either aborts startup. Unset: no ledger, nothing written |
+| Session create with `policy.scope.ledger: true` (new field) | refused `400` when no directory is configured, with `allowDownloads`, or on an engine without request recording; `500 INTERNAL` (`scope.ledger.unavailable`, session closed) when the ledger file cannot be created, e.g. the directory was removed or re-permissioned after startup; otherwise the session view carries `engagementId` |
+| Ledgered sessions | fail closed: a full or unwritable ledger stops all traffic with `SCOPE_LEDGER_UNAVAILABLE`; `GET /v1/sessions/{id}/scope` gains an optional `stopped` reason |
+| TypeScript consumers | `SCOPE_LEDGER_UNAVAILABLE` is a new member of the scope sub-code and navigation-failure unions: exhaustive `switch`es need a case |
 | REST / SDK / CLI clients | new `GET /v1/engagements/{id}` (tenant-scoped; keyless `401`), SDK `engagements.export`, CLI `engagement export` and offline `engagement verify` |
-| Engine embedders | `EngineSessionOptions.requestRecorder` and the `requestRecording` capability are new optional fields |
+| Engine embedders and capability readers | `EngineSessionOptions.requestRecorder` and the `requestRecording` capability are new optional fields; the Playwright engine reports `requestRecording: true` |
 | Sessions without a ledger | unchanged |
 
 ### Fixed — an engine crash keeps the ledger's close-time records (T10 M2)
