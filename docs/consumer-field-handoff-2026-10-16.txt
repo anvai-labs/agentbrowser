@@ -240,6 +240,13 @@ REBASE VALIDATION / DELIVERY
   were installed with PLAYWRIGHT_SKIP_BROWSER_GC=1; existing installations and
   the active headed session were preserved. Rebased browser tests: 79 pass,
   including disclosures, stale targets, document recovery and application parity.
+  The complete Playwright-engine suite also passed: 513 tests, one upstream skip.
+  The screenshot byte assertion uses Buffer.equals (same exact-byte guarantee,
+  avoids Vitest's per-byte object comparison overhead). MCP catalog was regenerated
+  and release artifact contracts pass. Documentation links: 1,188 across 303 files.
+  The full hook exposed missing Firefox/WebKit binaries and a macOS launcher-test
+  path spelling mismatch (/var versus /private/var); install the pinned binaries
+  with GC disabled and compare canonical paths in the isolated launcher fixture.
   Rebased full-workspace and remote CI checks remain pending.
 - No deployment/restart was performed. The running consumer session continues
   using its existing service code. Independent review and release gates remain.

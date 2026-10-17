@@ -31,7 +31,7 @@ describe('screenshot file receipts', () => {
       });
       const path = join(dir, 'shot.png');
       expect(await cli.run(['--json', 'screenshot', 'ses_1', 'pg_1', '--out', path])).toBe(0);
-      expect(readFileSync(path)).toEqual(bytes);
+      expect(readFileSync(path).equals(bytes)).toBe(true);
       expect(out).toHaveLength(1);
       expect(JSON.parse(out[0]!)).toMatchObject({
         artifactId: 'art_1',

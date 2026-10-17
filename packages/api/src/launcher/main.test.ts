@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -146,7 +147,7 @@ describe.runIf(posix)('launcher process', () => {
       );
       expect(stderr).toMatch(/First start: downloading Chromium/);
       const { cwd, env } = JSON.parse(readFileSync(join(root, 'server-env.json'), 'utf8'));
-      expect(cwd).toBe(join(root, 'server'));
+      expect(realpathSync(cwd)).toBe(realpathSync(join(root, 'server')));
       expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(browsers);
       expect(env.AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF).toBe('1');
       child.kill('SIGTERM');
