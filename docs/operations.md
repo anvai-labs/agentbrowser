@@ -781,9 +781,18 @@ engagement.opened → request … preflight.denied … → engagement.closed
 | Not keyed, not anchored | the chain detects edits, removals, reorderings and reformatting that do not rewrite it; whoever can write the file can rewrite and re-hash it. Keep the directory owner-only (enforced: mode 0700, owned by the server user, no symlinked component) and copy exports elsewhere |
 | Truncation | a ledger cut short (or a crash) verifies with `closed: false` — treat a missing `engagement.closed` as incomplete |
 | Durability | writes are flushed to the file as they happen; `fsync` runs at close only |
-| Paths | origin+path is recorded; a secret carried in a path segment (e.g. `/reset/<token>`) is written
+| Paths | origin+path is recorded; a secret carried in a path segment (e.g. `/reset/<token>`) is written |
 | Close race | a GET already in flight at the instant the browser context closes can reach the target without a recorded outcome (Playwright/Chromium teardown; observed 0–7 of ~140 in a stress test, never out of scope). POST/PUT/PATCH whose end was never observed (in flight at close, or aborted inside a worker) are recorded at close as `failed`, `detail: no outcome observed (recorded at close)`. The scope stops new traffic first |
 | Platforms | refused on Windows: directory privacy is checked with POSIX mode and owner |
+
+| Read it back | Surface |
+| --- | --- |
+| export (NDJSON, verbatim; during or after the session, across restarts) | `GET /v1/engagements/{engagementId}` · SDK `engagements.export(id)` · CLI `engagement export <id> [--out FILE]` |
+| verify offline (recomputes the chain; exit 1 if broken) | CLI `engagement verify FILE` |
+
+Export takes a tenant API key or the operator key and is scoped to that tenant (another tenant's
+id is `404`; a delegated agent grant is `403`); keyless deployments get `401` — read the files
+directly. `--json` does not change `export` output: it is the NDJSON itself.
 
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an

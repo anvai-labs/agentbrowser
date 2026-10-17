@@ -1723,6 +1723,79 @@
         }
       }
     },
+    "/v1/engagements/{engagementId}": {
+      "get": {
+        "operationId": "exportEngagement",
+        "summary": "Export one of the caller's engagement ledgers (NDJSON, verbatim)",
+        "description": "T10 M2. The hash-chained, metadata-only ledger of a scoped session created with policy.scope.ledger; readable after the session closes and across restarts. Tenant API key or operator key; verify offline with `agentbrowser engagement verify`.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "engagementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^eng_[0-9a-f]{24}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ledger, one JSON record per line.",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid bearer credential is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A delegated agent grant, or a credential that names no tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such engagement for the caller's tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/scope": {
       "get": {
         "operationId": "getSessionScope",

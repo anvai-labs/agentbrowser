@@ -7,7 +7,7 @@
  */
 
 import { isAbsolute } from 'node:path';
-import { assertCookieRequestSize } from '@agentbrowser/core';
+import { assertCookieRequestSize, verifyEngagementLedger } from '@agentbrowser/core';
 import {
   artifactReference,
   cacheLocalArtifact,
@@ -172,6 +172,8 @@ export interface CliClient
       | 'journalOperations'
     >
   > {
+  /** T10 M2: engagement ledger export. */
+  engagements?: Pick<AgentBrowserClient['engagements'], 'export'>;
   sessions: Pick<
     AgentBrowserClient['sessions'],
     | 'create'
@@ -2445,6 +2447,67 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
+          })
+        );
+
+      const engagement = program
+        .command('engagement')
+        .description(
+          'T10 engagement ledgers: export one (tenant-scoped) and verify a file offline'
+        );
+      engagement
+        .command('export <engagementId>')
+        .description(
+          'download one of your engagement ledgers as NDJSON (verbatim, verifiable offline)'
+        )
+        .option(
+          '--out <file>',
+          'write to this file (created exclusively, mode 0600) instead of stdout'
+        )
+        .action(
+          action(async (ctx, engagementId: string, options: { out?: string }) => {
+            if (!ctx.client.engagements)
+              throw new UsageError('Client does not support engagement ledgers');
+            const text = await ctx.client.engagements.export(engagementId);
+            if (options.out !== undefined) {
+              const { writeFile } = await import('node:fs/promises');
+              await writeFile(options.out, text, { flag: 'wx', mode: 0o600 });
+              const verdict = verifyEngagementLedger(text);
+              ctx.emit(
+                {
+                  engagementId,
+                  file: options.out,
+                  bytes: Buffer.byteLength(text),
+                  verification: verdict,
+                },
+                () => [
+                  `wrote ${options.out} (${Buffer.byteLength(text)} bytes)`,
+                  verdict.ok
+                    ? `chain verifies: ${verdict.records} records${verdict.closed ? ', closed' : ', still open'}`
+                    : `CHAIN BROKEN at seq ${verdict.seq}: ${verdict.reason}`,
+                ]
+              );
+              if (!verdict.ok) exitCode = 1;
+              return;
+            }
+            ctx.out(text.endsWith('\n') ? text.slice(0, -1) : text);
+          })
+        );
+      engagement
+        .command('verify <file>')
+        .description(
+          'offline: recompute the hash chain of an exported engagement ledger (exit 1 if broken)'
+        )
+        .action(
+          action(async (ctx, file: string) => {
+            const { readFile } = await import('node:fs/promises');
+            const verdict = verifyEngagementLedger(await readFile(file, 'utf8'));
+            ctx.emit(verdict, () => [
+              verdict.ok
+                ? `chain verifies: ${verdict.records} records${verdict.closed ? ', closed' : ', still open'}`
+                : `CHAIN BROKEN at seq ${verdict.seq}: ${verdict.reason}`,
+            ]);
+            if (!verdict.ok) exitCode = 1;
           })
         );
 
