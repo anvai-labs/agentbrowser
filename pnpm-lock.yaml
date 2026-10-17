@@ -383,6 +383,9 @@ importers:
 
   packages/mcp-server:
     devDependencies:
+      '@agentbrowser/core':
+        specifier: workspace:^
+        version: link:../core
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol

@@ -222,10 +222,12 @@ describe('AgentBrowser MCP server edge branches', () => {
       });
       sessions.artifact = vi.fn().mockResolvedValue({ metadata: { artifactId: 'html_9' } });
       const response = JSON.parse(
-        await call('e10', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+        await call('e10', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
       );
       expect(response.result.isError).toBe(true);
-      const text = errorText(await call('e10b', 'html', { sessionId: 'ses_1', pageId: 'pg_1' }));
+      const text = errorText(
+        await call('e10b', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
+      );
       expect(text).toContain('html_9');
       expect(text).toContain('without inline content');
       expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_9');

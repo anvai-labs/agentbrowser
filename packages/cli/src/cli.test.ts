@@ -480,8 +480,8 @@ describe('AgentBrowser CLI', () => {
       expect(sessions.events).toHaveBeenLastCalledWith('ses_1', { type: 'console.log', since: -1 });
     });
 
-    it('prints HTML inline by default and pulls stored bytes when not inlined', async () => {
-      await run('page', 'html', 'ses_1', 'pg_1');
+    it('prints HTML with explicit --inline and pulls stored bytes when not inlined', async () => {
+      await run('page', 'html', 'ses_1', 'pg_1', '--inline');
       expect(sessions.artifact).not.toHaveBeenCalled();
       expect(out.join('\n')).toContain('form values');
 
@@ -491,7 +491,7 @@ describe('AgentBrowser CLI', () => {
         contentType: 'text/html; charset=utf-8',
         sizeBytes: 999999,
       });
-      await run('page', 'html', 'ses_1', 'pg_1');
+      await run('page', 'html', 'ses_1', 'pg_1', '--inline');
       expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_2');
       expect(out.join('\n')).toContain('stored bytes');
     });
@@ -1761,13 +1761,24 @@ describe('AgentBrowser CLI', () => {
     });
 
     it('pdf forwards options and saves bytes with --out', async () => {
-      const { writeFileSync } = await import('node:fs');
-      const out = await import('node:os');
-      const code = await run('pdf', 'ses_1', 'pg_1', '--landscape', '--out', '/tmp/cli-test.pdf');
-      expect(code).toBe(0);
-      expect(sessions.pdf).toHaveBeenCalledWith('ses_1', 'pg_1', { landscape: true });
-      void writeFileSync;
-      void out;
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const dir = await mkdtemp(join(tmpdir(), 'ab-pdf-'));
+      try {
+        const code = await run(
+          'pdf',
+          'ses_1',
+          'pg_1',
+          '--landscape',
+          '--out',
+          join(dir, 'test.pdf')
+        );
+        expect(code).toBe(0);
+        expect(sessions.pdf).toHaveBeenCalledWith('ses_1', 'pg_1', { landscape: true });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
 
     it('health defaults to the health summary and exits 1 when unhealthy', async () => {

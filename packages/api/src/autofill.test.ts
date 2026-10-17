@@ -1548,3 +1548,84 @@ it('never exports an artifact from stale scope after dispatch rejects before ver
   expect(f.dispatch).toHaveBeenCalledOnce();
   expect(f.snapshot).not.toHaveBeenCalled();
 });
+
+describe('consumer autofill diagnostics', () => {
+  it('retains dispatch uncertainty and sanitized cause without replaying the prefix', async () => {
+    const f = fixture([field('a', 'one'), { ...field('b', 'two'), name: 'Other' }]);
+    f.act.mockImplementationOnce(async (_request, onDispatch) => {
+      onDispatch();
+      f.replace([field('a', 'one', 'x')]);
+      throw Object.assign(new Error('private-value https://site.test/?token=private'), {
+        code: 'STALE_TARGET',
+      });
+    });
+    const report = await runAutofill(
+      {
+        fields: [
+          { match: { label: 'Company name', block: { id: 'one' } }, value: 'x' },
+          { match: { label: 'Other' }, value: 'y' },
+        ],
+        policy: { settleMs: 0 },
+      },
+      f
+    );
+    expect(report.receipts.map((r) => r.status)).toEqual(['uncertain', 'not_attempted']);
+    expect(report.receipts[0]?.error?.code).toBe('STALE_TARGET');
+    expect(report.diagnostics).toMatchObject({
+      deadlineMode: 'cooperative',
+      stages: expect.arrayContaining([
+        expect.objectContaining({ stage: 'dispatch', calls: 1, errorCode: 'STALE_TARGET' }),
+      ]),
+    });
+    expect(JSON.stringify(report)).not.toContain('private');
+    expect(f.act).toHaveBeenCalledOnce();
+  });
+
+  it('reports a cooperative budget overrun and stops subsequent writes', async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      const f = fixture([field('a', 'one')]);
+      f.act.mockImplementationOnce(async (_request, onDispatch) => {
+        onDispatch();
+        now = 40120;
+      });
+      const report = await runAutofill(
+        {
+          fields: [
+            { match: { label: 'Company name' }, value: 'x' },
+            { match: { label: 'Other' }, value: 'y' },
+          ],
+          policy: { timeoutMs: 30000, settleMs: 0 },
+        },
+        f
+      );
+      expect(report.receipts.map((r) => r.status)).toEqual(['uncertain', 'not_attempted']);
+      expect(report.receipts[0]?.error?.code).toBe('ACTION_TIMEOUT');
+      expect(report.diagnostics).toMatchObject({ deadlineMode: 'cooperative', overrunMs: 10120 });
+      expect(f.snapshot).not.toHaveBeenCalled();
+      expect(f.act).toHaveBeenCalledOnce();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('distinguishes artifact-only failure from final verification failure', async () => {
+    const f = fixture([field('a', 'one')]);
+    f.snapshot.mockRejectedValueOnce(new Error('private html'));
+    const report = await runAutofill(
+      { fields: [{ match: { label: 'Company name' }, value: 'x' }], policy: { settleMs: 0 } },
+      f
+    );
+    expect(report.ok).toBe(true);
+    expect(report.receipts[0]?.verified).toBe(true);
+    expect(report.diagnostics?.stages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ stage: 'final_verification', calls: 1 }),
+        expect.objectContaining({ stage: 'artifact', errorCode: 'ACTION_FAILED' }),
+      ])
+    );
+    expect(report.snapshotError).toContain('ACTION_FAILED');
+    expect(JSON.stringify(report.diagnostics)).not.toContain('private');
+  });
+});

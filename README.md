@@ -238,3 +238,11 @@ Apache-2.0
 - [Cloudflare Kitesurf](https://blog.cloudflare.com/kitesurf/) - stateless browser architecture
 - [Playwright](https://playwright.dev/) - browser automation foundation
 - [Obscura](https://github.com/h4ckf0r0day/obscura) - Rust headless engine reference
+
+### Compact capture output
+
+CLI screenshot, PDF, HTML and artifact retrieval save private files by default in
+`~/.abrowser/artifacts`, returning small receipts. MCP defaults to artifact references;
+image/PDF content requires `inline:true`, and the `artifact` tool supports bounded
+retrieval. Set `AGENTBROWSER_ARTIFACT_DIR` for an explicit cache location. See
+[cache limits, cleanup and inline options](docs/cli-agent-usage.md#consumer-recovery-and-bounded-output).

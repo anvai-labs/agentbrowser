@@ -57,3 +57,6 @@ Cargo.lock
 .victor/
 __pycache__/
 site/
+
+# Optional local artifact cache (default lives in ~/.abrowser/artifacts)
+/.abrowser/

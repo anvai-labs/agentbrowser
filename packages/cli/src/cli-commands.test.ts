@@ -53,7 +53,12 @@ describe('AgentBrowser CLI remaining command surface', () => {
         },
       }),
       artifact: vi.fn().mockResolvedValue({
-        metadata: { artifactId: 'html_1' },
+        metadata: {
+          artifactId: 'art_1',
+          type: 'screenshot',
+          contentType: 'image/png',
+          sizeBytes: 12,
+        },
         contentBase64: Buffer.from('<html>stored bytes</html>').toString('base64'),
       }),
       events: vi.fn().mockResolvedValue([]),
@@ -228,7 +233,7 @@ describe('AgentBrowser CLI remaining command surface', () => {
         sizeBytes: 1234,
       });
       sessions.artifact.mockResolvedValueOnce({ metadata: { artifactId: 'html_3' } });
-      expect(await run('page', 'html', 'ses_1', 'pg_1')).toBe(0);
+      expect(await run('page', 'html', 'ses_1', 'pg_1', '--inline')).toBe(0);
       expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_3');
       expect(out.join('\n')).toContain('HTML artifact html_3');
       expect(out.join('\n')).toContain('1234 bytes');
@@ -566,21 +571,21 @@ describe('AgentBrowser CLI remaining command surface', () => {
     it('saving an expired screenshot artifact fails without writing a file', async () => {
       sessions.artifact.mockResolvedValueOnce({ metadata: { artifactId: 'art_1' } });
       expect(await run('screenshot', 'ses_1', 'pg_1', '--out', tempFile('x.png'))).toBe(1);
-      expect(err.join(' ')).toContain('art_1 has no inline content');
+      expect(err.join(' ')).toContain('Artifact bytes are unavailable');
       expect(out.join('\n')).not.toContain('Saved art_1');
     });
   });
 
   describe('artifact and health surfaces', () => {
-    it('artifact get renders metadata inline by default', async () => {
+    it('artifact get saves bytes privately by default', async () => {
       expect(await run('artifact', 'get', 'ses_1', 'art_1')).toBe(0);
-      expect(out.join('\n')).toContain('Artifact art_1');
+      expect(out.join('\n')).toContain('Saved art_1');
     });
 
     it('artifact get --out refuses an artifact without inline content', async () => {
       sessions.artifact.mockResolvedValueOnce({ metadata: { artifactId: 'art_x' } });
       expect(await run('artifact', 'get', 'ses_1', 'art_x', '--out', tempFile('y.bin'))).toBe(1);
-      expect(err.join(' ')).toContain('no inline content');
+      expect(err.join(' ')).toContain('Artifact bytes are unavailable');
       expect(out).toEqual([]);
     });
 

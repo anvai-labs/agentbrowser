@@ -51,3 +51,27 @@ describe('popup lifecycle (real Chromium)', () => {
     }
   });
 });
+
+it('records an immediate-close popup without leaving a phantom page or hanging its stream', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const session = await engine.createSession({ headless: true });
+    const opener = await session.newPage();
+    await opener.navigate({
+      url: `data:text/html,${encodeURIComponent('<button onclick="const child=window.open(\'about:blank\'); child.close()">Open briefly</button>')}`,
+    });
+    const seen: EngineEvent[] = [];
+    const pump = (async () => {
+      for await (const event of opener.events()) seen.push(event);
+    })();
+    const ref = (await opener.observe({})).elements.find((e) => e.role === 'button')?.ref;
+    expect(ref).toBeDefined();
+    await opener.act({ type: 'click', target: { ref: ref! } });
+    await vi.waitFor(() => expect(seen.some((e) => e.type === 'page.created')).toBe(true));
+    await vi.waitFor(async () => expect(await session.pages()).toHaveLength(1));
+    await opener.close();
+    await pump;
+  } finally {
+    await engine.close();
+  }
+});

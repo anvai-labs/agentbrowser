@@ -646,6 +646,7 @@ export type PartialObservation = {
   /** Compact projection (opt-in): roles/name/scopeRef/limit/includeFields. */
   roles?: string[] | undefined;
   name?: string | undefined;
+  text?: string | undefined;
   scopeRef?: string | undefined;
   limit?: number | undefined;
   includeFields?: ObservationRequest['includeFields'] | undefined;
@@ -739,6 +740,12 @@ export function browserReportOutcomeUnknown(body: unknown): boolean {
     Array.isArray(receipts) &&
     receipts.some((receipt) => (receipt as { status?: unknown } | null)?.status === 'uncertain')
   );
+}
+
+interface AdoptedPopup {
+  pageId: string;
+  enginePage: EnginePage;
+  startPump: boolean;
 }
 
 export class AgentBrowserService {
@@ -1188,7 +1195,7 @@ export class AgentBrowserService {
    * first-unknown-page selection. Chained per session, adoptions run in
    * event order and observe each other's registrations.
    */
-  private readonly adoptionChains = new Map<string, Promise<void>>();
+  private readonly adoptionChains = new Map<string, Promise<AdoptedPopup | undefined>>();
 
   private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
@@ -1314,7 +1321,7 @@ export class AgentBrowserService {
       try {
         for await (const event of enginePage.events()) {
           if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted) break;
-          const stamped: EngineEvent = this.secretManager.redact({
+          let stamped: EngineEvent = this.secretManager.redact({
             ...event,
             sessionId,
             pageId,
@@ -1323,9 +1330,25 @@ export class AgentBrowserService {
               : {}),
           });
           if (stamped.type === 'page.created') {
-            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
-              // Adoption is best-effort; the popup stays engine-side only.
-            });
+            const adopted = await this.adoptPopupSerialized(sessionId, event.data).catch(
+              () => undefined
+            );
+            // Public lifecycle evidence uses service handles, never adapter IDs.
+            // No target is invented when an immediate-close popup is already gone.
+            stamped = {
+              ...stamped,
+              pageId: adopted?.pageId ?? pageId,
+              data: {
+                openerPageId: pageId,
+                phase: adopted ? 'registered' : 'unavailable',
+                ...(adopted ? { pageId: adopted.pageId } : {}),
+              },
+            };
+            if (adopted?.startPump)
+              queueMicrotask(() => {
+                if (this.coordinator.get(sessionId) === owner && this.pages.has(adopted.pageId))
+                  this.pumpEvents(sessionId, adopted.pageId, adopted.enginePage);
+              });
           } else if (stamped.type === 'page.destroyed') {
             sawDestroyed = true;
             this.reapPage(sessionId, pageId);
@@ -1396,7 +1419,10 @@ export class AgentBrowserService {
    * previous one settles, in event order, so concurrent popups cannot race
    * on the engine page list. Never throws; the pump keeps flowing.
    */
-  private adoptPopupSerialized(sessionId: string, data: unknown): Promise<void> {
+  private adoptPopupSerialized(
+    sessionId: string,
+    data: unknown
+  ): Promise<AdoptedPopup | undefined> {
     const previous = this.adoptionChains.get(sessionId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
@@ -1410,7 +1436,8 @@ export class AgentBrowserService {
     return next;
   }
 
-  private async adoptPopup(sessionId: string, data: unknown): Promise<void> {
+  private async adoptPopup(sessionId: string, data: unknown): Promise<AdoptedPopup | undefined> {
+    const owner = this.requireSession(sessionId);
     const payload = data as { openerPageId?: unknown; pageId?: unknown } | null;
     const openerEnginePageId = payload?.openerPageId;
     const popupEnginePageId = payload?.pageId;
@@ -1423,9 +1450,9 @@ export class AgentBrowserService {
       return; // Opener already gone; nothing to attach the popup under.
     }
     // Idempotence: a replayed or raced page.created must not double-register.
-    if (owned.some(([, page]) => page.enginePage.id === popupEnginePageId)) {
-      return;
-    }
+    const existing = owned.find(([, page]) => page.enginePage.id === popupEnginePageId);
+    if (existing)
+      return { pageId: existing[0], enginePage: existing[1].enginePage, startPump: false };
     // Cap: runaway popup storms are closed engine-side, never adopted.
     const popupCount = owned.filter(([, page]) => page.openerPageId !== undefined).length;
     if (popupCount >= AgentBrowserService.MAX_POPUPS_PER_SESSION) {
@@ -1450,7 +1477,12 @@ export class AgentBrowserService {
     } catch {
       return; // The engine session is gone; nothing to adopt.
     }
-    if (popup === undefined) {
+    if (
+      popup === undefined ||
+      this.coordinator.get(sessionId) !== owner ||
+      owner.signal.aborted ||
+      this.pages.get(opener[0]) !== opener[1]
+    ) {
       return;
     }
     const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
@@ -1461,7 +1493,7 @@ export class AgentBrowserService {
       history: new Map(),
       openerPageId: opener[0],
     });
-    this.pumpEvents(sessionId, popupPageId, popup);
+    return { pageId: popupPageId, enginePage: popup, startPump: true };
   }
 
   /** Drop a page's registry and churn state (page.destroyed or pump end). */
@@ -4055,6 +4087,7 @@ export class AgentBrowserService {
       const projection = {
         ...(request.roles !== undefined ? { roles: request.roles } : {}),
         ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.text !== undefined ? { text: request.text } : {}),
         ...(request.scopeRef !== undefined ? { scopeRef: request.scopeRef } : {}),
         ...(request.limit !== undefined ? { limit: request.limit } : {}),
         ...(request.includeFields !== undefined ? { includeFields: request.includeFields } : {}),

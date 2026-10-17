@@ -7,13 +7,54 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-10-17
+
+Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options where needed.
+
+### Changed — compact capture output and private artifact caching
+
+- CLI screenshot, PDF, `page html`, and `artifact get` now save private files by default and
+  return one compact receipt. **Upgrade:** pass `--inline` explicitly for content; HTML also
+  accepts an explicit `--max-bytes`. Explicit `--out` files are created exclusively and are
+  never overwritten. Signed artifact URLs are omitted from capture, trace and download receipts.
+- The cache defaults to `~/.abrowser/artifacts`; `AGENTBROWSER_ARTIFACT_DIR` selects an explicit
+  alternative, including a repo-local `.abrowser/artifacts`. Prune on save bounds recognized
+  captures to 24 hours, 100 files and 128 MiB; `cache prune [--all]` supports manual cleanup.
+  Private ownership records preserve user files and replacements, including matching names;
+  parallel pruning tolerates already-removed entries. Limits are best-effort across processes;
+  stale records and ownership-unknown partial files may need manual cleanup.
+- MCP screenshot/PDF/HTML default to compact artifact references. A configured local artifact
+  directory enables file receipts. The new `artifact` tool retrieves existing session artifacts
+  with explicit bounded ranges (8 KiB default, 64 KiB maximum); image/PDF inline evidence uses
+  media/resource blocks without duplicating base64 in metadata. Default QA catalogs now expose
+  21 unbound tools and 18 delegated tools.
+- REST/SDK capture transport is unchanged and may still transfer base64 to adapters. Canonical
+  session/page IDs and credential strength are unchanged; no public ID acts as a bearer secret.
+
+### Fixed — consumer recovery and partial-result evidence
+
+- Autofill carries bounded stage diagnostics, cooperative timeout accounting and honest partial
+  or uncertain outcomes. Completed writes are not replayed after ambiguous interruption.
+- Observation and document reads use deadlines, clean up late handles and invalidate stale refs;
+  fresh reads can recover after human verification without reloading or closing the browser.
+  Duplicate-role binding is grouped, native checkbox state is verified, and visible text can
+  be projected with `observe --text`.
+- Popup receipts use canonical public page IDs and distinguish registered from unavailable
+  outcomes. Navigation events report sanitized commit facts without claiming application success.
+- CLI `--api-key-file` reads an owner-only existing credential on POSIX, with bounded validation
+  and redacted errors; Windows fails closed for that option. Credentials are never shortened.
+- Regression coverage includes large capture receipts, modern MCP media output, cache ownership
+  and concurrent pruning, browser read recovery, large synthetic forms and authorization boundaries.
+  [Consumer handoff](docs/consumer-field-handoff-2026-10-16.txt) records remaining limits: hard write
+  cancellation, live-site qualification, shorter ID aliases and streaming transport remain open.
+
 ### Added — the MCP `scope` tool (T10 M2)
 
 - `scope {sessionId}` returns the engagement scope in effect, budget used/remaining, expiry and
   denials by sub-code; `scope {sessionId, url, method?}` runs the dry-run check (no budget, no
   denial counted, identity bindings not evaluated). Structured output
   `urn:agentbrowser:scope-tool:v1`.
-- In every browser profile (unbound 20 tools, delegated 17); not in the application profile. The
+- In every browser profile (the final QA catalog has 21 unbound tools and 18 delegated tools); not in the application profile. The
   release smoke's pinned tool lists include it; the catalog is regenerated.
 
 ### Changed — wire-level scope denials carry the sub-code (T10 M2)
@@ -48,7 +89,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   protocol's `EngagementScopeStatus` schema is closed, and a test validates the policy's real
   status against it.
 - `EngagementScopePolicy` gains `status()` and `check()`; denials are counted by sub-code on the
-  wire and in the navigation preflight. The MCP tool follows in a separate change.
+  wire and in the navigation preflight. The MCP `scope` tool projects the same status and check.
 
 ### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
 
@@ -60,8 +101,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - The projection stays bounded: only a code from the protocol's `SCOPE_DENIAL_CODES` list is
   carried, read once; anything else is dropped as before. The policy's `SCOPE_SUBCODES` is
   pinned to that list.
-- Not yet carried (M2 follow-up): denials at the wire — a redirect blocked mid-navigation
-  (`status: blocked`, `reason: egress_policy`), `page_create` with a url, and `act`/`plan`.
+- Remaining M2 gaps are listed in the wire-level scope-denial section above.
 
 ### Docs — the 1.21.0 release record
 

@@ -48,7 +48,14 @@ describe('MCP tool-schema sync', () => {
 
   it('pdf reads exactly what it advertises', () => {
     expect(propertiesOf('pdf')).toEqual(
-      new Set(['sessionId', 'pageId', 'landscape', 'displayHeaderFooter', 'printBackground'])
+      new Set([
+        'sessionId',
+        'pageId',
+        'inline',
+        'landscape',
+        'displayHeaderFooter',
+        'printBackground',
+      ])
     );
   });
 
@@ -60,7 +67,10 @@ describe('MCP tool-schema sync', () => {
       properties: Record<string, unknown>;
       additionalProperties: boolean;
     };
-    const { sessionId, pageId, ...body } = schema.properties;
+    const { sessionId, pageId, inline, ...body } = schema.properties;
+    if (name === 'screenshot') {
+      expect(inline).toBeDefined();
+    }
     expect(body).toEqual(canonical.properties);
     expect(schema.additionalProperties).toBe(false);
   });

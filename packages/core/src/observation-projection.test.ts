@@ -345,3 +345,22 @@ describe('observation projection', () => {
     expect(result.projection).toMatchObject({ matched: 1, total: 2 });
   });
 });
+
+it('explicit text projection finds visible paragraph values without broadening name or withheld-value matching', () => {
+  const page = source([
+    el(0, { role: 'paragraph', value: 'Or sign up using email' }),
+    el(1, { role: 'button', name: 'Email login' }),
+    el(2, { role: 'paragraph', value: 'email hidden', visible: false }),
+    el(3, { role: 'textbox', value: 'email secret', valueRedacted: true }),
+  ]);
+  expect(projectObservation(page, { name: 'email' }).elements.map((e) => e.ref)).toEqual(['e7_1']);
+  const projected = projectObservation(page, { text: 'EMAIL' });
+  expect(projected.elements.map((e) => e.ref)).toEqual(['e7_0', 'e7_1']);
+  expect(projected.elements[0]?.role).toBe('paragraph');
+  expect(projected.projection).toMatchObject({ text: 'EMAIL', matched: 2, total: 4 });
+  expect(
+    projectObservation(page, { text: 'email', roles: ['paragraph'], limit: 1 }).elements.map(
+      (e) => e.ref
+    )
+  ).toEqual(['e7_0']);
+});
