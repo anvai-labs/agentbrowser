@@ -1723,6 +1723,138 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/scope": {
+      "get": {
+        "operationId": "getSessionScope",
+        "summary": "Read the engagement scope in effect, its budget and denials",
+        "description": "T10 M2. Identity bindings report header and hosts only; a marker value is never returned. 404 when the session has no engagement scope.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The scope status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngagementScopeStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/scope/check": {
+      "get": {
+        "operationId": "checkSessionScope",
+        "summary": "Dry run: would the scope rules allow this request now?",
+        "description": "T10 M2. Spends no budget and records no denial. Judges the scope rules only; the base policy and DNS still apply when the request is made.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The verdict.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeCheckResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "url is not an absolute http(s) URL, or method is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}": {
       "get": {
         "operationId": "getSession",
@@ -2671,6 +2803,118 @@
                     "elapsedMs": {
                       "minimum": 0,
                       "type": "number"
+                    },
+                    "diagnostics": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "correlationId",
+                        "deadlineMode",
+                        "timeoutMs",
+                        "overrunMs",
+                        "stages"
+                      ],
+                      "properties": {
+                        "correlationId": {
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "deadlineMode": {
+                          "const": "cooperative",
+                          "type": "string"
+                        },
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "overrunMs": {
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        "stages": {
+                          "maxItems": 6,
+                          "type": "array",
+                          "items": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "stage",
+                              "calls",
+                              "elapsedMs",
+                              "remainingMs"
+                            ],
+                            "properties": {
+                              "stage": {
+                                "anyOf": [
+                                  {
+                                    "const": "discovery",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "dispatch",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "verification",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "final_verification",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "artifact",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "resolve_values",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "calls": {
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "elapsedMs": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "remainingMs": {
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              "errorCode": {
+                                "maxLength": 64,
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "frameReadiness": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "incomplete",
+                            "loading",
+                            "timedOut"
+                          ],
+                          "properties": {
+                            "incomplete": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "loading": {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timedOut": {
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
                     },
                     "snapshot": {
                       "additionalProperties": false,
@@ -6429,6 +6673,144 @@
           }
         }
       },
+      "EngagementScopeStatus": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "allowedHosts",
+          "pathRules",
+          "identityBindings",
+          "expired",
+          "denials"
+        ],
+        "properties": {
+          "allowedHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pathRules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "prefix"
+              ],
+              "properties": {
+                "hostSuffix": {
+                  "minLength": 2,
+                  "type": "string"
+                },
+                "prefix": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "allowedMethods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "identityBindings": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "header",
+                "allowedHosts"
+              ],
+              "properties": {
+                "header": {
+                  "type": "string"
+                },
+                "allowedHosts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "budget": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "limit",
+              "spent",
+              "remaining"
+            ],
+            "properties": {
+              "limit": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "spent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "remaining": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          },
+          "denials": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ScopeCheckResult": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "allowed"
+            ],
+            "properties": {
+              "allowed": {
+                "const": true,
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "allowed",
+              "scope"
+            ],
+            "properties": {
+              "allowed": {
+                "const": false,
+                "type": "boolean"
+              },
+              "scope": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
       "ControlReview": {
         "type": "object",
         "allOf": [
@@ -9158,6 +9540,10 @@
                 "maxLength": 200,
                 "type": "string"
               },
+              "text": {
+                "maxLength": 200,
+                "type": "string"
+              },
               "scopeRef": {
                 "pattern": "^e\\d+_\\d+$",
                 "type": "string"
@@ -9575,6 +9961,10 @@
             }
           },
           "name": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "text": {
             "maxLength": 200,
             "type": "string"
           },
@@ -11400,6 +11790,34 @@
                     "type": "string"
                   }
                 ]
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "SCOPE_HOST_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_PATH_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_METHOD_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_IDENTITY_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_EXPIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                    "type": "string"
+                  }
+                ]
               }
             }
           },
@@ -11729,6 +12147,10 @@
                     "maxLength": 200,
                     "type": "string"
                   },
+                  "text": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
                   "scopeRef": {
                     "pattern": "^e\\d+_\\d+$",
                     "type": "string"
@@ -11819,6 +12241,25 @@
                 "sizeBytes"
               ],
               "properties": {
+                "file": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "bytes"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    }
+                  }
+                },
                 "artifactId": {
                   "type": "string"
                 },
@@ -12159,6 +12600,34 @@
                 "type": "string"
               }
             ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "const": "SCOPE_HOST_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_PATH_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_METHOD_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_IDENTITY_DENIED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_EXPIRED",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_BUDGET_EXHAUSTED",
+                "type": "string"
+              }
+            ]
           }
         }
       },
@@ -12171,6 +12640,25 @@
           "sizeBytes"
         ],
         "properties": {
+          "file": {
+            "type": "object",
+            "required": [
+              "path",
+              "bytes"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "expiresAt": {
+                "type": "number"
+              }
+            }
+          },
           "artifactId": {
             "type": "string"
           },

@@ -164,8 +164,7 @@ try {
         });
         assert.equal(allowed.status, 'success');
 
-        // REST and SDK carry the scope sub-code; CLI and MCP project only the
-        // bounded reason (T10 M2 closes that gap). Each is a policy denial.
+        // Every surface reports a policy denial carrying the scope sub-code.
         const out = at(OUT_HOST, '/never');
         const restNavigate = await fetch(
           `${baseUrl}/v1/sessions/${session.sessionId}/pages/${page.pageId}/navigate`,
@@ -194,6 +193,7 @@ try {
         const mcpDenial = (mcpBlocked.structuredContent ?? JSON.parse(mcpBlocked.content[0].text))
           .error;
         assert.equal(mcpDenial?.code, 'POLICY_DENIED');
+        assert.equal(mcpDenial?.details?.scope, 'SCOPE_HOST_DENIED');
         const cliNavigate = await runExecutable(
           [
             ...cliCommand,
@@ -209,6 +209,7 @@ try {
         );
         const cliDenial = JSON.parse(cliNavigate.stdout.trim() || cliNavigate.stderr.trim()).error;
         assert.equal(cliDenial?.code, 'POLICY_DENIED');
+        assert.equal(cliDenial?.details?.scope, 'SCOPE_HOST_DENIED');
         assert.ok(
           !hits.some((hit) => hit.path === '/never'),
           'an out-of-scope navigation reached the wire'
@@ -216,8 +217,8 @@ try {
         check('out-of-scope navigation', {
           rest: restDenial.details.scope,
           sdk: sdkDenial.details.scope,
-          mcp: mcpDenial.details?.scope ?? mcpDenial.details?.reason,
-          cli: cliDenial.details?.scope ?? cliDenial.details?.reason,
+          mcp: mcpDenial.details.scope,
+          cli: cliDenial.details.scope,
         });
 
         await client.sessions
@@ -243,6 +244,7 @@ try {
         const events = JSON.stringify(await replay.json());
         assert.match(events, /"blocked":true/);
         assert.match(events, /"redirect":"http:\/\/localhost:\d+\/leaked"/);
+        assert.match(events, /"scope":"SCOPE_HOST_DENIED"/);
         check('post redirect out of scope', { leaked: false, recorded: 'request.failed' });
       },
     });

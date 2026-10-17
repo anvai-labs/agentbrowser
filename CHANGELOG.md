@@ -7,6 +7,108 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.22.0] — 2026-10-17
+
+Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options where needed.
+
+### Changed — compact capture output and private artifact caching
+
+- CLI screenshot, PDF, `page html`, and `artifact get` now save private files by default and
+  return one compact receipt. **Upgrade:** pass `--inline` explicitly for content; HTML also
+  accepts an explicit `--max-bytes`. Explicit `--out` files are created exclusively and are
+  never overwritten. Signed artifact URLs are omitted from capture, trace and download receipts.
+- The cache defaults to `~/.abrowser/artifacts`; `AGENTBROWSER_ARTIFACT_DIR` selects an explicit
+  alternative, including a repo-local `.abrowser/artifacts`. Prune on save bounds recognized
+  captures to 24 hours, 100 files and 128 MiB; `cache prune [--all]` supports manual cleanup.
+  Private ownership records preserve user files and replacements, including matching names;
+  parallel pruning tolerates already-removed entries. Limits are best-effort across processes;
+  stale records and ownership-unknown partial files may need manual cleanup.
+- MCP screenshot/PDF/HTML default to compact artifact references. A configured local artifact
+  directory enables file receipts. The new `artifact` tool retrieves existing session artifacts
+  with explicit bounded ranges (8 KiB default, 64 KiB maximum); image/PDF inline evidence uses
+  media/resource blocks without duplicating base64 in metadata. Default QA catalogs now expose
+  21 unbound tools and 18 delegated tools.
+- REST/SDK capture transport is unchanged and may still transfer base64 to adapters. Canonical
+  session/page IDs and credential strength are unchanged; no public ID acts as a bearer secret.
+
+### Fixed — consumer recovery and partial-result evidence
+
+- Autofill carries bounded stage diagnostics, cooperative timeout accounting and honest partial
+  or uncertain outcomes. Completed writes are not replayed after ambiguous interruption.
+- Observation and document reads use deadlines, clean up late handles and invalidate stale refs;
+  fresh reads can recover after human verification without reloading or closing the browser.
+  Duplicate-role binding is grouped, native checkbox state is verified, and visible text can
+  be projected with `observe --text`.
+- Popup receipts use canonical public page IDs and distinguish registered from unavailable
+  outcomes. Navigation events report sanitized commit facts without claiming application success.
+- CLI `--api-key-file` reads an owner-only existing credential on POSIX, with bounded validation
+  and redacted errors; Windows fails closed for that option. Credentials are never shortened.
+- Regression coverage includes large capture receipts, modern MCP media output, cache ownership
+  and concurrent pruning, browser read recovery, large synthetic forms and authorization boundaries.
+  [Consumer handoff](docs/consumer-field-handoff-2026-10-16.txt) records remaining limits: hard write
+  cancellation, live-site qualification, shorter ID aliases and streaming transport remain open.
+
+### Added — the MCP `scope` tool (T10 M2)
+
+- `scope {sessionId}` returns the engagement scope in effect, budget used/remaining, expiry and
+  denials by sub-code; `scope {sessionId, url, method?}` runs the dry-run check (no budget, no
+  denial counted, identity bindings not evaluated). Structured output
+  `urn:agentbrowser:scope-tool:v1`.
+- In every browser profile (the final QA catalog has 21 unbound tools and 18 delegated tools); not in the application profile. The
+  release smoke's pinned tool lists include it; the catalog is regenerated.
+
+### Changed — wire-level scope denials carry the sub-code (T10 M2)
+
+| Where a scope denies | Now carries `scope: SCOPE_…` |
+| --- | --- |
+| a redirect hop of a navigation (GET walker) | the navigate `blocked` result (REST, SDK, CLI, MCP), and the `request.failed` event |
+| a redirect hop after POST/PUT/PATCH (the guard) | the `request.failed` event |
+| the initial request (subresources, act-driven navigation) | the `request.failed` event |
+| `page_create` with an out-of-scope url (its preflight) | REST/SDK `details.scope`; the MCP structured error at `error.details.scope`, the same place as `navigate`'s |
+
+- Only a code from the protocol's `SCOPE_DENIAL_CODES` is carried; the navigate result schema
+  (`NavigationStatus.scope`) is a closed union of those codes. OpenAPI and the MCP catalog are
+  regenerated.
+- An `act` that navigates out of scope still returns `success`; the denial shows in its events.
+- Still without the sub-code (M2 follow-up): `page_create` with an in-scope url that redirects
+  out (the create succeeds; only the event has it), downloads (`stage`/`transferFailed` only),
+  and CLI `page create --json` (plain-text error).
+
+### Added — scope status and a dry-run check (T10 M2)
+
+| Need | REST | SDK | CLI |
+| --- | --- | --- | --- |
+| the scope in effect, budget used/remaining, expiry, denials by sub-code | `GET /v1/sessions/{id}/scope` | `sessions.scopeStatus` | `session scope` |
+| would the scope rules allow this request now? | `GET /v1/sessions/{id}/scope/check?url&method` | `sessions.checkScope` | `session scope-check` |
+
+- The dry run spends no budget and records no denial. It judges the host, path, method (default
+  `GET`), expiry and budget rules; it does not evaluate identity bindings (it takes no headers),
+  and the base policy and DNS still apply at the wire. `404 NOT_FOUND` when the session has no
+  scope.
+- Identity bindings report `{header, allowedHosts}` only: a marker value is never returned. The
+  protocol's `EngagementScopeStatus` schema is closed, and a test validates the policy's real
+  status against it.
+- `EngagementScopePolicy` gains `status()` and `check()`; denials are counted by sub-code on the
+  wire and in the navigation preflight. The MCP `scope` tool projects the same status and check.
+
+### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
+
+- A `navigate` (command or tool) refused by the scope preflight now reports which rule fired
+  on every surface: `details.scope` (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
+  `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`) and the message
+  `Navigation failed: egress_policy (SCOPE_…)`. REST and the SDK already did; the CLI and MCP
+  projection (`navigationFailureDetail()`) dropped it.
+- The projection stays bounded: only a code from the protocol's `SCOPE_DENIAL_CODES` list is
+  carried, read once; anything else is dropped as before. The policy's `SCOPE_SUBCODES` is
+  pinned to that list.
+- Remaining M2 gaps are listed in the wire-level scope-denial section above.
+
+### Docs — the 1.21.0 release record
+
+- `docs/spec/evidence/release-1.21.0.md`: post-run verification of every channel and the scope
+  smoke run on the extracted release candidate. The task README, T9 packet and T10 evidence name
+  1.21.0 as the published baseline.
+
 ## [1.21.0] — 2026-10-16
 
 Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**

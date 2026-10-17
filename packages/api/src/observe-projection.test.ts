@@ -383,3 +383,18 @@ describe('observe compact projection', () => {
     expect(withControls.controlsProjection).toEqual({ matched: 2, total: 2 });
   });
 });
+
+it('forwards text projection through the service without renaming native paragraph semantics', async () => {
+  const { service, session, pageId, fakePage } = await setup();
+  try {
+    fakePage.seedElements([
+      { ref: 'e1_0', role: 'paragraph', value: 'Or sign up using email' },
+      { ref: 'e1_1', role: 'button', name: 'Continue' },
+    ]);
+    const result = await service.observe(session.sessionId, pageId, { text: 'email' });
+    expect(result.elements.map((e) => e.role)).toEqual(['paragraph']);
+    expect(result.projection).toMatchObject({ text: 'email', matched: 1, total: 21 });
+  } finally {
+    await service.closeSession(session.sessionId);
+  }
+});

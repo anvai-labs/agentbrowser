@@ -31,6 +31,8 @@ import type { BrowserContext, CDPSession, Frame, Page, Request } from 'playwrigh
 export interface RedirectVerdict {
   verdict: 'allow' | 'deny';
   reason?: string;
+  /** The engagement-scope sub-code when the scope denied (T10 M2). */
+  scope?: string;
 }
 
 export interface BodyRedirectGuardOptions {
@@ -45,7 +47,7 @@ export interface BodyRedirectGuardOptions {
    */
   onBlocked(
     root: Request | undefined,
-    detail: { reason: string; redirect?: string; detail?: string }
+    detail: { reason: string; redirect?: string; detail?: string; scope?: string }
   ): void;
   maxHops: number;
   /** Live chains per target; past it new body-bearing requests are refused. */
@@ -275,7 +277,12 @@ export class BodyRedirectGuard {
       await proceed();
       return;
     }
-    const fail = (detail: { reason: string; redirect?: string; detail?: string }) => {
+    const fail = (detail: {
+      reason: string;
+      redirect?: string;
+      detail?: string;
+      scope?: string;
+    }) => {
       this.close(target, chain);
       try {
         this.options.onBlocked(chain.root, detail);
@@ -319,7 +326,11 @@ export class BodyRedirectGuard {
         headers: chain.headers,
       });
       if (hop.verdict === 'deny') {
-        await fail({ reason: hop.reason ?? 'egress_policy', redirect });
+        await fail({
+          reason: hop.reason ?? 'egress_policy',
+          redirect,
+          ...(hop.scope !== undefined ? { scope: hop.scope } : {}),
+        });
         return;
       }
       await proceed();

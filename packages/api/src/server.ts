@@ -2213,6 +2213,43 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control' }
       );
 
+      // T10 M2: the engagement scope in effect, and a dry-run check that
+      // spends no budget and records no denial.
+      on(
+        'GET',
+        '/sessions/:sessionId/scope',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          return responseDraft(service.getScopeStatus(sessionId));
+        },
+        { capability: 'session.control' }
+      );
+
+      on(
+        'GET',
+        '/sessions/:sessionId/scope/check',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          const query = (request.query ?? {}) as { url?: unknown; method?: unknown };
+          if (typeof query.url !== 'string' || query.url.length === 0)
+            throw new ServiceError('INVALID_REQUEST', 'url is required');
+          if (
+            query.method !== undefined &&
+            (typeof query.method !== 'string' || !/^[A-Za-z]{1,16}$/.test(query.method))
+          )
+            throw new ServiceError('INVALID_REQUEST', 'method must be an HTTP method name');
+          return responseDraft(
+            service.checkScope(sessionId, {
+              url: query.url,
+              ...(typeof query.method === 'string' ? { method: query.method } : {}),
+            })
+          );
+        },
+        { capability: 'session.control' }
+      );
+
       // TD-BROWSER-16 phase 6 (ADR-025 section 3): the cookie handoff. Agent-
       // invoked (the agent relays APPROVAL_REQUIRED to the operator and
       // retries with the token); the DECISION it consumes is human-operator

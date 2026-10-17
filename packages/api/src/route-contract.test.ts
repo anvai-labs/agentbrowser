@@ -55,6 +55,8 @@ const EXPECTED: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string, AgentCapabilit
   ['POST', '/v1/sessions/:sessionId/trace', null],
   ['DELETE', '/v1/sessions/:sessionId', null],
   ['GET', '/v1/sessions/:sessionId', 'session.control'],
+  ['GET', '/v1/sessions/:sessionId/scope', 'session.control'],
+  ['GET', '/v1/sessions/:sessionId/scope/check', 'session.control'],
 ];
 
 /** Observation-class POSTs: admitted but never dispatched, no operation identity. */

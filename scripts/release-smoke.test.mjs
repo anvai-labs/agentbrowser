@@ -52,8 +52,8 @@ const delegatedTools = [
   'events_replay',
   'page_create', 'pages',
   'snapshot', 'plan', 'autofill', 'navigate', 'observe',
-  'act', 'extract', 'html', 'pdf',
-  'screenshot', 'session', 'operation', 'policy',
+  'act', 'artifact', 'extract', 'html', 'pdf',
+  'screenshot', 'session', 'operation', 'policy', 'scope',
 ];
 
 test('delegated MCP acceptance requires the exact bound catalog', async () => {

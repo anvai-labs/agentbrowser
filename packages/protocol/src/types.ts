@@ -866,6 +866,8 @@ export interface ObservationRequest {
    * redaction side channel). Max 200 chars.
    */
   name?: string;
+  /** Explicit substring filter on visible names and non-withheld public values. */
+  text?: string;
   /**
    * Compact projection: scope to this element's subtree — the scope element
    * plus following elements in the same snapshot block with greater depth.
@@ -892,6 +894,8 @@ export interface ObservationRequest {
 export interface ObservationProjectionEcho {
   roles?: string[];
   name?: string;
+  /** Explicit substring filter on visible names and non-withheld public values. */
+  text?: string;
   scopeRef?: string;
   matched: number;
   total: number;
@@ -964,6 +968,7 @@ export interface ApprovalDecision {
  * Artifact reference
  */
 export interface ArtifactRef {
+  file?: { path: string; bytes: number; expiresAt?: number };
   artifactId: string;
   type: 'screenshot' | 'pdf' | 'trace' | 'download' | 'html' | 'dom';
   contentType: string;

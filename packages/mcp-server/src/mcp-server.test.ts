@@ -238,6 +238,38 @@ describe('AgentBrowser MCP server', () => {
       expect(JSON.stringify(result.structuredContent)).not.toContain('privateReason');
     });
 
+    it('carries a bounded scope sub-code on structured errors, and nothing unlisted (T10 M2)', async () => {
+      await initialize('2025-06-18');
+      sessions.executeAction = vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('SCOPE_METHOD_DENIED: method DELETE is outside the scope'), {
+            code: 'POLICY_DENIED',
+            details: { reason: 'egress_policy', scope: 'SCOPE_METHOD_DENIED' },
+          })
+        )
+        .mockRejectedValueOnce(
+          Object.assign(new Error('denied'), {
+            code: 'POLICY_DENIED',
+            details: { scope: 'SCOPE_INVENTED host=10.0.0.1' },
+          })
+        );
+      const act = () =>
+        call('act-scope', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'click',
+          target: { ref: 'e1_0' },
+        }).then((text) => JSON.parse(text).result);
+      expect((await act()).structuredContent.error).toMatchObject({
+        code: 'POLICY_DENIED',
+        details: { scope: 'SCOPE_METHOD_DENIED' },
+      });
+      const unlisted = await act();
+      expect(unlisted.structuredContent.error.details).toBeUndefined();
+      expect(JSON.stringify(unlisted.structuredContent)).not.toContain('SCOPE_INVENTED');
+    });
+
     it.each([true, false])(
       'retains complete receipts and text for a report with ok=%s',
       async (ok) => {
@@ -703,6 +735,61 @@ describe('AgentBrowser MCP server', () => {
   });
 
   describe('tools/list', () => {
+    it('T10 M2: the scope tool reads status, runs a dry-run check, and stays out of the application profile', async () => {
+      const status = {
+        allowedHosts: ['a.example'],
+        pathRules: [],
+        identityBindings: [],
+        expired: false,
+        denials: {},
+      };
+      sessions.scopeStatus = vi.fn().mockResolvedValue(status);
+      sessions.checkScope = vi
+        .fn()
+        .mockResolvedValue({ allowed: false, scope: 'SCOPE_HOST_DENIED' });
+      const read = JSON.parse(await call('scope-status', 'scope', { sessionId: 'ses_1' })).result;
+      expect(JSON.parse(read.content[0].text)).toEqual({ sessionId: 'ses_1', status });
+      expect(sessions.scopeStatus).toHaveBeenCalledWith('ses_1');
+      const check = JSON.parse(
+        await call('scope-check', 'scope', {
+          sessionId: 'ses_1',
+          url: 'https://b.example/',
+          method: 'POST',
+        })
+      ).result;
+      expect(JSON.parse(check.content[0].text)).toEqual({
+        sessionId: 'ses_1',
+        check: { allowed: false, scope: 'SCOPE_HOST_DENIED' },
+      });
+      expect(sessions.checkScope).toHaveBeenCalledWith('ses_1', {
+        url: 'https://b.example/',
+        method: 'POST',
+      });
+      const methodOnly = JSON.parse(
+        await call('scope-bad', 'scope', { sessionId: 'ses_1', method: 'POST' })
+      ).result;
+      expect(methodOnly.isError).toBe(true);
+      const numericMethod = JSON.parse(
+        await call('scope-num', 'scope', {
+          sessionId: 'ses_1',
+          url: 'https://b.example/',
+          method: 123,
+        })
+      ).result;
+      expect(numericMethod.isError).toBe(true);
+      expect(sessions.checkScope).toHaveBeenCalledTimes(1);
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'application' });
+      const names = JSON.parse(await request('scope-app', 'tools/list')).result.tools.map(
+        (tool: { name: string }) => tool.name
+      );
+      expect(names).not.toContain('scope');
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'bounty' });
+      const bounty = JSON.parse(await request('scope-bounty', 'tools/list')).result.tools.map(
+        (tool: { name: string }) => tool.name
+      );
+      expect(bounty).toContain('scope');
+    });
+
     it('projects a fixed connection profile and rejects direct calls to omitted tools', async () => {
       sessions.autofill = vi.fn();
       server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'audit' });
@@ -939,6 +1026,32 @@ describe('AgentBrowser MCP server', () => {
       expect(response.structuredContent).toEqual(expected);
       expect(JSON.stringify(response)).not.toContain('secret');
       expect(JSON.stringify(response)).not.toContain('10.0.0.1');
+    });
+
+    it('carries the engagement-scope sub-code of a scope-refused navigation (T10 M2)', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('SCOPE_HOST_DENIED: host out.example is outside the scope'), {
+          code: 'POLICY_DENIED',
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED', host: 'out.example' },
+        })
+      );
+      const response = JSON.parse(
+        await call('7-scope', 'navigate', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          url: 'https://out.example/',
+        })
+      ).result;
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toEqual({
+        error: {
+          code: 'POLICY_DENIED',
+          message: 'Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+          retryable: false,
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED' },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain('out.example');
     });
 
     it('should observe and return the semantic observation', async () => {
@@ -1182,7 +1295,7 @@ describe('AgentBrowser MCP server', () => {
     describe('html', () => {
       it('returns inline decoded HTML with the untrusted-content warning', async () => {
         const response = JSON.parse(
-          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
         );
         const result = textOf(response);
 
@@ -1254,7 +1367,7 @@ describe('AgentBrowser MCP server', () => {
         });
 
         const response = JSON.parse(
-          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
         );
         const result = textOf(response);
 

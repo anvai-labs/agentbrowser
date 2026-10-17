@@ -52,7 +52,13 @@ describe.each(['observe', 'screenshot'] as const)(
       const { tool } = setup();
       const canonical =
         operation === 'observe' ? ObservationRequestSchema : ScreenshotRequestSchema;
-      const { sessionId, pageId, ...body } = tool.inputSchema.properties as Record<string, unknown>;
+      const { sessionId, pageId, inline, ...body } = tool.inputSchema.properties as Record<
+        string,
+        unknown
+      >;
+      if (operation === 'screenshot') {
+        expect(inline).toBeDefined();
+      }
       expect(body).toEqual(canonical.properties);
       expect(tool.outputSchema).toBeDefined();
     });

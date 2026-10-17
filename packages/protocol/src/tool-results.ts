@@ -1,7 +1,12 @@
 import { Type } from '@sinclair/typebox';
 import { ControlViewSchema, OperationRecordSchema } from './control.js';
 import { SessionEventsPageSchema } from './event-replay.js';
-import { SessionResponseSchema } from './schemas.js';
+import {
+  EngagementScopeStatusSchema,
+  LocalArtifactFileSchema,
+  ScopeCheckResultSchema,
+  SessionResponseSchema,
+} from './schemas.js';
 import { SessionViewSchema } from './session-diagnostics.js';
 
 /**
@@ -177,13 +182,17 @@ export const PageSnapshotSchema = Type.Object(
   { $id: 'urn:agentbrowser:page-snapshot:v1' }
 );
 
-/** MCP `html`: the page HTML inline, bounded by maxBytes UTF-8 bytes and marked untrusted. */
+/** MCP `html`: reference/file by default; explicitly requested inline text is bounded and untrusted. */
 export const PageHtmlResultSchema = Type.Object(
   {
     sessionId: Type.String({ minLength: 1 }),
     pageId: Type.String({ minLength: 1 }),
     artifactId: Type.String({ minLength: 1 }),
-    html: Type.String(),
+    html: Type.Optional(Type.String()),
+    delivery: Type.Optional(
+      Type.Union([Type.Literal('reference'), Type.Literal('file'), Type.Literal('inline')])
+    ),
+    file: Type.Optional(LocalArtifactFileSchema),
     truncated: Type.Boolean(),
     sizeBytes: Type.Integer({ minimum: 0 }),
     untrustedContent: Type.Literal(true),
@@ -243,8 +252,40 @@ export const SessionInspectionResultSchema = Type.Object(
   { $id: 'urn:agentbrowser:session-inspection:v1' }
 );
 
+/** MCP `scope` (T10 M2): the scope status, or a dry-run verdict when a url was given. */
+export const ScopeToolResultSchema = Type.Object(
+  {
+    sessionId: Type.String({ minLength: 1 }),
+    status: Type.Optional(
+      Type.Unsafe<Record<string, unknown>>(relaxForClients(EngagementScopeStatusSchema))
+    ),
+    check: Type.Optional(
+      Type.Unsafe<Record<string, unknown>>(relaxForClients(ScopeCheckResultSchema))
+    ),
+  },
+  { $id: 'urn:agentbrowser:scope-tool:v1' }
+);
+
 /** MCP `operation` (delegated sessions): the operation record, relaxed for clients. */
 export const OperationRecordResultSchema = Type.Unsafe<Record<string, unknown>>({
   ...relaxForClients(OperationRecordSchema),
   $id: 'urn:agentbrowser:operation-record:v1',
 });
+
+/** Explicit, bounded retrieval of existing session evidence; default is a reference. */
+export const ArtifactReadResultSchema = Type.Object(
+  {
+    artifactId: Type.String(),
+    contentType: Type.String(),
+    sizeBytes: Type.Integer({ minimum: 0 }),
+    file: Type.Optional(LocalArtifactFileSchema),
+    content: Type.Optional(Type.String()),
+    encoding: Type.Optional(Type.Union([Type.Literal('utf8'), Type.Literal('base64')])),
+    offset: Type.Optional(Type.Integer({ minimum: 0 })),
+    returnedBytes: Type.Optional(Type.Integer({ minimum: 0 })),
+    nextOffset: Type.Optional(Type.Integer({ minimum: 0 })),
+    truncated: Type.Optional(Type.Boolean()),
+    untrustedContent: Type.Literal(true),
+  },
+  { $id: 'urn:agentbrowser:artifact-read:v1' }
+);

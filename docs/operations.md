@@ -714,10 +714,11 @@ charged once). Surfacing: service `navigate` preflights the scope, so
 its denials are typed `POLICY_DENIED` errors carrying `SCOPE_*`
 reasons (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
 `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`);
-traffic denied at the wire from other lanes (act-driven navigations,
-non-navigation subresources) surfaces the generic `egress_policy`
-reason — enforcement is identical, only the reason granularity
-differs. Identity
+traffic denied at the wire (a redirect hop, act-driven navigations,
+subresources) is reported with `reason: egress_policy` plus the same
+`scope` sub-code on the navigate `blocked` result and on `request.failed`
+events (T10 M2). Downloads and `page_create` redirects do not carry it
+yet. Identity
 bindings on well-known headers (`host`, `content-length`, ...) are an
 operator footgun — bind application identity headers only. CLI:
 `session create --scope-file scope.json`
@@ -731,6 +732,16 @@ and its stated residuals.
 | `scope` at the top level | refused, `400 INVALID_REQUEST` (it would skip validation) |
 | `+ cdpAttach` | refused, `400 INVALID_REQUEST`, `floor.cdp.options` |
 | `+ allowServiceWorkers: true` | refused, `400 INVALID_REQUEST`, `scope.lane.serviceWorkers` |
+
+| Read the scope (T10 M2) | REST | SDK | CLI |
+| --- | --- | --- | --- |
+| scope in effect, budget used/remaining, expiry, denials by sub-code | `GET /v1/sessions/{id}/scope` | `sessions.scopeStatus(id)` | `session scope <id>` |
+| dry run: would the scope rules allow this now? (no budget, no denial counted) | `GET /v1/sessions/{id}/scope/check?url=…&method=…` | `sessions.checkScope(id, {url, method})` | `session scope-check <id> <url> [--method M]` |
+
+Identity bindings report header and hosts only; a marker value is never returned. The dry run
+judges the host, path, method (default `GET`), expiry and budget rules; it does not evaluate
+identity bindings (no headers are taken), and the base policy and DNS still apply when the
+request is made.
 
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an

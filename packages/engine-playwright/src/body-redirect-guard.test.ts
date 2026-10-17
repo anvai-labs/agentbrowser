@@ -208,7 +208,12 @@ describe('redirects after body-bearing requests are checked (T10 M1, real Chromi
           true
         );
         expect(fixture.leaked()).toEqual([]);
-        expect(failures.some((failure) => failure.blocked === true && failure.redirect)).toBe(true);
+        expect(
+          failures.some(
+            (failure) =>
+              failure.blocked === true && failure.redirect && failure.scope === 'SCOPE_HOST_DENIED'
+          )
+        ).toBe(true);
       });
     } finally {
       await closeFixture(fixture);

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   isNavigationFailureReason,
+  isScopeDenialCode,
   MAX_PLAN_STEPS,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
@@ -122,7 +123,12 @@ import {
   RecordsSelectorError,
   SchemaExtractor,
 } from '@agentbrowser/extraction';
-import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import {
+  EngagementScopePolicy,
+  type EngagementScopeStatus,
+  type NetworkPolicy,
+  SessionHostPolicy,
+} from '@agentbrowser/policy';
 import {
   type Authorizer,
   approvalModeOf,
@@ -640,6 +646,7 @@ export type PartialObservation = {
   /** Compact projection (opt-in): roles/name/scopeRef/limit/includeFields. */
   roles?: string[] | undefined;
   name?: string | undefined;
+  text?: string | undefined;
   scopeRef?: string | undefined;
   limit?: number | undefined;
   includeFields?: ObservationRequest['includeFields'] | undefined;
@@ -735,6 +742,12 @@ export function browserReportOutcomeUnknown(body: unknown): boolean {
   );
 }
 
+interface AdoptedPopup {
+  pageId: string;
+  enginePage: EnginePage;
+  startPump: boolean;
+}
+
 export class AgentBrowserService {
   readonly authority: SessionAuthority;
   /**
@@ -791,6 +804,8 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  /** Each scoped session's engagement scope, for status and dry-run checks (T10 M2). */
+  private readonly sessionScopes = new Map<string, EngagementScopePolicy>();
   /** TD-15 phase 4: per-session memo disposers, cleared at close. */
   private readonly sessionPolicyDisposers = new Map<string, () => void>();
   private readonly sessionApprovalPolicies = new Map<
@@ -1058,6 +1073,7 @@ export class AgentBrowserService {
     this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
+    this.sessionScopes.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
     this.sessionCredentialSources.delete(sessionId);
     this.sessionHostAllowlists.delete(sessionId);
@@ -1179,7 +1195,7 @@ export class AgentBrowserService {
    * first-unknown-page selection. Chained per session, adoptions run in
    * event order and observe each other's registrations.
    */
-  private readonly adoptionChains = new Map<string, Promise<void>>();
+  private readonly adoptionChains = new Map<string, Promise<AdoptedPopup | undefined>>();
 
   private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
@@ -1305,7 +1321,7 @@ export class AgentBrowserService {
       try {
         for await (const event of enginePage.events()) {
           if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted) break;
-          const stamped: EngineEvent = this.secretManager.redact({
+          let stamped: EngineEvent = this.secretManager.redact({
             ...event,
             sessionId,
             pageId,
@@ -1314,9 +1330,25 @@ export class AgentBrowserService {
               : {}),
           });
           if (stamped.type === 'page.created') {
-            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
-              // Adoption is best-effort; the popup stays engine-side only.
-            });
+            const adopted = await this.adoptPopupSerialized(sessionId, event.data).catch(
+              () => undefined
+            );
+            // Public lifecycle evidence uses service handles, never adapter IDs.
+            // No target is invented when an immediate-close popup is already gone.
+            stamped = {
+              ...stamped,
+              pageId: adopted?.pageId ?? pageId,
+              data: {
+                openerPageId: pageId,
+                phase: adopted ? 'registered' : 'unavailable',
+                ...(adopted ? { pageId: adopted.pageId } : {}),
+              },
+            };
+            if (adopted?.startPump)
+              queueMicrotask(() => {
+                if (this.coordinator.get(sessionId) === owner && this.pages.has(adopted.pageId))
+                  this.pumpEvents(sessionId, adopted.pageId, adopted.enginePage);
+              });
           } else if (stamped.type === 'page.destroyed') {
             sawDestroyed = true;
             this.reapPage(sessionId, pageId);
@@ -1387,7 +1419,10 @@ export class AgentBrowserService {
    * previous one settles, in event order, so concurrent popups cannot race
    * on the engine page list. Never throws; the pump keeps flowing.
    */
-  private adoptPopupSerialized(sessionId: string, data: unknown): Promise<void> {
+  private adoptPopupSerialized(
+    sessionId: string,
+    data: unknown
+  ): Promise<AdoptedPopup | undefined> {
     const previous = this.adoptionChains.get(sessionId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
@@ -1401,7 +1436,8 @@ export class AgentBrowserService {
     return next;
   }
 
-  private async adoptPopup(sessionId: string, data: unknown): Promise<void> {
+  private async adoptPopup(sessionId: string, data: unknown): Promise<AdoptedPopup | undefined> {
+    const owner = this.requireSession(sessionId);
     const payload = data as { openerPageId?: unknown; pageId?: unknown } | null;
     const openerEnginePageId = payload?.openerPageId;
     const popupEnginePageId = payload?.pageId;
@@ -1414,9 +1450,9 @@ export class AgentBrowserService {
       return; // Opener already gone; nothing to attach the popup under.
     }
     // Idempotence: a replayed or raced page.created must not double-register.
-    if (owned.some(([, page]) => page.enginePage.id === popupEnginePageId)) {
-      return;
-    }
+    const existing = owned.find(([, page]) => page.enginePage.id === popupEnginePageId);
+    if (existing)
+      return { pageId: existing[0], enginePage: existing[1].enginePage, startPump: false };
     // Cap: runaway popup storms are closed engine-side, never adopted.
     const popupCount = owned.filter(([, page]) => page.openerPageId !== undefined).length;
     if (popupCount >= AgentBrowserService.MAX_POPUPS_PER_SESSION) {
@@ -1441,7 +1477,12 @@ export class AgentBrowserService {
     } catch {
       return; // The engine session is gone; nothing to adopt.
     }
-    if (popup === undefined) {
+    if (
+      popup === undefined ||
+      this.coordinator.get(sessionId) !== owner ||
+      owner.signal.aborted ||
+      this.pages.get(opener[0]) !== opener[1]
+    ) {
       return;
     }
     const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
@@ -1452,7 +1493,7 @@ export class AgentBrowserService {
       history: new Map(),
       openerPageId: opener[0],
     });
-    this.pumpEvents(sessionId, popupPageId, popup);
+    return { pageId: popupPageId, enginePage: popup, startPump: true };
   }
 
   /** Drop a page's registry and churn state (page.destroyed or pump end). */
@@ -1559,6 +1600,36 @@ export class AgentBrowserService {
   }
 
   // ---- sessions -----------------------------------------------------------
+
+  private scopeOf(sessionId: string): EngagementScopePolicy {
+    if (!this.coordinator.get(sessionId))
+      throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} not found`);
+    const scope = this.sessionScopes.get(sessionId);
+    if (scope === undefined) throw new ServiceError('NOT_FOUND', 'Session has no engagement scope');
+    return scope;
+  }
+
+  /** The scope in effect, budget and denials (T10 M2); never an identity marker value. */
+  getScopeStatus(sessionId: string): EngagementScopeStatus {
+    return this.scopeOf(sessionId).status();
+  }
+
+  /** Dry run: would the scope rules allow this request now? Spends nothing, counts nothing. */
+  checkScope(
+    sessionId: string,
+    request: { url: string; method?: string }
+  ): { allowed: true } | { allowed: false; scope: string } {
+    const scope = this.scopeOf(sessionId);
+    let parsed: URL;
+    try {
+      parsed = new URL(request.url);
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'url must be an absolute http(s) URL');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      throw new ServiceError('INVALID_REQUEST', 'url must be an absolute http(s) URL');
+    return scope.check({ url: parsed.href, ...(request.method ? { method: request.method } : {}) });
+  }
 
   async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
     const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
@@ -1723,6 +1794,8 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (scopedPolicy instanceof EngagementScopePolicy)
+          this.sessionScopes.set(session.sessionId, scopedPolicy);
         if (sessionDisposer !== undefined)
           this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
@@ -3777,6 +3850,9 @@ export class AgentBrowserService {
         ...(result.status !== 'success'
           ? { reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error' }
           : {}),
+        ...(result.status === 'blocked' && isScopeDenialCode(result.scope)
+          ? { scope: result.scope }
+          : {}),
       });
     });
   }
@@ -4011,6 +4087,7 @@ export class AgentBrowserService {
       const projection = {
         ...(request.roles !== undefined ? { roles: request.roles } : {}),
         ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.text !== undefined ? { text: request.text } : {}),
         ...(request.scopeRef !== undefined ? { scopeRef: request.scopeRef } : {}),
         ...(request.limit !== undefined ? { limit: request.limit } : {}),
         ...(request.includeFields !== undefined ? { includeFields: request.includeFields } : {}),

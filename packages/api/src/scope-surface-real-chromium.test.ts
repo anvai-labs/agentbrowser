@@ -29,6 +29,11 @@ const OUT = 'http://192.0.2.7:9/never';
 
 async function startFixture(): Promise<{ server: ReturnType<typeof createServer>; port: number }> {
   const server = createServer((request, response) => {
+    if (request.url === '/redirect-out') {
+      response.writeHead(302, { location: OUT });
+      response.end();
+      return;
+    }
     response.writeHead(200, { 'content-type': 'text/html' });
     response.end(
       '<html><head><link rel="icon" href="data:,"></head><body><h1>fixture</h1></body></html>'
@@ -133,6 +138,32 @@ it('scope: an expired engagement scope denies the first navigation', async () =>
       service.navigate(sessionId, pageId, { url: `http://127.0.0.1:${port}/late` })
     );
     expect(denial.message).toContain('SCOPE_EXPIRED');
+  } finally {
+    await service.shutdown().catch(() => {});
+    await closeFixture(server);
+  }
+}, 30_000);
+
+it('T10 M2: a navigation blocked at a redirect hop reports the scope sub-code', async () => {
+  const { server, port } = await startFixture();
+  const service = new AgentBrowserService({
+    engine: new PlaywrightChromiumEngine(),
+    networkPolicy: new NetworkPolicy({ blockLoopback: false }),
+  });
+  try {
+    const { sessionId } = await service.createSession({
+      tenantId: 'local',
+      scope: { allowedHosts: ['127.0.0.1'] },
+    });
+    const { pageId } = await service.createPage(sessionId);
+    const blocked = await service.navigate(sessionId, pageId, {
+      url: `http://127.0.0.1:${port}/redirect-out`,
+    });
+    expect(blocked).toMatchObject({
+      status: 'blocked',
+      reason: 'egress_policy',
+      scope: 'SCOPE_HOST_DENIED',
+    });
   } finally {
     await service.shutdown().catch(() => {});
     await closeFixture(server);

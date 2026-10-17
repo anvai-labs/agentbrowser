@@ -6,9 +6,13 @@
  * live server.
  */
 
-import { writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { assertCookieRequestSize } from '@agentbrowser/core';
+import {
+  artifactReference,
+  cacheLocalArtifact,
+  pruneArtifactCache,
+} from '@agentbrowser/core/local-artifacts';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -72,6 +76,7 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
+import { readApiKeyFile } from './api-key-file.js';
 import { readCookieFile, writeCookieFile } from './cookie-file.js';
 import {
   createJsonArgumentReader,
@@ -79,6 +84,7 @@ import {
   type JsonInputStream,
 } from './json-input.js';
 import { observationReceipt, writeObservationFile } from './observation-file.js';
+import { writePrivateFile } from './private-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
   COOKIE_USAGE,
@@ -194,6 +200,8 @@ export interface CliClient
     | 'download'
     | 'collectDownload'
     | 'cookieHandoff'
+    | 'scopeStatus'
+    | 'checkScope'
   > &
     Partial<
       Pick<
@@ -397,6 +405,10 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
         .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
+        .option(
+          '--api-key-file <file>',
+          'owner-only API credential file; overrides env; exclusive with --api-key'
+        )
         // TD-BROWSER-16 phase 1 (ADR-025): an operator key is NEVER taken
         // from the environment — an env var is agent-reachable. Only the
         // approval commands read it, from the key file or a no-echo prompt.
@@ -416,51 +428,50 @@ export function buildCli(deps: CliDependencies): Cli {
         <A extends unknown[]>(handler: (ctx: CommandContext, ...args: A) => Promise<void>) =>
         async (...args: A) => {
           const globals = program.opts();
-          const apiKey = globals.apiKey ?? process.env.AGENTBROWSER_API_KEY;
-          // The operator key, when an approval command needs it: from the
-          // file, or a no-echo prompt — never an environment variable, and
-          // never for any other command.
-          // Only the approvals command resolves an operator key — never any
-          // other command whose argv merely contains the token.
-          const operatorKey: string | undefined = undefined;
-          const ctx: CommandContext = {
-            client: deps.createClient({
-              baseUrl: globals.baseUrl,
-              timeout: Number.parseInt(globals.timeout, 10),
-              ...(apiKey ? { apiKey } : {}),
-              ...(globals.operationId
-                ? { headers: { 'x-agentbrowser-operation-id': globals.operationId } }
-                : {}),
-            }),
-            json: Boolean(globals.json),
-            ...(act.opts().approvalToken
-              ? { approvalToken: String(act.opts().approvalToken) }
-              : {}),
-            ...(act.opts().executionRequirement !== undefined
-              ? { actExecutionRequirement: String(act.opts().executionRequirement) }
-              : {}),
-            ...(operatorKey !== undefined ? { operatorKey } : {}),
-            baseUrl: globals.baseUrl ?? 'http://localhost:5709',
-            ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
-            out: deps.out,
-            emit: (value: unknown, render: () => string[]) => {
-              if (globals.json) {
-                // Minified by default: --json output is machine-facing (agents,
-                // jq); --pretty restores indentation for human reading.
-                deps.out(globals.pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
-              } else {
-                for (const line of render()) {
-                  deps.out(line);
-                }
-              }
-            },
-          };
-
+          let apiKey: string | undefined;
           try {
+            if (globals.apiKeyFile && globals.apiKey)
+              throw new UsageError('Use only one of --api-key and --api-key-file.');
+            apiKey = globals.apiKeyFile
+              ? readApiKeyFile(globals.apiKeyFile)
+              : (globals.apiKey ?? process.env.AGENTBROWSER_API_KEY);
+            const ctx: CommandContext = {
+              client: deps.createClient({
+                baseUrl: globals.baseUrl,
+                timeout: Number.parseInt(globals.timeout, 10),
+                ...(apiKey ? { apiKey } : {}),
+                ...(globals.operationId
+                  ? { headers: { 'x-agentbrowser-operation-id': globals.operationId } }
+                  : {}),
+              }),
+              json: Boolean(globals.json),
+              ...(act.opts().approvalToken
+                ? { approvalToken: String(act.opts().approvalToken) }
+                : {}),
+              ...(act.opts().executionRequirement !== undefined
+                ? { actExecutionRequirement: String(act.opts().executionRequirement) }
+                : {}),
+              baseUrl: globals.baseUrl ?? 'http://localhost:5709',
+              ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
+              out: deps.out,
+              emit: (value: unknown, render: () => string[]) => {
+                if (globals.json) {
+                  // Minified by default: --json output is machine-facing (agents,
+                  // jq); --pretty restores indentation for human reading.
+                  deps.out(globals.pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
+                } else {
+                  for (const line of render()) {
+                    deps.out(line);
+                  }
+                }
+              },
+            };
+
             await handler(ctx, ...args);
           } catch (error) {
             exitCode = 1;
-            deps.err(formatError(error));
+            const message = formatError(error);
+            deps.err(apiKey ? message.split(apiKey).join('[REDACTED]') : message);
           }
         };
 
@@ -481,6 +492,58 @@ export function buildCli(deps: CliDependencies): Cli {
               `  ttl:     ${got.ttlMs ?? '?'} ms`,
               `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
               ...sessionFacts(got),
+            ]);
+          })
+        );
+      session
+        .command('scope <sessionId>')
+        .description(
+          'T10: the engagement scope in effect, request budget and denials by sub-code (never an identity marker value)'
+        )
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const status = await ctx.client.sessions.scopeStatus(sessionId);
+            ctx.emit(status, () => [
+              `Scope for ${sessionId}`,
+              `  hosts:   ${status.allowedHosts.join(', ')}`,
+              ...status.pathRules.map(
+                (rule) => `  path:    ${rule.hostSuffix ? `${rule.hostSuffix} ` : ''}${rule.prefix}`
+              ),
+              ...(status.allowedMethods ? [`  methods: ${status.allowedMethods.join(', ')}`] : []),
+              ...status.identityBindings.map(
+                (binding) =>
+                  `  identity: ${binding.header} bound to ${binding.allowedHosts.join(', ')}`
+              ),
+              ...(status.budget
+                ? [
+                    `  budget:  ${status.budget.spent}/${status.budget.limit} spent (${status.budget.remaining} left)`,
+                  ]
+                : []),
+              ...(status.expiresAt !== undefined
+                ? [
+                    `  expires: ${new Date(status.expiresAt).toISOString()}${status.expired ? ' (expired)' : ''}`,
+                  ]
+                : []),
+              ...Object.entries(status.denials).map(
+                ([code, count]) => `  denied:  ${code} x${count}`
+              ),
+            ]);
+          })
+        );
+      session
+        .command('scope-check <sessionId> <url>')
+        .description(
+          'T10: dry run — would the scope rules allow this request now? Spends no budget, records no denial'
+        )
+        .option('--method <method>', 'HTTP method to judge (default GET)')
+        .action(
+          action(async (ctx, sessionId: string, url: string, options: { method?: string }) => {
+            const verdict = await ctx.client.sessions.checkScope(sessionId, {
+              url,
+              ...(options.method !== undefined ? { method: options.method } : {}),
+            });
+            ctx.emit(verdict, () => [
+              verdict.allowed ? 'allowed by the scope' : `denied by the scope: ${verdict.scope}`,
             ]);
           })
         );
@@ -915,11 +978,11 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, sessionId: string) => {
             const artifact = await ctx.client.sessions.trace(sessionId);
-            ctx.emit(artifact, () => [
+            ctx.emit(artifactReference(artifact), () => [
               `Trace artifact ${artifact.artifactId}`,
               `  type:        ${artifact.type}`,
               `  size:        ${artifact.sizeBytes} bytes`,
-              `  fetch with:  GET ${artifact.url}`,
+              `  retrieve:    agentbrowser artifact get ${sessionId} ${artifact.artifactId}`,
             ]);
           })
         );
@@ -1239,26 +1302,37 @@ export function buildCli(deps: CliDependencies): Cli {
       page
         .command('html')
         .description(
-          "capture the page's current HTML (NOT secret-redacted — typed-in form values ride it verbatim); prints the HTML inline by default, or the artifact descriptor with --no-print"
+          "capture the page's current HTML (NOT secret-redacted — typed-in form values ride it verbatim); saves privately by default; --inline explicitly prints content; --no-print returns a session reference"
         )
         .argument('<sessionId>')
         .argument('<pageId>')
         .option('--max-bytes <n>', 'byte cap when printing inline (default 200000)')
-        .option('--no-print', 'capture the artifact only and print its descriptor')
+        .option('--no-print', 'return a compact session artifact reference without fetching bytes')
+        .option('--out <file>', 'save HTML to a new private file (default: managed cache)')
+        .option('--inline', 'explicitly return bounded HTML text')
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { maxBytes?: string; print?: boolean }
+              options: { maxBytes?: string; print?: boolean; out?: string; inline?: boolean }
             ) => {
+              if (options.out && (options.inline || options.maxBytes !== undefined))
+                throw new UsageError(
+                  '--out cannot be combined with --inline or --max-bytes for HTML'
+                );
               const exported = await ctx.client.sessions.html(sessionId, pageId);
               if (options.print === false) {
-                ctx.emit(exported, () => [
+                ctx.emit(artifactReference(exported), () => [
                   `HTML artifact ${exported.artifactId}`,
                   `  size:        ${exported.sizeBytes} bytes`,
                 ]);
+                return;
+              }
+
+              if ((!options.inline && options.maxBytes === undefined) || options.out) {
+                await emitCapture(ctx, sessionId, exported, { out: options.out });
                 return;
               }
 
@@ -1270,7 +1344,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 base64 = fetched.contentBase64;
               }
               if (base64 === undefined) {
-                ctx.emit(exported, () => [
+                ctx.emit(artifactReference(exported), () => [
                   `HTML artifact ${exported.artifactId}`,
                   `  size:        ${exported.sizeBytes} bytes`,
                 ]);
@@ -1280,7 +1354,9 @@ export function buildCli(deps: CliDependencies): Cli {
               const full = Buffer.from(base64, 'base64');
               const parsed = options.maxBytes ? Number.parseInt(options.maxBytes, 10) : Number.NaN;
               const maxBytes = Number.isInteger(parsed) && parsed > 0 ? parsed : 200000;
-              const bounded = full.subarray(0, maxBytes);
+              let end = Math.min(full.length, maxBytes);
+              while (end > 0 && end < full.length && ((full[end] ?? 0) & 0xc0) === 0x80) end--;
+              const bounded = full.subarray(0, end);
               const truncated = full.length > maxBytes;
               // Raw page bytes can carry ANSI/OSC sequences a terminal obeys
               // (cursor moves, clipboard writes); strip control characters
@@ -1381,6 +1457,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'compact projection: case-insensitive substring filter on element names (max 200 chars)'
         )
         .option(
+          '--text <substring>',
+          'explicit filter on visible names and public text values (max 200 chars)'
+        )
+        .option(
           '--scope-ref <ref>',
           'compact projection: scope to this element and its subtree (same frame block, deeper)'
         )
@@ -1422,6 +1502,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 sinceRevision?: string;
                 roles?: string[];
                 name?: string;
+                text?: string;
                 scopeRef?: string;
                 limit?: string;
                 includeFields?: string[];
@@ -1453,6 +1534,7 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.name !== undefined) {
                 request.name = options.name;
               }
+              if (options.text !== undefined) request.text = options.text;
               if (options.scopeRef !== undefined) {
                 request.scopeRef = options.scopeRef;
               }
@@ -1493,14 +1575,14 @@ export function buildCli(deps: CliDependencies): Cli {
                 const unknownProperty =
                   /[Uu]nrecognized (property|key|option)|[Uu]nexpected (property|key)/.test(
                     message
-                  ) || /"path":"\/(roles|scopeRef|includeFields|name|limit)"/.test(issues);
+                  ) || /"path":"\/(roles|scopeRef|includeFields|name|text|limit)"/.test(issues);
                 if (
                   (error as { code?: string }).code === 'INVALID_REQUEST' &&
                   unknownProperty &&
-                  /roles|scopeRef|includeFields|name|limit/.test(message + issues)
+                  /roles|scopeRef|includeFields|name|text|limit/.test(message + issues)
                 ) {
                   throw new UsageError(
-                    `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--scope-ref/--limit/--include-fields, or upgrade the server.`
+                    `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--text/--scope-ref/--limit/--include-fields, or upgrade the server.`
                   );
                 }
                 throw error;
@@ -2097,7 +2179,11 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--format <format>', 'png | jpeg | webp')
         .option('--quality <n>', 'jpeg/webp quality (0-100)')
         .option('--mask-sensitive', 'mask sensitive fields in the capture')
-        .option('--out <file>', 'save the screenshot bytes to a file')
+        .option('--out <file>', 'save bytes and print only a saved-artifact receipt')
+        .option(
+          '--inline',
+          'include screenshot bytes explicitly instead of the default file receipt'
+        )
         .option(
           '--wait-until <until>',
           'readiness wait before capture: settled|domcontentloaded|load|networkidle|urlPattern|selectorVisible|minElements'
@@ -2118,6 +2204,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 quality?: string;
                 maskSensitive?: boolean;
                 out?: string;
+                inline?: boolean;
               } & WaitFlagOptions
             ) => {
               const request: ScreenshotRequest = {};
@@ -2144,18 +2231,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 parseScreenshotRequest(request)
               );
 
-              ctx.emit(artifact, () => [
-                `Screenshot ${artifact.artifactId}`,
-                `  type:  ${artifact.contentType}`,
-                `  bytes: ${artifact.sizeBytes}`,
-                `  url:   ${artifact.url}`,
-              ]);
-              if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
-                ]);
-              }
+              await emitCapture(ctx, sessionId, artifact, options);
             }
           )
         );
@@ -2173,7 +2249,8 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--landscape')
         .option('--display-header-footer')
         .option('--print-background')
-        .option('--out <file>', 'save the PDF bytes to a file')
+        .option('--out <file>', 'save the PDF to a new private file (default: managed cache)')
+        .option('--inline', 'explicitly return base64 instead of a file receipt')
         .action(
           action(
             async (
@@ -2185,6 +2262,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 displayHeaderFooter?: boolean;
                 printBackground?: boolean;
                 out?: string;
+                inline?: boolean;
               }
             ) => {
               const request: PdfRequest = {};
@@ -2198,18 +2276,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 request.printBackground = true;
               }
               const artifact = await ctx.client.sessions.pdf(sessionId, pageId, request);
-              ctx.emit(artifact, () => [
-                `PDF ${artifact.artifactId}`,
-                `  type:  ${artifact.contentType}`,
-                `  bytes: ${artifact.sizeBytes}`,
-                `  url:   ${artifact.url}`,
-              ]);
-              if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
-                ]);
-              }
+              await emitCapture(ctx, sessionId, artifact, options);
             }
           )
         );
@@ -2546,35 +2613,57 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      program
+        .command('cache')
+        .description('manage disposable local captures')
+        .command('prune')
+        .description('remove expired captures and enforce cache limits')
+        .option('--all', 'remove all managed captures; explicit --out files are untouched')
+        .action(
+          action(async (ctx, options: { all?: boolean }) => {
+            const result = await pruneArtifactCache({ all: options.all === true });
+            ctx.emit(result, () => [
+              `Removed ${result.removed} cached captures; ${result.files} remain (${result.bytes} bytes)`,
+            ]);
+          })
+        );
       const artifact = program.command('artifact').description('manage artifacts');
       artifact
         .command('get')
-        .description('fetch an artifact (metadata + inline bytes)')
+        .description('save stored artifact bytes privately; inline content requires --inline')
         .argument('<sessionId>')
         .argument('<artifactId>')
-        .option('--out <file>', 'save the artifact bytes to a file')
+        .option('--out <file>', 'save to a new private file (default: managed cache)')
+        .option('--inline', 'explicitly return base64 content')
         .action(
-          action(async (ctx, sessionId: string, artifactId: string, options: { out?: string }) => {
-            const stored = await ctx.client.sessions.artifact(sessionId, artifactId);
-            if (options.out) {
-              if (!stored.contentBase64) {
-                throw new UsageError(
-                  'Artifact has no inline content to save (it may have expired).'
-                );
-              }
-              const bytes = Buffer.from(stored.contentBase64, 'base64');
-              writeFileSync(options.out, bytes);
-              ctx.emit(
-                { saved: options.out, sizeBytes: bytes.length, metadata: stored.metadata },
-                () => [`Saved ${artifactId} to ${options.out} (${bytes.length} bytes)`]
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              artifactId: string,
+              options: { out?: string; inline?: boolean }
+            ) => {
+              const stored = await ctx.client.sessions.artifact(sessionId, artifactId);
+              if (stored.contentBase64 === undefined)
+                throw new UsageError('Artifact bytes are unavailable; no content was printed.');
+              await emitCapture(
+                ctx,
+                sessionId,
+                {
+                  ...stored.metadata,
+                  ...(stored.contentBase64 !== undefined
+                    ? {
+                        inline: {
+                          contentBase64: stored.contentBase64,
+                          byteSize: stored.metadata.sizeBytes,
+                        },
+                      }
+                    : {}),
+                },
+                options
               );
-            } else {
-              ctx.emit(stored, () => [
-                `Artifact ${artifactId}`,
-                `  bytes: ${stored.contentBase64 ? stored.contentBase64.length : 0}`,
-              ]);
             }
-          })
+          )
         );
 
       const form = program.command('form').description('prepare reusable form mappings offline');
@@ -2783,10 +2872,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 url,
                 ...(options.filename !== undefined ? { filename: options.filename } : {}),
               });
-              ctx.emit(artifact, () => [
+              ctx.emit(artifactReference(artifact), () => [
                 `Download ${artifact.artifactId}`,
                 `  bytes: ${artifact.sizeBytes}`,
-                `  url:   ${artifact.url}`,
               ]);
               if (options.out) {
                 const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
@@ -2823,7 +2911,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 pageId,
                 downloadIdOrFilename
               );
-              ctx.emit(artifact, () => [
+              ctx.emit(artifactReference(artifact), () => [
                 `Download ${artifact.artifactId}`,
                 `  bytes: ${artifact.sizeBytes}`,
               ]);
@@ -3068,6 +3156,36 @@ function refTarget(ref: string): { ref: string } {
  * and write them to a file. Artifact `url` fields carry short-lived signed
  * tokens and a relative path; never dereference them here.
  */
+async function emitCapture(
+  ctx: CommandContext,
+  sessionId: string,
+  artifact: ArtifactRef,
+  options: { out?: string | undefined; inline?: boolean | undefined }
+): Promise<void> {
+  const contentBase64 =
+    artifact.inline?.contentBase64 ??
+    (await ctx.client.sessions.artifact(sessionId, artifact.artifactId)).contentBase64;
+  if (contentBase64 === undefined)
+    throw new UsageError(
+      'Artifact bytes are unavailable; the artifact may have expired. No content was printed.'
+    );
+  const bytes = Buffer.from(contentBase64, 'base64');
+  let file: { path: string; bytes: number; expiresAt?: number } | undefined;
+  if (options.out) file = await writePrivateFile(options.out, bytes);
+  else if (!options.inline) file = await cacheLocalArtifact(bytes, artifact.contentType);
+  const receipt = {
+    ...artifactReference(artifact),
+    sizeBytes: bytes.length,
+    ...(file ? { saved: file.path, file } : {}),
+    ...(options.inline ? { inline: { contentBase64, byteSize: bytes.length } } : {}),
+  };
+  ctx.emit(receipt, () =>
+    file
+      ? [`Saved ${artifact.artifactId} to ${file.path} (${bytes.length} bytes)`]
+      : [JSON.stringify(receipt)]
+  );
+}
+
 async function saveArtifactBytes(
   ctx: CommandContext,
   sessionId: string,
@@ -3081,8 +3199,11 @@ async function saveArtifactBytes(
     );
   }
   const bytes = Buffer.from(stored.contentBase64, 'base64');
-  writeFileSync(out, bytes);
-  return { path: out, sizeBytes: bytes.length };
+  await writePrivateFile(out, bytes);
+  return {
+    path: out,
+    sizeBytes: bytes.length,
+  };
 }
 
 function parseViewport(value: string): { width: number; height: number } {
@@ -3114,6 +3235,7 @@ function renderObservation(observation: ObservationResponse): string[] {
     const filters = [
       observation.projection.roles ? `roles=[${observation.projection.roles.join(',')}]` : null,
       observation.projection.name ? `name~"${observation.projection.name}"` : null,
+      observation.projection.text ? `text~"${observation.projection.text}"` : null,
       observation.projection.scopeRef ? `scope=${observation.projection.scopeRef}` : null,
     ].filter((part): part is string => part !== null);
     const prefix = filters.length > 0 ? `  projection: ${filters.join(' ')}` : '  projection:';

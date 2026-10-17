@@ -98,7 +98,14 @@ describe('MCP output schemas validate real results (T0 M2)', () => {
     });
     expect((listed.pages as unknown[]).length).toBeGreaterThanOrEqual(4);
 
-    await callValidated('pdf', { sessionId, pageId });
+    const pdf = await callValidated('pdf', { sessionId, pageId });
+    await callValidated('artifact', { sessionId, artifactId: pdf.artifactId });
+    await callValidated('artifact', {
+      sessionId,
+      artifactId: pdf.artifactId,
+      inline: true,
+      maxBytes: 7,
+    });
 
     await callValidated('events_replay', { sessionId });
     await callValidated('events_replay', { sessionId, type: 'console.log', since: -1, limit: 5 });

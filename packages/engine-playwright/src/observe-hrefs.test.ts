@@ -1,5 +1,5 @@
 import type { EnginePage } from '@agentbrowser/engine';
-import type { Locator, Page } from 'playwright';
+import type { ElementHandle, Page } from 'playwright';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 
@@ -8,9 +8,13 @@ import { PlaywrightChromiumEngine } from './index.js';
  * attach to the prototype of a live instance (same pattern as
  * target-identity.test.ts).
  */
-function locatorPrototype(page: EnginePage): Locator {
+async function handlePrototype(page: EnginePage): Promise<ElementHandle> {
   const backing = (page as unknown as { backingPage(): Page }).backingPage();
-  return Object.getPrototypeOf(backing.locator('body')) as Locator;
+  const handle = await backing.locator('body').elementHandle();
+  if (!handle) throw new Error('Missing fixture body');
+  const prototype = Object.getPrototypeOf(handle) as ElementHandle;
+  await handle.dispose();
+  return prototype;
 }
 
 /**
@@ -59,7 +63,7 @@ describe('observe link hrefs', () => {
       await page.navigate({
         url: 'data:text/html,<a href="https://example.com/a">A</a><a href="https://example.com/b">B</a>',
       });
-      vi.spyOn(locatorPrototype(page), 'getAttribute').mockRejectedValueOnce(
+      vi.spyOn(await handlePrototype(page), 'getAttribute').mockRejectedValueOnce(
         new Error('capture failed')
       );
       const { elements } = await page.observe({});

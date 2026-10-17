@@ -32,7 +32,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 | Milestone | Release | Acceptance (each test-first; real Chromium where traffic is involved) |
 | --- | --- | --- |
 | M1 scope without holes | 1.21.0 | an in-scope POST/PUT/PATCH redirected out of scope is blocked and recorded; a scope with `cdpAttach` or `allowServiceWorkers` is refused; worker traffic is checked or the session refused; release smoke covers a scoped session |
-| M2 status and ledger | 1.22.0 | scope status (in-effect scope, budget used/remaining, expiry, denials by sub-code) and a no-budget dry-run check on REST/SDK/CLI/MCP; `SCOPE_*` sub-codes in request events and in CLI/MCP navigate refusals (REST and the SDK carry them; `navigationFailureDetail()` drops them); an opt-in append-only hash-chained ledger that is exportable after close, refuses when full, redacts the query unless kept, and fails verification when edited |
+| M2 status and ledger | 1.22.0 | scope status (in-effect scope, budget used/remaining, expiry, denials by sub-code) and a no-budget dry-run check on REST/SDK/CLI/MCP; `SCOPE_*` sub-codes in request events and wire-level denials (blocked redirects, `page_create`, `act`/`plan`); the `navigate` preflight refusal already carries one on all four surfaces; an opt-in append-only hash-chained ledger that is exportable after close, refuses when full, redacts the query unless kept, and fails verification when edited |
 | M3 program scope and findings | 1.23.0 | restrictive fields (excludes, ports, schemes, rate limit, program metadata); an importer for published program scope that maps `*.host` to subdomains only (the apex is in scope only when listed), refuses ambiguous wildcards and anything else it cannot express; findings bound to the engagement (out-of-scope evidence refused, confirmations cite ledger entries), SARIF draft export |
 | M4 automation runs | 1.24.0 | a saved plan file runs from the CLI with label targets, optional durable classification and JUnit/JSON results; the CI action accepts it. Released alongside: T6 rollback and async/recycled-option coverage, owned and recorded by [T6](t6-widget-strategies.md) |
 
@@ -48,4 +48,7 @@ automatic submission or outside communication of findings.
 | M1: redirects after POST/PUT/PATCH checked in scoped sessions | #540 |
 | M1: a scope refuses `cdpAttach`, service workers and a top-level (unvalidated) scope | #541 |
 | M1: workers | dedicated-worker POST redirects are checked (`body-redirect-guard.test.ts`; observed coverage, not a guarantee); service workers are refused with a scope (#541); shared workers and worker WebSockets stay a stated residual (not qualified) |
+| M1: released in 1.21.0 | [release record](../evidence/release-1.21.0.md): the smoke passed on the extracted release candidate |
 | M1: release smoke | `scripts/scope-consumer-smoke.mjs`: lane refusals (REST rule ids; CLI/MCP service workers), out-of-scope navigation on all four surfaces, POST redirect blocked and recorded; local fixtures, run against the extracted release candidate |
+| M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors |
+| M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool |
