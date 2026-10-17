@@ -747,7 +747,12 @@ Program restrictions (T10 M3) only narrow. Each denial reuses an existing sub-co
 | `program` | `{id, version?, authorizedBy, authorizedAt}`: recorded in the scope status and the ledger, never enforced | — |
 
 A scheme, port or exclusion rule that cannot be checked because a request carries no URL denies
-(fail closed). A server older than 1.24.0 ignores unknown scope fields: confirm what is in effect
+(fail closed). Exclusions match a canonical path: percent-escapes decoded, case folded, repeated
+`/` and `\` collapsed, `;params` cut and dot segments resolved, so `/%61dmin`, `/Admin`,
+`//admin` and `/admin;x=1` all fall under an `/admin` exclusion (over-matching only narrows).
+Allow-side `pathRules` match the literal path, so those spellings fall outside them. `program` is
+recorded as given in the scope status and the ledger: keep personal data you do not want
+retained out of `authorizedBy`. A server older than 1.24.0 ignores unknown scope fields: confirm what is in effect
 with `session scope <id>` before relying on a restriction.
 
 | Read the scope (T10 M2) | REST | SDK | CLI |

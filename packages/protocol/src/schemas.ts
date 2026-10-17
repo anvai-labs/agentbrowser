@@ -145,7 +145,10 @@ export const ScopeProgramSchema = Type.Object(
     id: Type.String({ minLength: 1, maxLength: 200 }),
     version: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     authorizedBy: Type.String({ minLength: 1, maxLength: 200 }),
-    authorizedAt: Type.String({ minLength: 1, maxLength: 64 }),
+    authorizedAt: Type.String({
+      maxLength: 64,
+      pattern: '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
+    }),
   },
   { additionalProperties: false }
 );
