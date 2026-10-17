@@ -12241,6 +12241,25 @@
                 "sizeBytes"
               ],
               "properties": {
+                "file": {
+                  "type": "object",
+                  "required": [
+                    "path",
+                    "bytes"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "expiresAt": {
+                      "type": "number"
+                    }
+                  }
+                },
                 "artifactId": {
                   "type": "string"
                 },
@@ -12621,6 +12640,25 @@
           "sizeBytes"
         ],
         "properties": {
+          "file": {
+            "type": "object",
+            "required": [
+              "path",
+              "bytes"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "expiresAt": {
+                "type": "number"
+              }
+            }
+          },
           "artifactId": {
             "type": "string"
           },

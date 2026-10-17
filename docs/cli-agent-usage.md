@@ -640,7 +640,38 @@ See [reason definitions and limits](spec/design/navigation-failure-reasons.md).
 `agentbrowser --json screenshot "$session_id" "$page_id" --out screenshot.png`
 prints one saved-file receipt (artifact ID, type, path and byte count), without
 inline base64 or the artifact's signed URL. Add `--inline` to explicitly include
-bytes alongside that receipt. Without `--out`, the artifact response is unchanged.
+bytes alongside that receipt. Screenshot, PDF, `page html`, and `artifact get` now
+save to a private cache by default and print a compact receipt; no `--out` is needed.
+Files are created exclusively, so existing output files are never overwritten.
+HTML `--inline` (or an explicit `--max-bytes`) requests bounded text; `--no-print`
+returns only the session artifact reference. HTML `--out` and inline flags conflict.
+
+The default cache is `~/.abrowser/artifacts`. Set `AGENTBROWSER_ARTIFACT_DIR` to
+choose another private directory, including `$PWD/.abrowser/artifacts` for a
+repository-local cache (ignored by this repository). There is one configured cache,
+not duplicate copies or a silent fallback. Cache entries use random non-secret
+identifiers and private files (0600 on POSIX, owner-only DACL on Windows). Credentials
+remain in their existing dedicated configuration; this cache stores only artifacts.
+Captures can contain private page data even though the receipt does not.
+
+On each save, prune managed files older than 24 hours and oldest entries to fit
+100 files / 128 MiB. Limits are best-effort across concurrent processes; an idle
+cache is not automatically swept. `agentbrowser cache prune` applies those limits;
+`agentbrowser cache prune --all` removes all eligible managed entries. Cleanup never
+recurses, follows links, removes user-named files, or manages explicit `--out` files.
+A full-size capture above 128 MiB or an unusable cache fails without printing content;
+choose an explicit `--out` destination for a large artifact.
+
+MCP screenshot/PDF/HTML tools default to artifact references. For an MCP process
+sharing a filesystem with its consumer, setting `AGENTBROWSER_ARTIFACT_DIR` opts
+into private file receipts. Remote consumers can use `artifact` with the session and
+artifact IDs; `inline:true` retrieves a byte range (8192 bytes by default, maximum
+65536). Screenshot `inline:true` emits an MCP image block and PDF emits an embedded
+resource, with no duplicate base64 in metadata. HTML inline output remains bounded
+text. Session authorization and expiry still apply; file paths and signed URLs are
+not accepted by the retrieval tool. REST/SDK transport compatibility is unchanged,
+so bytes may still travel between the service and adapter; these defaults reduce
+agent context output rather than claiming HTTP streaming or lower service memory.
 
 Use `observe ... --text email` to match visible element names or public text values,
 including paragraph text. `--name` continues to match names only. Neither option

@@ -250,3 +250,34 @@ REBASE VALIDATION / DELIVERY
   Rebased full-workspace and remote CI checks remain pending.
 - No deployment/restart was performed. The running consumer session continues
   using its existing service code. Independent review and release gates remain.
+
+FOLLOW-UP: CONTEXT OUTPUT DEFAULTS (2026-10-17)
+- CLI screenshot/PDF/HTML/artifact-get now default to private files and one small
+  receipt. --inline is explicit; HTML --max-bytes explicitly requests bounded text.
+  --out files are exclusive/private and remain caller-owned. Signed URLs are stripped
+  from capture, trace and download descriptors. Compact semantic observations remain
+  inline; no credential or canonical session/page identifier shortening was added.
+- Managed cache: ~/.abrowser/artifacts, overridable by AGENTBROWSER_ARTIFACT_DIR
+  (including an ignored repo .abrowser/artifacts). No silent fallback or duplicate
+  cache. Private binary-safe file writer shared by CLI/MCP, POSIX 0600 and Windows
+  owner-only DACL at creation. Prune on save: 24h, 100 files, 128MiB, oldest first;
+  best-effort across concurrent processes. Manual cache prune / prune --all supported.
+  Only owned regular managed files are eligible, never symlinks/hardlinks/user files.
+  Idle caches need explicit cleanup. Explicit --out files are not auto-pruned.
+- MCP defaults to references for remote usability; operator-configured artifact
+  directory enables local file receipts. Explicit screenshot/PDF inline evidence uses
+  one media/resource block with no duplicate base64 in text/structured metadata. New
+  artifact tool uses authenticated session IDs and artifact IDs, refuses arbitrary
+  paths, and provides explicit bounded ranges (8KiB default, 64KiB max). HTML inline
+  and CLI terminal output respect UTF-8 boundaries.
+- REST/SDK payload transport is unchanged: this removes context flooding, not the
+  full base64 transfer from service to adapter. HTTP streaming, remote range endpoints
+  and a measured full-workflow tokenizer benchmark remain future work. Synthetic
+  1.13MB capture regressions require default receipts below 1KiB and exact saved bytes.
+- Rebased full hook previously passed 5,759 tests with 20 platform/optional skips.
+  A repeated pre-push run exposed the large synthetic autofill fixture's 30s wall-clock
+  assumption under parallel load. Its correctness budget is now 60s (120s test cap);
+  deterministic deadline tests retain timeout/partial-result coverage. Duplicate-role
+  binding also has a direct one-lookup assertion, avoiding a timing-only regression.
+- Validation of this follow-up and delivery status will be recorded below after gates.
+  Live Fiverr session remains untouched; no challenge interaction or service restart.

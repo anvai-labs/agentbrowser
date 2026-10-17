@@ -1295,7 +1295,7 @@ describe('AgentBrowser MCP server', () => {
     describe('html', () => {
       it('returns inline decoded HTML with the untrusted-content warning', async () => {
         const response = JSON.parse(
-          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
         );
         const result = textOf(response);
 
@@ -1367,7 +1367,7 @@ describe('AgentBrowser MCP server', () => {
         });
 
         const response = JSON.parse(
-          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1', inline: true })
         );
         const result = textOf(response);
 

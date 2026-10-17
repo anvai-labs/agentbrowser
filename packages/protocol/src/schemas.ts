@@ -908,7 +908,13 @@ export const ApprovalDecisionSchema = Type.Object({
   approvalRequired: Type.Optional(Type.Boolean()),
 });
 
+export const LocalArtifactFileSchema = Type.Object({
+  path: Type.String(),
+  bytes: Type.Integer({ minimum: 0 }),
+  expiresAt: Type.Optional(Type.Number()),
+});
 export const ArtifactRefSchema = Type.Object({
+  file: Type.Optional(LocalArtifactFileSchema),
   artifactId: Type.String(),
   type: Type.Union([
     Type.Literal('screenshot'),

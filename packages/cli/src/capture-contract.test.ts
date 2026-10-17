@@ -8,7 +8,17 @@ import { buildCli, type CliClient } from './cli.js';
 
 describe.each(['observe', 'screenshot'] as const)('%s capture CLI', (operation) => {
   function setup() {
-    const invoke = vi.fn().mockResolvedValue({ elements: [], revision: 1 });
+    const invoke = vi.fn().mockResolvedValue(
+      operation === 'observe'
+        ? { elements: [], revision: 1 }
+        : {
+            artifactId: 'a',
+            type: 'screenshot',
+            contentType: 'image/png',
+            sizeBytes: 1,
+            inline: { contentBase64: 'YQ==', byteSize: 1 },
+          }
+    );
     const out: string[] = [];
     const err: string[] = [];
     const cli = buildCli({

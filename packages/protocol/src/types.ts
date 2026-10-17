@@ -968,6 +968,7 @@ export interface ApprovalDecision {
  * Artifact reference
  */
 export interface ArtifactRef {
+  file?: { path: string; bytes: number; expiresAt?: number };
   artifactId: string;
   type: 'screenshot' | 'pdf' | 'trace' | 'download' | 'html' | 'dom';
   contentType: string;

@@ -141,7 +141,12 @@ it('keeps large duplicate-name groups pinned to nodes after reorder', async () =
     ).join('');
     await page.navigate({ url: `data:text/html,${encodeURIComponent(html)}` });
     const raw = (page as unknown as { backingPage(): Page }).backingPage();
+    const lookup = vi.spyOn(Object.getPrototypeOf(raw.locator('body')), 'elementHandles');
     const view = await page.observe({});
+    expect(lookup.mock.contexts.filter((locator) => String(locator).includes('Pick'))).toHaveLength(
+      1
+    );
+    lookup.mockRestore();
     const ref = view.elements.filter((e) => e.role === 'button')[3]?.ref;
     expect(ref).toBeDefined();
     await raw.evaluate(() => document.body.prepend(document.getElementById('b3')!));
