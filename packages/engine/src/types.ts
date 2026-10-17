@@ -36,7 +36,20 @@ export type {
 /**
  * Engine session creation options
  */
+/** One request outcome, origin+path only (T10 M2 engagement ledger). */
+export interface EngineRequestRecord {
+  type: 'request.finished' | 'request.failed';
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
 export interface EngineSessionOptions {
+  /**
+   * T10 M2: called for every request outcome in the session — any page,
+   * popup or worker, before any page attribution — so an engagement ledger
+   * misses nothing. Engines advertising `requestRecording` honour it.
+   */
+  requestRecorder?: (record: EngineRequestRecord) => void;
   /** Use the explicitly configured local-operator CDP attachment lane. */
   cdpAttach?: boolean;
   downloadPolicy?: { allow: boolean; maxBytes: number };

@@ -7,6 +7,71 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.23.0] — 2026-10-17
+
+Entries are newest first. T10 milestone M2 completes: the engagement ledger. **Upgrading from 1.22.x:**
+
+| Who | What changes |
+| --- | --- |
+| Operators | opt in with `AGENTBROWSER_ENGAGEMENT_DIR` (an existing, canonical, owner-only `0700` directory; refused on Windows) and optionally `AGENTBROWSER_ENGAGEMENT_MAX_BYTES` (integer 1 MiB–1 GiB, default 64 MiB; needs the directory); an invalid value of either aborts startup. Unset: no ledger, nothing written |
+| Session create with `policy.scope.ledger: true` (new field) | refused `400` when no directory is configured, with `allowDownloads`, or on an engine without request recording; `500 INTERNAL` (`scope.ledger.unavailable`, session closed) when the ledger file cannot be created, e.g. the directory was removed or re-permissioned after startup; otherwise the session view carries `engagementId` |
+| Ledgered sessions | fail closed: a full or unwritable ledger stops all traffic with `SCOPE_LEDGER_UNAVAILABLE`; `GET /v1/sessions/{id}/scope` gains an optional `stopped` reason |
+| TypeScript consumers | `SCOPE_LEDGER_UNAVAILABLE` is a new member of the scope sub-code and navigation-failure unions: exhaustive `switch`es need a case |
+| REST / SDK / CLI clients | new `GET /v1/engagements/{id}` (tenant-scoped; keyless `401`), SDK `engagements.export`, CLI `engagement export` and offline `engagement verify` |
+| Engine embedders and capability readers | `EngineSessionOptions.requestRecorder` and the `requestRecording` capability are new optional fields; the Playwright engine reports `requestRecording: true` |
+| Sessions without a ledger | unchanged |
+
+### Fixed — an engine crash keeps the ledger's close-time records (T10 M2)
+
+- On an engine crash the session now stops the scope, terminates the engine session, and only
+  then closes the ledger, so the engine's close-time records (POST/PUT/PATCH outcomes never
+  observed) are written. The closing record carries `crashed: true` and `scope.stopped:
+  "engine crashed"`. Previously the ledger closed first and those records were lost uncounted.
+- The crash-path close is tracked like any ledger close: `closeSession` and service shutdown that
+  start during crash recovery wait for it. (A crash detected while an explicit close is already
+  in progress can still close the ledger before that engine close's sweep.)
+
+### Tests — the release smoke covers the engagement ledger (T10 M2)
+
+- `scripts/scope-consumer-smoke.mjs` runs a ledgered session (in-scope navigation and a POST
+  redirected out of scope), exports it over REST, verifies it with the released CLI
+  (`engagement verify`), and checks that an edited copy is refused.
+
+### Added — export and verify engagement ledgers (T10 M2)
+
+| Need | Surface |
+| --- | --- |
+| export a ledger (NDJSON, verbatim; open or closed; across restarts) | `GET /v1/engagements/{id}`, SDK `engagements.export`, CLI `engagement export [--out]` |
+| verify a ledger offline | CLI `engagement verify FILE` (exit 1 when the chain is broken) |
+
+- Tenant-scoped: the file path is derived from the caller's tenant, so another tenant's id is
+  `404`. Keyless deployments get `401` (no credential names a tenant). `--out` creates the file exclusively, mode
+  0600, and verifies it.
+- The chain format and verifier now live in `@agentbrowser/core`, shared by the server-side writer
+  and the CLI.
+
+### Added — the engagement ledger (T10 M2)
+
+- `policy.scope.ledger: true` records a scoped session's traffic decisions in an append-only,
+  hash-chained JSONL file under the operator's `AGENTBROWSER_ENGAGEMENT_DIR`
+  (`AGENTBROWSER_ENGAGEMENT_MAX_BYTES`, default 64 MiB). Metadata only: no bodies, no query
+  strings, no identity marker values. Records: `engagement.opened`, `request`,
+  `preflight.denied`, `engagement.closed`. The hash chain detects edits, removals and reorderings
+  that do not rewrite it from that point; it is not keyed or anchored, so whoever can write the
+  file can rewrite it (see the operator guide's limits).
+- Fed by an engine request recorder that sees every outcome before page attribution (popups not
+  yet adopted, workers); the redirect guard records each response of a POST/PUT/PATCH chain.
+  A POST/PUT/PATCH whose end was never observed (aborted in a worker, or in flight at close) is
+  recorded at close as `no outcome observed`; a GET in flight at the instant the context closes
+  can go unrecorded (stated limit).
+  Refused when it cannot record a lane:
+  `allowDownloads` (`scope.ledger.downloads`) and engines without request recording
+  (`scope.ledger.engine`).
+- Fails closed: when the ledger is nearly full or cannot be written, the scope denies all further
+  traffic with the new sub-code `SCOPE_LEDGER_UNAVAILABLE`; nothing is dropped silently.
+- Refused with `400 scope.ledger.unconfigured` when the operator configured no directory; an
+  invalid directory aborts startup. The session view gains `engagementId`.
+
 ## [1.22.0] — 2026-10-17
 
 Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options where needed.

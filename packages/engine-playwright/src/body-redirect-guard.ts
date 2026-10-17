@@ -52,11 +52,23 @@ export interface BodyRedirectGuardOptions {
   maxHops: number;
   /** Live chains per target; past it new body-bearing requests are refused. */
   maxChains?: number;
+  /**
+   * T10 M2: every response this guard pauses in a tracked chain, as an
+   * outcome (origin+path only): finished with its status (and the allowed
+   * redirect target), failed, or blocked. The engagement ledger's source for
+   * body-bearing requests and their hops.
+   */
+  onOutcome?(outcome: {
+    type: 'request.finished' | 'request.failed';
+    data: Record<string, unknown>;
+  }): void;
 }
 
 interface Chain {
   networkId: string;
   key: string;
+  /** The hop in flight (method and full URL), for an outcome reported without a response. */
+  current: { method: string; url: string };
   root?: Request;
   headers: Record<string, string>;
   hops: number;
@@ -74,6 +86,7 @@ interface GuardTarget {
 type PausedEvent = {
   requestId: string;
   networkId?: string;
+  resourceType?: string;
   request: { url: string; method: string; headers?: Record<string, string> };
   responseStatusCode?: number;
   responseErrorReason?: string;
@@ -102,6 +115,8 @@ export class BodyRedirectGuard {
   private readonly frameTargets = new WeakMap<Frame, GuardTarget>();
   private readonly frameAttach = new WeakMap<Frame, Promise<void>>();
   private readonly watched = new WeakSet<Page>();
+  /** Every target, so open chains can be reported when the session closes. */
+  private readonly allTargets = new Set<GuardTarget>();
   private readonly pageReady = new WeakMap<Page, Promise<void>>();
 
   constructor(
@@ -144,6 +159,33 @@ export class BodyRedirectGuard {
   ready(page: Page): Promise<void> {
     this.watchPage(page);
     return this.pageReady.get(page) ?? Promise.resolve();
+  }
+
+  /**
+   * Reports every chain still open as a failed outcome, then forgets it. Called
+   * before the browser context closes: a request whose end the guard never saw
+   * (an aborted worker POST — its loadingFailed fires on the worker target — or
+   * one in flight at close) is recorded rather than lost, with that said.
+   */
+  recordUnfinished(): void {
+    for (const target of this.allTargets) {
+      for (const chain of [...target.chains.values()]) {
+        const at = new URL(chain.current.url);
+        try {
+          this.options.onOutcome?.({
+            type: 'request.failed',
+            data: {
+              url: `${at.origin}${at.pathname}`,
+              hostname: at.hostname,
+              method: chain.current.method,
+              reason: 'engine_error',
+              detail: 'no outcome observed (recorded at close)',
+            },
+          });
+        } catch {}
+        this.close(target, chain);
+      }
+    }
   }
 
   /** The target that intercepts this frame's requests: its own if out of process. */
@@ -193,6 +235,7 @@ export class BodyRedirectGuard {
   private async attach(open: () => Promise<CDPSession>): Promise<GuardTarget> {
     const cdp = await open();
     const target: GuardTarget = { cdp, chains: new Map(), unclaimed: new Map() };
+    this.allTargets.add(target);
     cdp.on('Fetch.requestPaused', (event: PausedEvent) => {
       void this.paused(target, event).catch(() => {});
     });
@@ -202,7 +245,27 @@ export class BodyRedirectGuard {
       const chain = target.chains.get(event.requestId);
       if (chain !== undefined) this.close(target, chain);
     };
-    cdp.on('Network.loadingFailed', ended);
+    // A request aborted, hung up or failed before any response never reaches the
+    // response stage: its only end is loadingFailed, which is its recorded outcome.
+    const failed = (event: { requestId: string; errorText?: string; canceled?: boolean }) => {
+      const chain = target.chains.get(event.requestId);
+      if (chain === undefined) return;
+      const at = new URL(chain.current.url);
+      try {
+        this.options.onOutcome?.({
+          type: 'request.failed',
+          data: {
+            url: `${at.origin}${at.pathname}`,
+            hostname: at.hostname,
+            method: chain.current.method,
+            reason: 'engine_error',
+            detail: event.canceled === true ? 'canceled' : (event.errorText ?? 'failed'),
+          },
+        });
+      } catch {}
+      this.close(target, chain);
+    };
+    cdp.on('Network.loadingFailed', failed);
     cdp.on('Network.loadingFinished', ended);
     await cdp.send('Network.enable', { maxTotalBufferSize: 0, maxResourceBufferSize: 0 });
     await cdp.send('Fetch.enable', {
@@ -219,6 +282,7 @@ export class BodyRedirectGuard {
     const chain: Chain = {
       networkId,
       key,
+      current: { method: event.request.method, url: event.request.url },
       headers: { ...(event.request.headers ?? {}) },
       hops: 0,
       seen: new Set([event.request.url]),
@@ -277,12 +341,30 @@ export class BodyRedirectGuard {
       await proceed();
       return;
     }
+    const at = new URL(event.request.url);
+    const base = {
+      url: `${at.origin}${at.pathname}`,
+      hostname: at.hostname,
+      method: event.request.method,
+      ...(event.resourceType !== undefined
+        ? { resourceType: event.resourceType.toLowerCase() }
+        : {}),
+    };
+    const outcome = (
+      type: 'request.finished' | 'request.failed',
+      data: Record<string, unknown>
+    ) => {
+      try {
+        this.options.onOutcome?.({ type, data: { ...base, ...data } });
+      } catch {}
+    };
     const fail = (detail: {
       reason: string;
       redirect?: string;
       detail?: string;
       scope?: string;
     }) => {
+      outcome('request.failed', { blocked: true, ...detail });
       this.close(target, chain);
       try {
         this.options.onBlocked(chain.root, detail);
@@ -296,10 +378,14 @@ export class BodyRedirectGuard {
       const location = event.responseHeaders?.find(
         (header) => header.name.toLowerCase() === 'location'
       )?.value;
-      if (
-        event.responseErrorReason !== undefined ||
-        !(status >= 300 && status < 400 && location !== undefined)
-      ) {
+      if (event.responseErrorReason !== undefined) {
+        outcome('request.failed', { reason: 'engine_error', detail: event.responseErrorReason });
+        this.close(target, chain);
+        await proceed();
+        return;
+      }
+      if (!(status >= 300 && status < 400 && location !== undefined)) {
+        outcome('request.finished', { status });
         this.close(target, chain);
         await proceed();
         return;
@@ -333,6 +419,8 @@ export class BodyRedirectGuard {
         });
         return;
       }
+      outcome('request.finished', { status, redirect });
+      chain.current = { method: followMethod(status, event.request.method), url: next.href };
       await proceed();
     } catch {
       // Fail closed: a hop the guard could not judge is not followed.

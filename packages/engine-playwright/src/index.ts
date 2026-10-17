@@ -1003,6 +1003,8 @@ function canonicalFingerprint(element: StoredElement): string {
 
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
+  /** T10 M2: every request outcome, before page attribution (the engagement ledger). */
+  record?: (record: import('@agentbrowser/engine').EngineRequestRecord) => void;
   readonly navigationFailures: WeakMap<
     import('playwright').Request,
     { kind: 'blocked' | 'failed'; reason: NavigationFailureReason; scope?: ScopeDenialCode }
@@ -1173,6 +1175,8 @@ async function closeSessionResources(
   context?: BrowserContext,
   ownedBrowser?: Browser
 ): Promise<void> {
+  // T10 M2: chains whose end was never observed are recorded before the context goes.
+  if (context !== undefined) redirectGuards.get(context)?.recordUnfinished();
   try {
     await context?.close();
   } finally {
@@ -1316,6 +1320,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: this.browserFamily === 'chromium',
+      requestRecording: true,
       ...(this.operatorCdp?.allowUnenforcedEgress &&
       this.browserFamily === 'chromium' &&
       this.cdpEndpoint === undefined
@@ -1456,7 +1461,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // existing event pipeline (page queue -> service pump -> replay/WS)
       // carries it with no new transport. installEgress runs before any page
       // exists, hence the mutable holder.
-      const requestSink: RequestEventSink = { emit: undefined, navigationFailures: new WeakMap() };
+      const requestSink: RequestEventSink = {
+        emit: undefined,
+        navigationFailures: new WeakMap(),
+        ...(options.requestRecorder !== undefined ? { record: options.requestRecorder } : {}),
+      };
       if (egress !== undefined) {
         await this.installEgress(context, egress, requestSink);
       }
@@ -1869,8 +1878,29 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const emitRequest = (
       type: 'request.started' | 'request.finished' | 'request.failed',
       request: import('playwright').Request,
-      extra: Record<string, unknown>
+      extra: Record<string, unknown>,
+      // False where another source records the real outcome (the redirect guard).
+      record = true
     ): void => {
+      if (
+        sink.emit === undefined &&
+        (sink.record === undefined || !record || type === 'request.started')
+      )
+        return;
+      // URLs carry query-string tokens (spec 14.2): record origin + path,
+      // never the query. Deterministic engine-side, no secret registry needed.
+      const parsed = new URL(request.url());
+      const data = {
+        url: `${parsed.origin}${parsed.pathname}`,
+        hostname: parsed.hostname,
+        method: request.method(),
+        resourceType: request.resourceType(),
+        ...extra,
+      };
+      const timestamp = new Date().toISOString();
+      // The ledger hook sees every outcome, attributed to a page or not
+      // (a popup not yet adopted, a worker, a detached frame).
+      if (record && type !== 'request.started') sink.record?.({ type, timestamp, data });
       const emit = sink.emit;
       if (emit === undefined) {
         return;
@@ -1881,21 +1911,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       } catch {
         return; // frame detached mid-flight; nothing to attribute to
       }
-      // URLs carry query-string tokens (spec 14.2): record origin + path,
-      // never the query. Deterministic engine-side, no secret registry needed.
-      const parsed = new URL(request.url());
-      emit({
-        type,
-        timestamp: new Date().toISOString(),
-        playwrightPage,
-        data: {
-          url: `${parsed.origin}${parsed.pathname}`,
-          hostname: parsed.hostname,
-          method: request.method(),
-          resourceType: request.resourceType(),
-          ...extra,
-        },
-      });
+      emit({ type, timestamp, playwrightPage, data });
     };
 
     // WebSocket upgrades bypass context.route entirely. Selective
@@ -1936,6 +1952,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         ? new BodyRedirectGuard(context, {
             verdictOf: (hostname, url, hop) => verdictOf(hostname, url, hop),
             maxHops: MAX_REDIRECT_HOPS,
+            // The guard sees every response of a body-bearing chain: its outcomes
+            // are the ledger's record (the passthrough emit is intent only).
+            onOutcome: (outcome) =>
+              sink.record?.({ ...outcome, timestamp: new Date().toISOString() }),
             onBlocked: (root, detail) => {
               // The hop is failed either way; an unclaimed chain has no routed
               // request to attribute the event to.
@@ -1949,13 +1969,18 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 reason,
                 ...(scope !== undefined ? { scope } : {}),
               });
-              emitRequest('request.failed', root, {
-                blocked: true,
-                reason,
-                ...(scope !== undefined ? { scope } : {}),
-                ...(detail.redirect !== undefined ? { redirect: detail.redirect } : {}),
-                ...(detail.detail !== undefined ? { detail: detail.detail } : {}),
-              });
+              emitRequest(
+                'request.failed',
+                root,
+                {
+                  blocked: true,
+                  reason,
+                  ...(scope !== undefined ? { scope } : {}),
+                  ...(detail.redirect !== undefined ? { redirect: detail.redirect } : {}),
+                  ...(detail.detail !== undefined ? { detail: detail.detail } : {}),
+                },
+                false
+              );
             },
           })
         : undefined;
@@ -2024,7 +2049,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             await deny('egress_policy');
             return;
           }
-          emitRequest('request.finished', request, { passthrough: true });
+          emitRequest(
+            'request.finished',
+            request,
+            { passthrough: true },
+            redirectGuard === undefined
+          );
           await continueRequest();
           return;
         }

@@ -144,6 +144,8 @@ export interface EngagementScope {
   /** Total choke-point requests in scope, redirect hops included. */
   requestBudget?: number;
   identityBindings?: ScopeIdentityBinding[];
+  /** T10 M2: record the engagement in a hash-chained, metadata-only ledger (needs AGENTBROWSER_ENGAGEMENT_DIR). */
+  ledger?: boolean;
 }
 
 /**
@@ -222,6 +224,8 @@ export interface EngineCapabilities {
   supportsAccessibilityTree: boolean;
   supportsCdp: boolean;
   supportsCdpAttach?: boolean;
+  /** T10 M2: reports every request outcome through `EngineSessionOptions.requestRecorder`. */
+  requestRecording?: boolean;
   supportedObservationModes: ObservationMode[];
   supportedActionTypes: ActionType[];
   /**

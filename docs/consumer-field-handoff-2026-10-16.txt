@@ -331,3 +331,86 @@ REVIEW FIX VALIDATION / RELEASE PREPARATION
   not a publication claim. Final-head CI, promotion to main, tag ancestry/version
   checks and the owner-gated npm environment must pass before release completion.
 - Publication must not replace or restart the active headed consumer service.
+
+DELIVERY UPDATE — 2026-10-17
+- Final candidate c76eca3c passed the complete local commit and push gates:
+  5,780 tests passed, 20 platform/optional skips; type-check, lint and build passed.
+  Release contracts passed at 1.22.0, including 23 release-smoke tests, all MCP
+  profile catalogs and 1,190 relative documentation links across 303 Markdown files.
+- PR #552 passed final-head CI, including Windows and macOS checks, and merged
+  into develop as 3f46314a. Promotion PR #553 passed all checks and merged into
+  main as 4eb78850. Independent review confirmed the promotion tree exactly
+  matched the reviewed candidate, version consistency and accurate release claims.
+- Tag v1.22.0 points to main 4eb78850. Its push passed the full local gates again.
+  GitHub accepted creation through the current account's configured release-tag
+  exception; no repository protection was changed. The workflow's package-version
+  and main-ancestry guard passed.
+- Release run: https://github.com/anvai-labs/agentbrowser/actions/runs/39008344538
+  All five binary builds, four packaged-server acceptance jobs and the Windows
+  bundle passed. Publication is waiting for the repository owner's protected npm
+  environment approval; GitHub release publication follows npm. No published-release
+  claim is made here. Post-publication assets/provenance and channel checks remain.
+- Back-sync PR #554 passed all CI and merged as 637656d7, restoring main's
+  promotion ancestry to develop: https://github.com/anvai-labs/agentbrowser/pull/554.
+- The active headed Fiverr session and installed service were not accessed,
+  upgraded or restarted. No credentials were printed and no verification challenge
+  was automated. Earlier remaining issues and qualification limits still apply.
+
+PUBLICATION VERIFIED — 2026-10-17
+- Owner approved the protected npm environment. Release run 39008344538 completed
+  successfully with 14/14 jobs. GitHub v1.22.0 was published at 06:30:07 UTC,
+  is immutable, and contains 16 assets:
+  https://github.com/anvai-labs/agentbrowser/releases/tag/v1.22.0.
+- Downloaded all release assets into an isolated temporary directory. All 15
+  payload SHA-256 checksums matched sha256sums.txt. Cryptographic provenance
+  verification passed for all 16 assets, including the checksum manifest, pinned
+  to anvai-labs/agentbrowser, release.yml, refs/tags/v1.22.0 and main 4eb78850;
+  verification also rejected self-hosted attestation signers by policy.
+- npm @anvailabs/agentbrowser-mcp 1.22.0 is visible and is the latest dist-tag.
+  Registry metadata exposes SLSA v1 provenance. Independently downloaded npm
+  tarball SHA-512 integrity matches registry metadata; its package version is 1.22.0.
+- All four server tarballs and the Windows bundle embed package version 1.22.0.
+  Downloaded Darwin ARM CLI reports 1.22.0. Both the downloaded Darwin ARM MCP
+  binary and npm package passed initialize/tools-list smoke with version 1.22.0
+  and the complete 21-tool catalog for protocols 2024-11-05 and 2025-06-18.
+  These post-publication probes did not connect to a browser service.
+- Distribution limits: Homebrew Formula/agentbrowser.rb still targets 1.21.0
+  and no 1.22.0 bump PR exists at verification time. Winget generated and pushed
+  ab-agentbrowser-1.22.0 to anvai-labs/winget-pkgs (da0f85ac), but upstream PR
+  creation reported Resource not accessible by integration. No 1.22.0 upstream
+  PR exists. Initial package PR microsoft/winget-pkgs#454058 remains open/unmerged.
+  Successful release workflow status does not mean these channels are updated.
+- No installed binary was upgraded, no service/browser was restarted, and the
+  active headed Fiverr session remains untouched. Product limitations recorded
+  above remain; publication does not establish live-site recovery qualification.
+
+DISTRIBUTION FOLLOW-UP — 2026-10-17
+- Homebrew updated through the existing update-agentbrowser workflow. It downloaded
+  and hashed all 12 formula assets; independent comparison found no mismatch with
+  the verified immutable 1.22.0 release. Only artifact URLs and hashes changed.
+- Tap PR https://github.com/anvai-labs/homebrew-tap/pull/109 passed formula validation,
+  real Linux brew install and binary tests, macOS cask checks, and CI Success.
+  Merged as aa01607c; all 12 URLs on tap main now point to v1.22.0. Validation ran
+  on isolated CI runners, without changing the local installation or active service.
+- Winget's initial package PR microsoft/winget-pkgs#454058 has passed CLA and all
+  ten validation stages but still requires community-moderator approval. Keep the
+  prepared ab-agentbrowser-1.22.0 branch ready rather than creating a competing
+  initial-package submission. Its installer URL and SHA-256 match the published
+  Windows ZIP. After the initial package is accepted, submit 1.22.0 through an
+  authorized upstream PR route; the release integration cannot create that PR.
+- No local upgrade, restart, credential change, or verification-challenge action
+  was performed. The active headed Fiverr session remains untouched.
+- Local validation after integrating PRs #550 and #556 exposed macOS temporary-path
+  aliases in configuration and export test fixtures. Canonicalized them with realpath;
+  production directory/privacy validation and the unsafe-path refusal cases remain.
+
+SESSION SCOPE FOLLOW-UP — 2026-10-17
+- Scope is already bound to sessions; restrictions, status and dry-run checks ship
+  in 1.22.0. Ledger recording (#550), unfinished-request outcomes (#558), and export
+  with offline verification (#556) are merged into develop but remain unreleased.
+- Remaining M2 reporting work: act-driven and page-create redirect denials can be
+  event-only; downloads lack scope sub-codes; CLI page create --json can emit text.
+- T10 M3 remains: restrictive scope fields, program authorization metadata/import,
+  engagement-bound findings and SARIF drafts. M4 covers saved-plan execution and
+  JUnit/JSON/CI integration. Objective/completion-criteria metadata is not a current
+  T10 requirement. Shared-worker and worker-WebSocket qualification remains limited.
