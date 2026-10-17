@@ -4,6 +4,8 @@ import {
   isNavigationFailureReason,
   isScopeDenialCode,
   MAX_PLAN_STEPS,
+  type NavigationFailureReason,
+  navigationFailureDetailFromParts,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
 import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
@@ -3878,25 +3880,25 @@ export class AgentBrowserService {
             navigation.status === 'blocked' && isScopeDenialCode(scopeValue)
               ? scopeValue
               : undefined;
-          const reasonValue = navigation.reason;
-          const reason =
-            scope !== undefined
-              ? 'egress_policy'
-              : isNavigationFailureReason(reasonValue)
-                ? reasonValue
-                : 'engine_error';
+          // navigate() is the single reason normalization point: every
+          // non-success result it returns already carries a valid reason
+          // (its own 'engine_error' fallback included), so no re-validation.
+          const reason = (
+            scope !== undefined ? 'egress_policy' : navigation.reason
+          ) as NavigationFailureReason;
           const code =
             navigation.status === 'timeout'
               ? 'NAVIGATION_TIMEOUT'
               : reason === 'egress_policy'
                 ? 'POLICY_DENIED'
                 : 'INTERNAL';
-          throw new ServiceError(
-            code,
-            `Navigation failed: ${reason}${scope !== undefined ? ` (${scope})` : ''}`,
-            false,
-            { reason, ...(scope !== undefined ? { scope } : {}) }
-          );
+          // One envelope (protocol) for the message and details; the wire
+          // code stays the service-level ProtocolErrorCode above.
+          const detail = navigationFailureDetailFromParts({
+            reason,
+            ...(scope !== undefined ? { scope } : {}),
+          });
+          throw new ServiceError(code, detail.message, detail.retryable, detail.details);
         }
       } catch (error) {
         if (this.authority.get(sessionId)?.view().state === 'PAUSE_REQUESTED') throw error;

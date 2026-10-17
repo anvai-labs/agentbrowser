@@ -74,12 +74,11 @@ describe.each(commands)('download receipt (%s %s)', (...command) => {
     expect(await cli.run([...(json ? ['--json'] : []), ...command, '--out', path])).toBe(1);
     expect(readFileSync(path, 'utf8')).toBe('keep existing file');
     expect(out).toEqual([]);
-    expect(err).toHaveLength(1);
-    if (json) {
-      expect(JSON.parse(err.join('\n'))).toEqual({
-        error: { code: 'INTERNAL', message: 'Download failed', retryable: false },
-      });
-    } else expect(err).toEqual(['INTERNAL: Download failed']);
+    // A local write failure is a usage error naming the cause — never the
+    // bounded server projection, which would read as a server fault.
+    expect(err).toEqual([
+      'Could not exclusively create download output file (EEXIST: path exists, parent missing, is a symlink, is not writable, or could not be made owner-only).',
+    ]);
     expect(err.join('\n')).not.toContain(path);
   });
 

@@ -86,7 +86,7 @@ import {
   type JsonInputStream,
 } from './json-input.js';
 import { observationReceipt, writeObservationFile } from './observation-file.js';
-import { writePrivateFile } from './private-file.js';
+import { PrivateFileError, writePrivateFile } from './private-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
   COOKIE_USAGE,
@@ -2956,6 +2956,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 });
                 await emitDownload(ctx, sessionId, artifact, options.out);
               } catch (error) {
+                const usage = downloadUsageError(error);
+                if (usage) throw usage;
                 const detail = downloadFailureDetail(error);
                 exitCode = 1;
                 deps.err(
@@ -2994,6 +2996,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 );
                 await emitDownload(ctx, sessionId, artifact, output);
               } catch (error) {
+                const usage = downloadUsageError(error);
+                if (usage) throw usage;
                 const detail = downloadFailureDetail(error);
                 exitCode = 1;
                 deps.err(
@@ -3237,16 +3241,38 @@ function refTarget(ref: string): { ref: string } {
 }
 
 /**
- * Fetch an artifact's bytes through the session-scoped authenticated route
- * and write them to a file. Artifact `url` fields carry short-lived signed
+ * Local download failures surface as actionable usage errors — the same
+ * mapping observation and cookie output files use — while server failures
+ * keep the bounded download projection (never echoes URLs, filenames or
+ * adapter prose). Returns the usage error to rethrow, or undefined when the
+ * failure is server-shaped and belongs to downloadFailureDetail.
+ */
+function downloadUsageError(error: unknown): UsageError | undefined {
+  if (error instanceof UsageError) return error;
+  if (error instanceof PrivateFileError && error.stage === 'write') {
+    // Retain incomplete private output: this pathname may now identify
+    // another file; removing it could delete a concurrent replacement.
+    return new UsageError('Could not write download output file.');
+  }
+  if (error instanceof PrivateFileError) {
+    return new UsageError(
+      `Could not exclusively create download output file (${error.code}: path exists, parent missing, is a symlink, is not writable, or could not be made owner-only).`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Resolve an artifact's bytes: inline content when present, else the
+ * session-scoped authenticated artifact route. Shared by capture and download
+ * so one fix serves both. Artifact `url` fields carry short-lived signed
  * tokens and a relative path; never dereference them here.
  */
-async function emitCapture(
+async function artifactBytes(
   ctx: CommandContext,
   sessionId: string,
-  artifact: ArtifactRef,
-  options: { out?: string | undefined; inline?: boolean | undefined }
-): Promise<void> {
+  artifact: ArtifactRef
+): Promise<{ contentBase64: string; bytes: Buffer }> {
   const contentBase64 =
     artifact.inline?.contentBase64 ??
     (await ctx.client.sessions.artifact(sessionId, artifact.artifactId)).contentBase64;
@@ -3254,7 +3280,16 @@ async function emitCapture(
     throw new UsageError(
       'Artifact bytes are unavailable; the artifact may have expired. No content was printed.'
     );
-  const bytes = Buffer.from(contentBase64, 'base64');
+  return { contentBase64, bytes: Buffer.from(contentBase64, 'base64') };
+}
+
+async function emitCapture(
+  ctx: CommandContext,
+  sessionId: string,
+  artifact: ArtifactRef,
+  options: { out?: string | undefined; inline?: boolean | undefined }
+): Promise<void> {
+  const { contentBase64, bytes } = await artifactBytes(ctx, sessionId, artifact);
   let file: { path: string; bytes: number; expiresAt?: number } | undefined;
   if (options.out) file = await writePrivateFile(options.out, bytes);
   else if (!options.inline) file = await cacheLocalArtifact(bytes, artifact.contentType);
@@ -3284,11 +3319,7 @@ async function emitDownload(
     ]);
     return;
   }
-  const contentBase64 =
-    artifact.inline?.contentBase64 ??
-    (await ctx.client.sessions.artifact(sessionId, artifact.artifactId)).contentBase64;
-  if (contentBase64 === undefined) throw new UsageError('Download artifact bytes are unavailable.');
-  const bytes = Buffer.from(contentBase64, 'base64');
+  const { bytes } = await artifactBytes(ctx, sessionId, artifact);
   const saved = await writePrivateFile(out, bytes);
   const receipt = {
     ...artifactReference(artifact),

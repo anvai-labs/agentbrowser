@@ -563,7 +563,7 @@ describe('AgentBrowser CLI remaining command surface', () => {
       expect(await run('download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1', '--out', file)).toBe(
         1
       );
-      expect(err).toEqual(['INTERNAL: Download failed']);
+      expect(err.join(' ')).toContain('Artifact bytes are unavailable');
       expect(existsSync(file)).toBe(false);
       expect(out).toEqual([]);
     });
