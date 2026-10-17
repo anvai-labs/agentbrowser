@@ -122,7 +122,12 @@ import {
   RecordsSelectorError,
   SchemaExtractor,
 } from '@agentbrowser/extraction';
-import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import {
+  EngagementScopePolicy,
+  type EngagementScopeStatus,
+  type NetworkPolicy,
+  SessionHostPolicy,
+} from '@agentbrowser/policy';
 import {
   type Authorizer,
   approvalModeOf,
@@ -791,6 +796,8 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  /** Each scoped session's engagement scope, for status and dry-run checks (T10 M2). */
+  private readonly sessionScopes = new Map<string, EngagementScopePolicy>();
   /** TD-15 phase 4: per-session memo disposers, cleared at close. */
   private readonly sessionPolicyDisposers = new Map<string, () => void>();
   private readonly sessionApprovalPolicies = new Map<
@@ -1058,6 +1065,7 @@ export class AgentBrowserService {
     this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
+    this.sessionScopes.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
     this.sessionCredentialSources.delete(sessionId);
     this.sessionHostAllowlists.delete(sessionId);
@@ -1560,6 +1568,36 @@ export class AgentBrowserService {
 
   // ---- sessions -----------------------------------------------------------
 
+  private scopeOf(sessionId: string): EngagementScopePolicy {
+    if (!this.coordinator.get(sessionId))
+      throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} not found`);
+    const scope = this.sessionScopes.get(sessionId);
+    if (scope === undefined) throw new ServiceError('NOT_FOUND', 'Session has no engagement scope');
+    return scope;
+  }
+
+  /** The scope in effect, budget and denials (T10 M2); never an identity marker value. */
+  getScopeStatus(sessionId: string): EngagementScopeStatus {
+    return this.scopeOf(sessionId).status();
+  }
+
+  /** Dry run: would the scope rules allow this request now? Spends nothing, counts nothing. */
+  checkScope(
+    sessionId: string,
+    request: { url: string; method?: string }
+  ): { allowed: true } | { allowed: false; scope: string } {
+    const scope = this.scopeOf(sessionId);
+    let parsed: URL;
+    try {
+      parsed = new URL(request.url);
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'url must be an absolute http(s) URL');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      throw new ServiceError('INVALID_REQUEST', 'url must be an absolute http(s) URL');
+    return scope.check({ url: parsed.href, ...(request.method ? { method: request.method } : {}) });
+  }
+
   async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
     const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
     if (
@@ -1723,6 +1761,8 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (scopedPolicy instanceof EngagementScopePolicy)
+          this.sessionScopes.set(session.sessionId, scopedPolicy);
         if (sessionDisposer !== undefined)
           this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
