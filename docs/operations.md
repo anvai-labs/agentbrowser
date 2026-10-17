@@ -782,7 +782,7 @@ engagement.opened → request … preflight.denied … → engagement.closed
 | Truncation | a ledger cut short (or a crash) verifies with `closed: false` — treat a missing `engagement.closed` as incomplete |
 | Durability | writes are flushed to the file as they happen; `fsync` runs at close only |
 | Paths | origin+path is recorded; a secret carried in a path segment (e.g. `/reset/<token>`) is written
-| Close race | a request already in flight at the instant the browser context closes can reach the target without a recorded outcome (Playwright/Chromium teardown; observed 0–7 of ~140 in a stress test, never out of scope). The scope stops new traffic first |
+| Close race | a GET already in flight at the instant the browser context closes can reach the target without a recorded outcome (Playwright/Chromium teardown; observed 0–7 of ~140 in a stress test, never out of scope). POST/PUT/PATCH whose end was never observed (in flight at close, or aborted inside a worker) are recorded at close as `failed`, `detail: no outcome observed (recorded at close)`. The scope stops new traffic first |
 | Platforms | refused on Windows: directory privacy is checked with POSIX mode and owner |
 
 **There is no supported procedure to enable page WebSockets under a
