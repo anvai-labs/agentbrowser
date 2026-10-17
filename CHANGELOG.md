@@ -7,6 +7,21 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.24.0] — 2026-10-17
+
+Entries are newest first. T10 milestone M2 completes: scope denials are reported everywhere, and a
+session request can no longer carry a restriction the server ignores. **Upgrading from 1.23.x:**
+
+| Who | What changes |
+| --- | --- |
+| REST clients sending policy fields at the top level of `POST /v1/sessions` (`allowedHosts`, `blockedHosts`, `approval`, `allowDownloads`, `maxDownloadBytes`, `allowServiceWorkers`) | **breaking:** refused `400`. This undocumented shape was honored without validation; send these under `policy`. The SDK, CLI and MCP already do |
+| Any session-create request | an unknown key in the request, `policy`, `policy.approval` or `policy.scope` (and its path rules and identity bindings) is refused `400`, never ignored |
+| Engagement scopes | configured hosts are lowercased and stripped of trailing dots (a `hostSuffix` with uppercase letters used to bind nothing and leave the host's paths unrestricted); a path-rule `prefix` must start with `/`; a `hostSuffix` must be an ASCII hostname, `.suffix` or bracketed IPv6 literal; a path rule binding no allowed host is refused (`scope.unbound`) |
+| In-process embedders | `AgentBrowserService.createSession` validates the scope and approval policy (`scope.invalid`, `approval.invalid`) |
+| CLI `page create`, downloads, actions, plans, autofill | scope denials keep their sub-code; completed actions can carry `navigationObservation`; plans and autofill stop on an observed denial (see the entries below) |
+| MCP clients | the `create` tool's scope schema changed (catalog digest changed) |
+| Requests already using `policy` with known fields | unchanged |
+
 ### Security — scope rules bind exactly the hosts they name (T10)
 
 - A `pathRules` entry whose `hostSuffix` had uppercase letters or a trailing dot bound no host,

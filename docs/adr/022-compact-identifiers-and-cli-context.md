@@ -148,7 +148,7 @@ Element refs (`e<revision>_<ordinal>`, ADR-004) are already compact and do not c
 - **Compatibility:**
   - Ids remain opaque strings, and the session schema pattern is unchanged.
   - Out-of-repository clients that parsed id structure would break; the release notes say so.
-  - Ships in a minor release (after 1.23.0), not a patch.
+  - Ships in a minor release (after 1.24.0), not a patch.
 - **New surface to document and test:** `use`, `which` and `unuse`, `-c`/`-s`/`-p`,
   `AGENTBROWSER_CLI_CONTEXT`, the `x-agentbrowser-generation` request header, and the public ids
   in `page.created`.
