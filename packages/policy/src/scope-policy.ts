@@ -111,23 +111,35 @@ const decodeRepeatedly = (path: string, keepSeparators: boolean): string => {
   return current;
 };
 
-const resolveSegments = (path: string, resolveDots = true): string => {
+/**
+ * How ".." and dot-and-space segments ("..%20", "...") are read: "parent" resolves them
+ * against the previous segment, "drop" skips dot-and-space segments, "literal" keeps ".."
+ * as a segment (a server that does not resolve across an encoded separator).
+ */
+type DotReading = 'parent' | 'drop' | 'literal';
+
+const resolveSegments = (path: string, dots: DotReading): string => {
   const segments: string[] = [];
   for (const raw of path
     .toLowerCase()
     .replace(/%2f|%5c/g, '/')
     .replace(/\\/g, '/')
     .split('/')) {
-    // Cut ";params" and anything after a NUL; strip the trailing dots and spaces
-    // IIS/Windows ignore. "." and ".." are resolved before stripping.
+    // Cut ";params" and anything after a NUL.
     let segment = (raw.split(';')[0] ?? '').split('\u0000')[0] ?? '';
     if (segment === '' || segment === '.') continue;
-    if (segment === '..') {
-      if (resolveDots) segments.pop();
-      else segments.push(segment);
+    // A segment of dots and whitespace: IIS/Windows trim trailing dots and spaces, so
+    // "..%20" and "..." may reach the server as "..".
+    const dotsOnly = /^[.\s]+$/.test(segment);
+    const parent = segment === '..' || (dotsOnly && (segment.match(/\./g)?.length ?? 0) >= 2);
+    if (parent) {
+      if (dots === 'parent') segments.pop();
+      else if (dots === 'literal') segments.push('..');
       continue;
     }
-    segment = segment.replace(/[. ]+$/, '');
+    if (dotsOnly) continue;
+    // Strip the trailing dots and whitespace IIS/Windows ignore.
+    segment = segment.replace(/[.\s]+$/, '');
     if (segment !== '') segments.push(segment);
   }
   return `/${segments.join('/')}`;
@@ -135,17 +147,21 @@ const resolveSegments = (path: string, resolveDots = true): string => {
 
 /**
  * The paths an exclusion is matched against: every spelling a server might route to the
- * same resource. Form A decodes everything (repeatedly, for double encoding) before
- * resolving dot segments; form B keeps an encoded separator literal. Both fold case, map
- * "\\" to "/", collapse repeated "/", cut ";params" and NUL tails, and strip trailing dots and
- * spaces per segment. An exclusion matches if either form falls under it: over-matching only
- * narrows the scope. Allow-side rules keep the literal path.
+ * same resource. Form A decodes everything (repeatedly, for double encoding), then reads
+ * dot segments both as a parent step and, for dot-and-space segments, as dropped. Form B
+ * keeps an encoded separator undecoded so ".." across it stays literal. All fold case,
+ * map "\\" to "/", collapse repeated "/", cut ";params" and NUL tails, and strip trailing
+ * dots and whitespace per segment. An exclusion matches if any form falls under it:
+ * over-matching only narrows the scope. Allow-side rules keep the literal path.
  */
-const canonicalPaths = (pathname: string): [string, string] => [
-  resolveSegments(decodeRepeatedly(pathname, false)),
-  // Form B: an encoded separator splits segments, but ".." across it is not resolved.
-  resolveSegments(decodeRepeatedly(pathname, true), false),
-];
+const canonicalPaths = (pathname: string): string[] => {
+  const decoded = decodeRepeatedly(pathname, false);
+  return [
+    resolveSegments(decoded, 'parent'),
+    resolveSegments(decoded, 'drop'),
+    resolveSegments(decodeRepeatedly(pathname, true), 'literal'),
+  ];
+};
 
 /** Segment-bounded prefix: "/api" admits "/api" and "/api/x", never "/apix". */
 const underPrefix = (pathname: string, prefix: string): boolean =>
@@ -482,7 +498,7 @@ export class EngagementScopePolicy {
       const forms = canonicalPaths(pathname);
       const excluded = this.excludedPaths.some((rule) => {
         if (rule.hostSuffix !== undefined && !hostMatches(hostname, rule.hostSuffix)) return false;
-        const [prefix] = canonicalPaths(rule.prefix);
+        const prefix = canonicalPaths(rule.prefix)[0] ?? '/';
         return forms.some((form) => underPrefix(form, prefix));
       });
       if (excluded) {

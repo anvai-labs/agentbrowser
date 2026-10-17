@@ -239,4 +239,26 @@ describe('EngagementScopePolicy program fields (T10 M3)', () => {
     await scope.checkRequest(req('https://app.example/public'));
     await scope.checkRequest(req('https://app.example/admins'));
   });
+
+  it('dot-and-space segments are read both as ".." and as dropped (either may be how a server routes)', async () => {
+    const scope = new EngagementScopePolicy(base(), {
+      allowedHosts: ['app.example'],
+      excludePaths: [{ prefix: '/admin' }],
+    });
+    for (const path of [
+      '/x/..%20/admin',
+      '/x/%2e%2e%20/admin',
+      '/x/..%2e/admin',
+      '/x/...%20/admin',
+      '/x/..%09/admin',
+      '/admin/.../secret',
+      '/admin/..%20/admin',
+    ]) {
+      await expect(
+        scope.checkRequest(req(`https://app.example${path}`)),
+        path
+      ).rejects.toMatchObject(denied('SCOPE_PATH_DENIED'));
+    }
+    await scope.checkRequest(req('https://app.example/x/..%20/public'));
+  });
 });

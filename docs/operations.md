@@ -752,7 +752,9 @@ A scheme, port or exclusion rule that cannot be checked because a request carrie
 and dot segments resolved, both with and without decoding an encoded `/` first. So `/%61dmin`,
 `/Admin`, `//admin`, `/admin;x=1`, `/admin.`, `/admin%00.php` and `/ADMIN%2F..%2Fpublic` all fall
 under an `/admin` exclusion (over-matching only narrows). Unicode format characters (for example
-a right-to-left override) are not stripped: a stated residual.
+a right-to-left override) are not stripped: a stated residual. Dot-and-space segments (`..%20`, `...`) are read both as
+`..` and as dropped. Over-matching has visible effects: an encoded slash splits a segment, so
+an exclusion of `/files/a` also refuses `/files/a%2Fb`.
 Allow-side `pathRules` match the literal path, so those spellings fall outside them. `program` is
 recorded as given in the scope status and the ledger: keep personal data you do not want
 retained out of `authorizedBy`. A server older than 1.24.0 ignores unknown scope fields: confirm what is in effect

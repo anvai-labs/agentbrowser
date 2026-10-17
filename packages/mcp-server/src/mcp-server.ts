@@ -336,9 +336,10 @@ export function buildTools(
                   type: 'object',
                   properties: {
                     hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-                    prefix: { type: 'string', minLength: 1 },
+                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
                   },
                   required: ['prefix'],
+                  additionalProperties: false,
                 },
                 minItems: 1,
               },
