@@ -18,7 +18,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   file can rewrite it (see the operator guide's limits).
 - Fed by an engine request recorder that sees every outcome before page attribution (popups not
   yet adopted, workers); the redirect guard records each response of a POST/PUT/PATCH chain.
-  A request in flight at the instant the context closes can go unrecorded (stated limit).
+  A POST/PUT/PATCH whose end was never observed (aborted in a worker, or in flight at close) is
+  recorded at close as `no outcome observed`; a GET in flight at the instant the context closes
+  can go unrecorded (stated limit).
   Refused when it cannot record a lane:
   `allowDownloads` (`scope.ledger.downloads`) and engines without request recording
   (`scope.ledger.engine`).
