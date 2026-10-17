@@ -7,6 +7,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.21.0 release record
+
+- `docs/spec/evidence/release-1.21.0.md`: post-run verification of every channel and the scope
+  smoke run on the extracted release candidate. The task README, T9 packet and T10 evidence name
+  1.21.0 as the published baseline.
+
 ## [1.21.0] — 2026-10-16
 
 Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**
