@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the site matches 1.23.0 and the T10 plan
+
+- Home: the 1.21–1.23 engagement features, a "testing beyond what is authorized" row, T0–T10
+  status (T10 in progress), defaults stamped 1.23 (unchanged values).
+- Release milestones: a release history 1.14.0–1.23.0 (date, main commit, headline, record) and
+  the 1.24.0–1.26.0 plan, above the earlier checkpoints.
+- Spec overview: baseline 1.23.0 (was 1.10.0). Operations: engagements get their own heading.
+
 ### Changed — engagement scopes refuse fields they cannot enforce (T10)
 
 - `policy.scope`, its `pathRules` entries and its `identityBindings` entries now reject unknown

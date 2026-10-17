@@ -700,6 +700,8 @@ the [threat model](threat-model.md) carries the enforcement-boundary
 caveats (page-routing coverage only, no worker guarantee, explicit
 `off`/no-policy modes unguarded).
 
+### Engagements (authorized testing)
+
 **Engagement scope for authorized testing (`policy.scope` /
 `--scope-file`).** Sessions can pin an engagement — exhaustive
 `allowedHosts` (`.suffix` covers subdomains only; list the apex

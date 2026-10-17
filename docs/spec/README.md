@@ -2,13 +2,10 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Published baseline: AgentBrowser 1.10.0 at
-`2ba4efe3992f5372881f988624dde4a9807c07e8`, promoted from develop
-`502fa734cdf84286022a28e5b616318b4be3d6d0` through PR #277. Release alignment
-reviewed 2026-09-23. Victor source repair is recorded by T8; installed-harness
-qualification remains open.
-See the [release evidence](evidence/release-1.10.0.md) and
-[progress checkpoint](evidence/foundation-progress-2026-09-20.md).
+Published baseline: AgentBrowser 1.23.0 at main `82b06ca` (promotion PR #564), released
+2026-10-17; release alignment reviewed the same day. See the
+[release evidence](evidence/release-1.23.0.md), the [task index](tasks/README.md) for current
+status, and the [1.10.0 checkpoint](evidence/release-1.10.0.md) for this spec's original baseline.
 
 Build a shared execution and verification service for people and agents. A mode
 selects a small policy and capability profile; it does not create another runner,
