@@ -214,4 +214,29 @@ describe('EngagementScopePolicy program fields (T10 M3)', () => {
       denied('SCOPE_PATH_DENIED')
     );
   });
+
+  it('an exclusion also holds against encoded separators and server-trimmed spellings', async () => {
+    const scope = new EngagementScopePolicy(base(), {
+      allowedHosts: ['app.example'],
+      excludePaths: [{ prefix: '/admin' }],
+    });
+    for (const path of [
+      // A server that keeps %2F literal routes this under /admin.
+      '/ADMIN%2F..%2Fpublic',
+      '/admin%2F..%2F..%2Fpublic',
+      // IIS/Windows strip trailing dots and spaces; legacy stacks truncate at NUL.
+      '/admin.',
+      '/admin%20',
+      '/admin.%20.',
+      '/admin%00.php',
+      '/x%5c..%5cadmin',
+    ]) {
+      await expect(
+        scope.checkRequest(req(`https://app.example${path}`)),
+        path
+      ).rejects.toMatchObject(denied('SCOPE_PATH_DENIED'));
+    }
+    await scope.checkRequest(req('https://app.example/public'));
+    await scope.checkRequest(req('https://app.example/admins'));
+  });
 });

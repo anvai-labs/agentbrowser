@@ -477,4 +477,21 @@ describe('scope status contract (ADR-015)', () => {
       await app.close();
     }
   });
+
+  it.each([
+    ['a Unicode host', 'bücher.example'],
+    ['a host with a port', 'admin.example:443'],
+    ['a URL', 'https://admin.example'],
+  ])('refuses an excludeHosts entry that is %s (it would exclude nothing)', async (_what, host) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope: { allowedHosts: ['.example'], excludeHosts: [host] } },
+      });
+      expect(created.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
 });

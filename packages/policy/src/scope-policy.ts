@@ -97,24 +97,55 @@ const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, ws
  * cut from each segment and dot segments resolved. Over-matching only narrows the scope,
  * so exclusions err toward matching; allow-side rules keep the literal path.
  */
-const canonicalPath = (pathname: string): string => {
-  let path = pathname;
+const decodeRepeatedly = (path: string, keepSeparators: boolean): string => {
+  let current = path;
   for (let pass = 0; pass < 3; pass += 1) {
-    const decoded = path.replace(/%([0-9A-Fa-f]{2})/g, (_m, hex: string) =>
-      String.fromCharCode(Number.parseInt(hex, 16))
-    );
-    if (decoded === path) break;
-    path = decoded;
+    const decoded = current.replace(/%([0-9A-Fa-f]{2})/g, (match, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      // Form B keeps an encoded "/" or "\\" undecoded so ".." across it stays unresolved.
+      return keepSeparators && (code === 0x2f || code === 0x5c) ? match : String.fromCharCode(code);
+    });
+    if (decoded === current) break;
+    current = decoded;
   }
+  return current;
+};
+
+const resolveSegments = (path: string, resolveDots = true): string => {
   const segments: string[] = [];
-  for (const raw of path.toLowerCase().replace(/\\/g, '/').split('/')) {
-    const segment = raw.split(';')[0] ?? '';
+  for (const raw of path
+    .toLowerCase()
+    .replace(/%2f|%5c/g, '/')
+    .replace(/\\/g, '/')
+    .split('/')) {
+    // Cut ";params" and anything after a NUL; strip the trailing dots and spaces
+    // IIS/Windows ignore. "." and ".." are resolved before stripping.
+    let segment = (raw.split(';')[0] ?? '').split('\u0000')[0] ?? '';
     if (segment === '' || segment === '.') continue;
-    if (segment === '..') segments.pop();
-    else segments.push(segment);
+    if (segment === '..') {
+      if (resolveDots) segments.pop();
+      else segments.push(segment);
+      continue;
+    }
+    segment = segment.replace(/[. ]+$/, '');
+    if (segment !== '') segments.push(segment);
   }
   return `/${segments.join('/')}`;
 };
+
+/**
+ * The paths an exclusion is matched against: every spelling a server might route to the
+ * same resource. Form A decodes everything (repeatedly, for double encoding) before
+ * resolving dot segments; form B keeps an encoded separator literal. Both fold case, map
+ * "\\" to "/", collapse repeated "/", cut ";params" and NUL tails, and strip trailing dots and
+ * spaces per segment. An exclusion matches if either form falls under it: over-matching only
+ * narrows the scope. Allow-side rules keep the literal path.
+ */
+const canonicalPaths = (pathname: string): [string, string] => [
+  resolveSegments(decodeRepeatedly(pathname, false)),
+  // Form B: an encoded separator splits segments, but ".." across it is not resolved.
+  resolveSegments(decodeRepeatedly(pathname, true), false),
+];
 
 /** Segment-bounded prefix: "/api" admits "/api" and "/api/x", never "/apix". */
 const underPrefix = (pathname: string, prefix: string): boolean =>
@@ -448,11 +479,11 @@ export class EngagementScopePolicy {
         throw scopeDenial('SCOPE_PATH_DENIED', `path on ${hostname} cannot be checked (no URL)`);
       }
       const pathname = new URL(request.url).pathname;
-      const canonical = canonicalPath(pathname);
+      const forms = canonicalPaths(pathname);
       const excluded = this.excludedPaths.some((rule) => {
         if (rule.hostSuffix !== undefined && !hostMatches(hostname, rule.hostSuffix)) return false;
-        const prefix = canonicalPath(rule.prefix);
-        return prefix === '/' || underPrefix(canonical, prefix);
+        const [prefix] = canonicalPaths(rule.prefix);
+        return forms.some((form) => underPrefix(form, prefix));
       });
       if (excluded) {
         throw scopeDenial(
