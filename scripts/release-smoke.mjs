@@ -9,7 +9,7 @@ export const EXPECTED_TOOLS = Object.freeze([
   'create', 'page_create', 'pages', 'close', 'cookies', 'snapshot',
   'plan', 'autofill', 'navigate', 'observe', 'act',
   'extract', 'html', 'pdf', 'screenshot', 'session',
-  'events_replay', 'policy', 'cookie_handoff',
+  'events_replay', 'policy', 'cookie_handoff', 'scope',
 ]);
 
 export const EXPECTED_DELEGATED_TOOLS = Object.freeze([

@@ -46,6 +46,7 @@ import {
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
+  ScopeToolResultSchema,
   ScreenshotRequestSchema,
   SessionClosedResultSchema,
   SessionCreatedResultSchema,
@@ -93,7 +94,14 @@ export interface McpClient {
     Partial<
       Pick<
         AgentBrowserClient['sessions'],
-        'autofill' | 'control' | 'cookieHandoff' | 'get' | 'listPages' | 'operation'
+        | 'autofill'
+        | 'control'
+        | 'cookieHandoff'
+        | 'get'
+        | 'listPages'
+        | 'operation'
+        | 'scopeStatus'
+        | 'checkScope'
       >
     >;
 }
@@ -998,6 +1006,43 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       },
     },
 
+    {
+      name: 'scope',
+      requiredCapabilities: ['session.control', 'page.navigate'],
+      description:
+        "Read a scoped session's engagement scope: the rules in effect, request budget used and remaining, expiry and denials by sub-code (identity bindings show header and hosts, never the value). " +
+        'With url (and optional method, default GET): a dry run of the scope rules — spends no budget, records no denial, does not evaluate identity bindings; the base policy and DNS still apply when the request is made.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', minLength: 1 },
+          url: { type: 'string', minLength: 1 },
+          method: { type: 'string', pattern: '^[A-Za-z]{1,16}$' },
+        },
+        required: ['sessionId'],
+      },
+      outputSchema: ScopeToolResultSchema,
+      handler: async (args) => {
+        const sessionId = requireSessionId(args);
+        if (args.method !== undefined && args.url === undefined)
+          throw new UsageError('method needs url');
+        if (args.method !== undefined && typeof args.method !== 'string')
+          throw new UsageError('method must be a string');
+        if (args.url !== undefined) {
+          if (typeof args.url !== 'string') throw new UsageError('url must be a string');
+          if (!client.sessions.checkScope)
+            throw new UsageError('Client does not support scope checks');
+          const check = await client.sessions.checkScope(sessionId, {
+            url: args.url,
+            ...(typeof args.method === 'string' ? { method: args.method } : {}),
+          });
+          return { sessionId, check };
+        }
+        if (!client.sessions.scopeStatus)
+          throw new UsageError('Client does not support scope status');
+        return { sessionId, status: await client.sessions.scopeStatus(sessionId) };
+      },
+    },
     {
       name: 'session',
       requiredCapabilities: ['session.control', 'page.observe'],
