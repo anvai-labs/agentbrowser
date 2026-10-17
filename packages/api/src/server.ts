@@ -1803,11 +1803,32 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           });
         }
 
+        if ('cdpEndpoint' in (body as object) || 'operatorCdp' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'CDP endpoints are trusted startup configuration, never session input.'
+          );
+        // TD-BROWSER-16 (ADR-025 §5): the credential-source marking is set by
+        // the operator side (the handoff) or an embedder — an agent marking
+        // its own session would forge the trust indicator phase 6 builds on.
+        // Refused by name, before the schema, so the caller gets this guidance
+        // rather than a generic unexpected-property error.
+        if ('credentialSource' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'credentialSource is server-assigned (the cookie handoff), never session input.'
+          );
+        // A scope belongs under `policy`, where it is validated.
+        if ('scope' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'An engagement scope belongs under policy.scope, where it is validated.'
+          );
         // ADR-015 B4: schema validation (compiled from the protocol's
         // SessionRequestSchema) replaces the hand-rolled checks; the
         // nested `policy` object maps onto the service's flat fields at
-        // this boundary (flat fields keep working - validation passes
-        // them through untouched, and explicit nested policy wins).
+        // this boundary. The schema is strict: an unknown or misplaced key
+        // (a policy field outside `policy`) is refused, never passed through.
         const validated = validateSessionRequest(body);
         if (!validated.ok) {
           const details = validated.issues
@@ -1821,27 +1842,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             },
           });
         }
-        if ('cdpEndpoint' in (body as object) || 'operatorCdp' in (body as object))
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            'CDP endpoints are trusted startup configuration, never session input.'
-          );
-        // TD-BROWSER-16 (ADR-025 §5): the credential-source marking is set by
-        // the operator side (the handoff) or an embedder — an agent marking
-        // its own session would forge the trust indicator phase 6 builds on.
-        // The wire passes unknown keys through, so refuse it BY NAME here.
-        if ('credentialSource' in (body as object))
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            'credentialSource is server-assigned (the cookie handoff), never session input.'
-          );
-        // The wire passes unknown keys through unvalidated: a scope outside
-        // `policy` would reach the service without schema validation.
-        if ('scope' in (body as object))
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            'An engagement scope belongs under policy.scope, where it is validated.'
-          );
         if (validated.value.cdpAttach === true) {
           const address = fastify.server.address();
           if (
