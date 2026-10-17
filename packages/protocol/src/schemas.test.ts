@@ -653,12 +653,13 @@ describe('validateSessionRequest (compiled, ADR-015 B4)', () => {
     }
   });
 
-  it('passes additional (flat) properties through untouched', () => {
-    const result = validateSessionRequest({ tenantId: 't1', allowedHosts: ['a.com'] });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect((result.value as { allowedHosts?: string[] }).allowedHosts).toEqual(['a.com']);
-    }
+  it('refuses additional (flat) properties: policy fields belong under policy', () => {
+    // Formerly passed through unvalidated and honored by the server; an unknown or
+    // misplaced restriction must be refused, never ignored or trusted unchecked.
+    expect(validateSessionRequest({ tenantId: 't1', allowedHosts: ['a.com'] }).ok).toBe(false);
+    expect(validateSessionRequest({ tenantId: 't1', policy: { allowedHosts: ['a.com'] } }).ok).toBe(
+      true
+    );
   });
 });
 

@@ -15,8 +15,10 @@ import { UsageError } from './errors.js';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import {
   ActionSchema,
+  ApprovalPolicySchema,
   CookieHandoffRequestSchema,
   DeliveredWaitConditionSchema,
+  EngagementScopeSchema,
   ObservationRequestSchema,
   PlanStepSchema,
   ScreenshotRequestSchema,
@@ -25,6 +27,7 @@ import {
 import type {
   CookieHandoffRequest,
   DeliveredWaitCondition,
+  EngagementScope,
   ObservationRequest,
   ScreenshotRequest,
   SessionRequest,
@@ -74,6 +77,40 @@ export function validateSessionRequest(body: unknown): Validated<SessionRequest>
   }
   const issues: ValidationIssue[] = [];
   for (const error of sessionRequest.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
+
+const engagementScope = TypeCompiler.Compile(EngagementScopeSchema);
+
+/**
+ * Validate an engagement scope on its own. The service runs this for in-process
+ * embedders, whose scope never crosses the REST validator: an unknown field must be
+ * refused, never ignored (an ignored restriction silently widens the engagement).
+ */
+export function validateEngagementScope(body: unknown): Validated<EngagementScope> {
+  if (engagementScope.Check(body)) {
+    return { ok: true, value: body as EngagementScope };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of engagementScope.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
+
+const approvalPolicy = TypeCompiler.Compile(ApprovalPolicySchema);
+
+/** Validate an approval policy on its own (in-process embedders; see validateEngagementScope). */
+export function validateApprovalPolicy(
+  body: unknown
+): Validated<Static<typeof ApprovalPolicySchema>> {
+  if (approvalPolicy.Check(body)) {
+    return { ok: true, value: body as Static<typeof ApprovalPolicySchema> };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of approvalPolicy.Errors(body)) {
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };

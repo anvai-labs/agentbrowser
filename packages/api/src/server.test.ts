@@ -80,10 +80,8 @@ describe('AgentBrowser REST API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenantId: 'tenant_1',
-          options: {
-            viewport: { width: 1280, height: 720 },
-            locale: 'en-US',
-          },
+          viewport: { width: 1280, height: 720 },
+          locale: 'en-US',
         }),
       });
 
@@ -1532,7 +1530,7 @@ describe('AgentBrowser REST API safety integration', () => {
       const sessionResponse = await fetch(`${baseUrl}/v1/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId: 'dl', allowDownloads: true }),
+        body: JSON.stringify({ tenantId: 'dl', policy: { allowDownloads: true } }),
       });
       const { sessionId } = await sessionResponse.json();
       const pageId = (
@@ -1573,7 +1571,7 @@ describe('AgentBrowser REST API safety integration', () => {
       const sessionResponse = await fetch(`${baseUrl}/v1/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId: 'dl-a', allowDownloads: true }),
+        body: JSON.stringify({ tenantId: 'dl-a', policy: { allowDownloads: true } }),
       });
       const a = (await sessionResponse.json()).sessionId;
       const pageId = (
@@ -1820,7 +1818,7 @@ describe('authentication and tenancy (P0-1)', () => {
     const created = await authFetch('/v1/sessions', KEY_A, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ allowDownloads: true }),
+      body: JSON.stringify({ policy: { allowDownloads: true } }),
     });
     const { sessionId } = await created.json();
     const page = await authFetch(`/v1/sessions/${sessionId}/pages`, KEY_A, { method: 'POST' });

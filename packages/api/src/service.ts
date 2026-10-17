@@ -176,7 +176,9 @@ import {
   validateApplicationBinding,
   validateApplicationExecute,
   validateApplicationReview,
+  validateApprovalPolicy,
   validateDeliveredWaitCondition,
+  validateEngagementScope,
   validateObservationRequest,
   validateScreenshotRequest,
 } from '@agentbrowser/protocol';
@@ -1744,6 +1746,34 @@ export class AgentBrowserService {
         !request.tenantId)
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
+    if (request.scope !== undefined) {
+      // In-process embedders never cross the REST validator: an unknown scope
+      // field is refused here too, never ignored (it would widen the engagement).
+      const scopeCheck = validateEngagementScope(request.scope);
+      if (!scopeCheck.ok)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid engagement scope: ${scopeCheck.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path || '/'} ${issue.message}`)
+            .join('; ')}`,
+          false,
+          { rule: 'scope.invalid' }
+        );
+    }
+    if (request.approval !== undefined) {
+      const approvalCheck = validateApprovalPolicy(request.approval);
+      if (!approvalCheck.ok)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid approval policy: ${approvalCheck.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path || '/'} ${issue.message}`)
+            .join('; ')}`,
+          false,
+          { rule: 'approval.invalid' }
+        );
+    }
     if (request.scope !== undefined && request.allowServiceWorkers === true)
       throw new ServiceError(...SCOPE_SERVICE_WORKERS);
     if (request.scope?.ledger === true && this.engagement === undefined)
