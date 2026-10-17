@@ -213,6 +213,29 @@ describe('scope status contract (ADR-015)', () => {
     }
   });
 
+  it('refuses a path rule prefix that does not start with "/" (it could never match)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope: { allowedHosts: ['in.example'], pathRules: [{ prefix: 'api' }] } },
+      });
+      expect(created.statusCode).toBe(400);
+      const dots = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['in.example'],
+            pathRules: [{ prefix: '/api', hostSuffix: '..' }],
+          },
+        },
+      });
+      expect(dots.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('refuses an unknown scope field from an in-process embedder too', async () => {
     const { AgentBrowserService } = await import('./service.js');
     const service = new AgentBrowserService({ engine: new FakeEngine() });

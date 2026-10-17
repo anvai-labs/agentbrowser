@@ -6850,10 +6850,12 @@
               "properties": {
                 "hostSuffix": {
                   "minLength": 2,
+                  "pattern": "[A-Za-z0-9]",
                   "type": "string"
                 },
                 "prefix": {
                   "minLength": 1,
+                  "pattern": "^/",
                   "type": "string"
                 }
               }
@@ -8768,10 +8770,12 @@
                       "properties": {
                         "hostSuffix": {
                           "minLength": 2,
+                          "pattern": "[A-Za-z0-9]",
                           "type": "string"
                         },
                         "prefix": {
                           "minLength": 1,
+                          "pattern": "^/",
                           "type": "string"
                         }
                       }
