@@ -2029,6 +2029,37 @@ describe('AgentBrowser CLI', () => {
       expect(err.join('\n')).not.toMatch(/private|canary|authorization/);
     });
 
+    it.each([
+      ['NAVIGATION_TIMEOUT', 'dns_timeout', false],
+      ['NAVIGATION_TIMEOUT', 'dns_timeout', true],
+      ['INTERNAL', 'browser_error_document', false],
+      ['INTERNAL', 'browser_error_document', true],
+      ['INTERNAL', 'engine_error', false],
+      ['INTERNAL', 'engine_error', true],
+    ])('page create bounds %s/%s errors (json=%s)', async (code, reason, json) => {
+      sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private adapter https://private.invalid/?token=canary'), {
+          code,
+          details: { reason, operationId: 'create-page-once', url: 'https://private.invalid' },
+        })
+      );
+      expect(await run(...(json ? ['--json'] : []), 'page', 'create', 'ses_1')).toBe(1);
+      expect(sessions.createPage).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err).toHaveLength(1);
+      if (json) {
+        expect(JSON.parse(err[0])).toEqual({
+          error: {
+            code,
+            message: `Navigation failed: ${reason}`,
+            retryable: false,
+            details: { reason, operationId: 'create-page-once' },
+          },
+        });
+      } else expect(err).toEqual([`${code}: Navigation failed: ${reason}`]);
+      expect(err.join('\n')).not.toMatch(/private|canary|https/);
+    });
+
     it('page create omits unrecognized scope and operation identifiers from JSON errors', async () => {
       sessions.createPage.mockRejectedValueOnce(
         Object.assign(new Error('private adapter prose'), {

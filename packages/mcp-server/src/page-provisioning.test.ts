@@ -129,3 +129,47 @@ it.each(['2024-11-05', '2025-06-18'])(
     expect(f.sessions.listPages).not.toHaveBeenCalled();
   }
 );
+
+it.each(['2024-11-05', '2025-06-18'])(
+  'keeps generic page-create failures bounded on %s',
+  async (protocolVersion) => {
+    const f = fixture();
+    await f.exchange('initialize', { protocolVersion });
+    for (const [code, reason] of [
+      ['NAVIGATION_TIMEOUT', 'dns_timeout'],
+      ['POLICY_DENIED', 'egress_policy'],
+      ['INTERNAL', 'browser_error_document'],
+      ['INTERNAL', 'engine_error'],
+    ]) {
+      f.sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private-driver-prose'), {
+          code,
+          retryable: true,
+          details: {
+            reason,
+            url: 'https://private.invalid/?token=fixture-only',
+            headers: 'private-header',
+          },
+        })
+      );
+      const { result } = await f.call('page_create', {
+        sessionId: 's',
+        url: 'https://example.com/',
+      });
+      const expected = {
+        error: {
+          code,
+          message: `Navigation failed: ${reason}`,
+          retryable: false,
+          details: { reason },
+        },
+      };
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual(expected);
+      expect(JSON.parse(result.content[0].text)).toEqual(expected);
+      expect(JSON.stringify(result)).not.toMatch(/private|fixture-only|server-minted/);
+    }
+    expect(f.sessions.createPage).toHaveBeenCalledTimes(4);
+    expect(f.sessions.listPages).not.toHaveBeenCalled();
+  }
+);

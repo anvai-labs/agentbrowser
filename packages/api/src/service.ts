@@ -3869,15 +3869,33 @@ export class AgentBrowserService {
     if (request?.url !== undefined) {
       try {
         const navigation = await this.navigate(sessionId, pageId, { url: request.url });
-        const scope = navigation.scope;
-        if (navigation.status === 'blocked' && isScopeDenialCode(scope)) {
-          // Redirect denials return an outcome instead of throwing. Report the
-          // same bounded refusal as a preflight denial and use its teardown path.
+        if (navigation.status === 'blocked' || navigation.status === 'timeout') {
+          // Engines may return a failed outcome instead of throwing. Creation
+          // must not turn that outcome into a ready page; use the same bounded
+          // error and teardown path as a thrown navigation failure.
+          const scopeValue = navigation.scope;
+          const scope =
+            navigation.status === 'blocked' && isScopeDenialCode(scopeValue)
+              ? scopeValue
+              : undefined;
+          const reasonValue = navigation.reason;
+          const reason =
+            scope !== undefined
+              ? 'egress_policy'
+              : isNavigationFailureReason(reasonValue)
+                ? reasonValue
+                : 'engine_error';
+          const code =
+            navigation.status === 'timeout'
+              ? 'NAVIGATION_TIMEOUT'
+              : reason === 'egress_policy'
+                ? 'POLICY_DENIED'
+                : 'INTERNAL';
           throw new ServiceError(
-            'POLICY_DENIED',
-            `Navigation failed: egress_policy (${scope})`,
+            code,
+            `Navigation failed: ${reason}${scope !== undefined ? ` (${scope})` : ''}`,
             false,
-            { reason: 'egress_policy', scope }
+            { reason, ...(scope !== undefined ? { scope } : {}) }
           );
         }
       } catch (error) {

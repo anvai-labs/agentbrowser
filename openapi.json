@@ -3613,7 +3613,7 @@
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
-        "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank.",
+        "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank. Blocked or timed-out initial navigation returns a bounded error and removes only the new page, except when human takeover retains ownership. Do not automatically retry creation after a failure.",
         "tags": [
           "pages"
         ],
@@ -3675,6 +3675,16 @@
               }
             }
           },
+          "403": {
+            "description": "Navigation was denied by policy; includes a bounded reason and any recognized scope code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "The session or page does not exist.",
             "content": {
@@ -3697,6 +3707,16 @@
           },
           "500": {
             "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Initial navigation timed out; the error does not imply the request had no effect.",
             "content": {
               "application/json": {
                 "schema": {

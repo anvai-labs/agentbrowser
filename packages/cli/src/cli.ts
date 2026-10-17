@@ -39,6 +39,7 @@ import {
   createPlanReportParser,
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_WAIT_TYPES,
+  downloadFailureDetail,
   evaluateTestCaseRun,
   FormMappingSchema,
   FormValuesSchema,
@@ -2948,19 +2949,18 @@ export function buildCli(deps: CliDependencies): Cli {
               url: string,
               options: { filename?: string; out?: string }
             ) => {
-              const artifact = await ctx.client.sessions.download(sessionId, pageId, {
-                url,
-                ...(options.filename !== undefined ? { filename: options.filename } : {}),
-              });
-              ctx.emit(artifactReference(artifact), () => [
-                `Download ${artifact.artifactId}`,
-                `  bytes: ${artifact.sizeBytes}`,
-              ]);
-              if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
-                ]);
+              try {
+                const artifact = await ctx.client.sessions.download(sessionId, pageId, {
+                  url,
+                  ...(options.filename !== undefined ? { filename: options.filename } : {}),
+                });
+                await emitDownload(ctx, sessionId, artifact, options.out);
+              } catch (error) {
+                const detail = downloadFailureDetail(error);
+                exitCode = 1;
+                deps.err(
+                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
+                );
               }
             }
           )
@@ -2986,20 +2986,19 @@ export function buildCli(deps: CliDependencies): Cli {
             ) => {
               // Commander may parse this shared option on the parent download command.
               const output = options.out ?? download.opts().out;
-              const artifact = await ctx.client.sessions.collectDownload(
-                sessionId,
-                pageId,
-                downloadIdOrFilename
-              );
-              ctx.emit(artifactReference(artifact), () => [
-                `Download ${artifact.artifactId}`,
-                `  bytes: ${artifact.sizeBytes}`,
-              ]);
-              if (output) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, output);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
-                ]);
+              try {
+                const artifact = await ctx.client.sessions.collectDownload(
+                  sessionId,
+                  pageId,
+                  downloadIdOrFilename
+                );
+                await emitDownload(ctx, sessionId, artifact, output);
+              } catch (error) {
+                const detail = downloadFailureDetail(error);
+                exitCode = 1;
+                deps.err(
+                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
+                );
               }
             }
           )
@@ -3272,24 +3271,33 @@ async function emitCapture(
   );
 }
 
-async function saveArtifactBytes(
+async function emitDownload(
   ctx: CommandContext,
   sessionId: string,
   artifact: ArtifactRef,
-  out: string
-): Promise<{ path: string; sizeBytes: number }> {
-  const stored = await ctx.client.sessions.artifact(sessionId, artifact.artifactId);
-  if (!stored.contentBase64) {
-    throw new UsageError(
-      `Artifact ${artifact.artifactId} has no inline content to save (it may have expired).`
-    );
+  out: string | undefined
+): Promise<void> {
+  if (!out) {
+    ctx.emit(artifactReference(artifact), () => [
+      `Download ${artifact.artifactId}`,
+      `  bytes: ${artifact.sizeBytes}`,
+    ]);
+    return;
   }
-  const bytes = Buffer.from(stored.contentBase64, 'base64');
-  await writePrivateFile(out, bytes);
-  return {
-    path: out,
+  const contentBase64 =
+    artifact.inline?.contentBase64 ??
+    (await ctx.client.sessions.artifact(sessionId, artifact.artifactId)).contentBase64;
+  if (contentBase64 === undefined) throw new UsageError('Download artifact bytes are unavailable.');
+  const bytes = Buffer.from(contentBase64, 'base64');
+  const saved = await writePrivateFile(out, bytes);
+  const receipt = {
+    ...artifactReference(artifact),
+    saved: saved.path,
     sizeBytes: bytes.length,
   };
+  ctx.emit(receipt, () => [
+    `Saved ${artifact.artifactId} to ${saved.path} (${bytes.length} bytes)`,
+  ]);
 }
 
 function parseViewport(value: string): { width: number; height: number } {
