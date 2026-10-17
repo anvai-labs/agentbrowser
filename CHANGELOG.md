@@ -13,6 +13,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   then closes the ledger, so the engine's close-time records (POST/PUT/PATCH outcomes never
   observed) are written. The closing record carries `crashed: true` and `scope.stopped:
   "engine crashed"`. Previously the ledger closed first and those records were lost uncounted.
+- The crash-path close is tracked like any ledger close: `closeSession` and service shutdown that
+  start during crash recovery wait for it. (A crash detected while an explicit close is already
+  in progress can still close the ledger before that engine close's sweep.)
 
 ### Tests — the release smoke covers the engagement ledger (T10 M2)
 
