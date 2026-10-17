@@ -355,3 +355,31 @@ DELIVERY UPDATE — 2026-10-17
 - The active headed Fiverr session and installed service were not accessed,
   upgraded or restarted. No credentials were printed and no verification challenge
   was automated. Earlier remaining issues and qualification limits still apply.
+
+PUBLICATION VERIFIED — 2026-10-17
+- Owner approved the protected npm environment. Release run 39008344538 completed
+  successfully with 14/14 jobs. GitHub v1.22.0 was published at 06:30:07 UTC,
+  is immutable, and contains 16 assets:
+  https://github.com/anvai-labs/agentbrowser/releases/tag/v1.22.0.
+- Downloaded all release assets into an isolated temporary directory. All 15
+  payload SHA-256 checksums matched sha256sums.txt. Cryptographic provenance
+  verification passed for all 16 assets, including the checksum manifest, pinned
+  to anvai-labs/agentbrowser, release.yml, refs/tags/v1.22.0 and main 4eb78850;
+  verification also rejected self-hosted attestation signers by policy.
+- npm @anvailabs/agentbrowser-mcp 1.22.0 is visible and is the latest dist-tag.
+  Registry metadata exposes SLSA v1 provenance. Independently downloaded npm
+  tarball SHA-512 integrity matches registry metadata; its package version is 1.22.0.
+- All four server tarballs and the Windows bundle embed package version 1.22.0.
+  Downloaded Darwin ARM CLI reports 1.22.0. Both the downloaded Darwin ARM MCP
+  binary and npm package passed initialize/tools-list smoke with version 1.22.0
+  and the complete 21-tool catalog for protocols 2024-11-05 and 2025-06-18.
+  These post-publication probes did not connect to a browser service.
+- Distribution limits: Homebrew Formula/agentbrowser.rb still targets 1.21.0
+  and no 1.22.0 bump PR exists at verification time. Winget generated and pushed
+  ab-agentbrowser-1.22.0 to anvai-labs/winget-pkgs (da0f85ac), but upstream PR
+  creation reported Resource not accessible by integration. No 1.22.0 upstream
+  PR exists. Initial package PR microsoft/winget-pkgs#454058 remains open/unmerged.
+  Successful release workflow status does not mean these channels are updated.
+- No installed binary was upgraded, no service/browser was restarted, and the
+  active headed Fiverr session remains untouched. Product limitations recorded
+  above remain; publication does not establish live-site recovery qualification.
