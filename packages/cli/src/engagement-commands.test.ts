@@ -16,7 +16,10 @@ function ledger(records: Array<{ type: string; data: Record<string, unknown> }>)
   return records
     .map((record, seq) => {
       const at = '2026-10-17T00:00:00.000Z';
-      const hash = engagementChainHash(prev, JSON.stringify({ seq, at, type: record.type, data: record.data }));
+      const hash = engagementChainHash(
+        prev,
+        JSON.stringify({ seq, at, type: record.type, data: record.data })
+      );
       const line = JSON.stringify({ seq, at, type: record.type, data: record.data, prev, hash });
       prev = hash;
       return line;

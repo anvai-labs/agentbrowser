@@ -1252,7 +1252,10 @@ export class AgentBrowserService {
    * (survives the session and restarts). NOT_FOUND for another tenant's id: the
    * path is derived from the caller's tenant, so it cannot name someone else's file.
    */
-  async engagementLedgerFile(tenantId: string, engagementId: string): Promise<{ path: string; bytes: number }> {
+  async engagementLedgerFile(
+    tenantId: string,
+    engagementId: string
+  ): Promise<{ path: string; bytes: number }> {
     if (this.engagement === undefined || !ENGAGEMENT_ID.test(engagementId))
       throw new ServiceError('NOT_FOUND', 'Engagement not found');
     const path = engagementPath(this.engagement.directory, tenantId, engagementId);

@@ -72,9 +72,12 @@ describe('non-standard error bodies (T10 M2)', () => {
       'a/../b'
     );
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:5709/v1/sessions/a%2F..%2Fb/scope');
-    await new AgentBrowserClient({ baseUrl: 'http://localhost:5709' }).sessions.checkScope('a/../b', {
-      url: 'https://a.example/',
-    });
+    await new AgentBrowserClient({ baseUrl: 'http://localhost:5709' }).sessions.checkScope(
+      'a/../b',
+      {
+        url: 'https://a.example/',
+      }
+    );
     expect(String(fetchMock.mock.calls[1]?.[0])).toMatch(
       /^http:\/\/localhost:5709\/v1\/sessions\/a%2F\.\.%2Fb\/scope\/check\?/
     );

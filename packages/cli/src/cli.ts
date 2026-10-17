@@ -2457,8 +2457,13 @@ export function buildCli(deps: CliDependencies): Cli {
         );
       engagement
         .command('export <engagementId>')
-        .description("download one of your engagement ledgers as NDJSON (verbatim, verifiable offline)")
-        .option('--out <file>', 'write to this file (created exclusively, mode 0600) instead of stdout')
+        .description(
+          'download one of your engagement ledgers as NDJSON (verbatim, verifiable offline)'
+        )
+        .option(
+          '--out <file>',
+          'write to this file (created exclusively, mode 0600) instead of stdout'
+        )
         .action(
           action(async (ctx, engagementId: string, options: { out?: string }) => {
             if (!ctx.client.engagements)
@@ -2468,10 +2473,20 @@ export function buildCli(deps: CliDependencies): Cli {
               const { writeFile } = await import('node:fs/promises');
               await writeFile(options.out, text, { flag: 'wx', mode: 0o600 });
               const verdict = verifyEngagementLedger(text);
-              ctx.emit({ engagementId, file: options.out, bytes: Buffer.byteLength(text), verification: verdict }, () => [
-                `wrote ${options.out} (${Buffer.byteLength(text)} bytes)`,
-                verdict.ok ? `chain verifies: ${verdict.records} records${verdict.closed ? ', closed' : ', still open'}` : `CHAIN BROKEN at seq ${verdict.seq}: ${verdict.reason}`,
-              ]);
+              ctx.emit(
+                {
+                  engagementId,
+                  file: options.out,
+                  bytes: Buffer.byteLength(text),
+                  verification: verdict,
+                },
+                () => [
+                  `wrote ${options.out} (${Buffer.byteLength(text)} bytes)`,
+                  verdict.ok
+                    ? `chain verifies: ${verdict.records} records${verdict.closed ? ', closed' : ', still open'}`
+                    : `CHAIN BROKEN at seq ${verdict.seq}: ${verdict.reason}`,
+                ]
+              );
               if (!verdict.ok) exitCode = 1;
               return;
             }
@@ -2480,7 +2495,9 @@ export function buildCli(deps: CliDependencies): Cli {
         );
       engagement
         .command('verify <file>')
-        .description('offline: recompute the hash chain of an exported engagement ledger (exit 1 if broken)')
+        .description(
+          'offline: recompute the hash chain of an exported engagement ledger (exit 1 if broken)'
+        )
         .action(
           action(async (ctx, file: string) => {
             const { readFile } = await import('node:fs/promises');
