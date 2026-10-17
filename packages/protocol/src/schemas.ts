@@ -7,6 +7,7 @@
 
 import { type Static, type TSchema, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { ActionNavigationObservationSchema } from './action-navigation.js';
 import { NavigationFailureReasonSchema, SCOPE_DENIAL_CODES } from './navigation-failure.js';
 import {
   DELIVERED_ACTION_TYPES,
@@ -839,6 +840,7 @@ export const NavigationStatusSchema = Type.Object({
 export const ActOutcomeSchema = Type.Object(
   {
     status: Type.Literal('success'),
+    navigationObservation: Type.Optional(ActionNavigationObservationSchema),
     actionId: Type.String(),
     newRevision: Type.Integer({ minimum: 1 }),
     observation: Type.Optional(PageStateSchema),
@@ -952,6 +954,7 @@ export const ActionResultSchema = Type.Object({
   newRevision: Type.Integer({ minimum: 1 }),
   result: Type.Unknown(),
   navigationStatus: Type.Optional(NavigationStatusSchema),
+  navigationObservation: Type.Optional(ActionNavigationObservationSchema),
   targetFingerprint: Type.Optional(Type.String()),
   policyDecision: Type.Optional(PolicyDecisionSchema),
   approvalDecision: Type.Optional(ApprovalDecisionSchema),

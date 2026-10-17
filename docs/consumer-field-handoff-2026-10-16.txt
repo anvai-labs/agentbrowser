@@ -443,3 +443,37 @@ SCOPE REPORTING IMPLEMENTATION — 2026-10-17
 - Parallel implementation and independent review use isolated fixtures only. The
   active headed Fiverr session, installed service and verification challenges remain
   untouched; no live credentials are read or printed.
+
+ACTION NAVIGATION FOLLOW-UP — 2026-10-17
+- Added URL-free navigationObservation on completed actions and plan receipts:
+  blocked/egress_policy, a recognized scope code, and observedDuring: action.
+  This is temporal evidence from one main-document request chain during dispatch,
+  not a claim that the action caused that navigation. Request identity and epochs
+  exclude stale/late requests, subresources, iframes, other pages, multiple chains,
+  overlapping actions and concurrent direct navigation. No grace wait or replay.
+- Single-action success and actionId remain intact. Plans/batches preserve and count
+  the completed step, then stop with PLAN_NAVIGATION_BLOCKED. Post-action waits/reads
+  cannot mask this receipt. SDK/CLI/MCP and generated OpenAPI/catalogs carry it.
+- Independent review found a verification-order regression before delivery: the
+  new receipt initially bypassed the expectValue verification-evidence guard. Fixed
+  by running that guard first; an unverified fill remains a nonretryable post-effect
+  unknown outcome, with bounded observation/actionId details and no replay. Its plan
+  preserves the earlier successful prefix, not a falsely completed verified fill.
+- Validation: engine 57 focused tests (17 new) passed; service/fill/durable/outcome
+  suites 210 passed; independent reviewer reran 11 verification cases. Protocol 36,
+  core 54, CLI 153 and MCP 88 focused tests passed. Two real Chromium REST tests
+  cover GET/POST redirects through act and plan: effects occur once, denied targets
+  receive zero requests, reports retain the receipt, and no secret query is emitted.
+  Full commit/push gates and final-head CI are required and recorded in the PR.
+- Limits: only denials observed during dispatch are included; missing evidence is
+  not success. Autofill currently ignores this additive observation and is not
+  claimed to stop. Explicit navigation/wait behavior and hard cancellation remain
+  unchanged. Earlier identifier, streaming and benchmark follow-ups remain open.
+- Newly reproduced separate popup lifecycle issue: a popup closing during adoption
+  can invoke registerRemoval before onDownload is initialized, raising a temporal-
+  dead-zone ReferenceError in registerPlaywrightPage (engine-playwright/index.ts).
+  The fixture awaits adoption before teardown; production lifecycle code is unchanged.
+  This race needs its own focused fix and regression.
+- Work used isolated fixtures and parallel implementation plus independent review.
+  No active headed Fiverr session, installed service or verification challenge was
+  accessed, restarted or automated; no live credentials were read or printed.

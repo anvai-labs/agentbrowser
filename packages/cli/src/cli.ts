@@ -58,6 +58,7 @@ import {
   PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
+  parseActionNavigationObservation,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytesText,
@@ -3196,9 +3197,15 @@ async function runAction(
     ? ctx.client.sessions.executeAction(sessionId, pageId, request)
     : ctx.client.sessions.executeAction(sessionId, pageId, request, execution));
 
+  const navigationObservation = parseActionNavigationObservation(result.navigationObservation);
   ctx.emit(result, () => [
     `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
+    ...(navigationObservation
+      ? [
+          `  navigation observed during action: blocked (${navigationObservation.scope}); action completed, do not replay`,
+        ]
+      : []),
   ]);
 }
 

@@ -10,6 +10,40 @@ import {
 } from './plan.js';
 
 describe('canonical plan contracts', () => {
+  const navigationObservation = {
+    status: 'blocked',
+    reason: 'egress_policy',
+    scope: 'SCOPE_HOST_DENIED',
+    observedDuring: 'action',
+  };
+
+  it('rejects plan success when a completed action observed blocked navigation', () => {
+    expect(() =>
+      parsePlanReport({
+        ok: true,
+        completed: 1,
+        results: [{ step: 0, ok: true, actionId: 'once', navigationObservation }],
+      })
+    ).toThrow('may have executed');
+  });
+
+  it('preserves blocked navigation on verified completed fills in a stopped plan', () => {
+    const report = {
+      ok: false,
+      completed: 1,
+      results: [
+        { step: 0, ok: true, actionId: 'once', result: { verified: true }, navigationObservation },
+      ],
+      error: {
+        code: 'PLAN_NAVIGATION_BLOCKED',
+        message: 'Navigation was blocked; action completed.',
+      },
+    };
+    expect(createPlanReportParser([{ action: 'fill', expectValue: 'fixture' }])(report)).toEqual(
+      report
+    );
+  });
+
   it('retains nested input constraints and existing empty-plan/extension compatibility', () => {
     expect(PlanActionsSchema.items.properties.waitMs.maximum).toBe(60000);
     expect(PlanActionsSchema.items.properties.count.maximum).toBe(20);

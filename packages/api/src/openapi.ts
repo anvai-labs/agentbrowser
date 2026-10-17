@@ -8,6 +8,7 @@
  */
 
 import {
+  ActionNavigationObservationSchema,
   ActionResultSchema,
   AgentModeSchema,
   ApiErrorDetailSchema,
@@ -2212,6 +2213,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           type: 'object',
           required: ['status'],
           properties: {
+            navigationObservation: ActionNavigationObservationSchema,
             status: { type: 'string', examples: ['success'] },
             actionId: { type: 'string' },
             newRevision: {

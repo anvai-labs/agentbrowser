@@ -1037,6 +1037,37 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('action commands', () => {
+    it.each([false, true])(
+      'reports completed action and observed navigation denial without replay (json=%s)',
+      async (json) => {
+        const result = {
+          status: 'success',
+          actionId: 'once',
+          newRevision: 2,
+          navigationObservation: {
+            status: 'blocked',
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED',
+            observedDuring: 'action',
+          },
+        };
+        sessions.executeAction.mockResolvedValue(result);
+        expect(
+          await run(...(json ? ['--json'] : []), 'act', 'click', 'ses_1', 'pg_1', 'e1_0')
+        ).toBe(0);
+        if (json) expect(lastJson()).toEqual(result);
+        else {
+          expect(out.join('\n')).toContain('click e1_0: success');
+          expect(out.join('\n')).toContain(
+            'navigation observed during action: blocked (SCOPE_HOST_DENIED)'
+          );
+          expect(out.join('\n')).toContain('do not replay');
+        }
+        expect(err).toEqual([]);
+        expect(sessions.executeAction).toHaveBeenCalledOnce();
+      }
+    );
+
     it('should execute a click', async () => {
       const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0');
 

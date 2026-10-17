@@ -7,6 +7,23 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — observed navigation denials on completed actions
+
+- Playwright actions can return a bounded `navigationObservation` containing `status: blocked`,
+  `reason: egress_policy`, a recognized scope code, and `observedDuring: action`. This reports
+  a main-document request observed during dispatch; it does not prove the action caused it.
+  No URLs, bodies, headers, or driver messages are included. Stale requests, other frames/pages,
+  ambiguous chains, overlapping actions, and concurrent direct navigation are excluded.
+- Completed actions keep `status: success` and their action ID. Follow-up waits/observations are
+  skipped when this evidence is present. Required fill verification still takes precedence:
+  missing verification evidence retains its nonretryable post-effect unknown outcome.
+- Plans and action batches retain the completed step, count it in `completed`, and stop before
+  the next step with `PLAN_NAVIGATION_BLOCKED`; they do not replay the action. Outcome runs
+  cannot report a pass for that stopped plan. REST, SDK, CLI and MCP preserve the evidence.
+- Observation adds no settlement wait. A denial arriving after dispatch is not reported on that
+  action or a later one; absence is not a navigation-success claim. Explicit navigation and wait
+  actions retain their existing behavior. Autofill does not yet stop on this additive evidence.
+
 ### Fixed — scope denial reporting for page creation and downloads
 
 - Creating a page with an initially allowed URL that redirects outside its scope now returns
@@ -17,9 +34,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   neither projection includes raw driver prose, URLs, or arbitrary error details.
 - Direct download errors retain recognized scope sub-codes through connection and transfer
   sanitization, including redirect denials. Existing stages and generic messages remain.
-- Action/plan navigation reporting remains a follow-up: completed actions must not be reported
-  as unexecuted or replayed because a subsequent navigation was denied. CLI download errors
-  retain their existing generic formatting.
+- CLI download errors retain their existing generic formatting.
 
 ## [1.23.0] — 2026-10-17
 

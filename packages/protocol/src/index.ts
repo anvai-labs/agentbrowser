@@ -5,6 +5,7 @@
  * for the AgentBrowser v1 API. It is the source of truth for all API contracts.
  */
 
+export * from './action-navigation.js';
 export * from './application.js';
 export * from './autofill.js';
 export * from './contracts.js';

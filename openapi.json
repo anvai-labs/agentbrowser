@@ -10827,6 +10827,62 @@
                 "actionId": {
                   "type": "string"
                 },
+                "navigationObservation": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "reason",
+                    "scope",
+                    "observedDuring"
+                  ],
+                  "properties": {
+                    "status": {
+                      "const": "blocked",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "const": "egress_policy",
+                      "type": "string"
+                    },
+                    "scope": {
+                      "anyOf": [
+                        {
+                          "const": "SCOPE_HOST_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_PATH_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_METHOD_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_IDENTITY_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_EXPIRED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_BUDGET_EXHAUSTED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_LEDGER_UNAVAILABLE",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "observedDuring": {
+                      "const": "action",
+                      "type": "string"
+                    }
+                  }
+                },
                 "remap": {
                   "type": "object",
                   "required": [
@@ -11499,6 +11555,62 @@
                     "actionId": {
                       "type": "string"
                     },
+                    "navigationObservation": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "status",
+                        "reason",
+                        "scope",
+                        "observedDuring"
+                      ],
+                      "properties": {
+                        "status": {
+                          "const": "blocked",
+                          "type": "string"
+                        },
+                        "reason": {
+                          "const": "egress_policy",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "const": "SCOPE_HOST_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_PATH_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_METHOD_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_IDENTITY_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_EXPIRED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_BUDGET_EXHAUSTED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_LEDGER_UNAVAILABLE",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "observedDuring": {
+                          "const": "action",
+                          "type": "string"
+                        }
+                      }
+                    },
                     "remap": {
                       "type": "object",
                       "required": [
@@ -11910,6 +12022,62 @@
                     "type": "string"
                   }
                 ]
+              }
+            }
+          },
+          "navigationObservation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "status",
+              "reason",
+              "scope",
+              "observedDuring"
+            ],
+            "properties": {
+              "status": {
+                "const": "blocked",
+                "type": "string"
+              },
+              "reason": {
+                "const": "egress_policy",
+                "type": "string"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "SCOPE_HOST_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_PATH_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_METHOD_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_IDENTITY_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_EXPIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
+                  }
+                ]
+              },
+              "observedDuring": {
+                "const": "action",
+                "type": "string"
               }
             }
           },
@@ -13511,6 +13679,62 @@
           "status"
         ],
         "properties": {
+          "navigationObservation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "status",
+              "reason",
+              "scope",
+              "observedDuring"
+            ],
+            "properties": {
+              "status": {
+                "const": "blocked",
+                "type": "string"
+              },
+              "reason": {
+                "const": "egress_policy",
+                "type": "string"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "SCOPE_HOST_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_PATH_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_METHOD_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_IDENTITY_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_EXPIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
+                  }
+                ]
+              },
+              "observedDuring": {
+                "const": "action",
+                "type": "string"
+              }
+            }
+          },
           "status": {
             "type": "string",
             "examples": [
