@@ -116,7 +116,14 @@ export const ScopePathRuleSchema = Type.Object(
     // Exact host or ".suffix" (subdomains only — the apex needs its own
     // exact entry, matching SessionHostRules semantics). Absent = the rule
     // binds every allowed host.
-    hostSuffix: Type.Optional(Type.String({ minLength: 2, pattern: '[A-Za-z0-9]' })),
+    hostSuffix: Type.Optional(
+      Type.String({
+        minLength: 2,
+        // A hostname or ".suffix" in ASCII (punycode for IDNs), or a bracketed IPv6 literal: no
+        // scheme, port or Unicode, any of which would bind no request host.
+        pattern: '^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$',
+      })
+    ),
     prefix: Type.String({ minLength: 1, pattern: '^/' }),
   },
   { additionalProperties: false }

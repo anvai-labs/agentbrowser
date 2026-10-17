@@ -73,6 +73,33 @@ const DENIED = 'POLICY_DENIED' as const;
  */
 const normalizeHost = (host: string): string => host.toLowerCase().replace(/\.+$/, '');
 
+/** Do two host patterns (exact or ".suffix") admit at least one common host? */
+const patternsOverlap = (a: string, b: string): boolean => {
+  if (!a.startsWith('.') && !b.startsWith('.')) return a === b;
+  if (!a.startsWith('.')) return a.endsWith(b);
+  if (!b.startsWith('.')) return b.endsWith(a);
+  return a.endsWith(b) || b.endsWith(a);
+};
+
+/**
+ * Configuration a scope cannot enforce as written, refused at create time: a path rule
+ * whose host binds none of the allowed hosts would leave that host's paths unrestricted.
+ */
+export function scopeConfigurationIssues(scope: {
+  allowedHosts: string[];
+  pathRules?: Array<{ hostSuffix?: string }>;
+}): string[] {
+  const allowed = scope.allowedHosts.map(normalizeHost);
+  const issues: string[] = [];
+  for (const [index, rule] of (scope.pathRules ?? []).entries()) {
+    if (rule.hostSuffix === undefined) continue;
+    const host = normalizeHost(rule.hostSuffix);
+    if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
+      issues.push(`pathRules[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
+  }
+  return issues;
+}
+
 const hostMatches = (hostname: string, pattern: string): boolean => {
   const host = hostname.toLowerCase();
   if (pattern.startsWith('.')) {

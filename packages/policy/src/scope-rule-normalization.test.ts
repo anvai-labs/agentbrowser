@@ -19,7 +19,7 @@ describe('scope rule normalization', () => {
     });
   });
 
-  it('configured hosts with a trailing dot match the normalized request host', async () => {
+  it('configured hosts with a trailing dot match the request host', async () => {
     const scope = new EngagementScopePolicy(base(), {
       allowedHosts: ['app.example.'],
       identityBindings: [{ header: 'x-id', value: 'v', allowedHosts: ['APP.example.'] }],

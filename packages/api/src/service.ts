@@ -134,6 +134,7 @@ import {
   type EngagementScopeStatus,
   type NetworkPolicy,
   SessionHostPolicy,
+  scopeConfigurationIssues,
 } from '@agentbrowser/policy';
 import {
   type Authorizer,
@@ -1759,6 +1760,15 @@ export class AgentBrowserService {
             .join('; ')}`,
           false,
           { rule: 'scope.invalid' }
+        );
+      // A rule that binds no allowed host would leave that host unrestricted: refuse it.
+      const issues = scopeConfigurationIssues(request.scope);
+      if (issues.length > 0)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Engagement scope cannot be enforced as written: ${issues.slice(0, 3).join('; ')}`,
+          false,
+          { rule: 'scope.unbound' }
         );
     }
     if (request.approval !== undefined) {

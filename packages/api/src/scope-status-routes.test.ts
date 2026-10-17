@@ -266,6 +266,51 @@ describe('scope status contract (ADR-015)', () => {
     }
   });
 
+  it.each([
+    ['a Unicode host (requests use punycode)', 'bücher.example', ['xn--bcher-kva.example']],
+    ['a host with a port', 'app.example:443', ['app.example']],
+    ['a URL', 'https://app.example', ['app.example']],
+    ['a host that is not allowed', 'other.example', ['app.example']],
+    ['a suffix that overlaps no allowed host', '.other.example', ['app.example', '.app.example']],
+  ])(
+    'refuses a path rule bound to %s (it would leave the host unrestricted)',
+    async (_what, hostSuffix, allowedHosts) => {
+      const { app, call } = await harness();
+      try {
+        const created = await call('POST', '/v1/sessions', 'key-one', {
+          tenantId: 'one',
+          policy: { scope: { allowedHosts, pathRules: [{ prefix: '/public', hostSuffix }] } },
+        });
+        expect(created.statusCode).toBe(400);
+      } finally {
+        await app.close();
+      }
+    }
+  );
+
+  it('accepts path rules that bind an allowed host (exact, suffix, overlapping suffix)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['app.example', '.cdn.example', 'xn--bcher-kva.example'],
+            pathRules: [
+              { prefix: '/a', hostSuffix: 'App.Example.' },
+              { prefix: '/b', hostSuffix: '.img.cdn.example' },
+              { prefix: '/c', hostSuffix: '.example' },
+              { prefix: '/d', hostSuffix: 'xn--bcher-kva.example' },
+            ],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('refuses an unknown approval field from an in-process embedder', async () => {
     const { AgentBrowserService } = await import('./service.js');
     const service = new AgentBrowserService({ engine: new FakeEngine() });

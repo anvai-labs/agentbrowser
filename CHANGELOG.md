@@ -13,8 +13,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   so its path restriction silently disappeared and every path on that host was in scope. Every
   configured host (`allowedHosts`, `pathRules[].hostSuffix`, `identityBindings[].allowedHosts`)
   is now lowercased and stripped of trailing dots; the scope status reports the normalized form.
-- A path-rule `prefix` must start with `/` and a `hostSuffix` must contain a letter or digit;
-  either one otherwise could never match, and is refused (`400`).
+- A path-rule `prefix` must start with `/`, and a `hostSuffix` must be an ASCII hostname or
+  `.suffix` (punycode for IDNs) or a bracketed IPv6 literal: no scheme, port or Unicode. A path
+  rule whose host binds none of the `allowedHosts` is refused too (`400`, `scope.unbound`): it
+  would leave that host's paths unrestricted. The MCP catalog digest changed (the `create` tool's
+  scope schema).
 
 ### Docs — the site matches 1.23.0 and the T10 plan
 
