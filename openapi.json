@@ -6947,7 +6947,7 @@
               "properties": {
                 "hostSuffix": {
                   "minLength": 2,
-                  "pattern": "[A-Za-z0-9]",
+                  "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
                   "type": "string"
                 },
                 "prefix": {
@@ -8922,7 +8922,7 @@
                       "properties": {
                         "hostSuffix": {
                           "minLength": 2,
-                          "pattern": "[A-Za-z0-9]",
+                          "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
                           "type": "string"
                         },
                         "prefix": {
