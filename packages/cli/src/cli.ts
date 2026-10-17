@@ -194,6 +194,8 @@ export interface CliClient
     | 'download'
     | 'collectDownload'
     | 'cookieHandoff'
+    | 'scopeStatus'
+    | 'checkScope'
   > &
     Partial<
       Pick<
@@ -481,6 +483,58 @@ export function buildCli(deps: CliDependencies): Cli {
               `  ttl:     ${got.ttlMs ?? '?'} ms`,
               `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
               ...sessionFacts(got),
+            ]);
+          })
+        );
+      session
+        .command('scope <sessionId>')
+        .description(
+          'T10: the engagement scope in effect, request budget and denials by sub-code (never an identity marker value)'
+        )
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const status = await ctx.client.sessions.scopeStatus(sessionId);
+            ctx.emit(status, () => [
+              `Scope for ${sessionId}`,
+              `  hosts:   ${status.allowedHosts.join(', ')}`,
+              ...status.pathRules.map(
+                (rule) => `  path:    ${rule.hostSuffix ? `${rule.hostSuffix} ` : ''}${rule.prefix}`
+              ),
+              ...(status.allowedMethods ? [`  methods: ${status.allowedMethods.join(', ')}`] : []),
+              ...status.identityBindings.map(
+                (binding) =>
+                  `  identity: ${binding.header} bound to ${binding.allowedHosts.join(', ')}`
+              ),
+              ...(status.budget
+                ? [
+                    `  budget:  ${status.budget.spent}/${status.budget.limit} spent (${status.budget.remaining} left)`,
+                  ]
+                : []),
+              ...(status.expiresAt !== undefined
+                ? [
+                    `  expires: ${new Date(status.expiresAt).toISOString()}${status.expired ? ' (expired)' : ''}`,
+                  ]
+                : []),
+              ...Object.entries(status.denials).map(
+                ([code, count]) => `  denied:  ${code} x${count}`
+              ),
+            ]);
+          })
+        );
+      session
+        .command('scope-check <sessionId> <url>')
+        .description(
+          'T10: dry run — would the scope rules allow this request now? Spends no budget, records no denial'
+        )
+        .option('--method <method>', 'HTTP method to judge (default GET)')
+        .action(
+          action(async (ctx, sessionId: string, url: string, options: { method?: string }) => {
+            const verdict = await ctx.client.sessions.checkScope(sessionId, {
+              url,
+              ...(options.method !== undefined ? { method: options.method } : {}),
+            });
+            ctx.emit(verdict, () => [
+              verdict.allowed ? 'allowed by the scope' : `denied by the scope: ${verdict.scope}`,
             ]);
           })
         );

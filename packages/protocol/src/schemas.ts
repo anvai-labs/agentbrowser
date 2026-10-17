@@ -5,7 +5,7 @@
  * All types in this file should be kept in sync with types.ts
  */
 
-import { type TSchema, Type } from '@sinclair/typebox';
+import { type Static, type TSchema, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { NavigationFailureReasonSchema, SCOPE_DENIAL_CODES } from './navigation-failure.js';
 import {
@@ -135,6 +135,51 @@ export const EngagementScopeSchema = Type.Object({
   requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
   identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
 });
+
+// T10 M2: the scope in effect for a session (GET /v1/sessions/{id}/scope).
+// Identity bindings report header and hosts only: the marker value is the
+// credential the binding protects and is never returned.
+export const EngagementScopeStatusSchema = Type.Object(
+  {
+    allowedHosts: Type.Array(Type.String()),
+    pathRules: Type.Array(ScopePathRuleSchema),
+    allowedMethods: Type.Optional(Type.Array(Type.String())),
+    identityBindings: Type.Array(
+      Type.Object(
+        { header: Type.String(), allowedHosts: Type.Array(Type.String()) },
+        { additionalProperties: false }
+      )
+    ),
+    expiresAt: Type.Optional(Type.Number()),
+    expired: Type.Boolean(),
+    budget: Type.Optional(
+      Type.Object(
+        {
+          limit: Type.Integer({ minimum: 0 }),
+          spent: Type.Integer({ minimum: 0 }),
+          remaining: Type.Integer({ minimum: 0 }),
+        },
+        { additionalProperties: false }
+      )
+    ),
+    // Denials on the wire and in the navigation preflight, by sub-code.
+    denials: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false }
+);
+
+// T10 M2: dry-run verdict of the scope rules (no budget spent, no denial counted).
+export const ScopeCheckResultSchema = Type.Union([
+  Type.Object({ allowed: Type.Literal(true) }, { additionalProperties: false }),
+  Type.Object(
+    { allowed: Type.Literal(false), scope: Type.String() },
+    { additionalProperties: false }
+  ),
+]);
+
+/** T10 M2: the scope status and dry-run verdict, derived from the schemas (ADR-015). */
+export type EngagementScopeStatus = Static<typeof EngagementScopeStatusSchema>;
+export type ScopeCheckResult = Static<typeof ScopeCheckResultSchema>;
 
 export const SessionPolicySchema = Type.Object({
   // Optional since Phase 3: requiring allowedHosts meant a policy object

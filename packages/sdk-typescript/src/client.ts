@@ -1,9 +1,11 @@
 import type {
+  EngagementScopeStatus,
   OperationReplay,
   OperatorApprovalView,
   OutcomeRunReport,
   OutcomeRunRequest,
   PlanReport,
+  ScopeCheckResult,
 } from '@agentbrowser/protocol';
 import {
   createOutcomeRunReportParser,
@@ -460,6 +462,21 @@ export class SessionsClient {
 
   async control(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control`);
+  }
+
+  /** T10 M2: the engagement scope in effect, budget and denials (never a marker value). */
+  async scopeStatus(sessionId: string): Promise<EngagementScopeStatus> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/scope`);
+  }
+
+  /** T10 M2: dry run of the scope rules; spends no budget and records no denial. */
+  async checkScope(
+    sessionId: string,
+    request: { url: string; method?: string }
+  ): Promise<ScopeCheckResult> {
+    const query = new URLSearchParams({ url: request.url });
+    if (request.method !== undefined) query.set('method', request.method);
+    return this.http.requestJson(`/v1/sessions/${sessionId}/scope/check?${query}`);
   }
   async takeover(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/takeover`, { method: 'POST' });
