@@ -485,13 +485,24 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
         headers: { authorization: 'Bearer api-key-aaaaaaaaaaaa' },
         payload: {
           tenantId: 'owner',
-          // The wire passes unknown keys through, but nothing parses them:
-          // the proof is the view — no lease exists on the session.
-          lease: { hosts: ['example.com'], expiresInMs: 1000, maxActions: 5 },
-          policy: { allowedHosts: ['example.com'], lease: { maxActions: 5 } },
+          // The proof is the view — no lease exists on the session.
+          policy: { allowedHosts: ['example.com'] },
         },
       });
       expect(created.statusCode).toBe(201);
+      // Lease-shaped keys are refused outright, at the top level and under `policy`.
+      for (const payload of [
+        { tenantId: 'owner', lease: { hosts: ['example.com'], expiresInMs: 1000, maxActions: 5 } },
+        { tenantId: 'owner', policy: { allowedHosts: ['example.com'], lease: { maxActions: 5 } } },
+      ]) {
+        const refused = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: { authorization: 'Bearer api-key-aaaaaaaaaaaa' },
+          payload,
+        });
+        expect(refused.statusCode).toBe(400);
+      }
       const sessionId = created.json().sessionId as string;
       const view = await server.inject({
         method: 'GET',

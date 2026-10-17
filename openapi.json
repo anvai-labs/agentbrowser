@@ -8545,6 +8545,7 @@
         }
       },
       "SessionRequest": {
+        "additionalProperties": false,
         "type": "object",
         "properties": {
           "cdpAttach": {
@@ -8671,6 +8672,7 @@
             }
           },
           "policy": {
+            "additionalProperties": false,
             "type": "object",
             "properties": {
               "allowedHosts": {
@@ -8695,6 +8697,7 @@
                 "type": "number"
               },
               "approval": {
+                "additionalProperties": false,
                 "type": "object",
                 "properties": {
                   "review": {
