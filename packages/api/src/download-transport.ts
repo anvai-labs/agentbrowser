@@ -11,6 +11,7 @@ import {
   type ProtocolErrorCode,
   type RequestPolicy,
 } from '@agentbrowser/engine';
+import { isScopeDenialCode } from '@agentbrowser/protocol';
 import {
   ConnectionAuthority,
   ConnectionBudget,
@@ -38,12 +39,21 @@ export interface DownloadOutcome {
   code?: ProtocolErrorCode;
 }
 function safeError(cause: unknown, stage: Stage): EngineError {
-  const code = cause && typeof cause === 'object' ? (cause as { code?: unknown }).code : undefined;
+  const candidate =
+    cause && typeof cause === 'object'
+      ? (cause as { code?: unknown; details?: { scope?: unknown } })
+      : undefined;
+  const code = candidate?.code;
+  const scope = candidate?.details?.scope;
   return new EngineError(
     normalizeEngineError({ code, message: 'Download failed' }).code,
     'Download failed',
     false,
-    { stage, reason: 'transferFailed' }
+    {
+      stage,
+      reason: 'transferFailed',
+      ...(isScopeDenialCode(scope) ? { scope } : {}),
+    }
   );
 }
 

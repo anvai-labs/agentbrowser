@@ -1244,15 +1244,26 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--url <url>', 'navigate the new page to this URL')
         .action(
           action(async (ctx, sessionId: string, options: { url?: string }) => {
-            const created = await ctx.client.sessions.createPage(
-              sessionId,
-              options.url ? { url: options.url } : undefined
-            );
-            ctx.emit(created, () => [
-              `Page ${created.pageId}`,
-              `  session: ${created.sessionId ?? sessionId}`,
-              `  status:  ${created.status ?? 'unknown'}`,
-            ]);
+            try {
+              const created = await ctx.client.sessions.createPage(
+                sessionId,
+                options.url ? { url: options.url } : undefined
+              );
+              ctx.emit(created, () => [
+                `Page ${created.pageId}`,
+                `  session: ${created.sessionId ?? sessionId}`,
+                `  status:  ${created.status ?? 'unknown'}`,
+              ]);
+            } catch (error) {
+              const detail = navigationFailureDetail(error);
+              if (detail === undefined) throw error;
+              exitCode = 1;
+              deps.err(
+                ctx.json
+                  ? JSON.stringify({ error: detail }, null, 2)
+                  : `${detail.code}: ${detail.message}`
+              );
+            }
           })
         );
 

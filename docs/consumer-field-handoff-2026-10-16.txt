@@ -414,3 +414,32 @@ SESSION SCOPE FOLLOW-UP — 2026-10-17
   engagement-bound findings and SARIF drafts. M4 covers saved-plan execution and
   JUnit/JSON/CI integration. Objective/completion-criteria metadata is not a current
   T10 requirement. Shared-worker and worker-WebSocket qualification remains limited.
+
+SCOPE REPORTING IMPLEMENTATION — 2026-10-17
+- Continued from current develop after the 1.23.0 promotion; earlier "unreleased"
+  ledger notes describe their timestamp, not current publication status. The 1.23.0
+  GitHub release was not yet available when this follow-up checked publication.
+- Page creation now rejects scope-blocked redirect outcomes with POLICY_DENIED and
+  a validated scope sub-code, closes only the newly created page, and preserves
+  sibling pages. A cleanup failure does not mask the bounded denial.
+- CLI page create --json now returns bounded navigation-error JSON on stderr with
+  exit 1. MCP page_create applies the same projection on both protocol versions.
+  Neither includes raw driver prose, URLs, or arbitrary error details; no retry.
+- Direct download connection/transfer errors preserve only recognized scope codes.
+  Initial and redirect refusals retain existing generic messages and failure stages;
+  malformed or unrecognized scope values and arbitrary details are omitted.
+- Validation: reproduced failures before fixes; 170 API page/service tests, 117
+  download/connection tests, 151 CLI tests and 97 MCP tests passed. Real Chromium
+  REST coverage verifies HTTP 403, the scope code, zero denied-target requests and
+  no leaked page inventory; a sibling page remains usable. Full local commit gates
+  passed (type-check, lint, build and 5,852 tests; 20 optional/platform skips).
+  Review added a passing human-pause regression using the real authority state
+  machine: takeover keeps the new page for the operator and settles HUMAN_ACTIVE.
+  Final push/CI results are recorded in the associated PR before merge.
+- Remaining: action/plan navigation-denial correlation, non-scope blocked/timeout
+  page-create reporting, and generic CLI download error formatting. Broader T10 M3/M4
+  and the original identifier, hard-cancellation, live-site, streaming and benchmark
+  follow-ups remain. This change does not shorten credentials or identifiers.
+- Parallel implementation and independent review use isolated fixtures only. The
+  active headed Fiverr session, installed service and verification challenges remain
+  untouched; no live credentials are read or printed.

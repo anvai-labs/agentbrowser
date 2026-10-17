@@ -1904,6 +1904,77 @@ describe('AgentBrowser CLI', () => {
       expect(sessions.createPage).toHaveBeenCalledWith('ses_1', { url: 'https://example.com/x' });
     });
 
+    it.each([false, true])('page create reports a bounded scope denial (json=%s)', async (json) => {
+      sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private redirect https://private.invalid/?token=canary'), {
+          code: 'POLICY_DENIED',
+          details: {
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED',
+            operationId: 'create-page-once',
+            url: 'https://private.invalid/?token=canary',
+            headers: { authorization: 'synthetic-private-marker' },
+          },
+        })
+      );
+
+      expect(
+        await run(
+          ...(json ? ['--json'] : []),
+          'page',
+          'create',
+          'ses_1',
+          '--url',
+          'https://example.com'
+        )
+      ).toBe(1);
+      expect(sessions.createPage).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err).toHaveLength(1);
+      if (json) {
+        expect(JSON.parse(err[0])).toEqual({
+          error: {
+            code: 'POLICY_DENIED',
+            message: 'Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+            retryable: false,
+            details: {
+              reason: 'egress_policy',
+              scope: 'SCOPE_HOST_DENIED',
+              operationId: 'create-page-once',
+            },
+          },
+        });
+      } else {
+        expect(err).toEqual([
+          'POLICY_DENIED: Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+        ]);
+      }
+      expect(err.join('\n')).not.toMatch(/private|canary|authorization/);
+    });
+
+    it('page create omits unrecognized scope and operation identifiers from JSON errors', async () => {
+      sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private adapter prose'), {
+          code: 'POLICY_DENIED',
+          details: {
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED private-marker',
+            operationId: 'invalid id private-marker',
+          },
+        })
+      );
+      expect(await run('--json', 'page', 'create', 'ses_1')).toBe(1);
+      expect(out).toEqual([]);
+      expect(JSON.parse(err.join('\n'))).toEqual({
+        error: {
+          code: 'POLICY_DENIED',
+          message: 'Navigation failed: egress_policy',
+          retryable: false,
+          details: { reason: 'egress_policy' },
+        },
+      });
+    });
+
     it('page get and close round trip', async () => {
       expect(await run('page', 'get', 'ses_1', 'pg_1')).toBe(0);
       expect(await run('page', 'close', 'ses_1', 'pg_1')).toBe(0);

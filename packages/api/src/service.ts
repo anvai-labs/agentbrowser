@@ -3850,7 +3850,18 @@ export class AgentBrowserService {
     // of silently ignoring the field.
     if (request?.url !== undefined) {
       try {
-        await this.navigate(sessionId, pageId, { url: request.url });
+        const navigation = await this.navigate(sessionId, pageId, { url: request.url });
+        const scope = navigation.scope;
+        if (navigation.status === 'blocked' && isScopeDenialCode(scope)) {
+          // Redirect denials return an outcome instead of throwing. Report the
+          // same bounded refusal as a preflight denial and use its teardown path.
+          throw new ServiceError(
+            'POLICY_DENIED',
+            `Navigation failed: egress_policy (${scope})`,
+            false,
+            { reason: 'egress_policy', scope }
+          );
+        }
       } catch (error) {
         if (this.authority.get(sessionId)?.view().state === 'PAUSE_REQUESTED') throw error;
         // Runtime navigate failures (DNS, refused, egress policy) happen

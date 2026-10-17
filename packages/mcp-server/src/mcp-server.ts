@@ -1474,7 +1474,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             return ok(message.id, textResult(result, structured, navigationFailed));
           } catch (err) {
             const navigationFailure =
-              name === 'navigate' ? navigationFailureDetail(err) : undefined;
+              name === 'navigate' || name === 'page_create'
+                ? navigationFailureDetail(err)
+                : undefined;
             if (navigationFailure !== undefined)
               return ok(message.id, navigationErrorResult(navigationFailure));
             const code = (err as { code?: string }).code;

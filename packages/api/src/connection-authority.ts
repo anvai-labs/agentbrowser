@@ -3,7 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, Socket } from 'node:net';
 import { EngineError, type ProtocolErrorCode, type RequestPolicy } from '@agentbrowser/engine';
 import type { DestinationPolicy } from '@agentbrowser/policy';
-import { ErrorCode } from '@agentbrowser/protocol';
+import { ErrorCode, isScopeDenialCode, type ScopeDenialCode } from '@agentbrowser/protocol';
 
 // Internal TCP ownership primitive. Intentionally not re-exported by api/index.
 // No browser, HTTP, TLS, redirects, proxy or session integration lives here.
@@ -35,18 +35,33 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function error(code: ProtocolErrorCode, stage: Stage, reason: string): EngineError {
-  return new EngineError(code, 'Connection failed', false, { stage, reason });
+function error(
+  code: ProtocolErrorCode,
+  stage: Stage,
+  reason: string,
+  scope?: ScopeDenialCode
+): EngineError {
+  return new EngineError(code, 'Connection failed', false, {
+    stage,
+    reason,
+    ...(scope !== undefined ? { scope } : {}),
+  });
 }
 
-// Preserve explicit protocol codes, never infer them from raw transport text or
-// retain callback messages/details that can contain secrets or arbitrary data.
+// Preserve explicit protocol codes and closed-union scope reasons, never raw
+// callback messages or arbitrary details that can contain secrets.
 function safeFailure(cause: unknown, stage: Stage, reason: string): EngineError {
-  const code = cause && typeof cause === 'object' ? (cause as { code?: unknown }).code : undefined;
+  const candidate =
+    cause && typeof cause === 'object'
+      ? (cause as { code?: unknown; details?: { scope?: unknown } })
+      : undefined;
+  const code = candidate?.code;
+  const scope = candidate?.details?.scope;
   return error(
     typeof code === 'string' && codes.has(code) ? (code as ProtocolErrorCode) : 'INTERNAL',
     stage,
-    reason
+    reason,
+    isScopeDenialCode(scope) ? scope : undefined
   );
 }
 

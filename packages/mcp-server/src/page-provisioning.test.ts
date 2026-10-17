@@ -93,3 +93,39 @@ it('respects mode capabilities in discovery and execution', async () => {
   expect((await f.call('page_create', { sessionId: 's' })).error).toBeDefined();
   expect(f.sessions.createPage).not.toHaveBeenCalled();
 });
+
+it.each(['2024-11-05', '2025-06-18'])(
+  'reports a page-create redirect scope denial without a success receipt or retry (%s)',
+  async (protocolVersion) => {
+    const f = fixture();
+    await f.exchange('initialize', {
+      protocolVersion,
+      capabilities: {},
+      clientInfo: { name: 'fixture', version: '1' },
+    });
+    f.sessions.createPage.mockRejectedValue(
+      Object.assign(new Error('private driver URL https://private.invalid/?canary=1'), {
+        code: 'POLICY_DENIED',
+        details: {
+          reason: 'egress_policy',
+          scope: 'SCOPE_PATH_DENIED',
+          url: 'https://private.invalid/?canary=1',
+        },
+      })
+    );
+    const { result } = await f.call('page_create', {
+      sessionId: 's',
+      url: 'https://example.com/redirect',
+      operationId: 'create-redirect',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toMatchObject({
+      code: 'POLICY_DENIED',
+      retryable: false,
+      details: { reason: 'egress_policy', scope: 'SCOPE_PATH_DENIED' },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/private|canary|server-minted/);
+    expect(f.sessions.createPage).toHaveBeenCalledTimes(1);
+    expect(f.sessions.listPages).not.toHaveBeenCalled();
+  }
+);
