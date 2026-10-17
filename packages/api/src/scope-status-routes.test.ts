@@ -213,6 +213,29 @@ describe('scope status contract (ADR-015)', () => {
     }
   });
 
+  it('refuses a path rule prefix that does not start with "/" (it could never match)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope: { allowedHosts: ['in.example'], pathRules: [{ prefix: 'api' }] } },
+      });
+      expect(created.statusCode).toBe(400);
+      const dots = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['in.example'],
+            pathRules: [{ prefix: '/api', hostSuffix: '..' }],
+          },
+        },
+      });
+      expect(dots.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('refuses an unknown scope field from an in-process embedder too', async () => {
     const { AgentBrowserService } = await import('./service.js');
     const service = new AgentBrowserService({ engine: new FakeEngine() });
@@ -238,6 +261,52 @@ describe('scope status contract (ADR-015)', () => {
     try {
       const created = await call('POST', '/v1/sessions', 'key-one', { tenantId: 'one', ...extra });
       expect(created.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ['a Unicode host (requests use punycode)', 'bücher.example', ['xn--bcher-kva.example']],
+    ['a host with a port', 'app.example:443', ['app.example']],
+    ['a URL', 'https://app.example', ['app.example']],
+    ['a host that is not allowed', 'other.example', ['app.example']],
+    ['a suffix that overlaps no allowed host', '.other.example', ['app.example', '.app.example']],
+    ['an exact host no allowed suffix covers', 'other.example', ['.app.example']],
+  ])(
+    'refuses a path rule bound to %s (it would leave the host unrestricted)',
+    async (_what, hostSuffix, allowedHosts) => {
+      const { app, call } = await harness();
+      try {
+        const created = await call('POST', '/v1/sessions', 'key-one', {
+          tenantId: 'one',
+          policy: { scope: { allowedHosts, pathRules: [{ prefix: '/public', hostSuffix }] } },
+        });
+        expect(created.statusCode).toBe(400);
+      } finally {
+        await app.close();
+      }
+    }
+  );
+
+  it('accepts path rules that bind an allowed host (exact, suffix, overlapping suffix)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['app.example', '.cdn.example', 'xn--bcher-kva.example'],
+            pathRules: [
+              { prefix: '/a', hostSuffix: 'App.Example.' },
+              { prefix: '/b', hostSuffix: '.img.cdn.example' },
+              { prefix: '/c', hostSuffix: '.example' },
+              { prefix: '/d', hostSuffix: 'xn--bcher-kva.example' },
+            ],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
     } finally {
       await app.close();
     }
@@ -281,4 +350,22 @@ describe('scope status contract (ADR-015)', () => {
       }
     }
   );
+
+  it('accepts a broader rule suffix over a narrower allowed suffix (they overlap)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['.cdn.example'],
+            pathRules: [{ prefix: '/a', hostSuffix: '.example' }],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
 });

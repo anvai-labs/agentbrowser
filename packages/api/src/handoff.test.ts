@@ -185,19 +185,34 @@ describe('the handoff floors (ADR-025 s3 step 1)', () => {
     );
     expect(ruleOf(splitRefusal)).toBe('floor.handoff.allowlist');
 
-    const broad = await handoffFixture({
+    // A scope whose path rule binds a host outside allowedHosts can no longer be created
+    // (scope.unbound), so the handoff floor's check for it is defense in depth.
+    await expect(
+      handoffFixture({
+        create: {
+          scope: {
+            allowedHosts: ['example.com'],
+            pathRules: [{ hostSuffix: 'evil.org', prefix: '/' }],
+          },
+        },
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST', details: { rule: 'scope.unbound' } });
+
+    // Defense in depth: a path rule whose suffix is broader than the allowed host
+    // (it binds, so creation succeeds) still trips the handoff allowlist floor.
+    const wide = await handoffFixture({
       create: {
         scope: {
-          allowedHosts: ['example.com'],
-          pathRules: [{ hostSuffix: 'evil.org', prefix: '/' }],
+          allowedHosts: ['a.example.com'],
+          pathRules: [{ hostSuffix: '.example.com', prefix: '/' }],
         },
       },
     });
-    broad.login.state.cookies = [cookie()];
-    const broadRefusal = await refused(
-      broad.service.handoffCookies(broad.sessionId, { domains: ['example.com'] })
+    wide.login.state.cookies = [cookie({ domain: 'a.example.com' })];
+    const wideRefusal = await refused(
+      wide.service.handoffCookies(wide.sessionId, { domains: ['a.example.com'] })
     );
-    expect(ruleOf(broadRefusal)).toBe('floor.handoff.allowlist');
+    expect(ruleOf(wideRefusal)).toBe('floor.handoff.allowlist');
   });
 
   it('a policy deny for one domain fails the whole handoff', async () => {
