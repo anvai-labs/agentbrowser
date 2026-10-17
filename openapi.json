@@ -8545,6 +8545,7 @@
         }
       },
       "SessionRequest": {
+        "additionalProperties": false,
         "type": "object",
         "properties": {
           "cdpAttach": {

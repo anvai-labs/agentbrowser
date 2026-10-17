@@ -15,6 +15,7 @@ import { UsageError } from './errors.js';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import {
   ActionSchema,
+  ApprovalPolicySchema,
   CookieHandoffRequestSchema,
   DeliveredWaitConditionSchema,
   EngagementScopeSchema,
@@ -94,6 +95,22 @@ export function validateEngagementScope(body: unknown): Validated<EngagementScop
   }
   const issues: ValidationIssue[] = [];
   for (const error of engagementScope.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
+
+const approvalPolicy = TypeCompiler.Compile(ApprovalPolicySchema);
+
+/** Validate an approval policy on its own (in-process embedders; see validateEngagementScope). */
+export function validateApprovalPolicy(
+  body: unknown
+): Validated<Static<typeof ApprovalPolicySchema>> {
+  if (approvalPolicy.Check(body)) {
+    return { ok: true, value: body as Static<typeof ApprovalPolicySchema> };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of approvalPolicy.Errors(body)) {
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };

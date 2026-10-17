@@ -227,4 +227,32 @@ describe('scope status contract (ADR-015)', () => {
       await service.shutdown();
     }
   });
+
+  it.each([
+    ['blockedHosts', { blockedHosts: ['evil.example'] }],
+    ['approval', { approval: { transactions: 'deny' } }],
+    ['allowDownloads', { allowDownloads: true }],
+    ['an unknown key', { notARealRequestKey: 1 }],
+  ])('refuses a top-level %s (policy fields belong under policy)', async (_what, extra) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', { tenantId: 'one', ...extra });
+      expect(created.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('refuses an unknown approval field from an in-process embedder', async () => {
+    const { AgentBrowserService } = await import('./service.js');
+    const service = new AgentBrowserService({ engine: new FakeEngine() });
+    try {
+      const approval = JSON.parse('{"transactions":"deny","notARealApprovalField":true}');
+      await expect(service.createSession({ tenantId: 'one', approval })).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+    } finally {
+      await service.shutdown();
+    }
+  });
 });

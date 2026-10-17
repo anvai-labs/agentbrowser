@@ -238,23 +238,28 @@ export const SessionCookieSchema = Type.Object({
   ),
 });
 
-export const SessionRequestSchema = Type.Object({
-  cdpAttach: Type.Optional(Type.Boolean()),
-  controlMode: Type.Optional(Type.Literal('delegated')),
-  tenantId: Type.Optional(Type.String({ minLength: 1 })),
-  // Known engine names plus any registered engine name (TD-BROWSER-7
-  // registry routes arbitrary names; unknown names fail at the service).
-  engine: Type.Optional(Type.Union([EngineTypeSchema, Type.String({ minLength: 1 })])),
-  ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
-  idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
-  viewport: Type.Optional(ViewportSchema),
-  locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
-  timezoneId: Type.Optional(Type.String()),
-  headless: Type.Optional(Type.Boolean()),
-  cookies: Type.Optional(Type.Array(SessionCookieSchema)),
-  policy: Type.Optional(SessionPolicySchema),
-  snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
-});
+export const SessionRequestSchema = Type.Object(
+  {
+    cdpAttach: Type.Optional(Type.Boolean()),
+    controlMode: Type.Optional(Type.Literal('delegated')),
+    tenantId: Type.Optional(Type.String({ minLength: 1 })),
+    // Known engine names plus any registered engine name (TD-BROWSER-7
+    // registry routes arbitrary names; unknown names fail at the service).
+    engine: Type.Optional(Type.Union([EngineTypeSchema, Type.String({ minLength: 1 })])),
+    ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
+    idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
+    viewport: Type.Optional(ViewportSchema),
+    locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
+    timezoneId: Type.Optional(Type.String()),
+    headless: Type.Optional(Type.Boolean()),
+    cookies: Type.Optional(Type.Array(SessionCookieSchema)),
+    policy: Type.Optional(SessionPolicySchema),
+    snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
+    // Strict: an unknown or misplaced key (a policy field outside `policy`) is refused,
+    // never passed through unvalidated or ignored.
+  },
+  { additionalProperties: false }
+);
 
 /**
  * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request. Domains are

@@ -176,6 +176,7 @@ import {
   validateApplicationBinding,
   validateApplicationExecute,
   validateApplicationReview,
+  validateApprovalPolicy,
   validateDeliveredWaitCondition,
   validateEngagementScope,
   validateObservationRequest,
@@ -1758,6 +1759,19 @@ export class AgentBrowserService {
             .join('; ')}`,
           false,
           { rule: 'scope.invalid' }
+        );
+    }
+    if (request.approval !== undefined) {
+      const approvalCheck = validateApprovalPolicy(request.approval);
+      if (!approvalCheck.ok)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid approval policy: ${approvalCheck.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path || '/'} ${issue.message}`)
+            .join('; ')}`,
+          false,
+          { rule: 'approval.invalid' }
         );
     }
     if (request.scope !== undefined && request.allowServiceWorkers === true)
