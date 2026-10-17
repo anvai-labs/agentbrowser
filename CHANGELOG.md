@@ -9,13 +9,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
 
-- A navigation refused by an engagement scope now reports which rule fired on every surface:
-  `details.scope` (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
+- A `navigate` (command or tool) refused by the scope preflight now reports which rule fired
+  on every surface: `details.scope` (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
   `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`) and the message
   `Navigation failed: egress_policy (SCOPE_…)`. REST and the SDK already did; the CLI and MCP
   projection (`navigationFailureDetail()`) dropped it.
 - The projection stays bounded: only a code from the protocol's `SCOPE_DENIAL_CODES` list is
-  carried; anything else is dropped as before.
+  carried, read once; anything else is dropped as before. The policy's `SCOPE_SUBCODES` is
+  pinned to that list.
+- Not yet carried (M2 follow-up): denials at the wire — a redirect blocked mid-navigation
+  (`status: blocked`, `reason: egress_policy`), `page_create` with a url, and `act`/`plan`.
 
 ## [1.21.0] — 2026-10-16
 

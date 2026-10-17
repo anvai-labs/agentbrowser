@@ -78,3 +78,17 @@ it('carries a known engagement-scope sub-code and nothing else (T10 M2)', () => 
     expect(denial(scope)?.message).toBe('Navigation failed: egress_policy');
   }
 });
+
+it('reads the scope once, so a changing getter cannot smuggle prose', () => {
+  let reads = 0;
+  const details = {
+    reason: 'egress_policy',
+    get scope() {
+      reads += 1;
+      return reads === 1 ? 'SCOPE_HOST_DENIED' : 'attacker prose 10.0.0.1';
+    },
+  };
+  const projected = navigationFailureDetail({ code: 'POLICY_DENIED', details });
+  expect(JSON.stringify(projected)).not.toContain('attacker');
+  expect(projected?.details).toEqual({ reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED' });
+});

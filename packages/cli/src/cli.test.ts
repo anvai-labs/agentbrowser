@@ -642,6 +642,28 @@ describe('AgentBrowser CLI', () => {
       expect(err.join('\n')).not.toContain('10.0.0.1');
     });
 
+    it('carries the engagement-scope sub-code in JSON error output (T10 M2)', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('SCOPE_HOST_DENIED: host out.example is outside the scope'), {
+          code: 'POLICY_DENIED',
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED', host: 'out.example' },
+        })
+      );
+
+      const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://out.example/');
+
+      expect(code).toBe(1);
+      expect(JSON.parse(err.join('\n'))).toEqual({
+        error: {
+          code: 'POLICY_DENIED',
+          message: 'Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+          retryable: false,
+          details: { reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED' },
+        },
+      });
+      expect(err.join('\n')).not.toContain('out.example');
+    });
+
     it('prints the fixed reason for a human-readable navigation failure', async () => {
       sessions.navigate.mockRejectedValueOnce(
         Object.assign(new Error('private adapter prose'), {

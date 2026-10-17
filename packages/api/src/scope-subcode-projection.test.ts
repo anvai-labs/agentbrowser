@@ -1,6 +1,6 @@
 // T10 M2: every engagement-scope denial the policy raises survives the bounded
 // client projection that the CLI and MCP use for navigate refusals.
-import { EngagementScopePolicy, NetworkPolicy } from '@agentbrowser/policy';
+import { EngagementScopePolicy, NetworkPolicy, SCOPE_SUBCODES } from '@agentbrowser/policy';
 import { navigationFailureDetail, SCOPE_DENIAL_CODES } from '@agentbrowser/protocol';
 import { expect, it } from 'vitest';
 
@@ -12,6 +12,12 @@ const deniedBy = async (check: () => Promise<void>) => {
   }
   throw new Error('expected a scope denial');
 };
+
+it('the policy raises exactly the codes the projection carries (ADR-015)', () => {
+  // scopeDenial() only accepts SCOPE_SUBCODES (type-checked), so this pins
+  // additions as well as renames and removals.
+  expect([...SCOPE_SUBCODES].sort()).toEqual([...SCOPE_DENIAL_CODES].sort());
+});
 
 it('projects each scope denial with its sub-code', async () => {
   const base = () => new NetworkPolicy({ blockLoopback: false });

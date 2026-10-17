@@ -53,7 +53,9 @@ export function navigationFailureDetail(error: unknown): ApiErrorDetail | undefi
     ? (candidate.code as ErrorCode)
     : ErrorCode.INTERNAL;
   const operationId = candidate.details?.operationId;
-  const scope = isScopeDenialCode(candidate.details?.scope) ? candidate.details.scope : undefined;
+  // Read once: a getter must not pass the check and then return something else.
+  const scopeValue = candidate.details?.scope;
+  const scope = isScopeDenialCode(scopeValue) ? scopeValue : undefined;
   return {
     code,
     message: `Navigation failed: ${reason}${scope !== undefined ? ` (${scope})` : ''}`,
