@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -15,7 +15,8 @@ const privateDir = async () => {
   const dir = await mkdtemp(join(tmpdir(), 'eng-cfg-'));
   dirs.push(dir);
   await chmod(dir, 0o700);
-  return dir;
+  // macOS can expose tmpdir() through a symlink; valid fixtures must be canonical.
+  return realpath(dir);
 };
 
 describe('engagement configuration (T10 M2)', () => {
