@@ -6774,6 +6774,9 @@
                 "type": "integer"
               }
             }
+          },
+          "stopped": {
+            "type": "string"
           }
         }
       },
@@ -8664,6 +8667,9 @@
                         }
                       }
                     }
+                  },
+                  "ledger": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -8760,6 +8766,9 @@
                     "type": "boolean"
                   },
                   "supportsCdpAttach": {
+                    "type": "boolean"
+                  },
+                  "requestRecording": {
                     "type": "boolean"
                   },
                   "supportedObservationModes": {
@@ -8962,6 +8971,9 @@
               "supportsCdpAttach": {
                 "type": "boolean"
               },
+              "requestRecording": {
+                "type": "boolean"
+              },
               "supportedObservationModes": {
                 "minItems": 1,
                 "type": "array",
@@ -9134,6 +9146,9 @@
             "type": "boolean"
           },
           "supportsCdpAttach": {
+            "type": "boolean"
+          },
+          "requestRecording": {
             "type": "boolean"
           },
           "supportedObservationModes": {
@@ -11816,6 +11831,10 @@
                   {
                     "const": "SCOPE_BUDGET_EXHAUSTED",
                     "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
                   }
                 ]
               }
@@ -12626,6 +12645,10 @@
               {
                 "const": "SCOPE_BUDGET_EXHAUSTED",
                 "type": "string"
+              },
+              {
+                "const": "SCOPE_LEDGER_UNAVAILABLE",
+                "type": "string"
               }
             ]
           }
@@ -13097,6 +13120,10 @@
           },
           "credentialSource": {
             "const": "operator",
+            "type": "string"
+          },
+          "engagementId": {
+            "pattern": "^eng_[0-9a-f]{24}$",
             "type": "string"
           },
           "actionLease": {

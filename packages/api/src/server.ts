@@ -65,6 +65,7 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 import Fastify from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { artifactStoreFromEnvironment } from './artifact-config.js';
+import { engagementConfigFromEnvironment } from './engagement-config.js';
 import {
   createHttpPublication,
   type HttpResponseDraft,
@@ -578,6 +579,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   // Validated before the service exists: an invalid ceiling aborts startup.
   const artifactStore = artifactStoreFromEnvironment(process.env);
+  // T10 M2: an invalid engagement directory aborts startup; unset refuses scope.ledger.
+  const engagement = await engagementConfigFromEnvironment(process.env);
   // T5 J-d: a configured durable journal opens before the service exists, and any refusal to
   // open it aborts startup. Durable work is never served ephemerally: with no open journal it is
   // refused. Unconfigured: nothing changes.
@@ -627,6 +630,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       extractMaxBytes,
       engine,
       ...(artifactStore !== undefined ? { artifactStore } : {}),
+      ...(engagement !== undefined ? { engagement } : {}),
       // TD-BROWSER-16 phase 6: the handoff reads through the login browser
       // (constructed above; enabled encodes operator keys being configured).
       loginBrowser: options.loginBrowserPort ?? loginBrowser,

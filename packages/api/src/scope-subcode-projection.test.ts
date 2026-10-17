@@ -76,6 +76,14 @@ it('projects each scope denial with its sub-code', async () => {
           headers: { 'x-id': 'v' },
         }),
     ],
+    [
+      'SCOPE_LEDGER_UNAVAILABLE',
+      () => {
+        const scope = new EngagementScopePolicy(base(), { allowedHosts: [host] });
+        scope.stop('full');
+        return scope.checkRequest({ hostname: host, url: `http://${host}/` });
+      },
+    ],
   ];
   expect(cases.map(([code]) => code).sort()).toEqual([...SCOPE_DENIAL_CODES].sort());
   for (const [code, check] of cases) {

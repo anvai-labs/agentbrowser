@@ -7,6 +7,26 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the engagement ledger (T10 M2)
+
+- `policy.scope.ledger: true` records a scoped session's traffic decisions in an append-only,
+  hash-chained JSONL file under the operator's `AGENTBROWSER_ENGAGEMENT_DIR`
+  (`AGENTBROWSER_ENGAGEMENT_MAX_BYTES`, default 64 MiB). Metadata only: no bodies, no query
+  strings, no identity marker values. Records: `engagement.opened`, `request`,
+  `preflight.denied`, `engagement.closed`. The hash chain detects edits, removals and reorderings
+  that do not rewrite it from that point; it is not keyed or anchored, so whoever can write the
+  file can rewrite it (see the operator guide's limits).
+- Fed by an engine request recorder that sees every outcome before page attribution (popups not
+  yet adopted, workers); the redirect guard records each response of a POST/PUT/PATCH chain.
+  A request in flight at the instant the context closes can go unrecorded (stated limit).
+  Refused when it cannot record a lane:
+  `allowDownloads` (`scope.ledger.downloads`) and engines without request recording
+  (`scope.ledger.engine`).
+- Fails closed: when the ledger is nearly full or cannot be written, the scope denies all further
+  traffic with the new sub-code `SCOPE_LEDGER_UNAVAILABLE`; nothing is dropped silently.
+- Refused with `400 scope.ledger.unconfigured` when the operator configured no directory; an
+  invalid directory aborts startup. The session view gains `engagementId`.
+
 ## [1.22.0] — 2026-10-17
 
 Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options where needed.

@@ -63,6 +63,8 @@ export class FakeEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: false,
+      // No network traffic, so every (zero) request outcome is recorded.
+      requestRecording: true,
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
       supportedActionTypes: [...DELIVERED_ACTION_TYPES],
     };

@@ -177,6 +177,9 @@ export class SessionCoordinator {
       if (request.cdpAttach === true) sessionOptions.cdpAttach = true;
       if (request.downloadPolicy !== undefined)
         sessionOptions.downloadPolicy = request.downloadPolicy;
+      // T10 M2: the engagement ledger's recorder must reach the engine.
+      if (request.requestRecorder !== undefined)
+        sessionOptions.requestRecorder = request.requestRecorder;
 
       if (request.viewport !== undefined) {
         sessionOptions.viewport = request.viewport;
@@ -765,6 +768,7 @@ export type CoordinatedSessionRequest = SessionRequest & {
   requestPolicy?: import('@agentbrowser/engine').RequestPolicy;
   downloadPolicy?: import('@agentbrowser/engine').EngineSessionOptions['downloadPolicy'];
   allowServiceWorkers?: import('@agentbrowser/engine').EngineSessionOptions['allowServiceWorkers'];
+  requestRecorder?: import('@agentbrowser/engine').EngineSessionOptions['requestRecorder'];
 };
 
 export interface SessionInspection {
