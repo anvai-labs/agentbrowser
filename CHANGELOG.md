@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
+
+- A navigation refused by an engagement scope now reports which rule fired on every surface:
+  `details.scope` (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
+  `SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`) and the message
+  `Navigation failed: egress_policy (SCOPE_…)`. REST and the SDK already did; the CLI and MCP
+  projection (`navigationFailureDetail()`) dropped it.
+- The projection stays bounded: only a code from the protocol's `SCOPE_DENIAL_CODES` list is
+  carried; anything else is dropped as before.
+
 ## [1.21.0] — 2026-10-16
 
 Entries are newest first. T10 milestone M1: an engagement scope without holes. **Upgrading from 1.20.x:**

@@ -1,6 +1,10 @@
 import { Value } from '@sinclair/typebox/value';
 import { expect, it } from 'vitest';
-import { NavigationFailureReasonSchema, navigationFailureDetail } from './navigation-failure.js';
+import {
+  NavigationFailureReasonSchema,
+  navigationFailureDetail,
+  SCOPE_DENIAL_CODES,
+} from './navigation-failure.js';
 
 it('bounds navigation reasons and projects no raw topology or details', () => {
   for (const reason of [
@@ -52,5 +56,25 @@ it('retains only a canonical operation identity for reconciliation', () => {
         details: { reason: 'engine_error', operationId, address: '10.0.0.1' },
       })?.details
     ).toEqual({ reason: 'engine_error' });
+  }
+});
+
+it('carries a known engagement-scope sub-code and nothing else (T10 M2)', () => {
+  const denial = (scope: unknown) =>
+    navigationFailureDetail({
+      code: 'POLICY_DENIED',
+      details: { reason: 'egress_policy', scope, host: 'leak.example' },
+    });
+  for (const scope of SCOPE_DENIAL_CODES) {
+    expect(denial(scope)).toEqual({
+      code: 'POLICY_DENIED',
+      message: `Navigation failed: egress_policy (${scope})`,
+      retryable: false,
+      details: { reason: 'egress_policy', scope },
+    });
+  }
+  for (const scope of ['SCOPE_SOMETHING_ELSE', 'scope_host_denied', 1, {}, null]) {
+    expect(denial(scope)?.details).toEqual({ reason: 'egress_policy' });
+    expect(denial(scope)?.message).toBe('Navigation failed: egress_policy');
   }
 });
