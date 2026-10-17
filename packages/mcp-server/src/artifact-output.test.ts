@@ -38,11 +38,24 @@ describe('reference-first MCP evidence', () => {
       expect(sessions.artifact).not.toHaveBeenCalled();
     }
   );
-  it.each(['screenshot', 'pdf'])(
-    '%s explicit evidence uses one MCP media block without duplicating bytes in JSON',
-    async (name) => {
+  it.each([
+    ['screenshot', '2024-11-05'],
+    ['pdf', '2024-11-05'],
+    ['screenshot', '2025-06-18'],
+    ['pdf', '2025-06-18'],
+  ])(
+    '%s explicit evidence on %s uses one MCP media block without duplicating bytes in JSON',
+    async (name, protocolVersion) => {
       const { client, artifact } = fixture();
       const server = buildMcpServer({ createClient: () => client });
+      await server.handle(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'init',
+          method: 'initialize',
+          params: { protocolVersion },
+        })
+      );
       const response = JSON.parse(
         await server.handle(
           JSON.stringify({
@@ -53,6 +66,8 @@ describe('reference-first MCP evidence', () => {
           })
         )
       );
+      if (protocolVersion === '2025-06-18')
+        expect(response.result.structuredContent.artifactId).toBe(artifact.artifactId);
       const blocks = response.result.content;
       expect(blocks).toHaveLength(2);
       expect(blocks[0].text).not.toContain('contentBase64');

@@ -301,3 +301,23 @@ FOLLOW-UP VALIDATION / DELIVERY
 - Pre-push release-smoke tests also pin an independent delegated-tool fixture.
   Added the new artifact tool there after the gate rejected its stale catalog;
   the built adapter/profile catalog check already passed. No gate was bypassed.
+
+INDEPENDENT ADVERSARIAL REVIEW (PR #552)
+- Separate reviewer inspected af7926fe against develop and confirmed two P2 blockers:
+  (1) filename-only cleanup could delete an explicit output with a matching generated
+  basename; (2) concurrent pruning could turn an already-removed entry into capture
+  failures (the isolated reproducer rejected 7 of 8 parallel saves).
+- Fixed with bounded private ownership sidecars matching payload device/inode,
+  birthtime, mtime and size; cleanup rechecks payload and record identity and treats
+  concurrent ENOENT as benign. Matching user filenames, replacements and corrupt or
+  missing proofs are preserved. Six cache regressions pass, including eight parallel
+  saves over an expired capture. The reviewer independently reran the tests and
+  verified both blockers resolved with no new merge blocker.
+- Safe-preservation limit: orphan/stale sidecars and partial private writes without
+  ownership proofs may remain for manual cleanup. Limits cover managed payloads,
+  not every physical file. No existing user output is adopted based on name alone.
+- Reviewer independently exercised modern MCP protocol + bound-session media/range
+  behavior; modern initialized screenshot/PDF cases are now regression-tested too.
+  No other confirmed blocker in read recovery, autofill uncertainty or popup IDs.
+- PR: https://github.com/anvai-labs/agentbrowser/pull/552. New head validation and
+  remote CI follow the review fix; publication still uses existing release gates.

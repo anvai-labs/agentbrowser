@@ -1,6 +1,7 @@
 /** Private, disposable client-side captures. Never contains credentials/configuration. */
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, readdir, unlink } from 'node:fs/promises';
+import { constants, type Stats } from 'node:fs';
+import { lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ArtifactRef } from '@agentbrowser/protocol';
@@ -65,6 +66,67 @@ export function artifactReference(artifact: ArtifactRef): ArtifactRef {
   };
 }
 
+const identityFields = ['dev', 'ino', 'birthtimeMs', 'mtimeMs', 'size'] as const;
+function sameFile(stat: Stats, identity: Record<string, unknown>): boolean {
+  return identityFields.every((key) => stat[key] === identity[key]);
+}
+function ownedRegular(stat: Stats | undefined): stat is Stats {
+  return (
+    !!stat?.isFile() &&
+    stat.nlink === 1 &&
+    (process.platform === 'win32' || stat.uid === process.getuid?.())
+  );
+}
+const ownershipPath = (path: string) => `${path}.managed.json`;
+/** A filename is not ownership. Bounded, private records authorize cleanup only of the
+ * original, unchanged file. User-created matching names and replacements are preserved.
+ */
+async function ownership(path: string, stat: Stats) {
+  const recordPath = ownershipPath(path);
+  const before = await lstat(recordPath).catch(() => undefined);
+  if (
+    !ownedRegular(before) ||
+    before.size > 512 ||
+    (process.platform !== 'win32' && (before.mode & 0o077) !== 0)
+  )
+    return;
+  try {
+    const handle = await open(recordPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const opened = await handle.stat();
+      if (!ownedRegular(opened) || !sameFile(opened, before as unknown as Record<string, unknown>))
+        return;
+      const buffer = Buffer.alloc(513);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      if (bytesRead > 512) return;
+      const record: unknown = JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
+      if (typeof record !== 'object' || record === null) return;
+      const data = record as Record<string, unknown>;
+      if (
+        data.version !== 1 ||
+        typeof data.createdAt !== 'number' ||
+        !Number.isFinite(data.createdAt) ||
+        !sameFile(stat, data)
+      )
+        return;
+      return { recordPath, recordStat: opened, createdAt: data.createdAt };
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return;
+  } // A missing, corrupt or replaced proof never authorizes deletion.
+}
+async function removeIfPresent(path: string): Promise<boolean> {
+  try {
+    await unlink(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 /** Only managed regular files directly inside the cache are eligible. Never recurse or follow links.
  * Limits are best-effort across concurrent processes; --out files are never managed or pruned.
  */
@@ -81,15 +143,11 @@ export async function pruneArtifactCache(
       if (!managed.test(name)) continue;
       const path = join(directory, name);
       const stat = await lstat(path).catch(() => undefined);
-      if (
-        stat?.isFile() &&
-        !stat.isSymbolicLink() &&
-        stat.nlink === 1 &&
-        (process.platform === 'win32' || stat.uid === process.getuid?.())
-      )
-        files.push({ path, stat });
+      if (!ownedRegular(stat)) continue;
+      const proof = await ownership(path, stat);
+      if (proof) files.push({ path, stat, ...proof });
     }
-    files.sort((a, b) => a.stat.mtimeMs - b.stat.mtimeMs || a.path.localeCompare(b.path));
+    files.sort((a, b) => a.createdAt - b.createdAt || a.path.localeCompare(b.path));
     let bytes = files.reduce((sum, file) => sum + file.stat.size, 0);
     let count = files.length;
     let removed = 0;
@@ -97,24 +155,31 @@ export async function pruneArtifactCache(
     for (const file of files) {
       if (
         !options.all &&
-        now - file.stat.mtimeMs < limits.maxAgeMs &&
+        now - file.createdAt < limits.maxAgeMs &&
         bytes + reserve <= limits.maxBytes &&
         count + (reserve > 0 ? 1 : 0) <= limits.maxFiles
       )
         continue;
-      // Recheck identity after enumeration; a replacement is not ours to remove.
+      // Both data and ownership record must still be the entries we inspected.
       const current = await lstat(file.path).catch(() => undefined);
+      const currentRecord = await lstat(file.recordPath).catch(() => undefined);
       if (
-        !current?.isFile() ||
-        current.nlink !== 1 ||
-        current.dev !== file.stat.dev ||
-        current.ino !== file.stat.ino
+        !ownedRegular(current) ||
+        !ownedRegular(currentRecord) ||
+        !sameFile(current, file.stat as unknown as Record<string, unknown>) ||
+        !sameFile(currentRecord, file.recordStat as unknown as Record<string, unknown>)
       )
         continue;
-      await unlink(file.path);
+      const deleted = await removeIfPresent(file.path);
+      const finalRecord = await lstat(file.recordPath).catch(() => undefined);
+      if (
+        ownedRegular(finalRecord) &&
+        sameFile(finalRecord, file.recordStat as unknown as Record<string, unknown>)
+      )
+        await removeIfPresent(file.recordPath);
       bytes -= file.stat.size;
       count--;
-      removed++;
+      if (deleted) removed++;
     }
     return { directory, removed, files: count, bytes };
   } catch {
@@ -138,10 +203,20 @@ export async function cacheLocalArtifact(
     const extension = extensions[contentType.split(';')[0]?.trim().toLowerCase() ?? ''] ?? 'bin';
     const path = join(directory, `capture-${randomUUID()}.${extension}`);
     await writePrivateFile(path, bytes);
+    const stat = await lstat(path);
+    const createdAt = options.now ?? Date.now();
+    await writePrivateFile(
+      ownershipPath(path),
+      JSON.stringify({
+        version: 1,
+        createdAt,
+        ...Object.fromEntries(identityFields.map((key) => [key, stat[key]])),
+      })
+    );
     return {
       path,
       bytes: bytes.byteLength,
-      expiresAt: (options.now ?? Date.now()) + limits.maxAgeMs,
+      expiresAt: createdAt + limits.maxAgeMs,
     };
   } catch {
     throw new ArtifactCacheError();

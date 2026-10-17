@@ -8,7 +8,6 @@ import {
   readFile,
   rm,
   symlink,
-  utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -59,8 +58,10 @@ describe('private artifact cache', () => {
     'evicts expired and oldest excess managed files while preserving user files and links',
     async () => {
       const dir = await directory();
-      const expired = await cacheLocalArtifact(Buffer.alloc(4), 'image/png', { directory: dir });
-      await utimes(expired.path, 1, 1);
+      const expired = await cacheLocalArtifact(Buffer.alloc(4), 'image/png', {
+        directory: dir,
+        now: 1,
+      });
       const keep = join(dir, 'user-output.png');
       await writeFile(keep, 'user');
       const symbolic = join(dir, `capture-${randomUUID()}.png`);
@@ -112,4 +113,44 @@ describe('private artifact cache', () => {
     ).rejects.toThrow('private artifact cache');
     expect(await readdir(dir)).toEqual([]);
   });
+});
+
+it('preserves matching user filenames, replacements and corrupt ownership records', async () => {
+  const dir = await directory();
+  const userFile = join(dir, `capture-${randomUUID()}.png`);
+  await writeFile(userFile, 'explicit output');
+  const replaced = await cacheLocalArtifact(Buffer.from('original'), 'image/png', {
+    directory: dir,
+  });
+  await rm(replaced.path);
+  await writeFile(replaced.path, 'user replacement');
+  const corrupt = await cacheLocalArtifact(Buffer.from('keep'), 'image/png', { directory: dir });
+  await writeFile(`${corrupt.path}.managed.json`, 'invalid');
+  const oversized = await cacheLocalArtifact(Buffer.from('also keep'), 'image/png', {
+    directory: dir,
+  });
+  await writeFile(`${oversized.path}.managed.json`, 'x'.repeat(513));
+  const removable = await cacheLocalArtifact(Buffer.from('managed'), 'image/png', {
+    directory: dir,
+  });
+  expect((await pruneArtifactCache({ directory: dir, all: true })).removed).toBe(1);
+  await expect(lstat(removable.path)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(lstat(`${removable.path}.managed.json`)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readFile(userFile, 'utf8')).toBe('explicit output');
+  expect(await readFile(replaced.path, 'utf8')).toBe('user replacement');
+  expect(await readFile(corrupt.path, 'utf8')).toBe('keep');
+  expect(await readFile(oversized.path, 'utf8')).toBe('also keep');
+});
+it('concurrent saves tolerate another pruner removing expired data and ownership records', async () => {
+  const dir = await directory();
+  await cacheLocalArtifact(Buffer.from('expired'), 'image/png', { directory: dir, now: 1 });
+  const files = await Promise.all(
+    Array.from({ length: 8 }, (_, i) =>
+      cacheLocalArtifact(Buffer.from([i]), 'image/png', { directory: dir })
+    )
+  );
+  expect(new Set(files.map((file) => file.path)).size).toBe(8);
+  for (let i = 0; i < files.length; i++) expect((await readFile(files[i]!.path))[0]).toBe(i);
+  expect((await pruneArtifactCache({ directory: dir, all: true })).removed).toBe(8);
+  expect(await readdir(dir)).toEqual([]);
 });

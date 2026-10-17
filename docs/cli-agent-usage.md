@@ -659,6 +659,10 @@ On each save, prune managed files older than 24 hours and oldest entries to fit
 cache is not automatically swept. `agentbrowser cache prune` applies those limits;
 `agentbrowser cache prune --all` removes all eligible managed entries. Cleanup never
 recurses, follows links, removes user-named files, or manages explicit `--out` files.
+Private ownership sidecars identify original captures; matching user filenames,
+replacements, and files without valid ownership records are preserved. Limits count
+managed payloads, not every physical file. Stale sidecars or partial writes can remain
+for manual cleanup when ownership cannot be established safely.
 A full-size capture above 128 MiB or an unusable cache fails without printing content;
 choose an explicit `--out` destination for a large artifact.
 
