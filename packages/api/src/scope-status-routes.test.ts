@@ -153,7 +153,7 @@ describe('scope status contract (ADR-015)', () => {
   // A scope may only narrow: a field this server cannot enforce must be refused,
   // never ignored (an ignored exclusion silently widens the engagement).
   it.each([
-    ['top level', { allowedHosts: ['in.example'], excludeHosts: ['admin.in.example'] }],
+    ['top level', { allowedHosts: ['in.example'], notARealScopeField: ['admin.in.example'] }],
     ['path rule', { allowedHosts: ['in.example'], pathRules: [{ prefix: '/api', exclude: true }] }],
     [
       'identity binding',
@@ -231,6 +231,85 @@ describe('scope status contract (ADR-015)', () => {
         },
       });
       expect(dots.statusCode).toBe(400);
+
+  it('accepts the T10 M3 program fields, echoes them in status, and the dry run applies them', async () => {
+    const { app, call } = await harness();
+    try {
+      const program = {
+        id: 'acme-vdp',
+        version: '2026-10-01',
+        authorizedBy: 'researcher@example.test',
+        authorizedAt: '2026-10-17T00:00:00Z',
+      };
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['in.example', '.in.example'],
+            excludeHosts: ['admin.in.example'],
+            excludePaths: [{ prefix: '/logout' }],
+            allowedSchemes: ['https'],
+            allowedPorts: [443],
+            program,
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const { sessionId } = created.json();
+      const status = (await call('GET', `/v1/sessions/${sessionId}/scope`)).json();
+      expect(status).toMatchObject({
+        excludeHosts: ['admin.in.example'],
+        excludePaths: [{ prefix: '/logout' }],
+        allowedSchemes: ['https'],
+        allowedPorts: [443],
+        program,
+      });
+      const dry = async (url: string) =>
+        (
+          await call('GET', `/v1/sessions/${sessionId}/scope/check?url=${encodeURIComponent(url)}`)
+        ).json();
+      expect(await dry('https://www.in.example/')).toEqual({ allowed: true });
+      expect(await dry('https://admin.in.example/')).toMatchObject({
+        allowed: false,
+        scope: 'SCOPE_HOST_DENIED',
+      });
+      expect(await dry('https://in.example/logout')).toMatchObject({
+        allowed: false,
+        scope: 'SCOPE_PATH_DENIED',
+      });
+      expect(await dry('http://in.example/')).toMatchObject({
+        allowed: false,
+        scope: 'SCOPE_HOST_DENIED',
+      });
+      expect(await dry('https://in.example:8443/')).toMatchObject({
+        allowed: false,
+        scope: 'SCOPE_HOST_DENIED',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ['a port out of range', { allowedPorts: [70000] }],
+    ['a scheme with a colon', { allowedSchemes: ['https:'] }],
+    ['an empty exclusion list', { excludeHosts: [] }],
+    [
+      'a program without authorizedBy',
+      { program: { id: 'p', authorizedAt: '2026-10-17T00:00:00Z' } },
+    ],
+    [
+      'an unknown program field',
+      { program: { id: 'p', authorizedBy: 'r', authorizedAt: 'x', scopeUrl: 'u' } },
+    ],
+  ])('refuses %s', async (_what, extra) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope: { allowedHosts: ['in.example'], ...extra } },
+      });
+      expect(created.statusCode).toBe(400);
     } finally {
       await app.close();
     }

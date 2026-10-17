@@ -6929,6 +6929,75 @@
           },
           "stopped": {
             "type": "string"
+          },
+          "excludeHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludePaths": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "prefix"
+              ],
+              "properties": {
+                "hostSuffix": {
+                  "minLength": 2,
+                  "type": "string"
+                },
+                "prefix": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "allowedSchemes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedPorts": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "program": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "authorizedBy",
+              "authorizedAt"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "version": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "authorizedBy": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "authorizedAt": {
+                "minLength": 1,
+                "maxLength": 64,
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -8830,6 +8899,83 @@
                   },
                   "ledger": {
                     "type": "boolean"
+                  },
+                  "excludeHosts": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "excludePaths": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "prefix"
+                      ],
+                      "properties": {
+                        "hostSuffix": {
+                          "minLength": 2,
+                          "type": "string"
+                        },
+                        "prefix": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "allowedSchemes": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*$",
+                      "type": "string"
+                    }
+                  },
+                  "allowedPorts": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minimum": 1,
+                      "maximum": 65535,
+                      "type": "integer"
+                    }
+                  },
+                  "program": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "authorizedBy",
+                      "authorizedAt"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "version": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "authorizedBy": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "authorizedAt": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "type": "string"
+                      }
+                    }
                   }
                 }
               }
