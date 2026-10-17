@@ -14,11 +14,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 | a redirect hop of a navigation (GET walker) | the navigate `blocked` result (REST, SDK, CLI, MCP), and the `request.failed` event |
 | a redirect hop after POST/PUT/PATCH (the guard) | the `request.failed` event |
 | the initial request (subresources, act-driven navigation) | the `request.failed` event |
-| any tool error carrying a scope denial (`act`, `page_create`, …) | the MCP structured error (`scope`, allowlisted) |
+| `page_create` with an out-of-scope url (its preflight) | REST/SDK `details.scope`; the MCP structured error at `error.details.scope`, the same place as `navigate`'s |
 
 - Only a code from the protocol's `SCOPE_DENIAL_CODES` is carried; the navigate result schema
   (`NavigationStatus.scope`) is a closed union of those codes. OpenAPI and the MCP catalog are
   regenerated.
+- An `act` that navigates out of scope still returns `success`; the denial shows in its events.
+- Still without the sub-code (M2 follow-up): `page_create` with an in-scope url that redirects
+  out (the create succeeds; only the event has it), downloads (`stage`/`transferFailed` only),
+  and CLI `page create --json` (plain-text error).
 
 ### Changed — CLI and MCP navigate refusals carry the scope sub-code (T10 M2)
 

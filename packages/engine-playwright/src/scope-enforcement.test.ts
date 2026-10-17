@@ -350,6 +350,14 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 200));
         expect(failures.some((failure) => failure.scope === 'SCOPE_HOST_DENIED')).toBe(true);
+        // A subresource denied at its initial request: an in-scope page whose
+        // frame points out of scope (the initial verdict, not a hop).
+        failures.length = 0;
+        await page.navigate({ url: fixture.url('/frame-out') });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const initial = failures.find((failure) => String(failure.url).endsWith('/frame-leak'));
+        expect(initial).toMatchObject({ blocked: true, scope: 'SCOPE_HOST_DENIED' });
+        expect(initial?.redirect).toBeUndefined();
       });
     } finally {
       await closeFixture(fixture);

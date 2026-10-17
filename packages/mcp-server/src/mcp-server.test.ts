@@ -263,11 +263,11 @@ describe('AgentBrowser MCP server', () => {
         }).then((text) => JSON.parse(text).result);
       expect((await act()).structuredContent.error).toMatchObject({
         code: 'POLICY_DENIED',
-        scope: 'SCOPE_METHOD_DENIED',
+        details: { scope: 'SCOPE_METHOD_DENIED' },
       });
       const unlisted = await act();
-      expect(unlisted.structuredContent.error.scope).toBeUndefined();
-      expect(JSON.stringify(unlisted.structuredContent)).not.toContain('10.0.0.1');
+      expect(unlisted.structuredContent.error.details).toBeUndefined();
+      expect(JSON.stringify(unlisted.structuredContent)).not.toContain('SCOPE_INVENTED');
     });
 
     it.each([true, false])(

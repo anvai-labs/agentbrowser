@@ -1290,7 +1290,8 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
                       code,
                       message: formatErrorForUser(err),
                       ...(typeof operationId === 'string' ? { operationId } : {}),
-                      ...(isScopeDenialCode(scope) ? { scope } : {}),
+                      // Same place as navigate's refusal: error.details.scope.
+                      ...(isScopeDenialCode(scope) ? { details: { scope } } : {}),
                     }
                   : undefined,
                 protocolVersion === STRUCTURED_PROTOCOL_VERSION
@@ -1353,7 +1354,12 @@ function navigationErrorResult(detail: NonNullable<ReturnType<typeof navigationF
 
 function errorResult(
   message: string,
-  structuredError?: { code: string; message: string; operationId?: string; scope?: string },
+  structuredError?: {
+    code: string;
+    message: string;
+    operationId?: string;
+    details?: { scope: string };
+  },
   structuredProtocol = false
 ) {
   return {
