@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — scope denial reporting for page creation and downloads
+
+- Creating a page with an initially allowed URL that redirects outside its scope now returns
+  `POLICY_DENIED` with a validated scope sub-code and removes the new page. Sibling pages remain
+  available. Non-scope blocked and timeout outcomes keep their existing behavior.
+- CLI `page create --json` emits bounded JSON navigation errors on stderr and exits 1. MCP
+  `page_create` uses the same bounded navigation-error projection on both supported protocols;
+  neither projection includes raw driver prose, URLs, or arbitrary error details.
+- Direct download errors retain recognized scope sub-codes through connection and transfer
+  sanitization, including redirect denials. Existing stages and generic messages remain.
+- Action/plan navigation reporting remains a follow-up: completed actions must not be reported
+  as unexecuted or replayed because a subsequent navigation was denied. CLI download errors
+  retain their existing generic formatting.
+
 ## [1.23.0] — 2026-10-17
 
 Entries are newest first. T10 milestone M2 completes: the engagement ledger. **Upgrading from 1.22.x:**
