@@ -50,7 +50,8 @@ automatic submission or outside communication of findings.
 | M1: workers | dedicated-worker POST redirects are checked (`body-redirect-guard.test.ts`; observed coverage, not a guarantee); service workers are refused with a scope (#541); shared workers and worker WebSockets stay a stated residual (not qualified) |
 | M1: released in 1.21.0 | [release record](../evidence/release-1.21.0.md): the smoke passed on the extracted release candidate |
 | M1: release smoke | `scripts/scope-consumer-smoke.mjs`: lane refusals (REST rule ids; CLI/MCP service workers), out-of-scope navigation on all four surfaces, POST redirect blocked and recorded; local fixtures, run against the extracted release candidate |
-| M2: engagement ledger (recorder, fail closed) | `engagement-ledger.ts`; operator guide "Engagement ledger"; export and verify surfaces next |
+| M2: engagement ledger (recorder, fail closed) | `engagement-ledger.ts`; operator guide "Engagement ledger" |
+| M2: released in 1.23.0 | [release record](../evidence/release-1.23.0.md): the ledger smoke passed on the extracted release candidate |
 | M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors (#549); released in 1.22.0 |
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |
