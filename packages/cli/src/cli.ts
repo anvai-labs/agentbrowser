@@ -2853,7 +2853,7 @@ export function buildCli(deps: CliDependencies): Cli {
       const autofill = program
         .command('autofill')
         .description(
-          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. Optional scope.url preflights and pins a complete stage; use form prepare for reusable mappings. A failed report exits 1; inspect receipts for verification.'
+          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. Uncertain writes or observed blocked navigation stop remaining writes without replay. Optional scope.url preflights and pins a complete stage; use form prepare for reusable mappings. A failed report exits 1; inspect receipts for verification.'
         )
         .argument('<sessionId>')
         .argument('<pageId>')
@@ -2907,6 +2907,11 @@ export function buildCli(deps: CliDependencies): Cli {
                 for (const r of report.receipts) {
                   const label = `field ${r.field}: ${r.status}`;
                   lines.push(`  ${label}${r.resolvedRef ? ` (${r.resolvedRef})` : ''}`);
+                  if (r.navigationObservation) {
+                    lines.push(
+                      `    navigation blocked during action (${r.navigationObservation.scope}); autofill stopped; inspect current state before another write`
+                    );
+                  }
                 }
                 if (report.snapshot?.artifactId) {
                   lines.push(`  snapshot: ${report.snapshot.artifactId}`);

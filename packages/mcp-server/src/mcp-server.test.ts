@@ -343,6 +343,41 @@ describe('AgentBrowser MCP server', () => {
       }
     );
 
+    it.each(['2024-11-05', '2025-06-18'])(
+      'preserves stopped autofill navigation receipts on %s without replay',
+      async (version) => {
+        await initialize(version);
+        const stopped = {
+          ...report,
+          ok: false,
+          receipts: [
+            {
+              ...report.receipts[0],
+              status: 'uncertain',
+              verified: false,
+              actionId: 'act_completed',
+              navigationObservation: {
+                status: 'blocked',
+                reason: 'egress_policy',
+                scope: 'SCOPE_PATH_DENIED',
+                observedDuring: 'action',
+              },
+              error: {
+                code: 'AUTOFILL_NAVIGATION_BLOCKED',
+                message: 'Inspect current state before another write',
+              },
+            },
+          ],
+        };
+        sessions.autofill = vi.fn().mockResolvedValue(stopped);
+        const result = JSON.parse(await call('navigation-stopped', 'autofill', args)).result;
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.content[0].text)).toEqual(stopped);
+        expect(result.structuredContent).toEqual(version === '2025-06-18' ? stopped : undefined);
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      }
+    );
+
     it('marks a failed plan report as a tool error without dropping partial results', async () => {
       const partial = {
         ok: false,

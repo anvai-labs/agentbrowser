@@ -7,6 +7,26 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — autofill stops on observed navigation denials
+
+- Autofill preserves bounded `navigationObservation` evidence and the action ID on the affected
+  field receipt, then stops remaining widget actions and fields with `AUTOFILL_NAVIGATION_BLOCKED`.
+  Skip and retry policies cannot resume writes. Completed actions do not establish exact field
+  verification: interrupted exact or multi-action fields remain `uncertain`; a completed native
+  `verify: none` action remains `unverified`, while the overall report fails. Post-effect action
+  errors retain their original bounded error code alongside any navigation evidence.
+- Previously verified fields still receive a final read-only check, and confirmed chip effects
+  remain in partial receipts. Durable operations preserve unknown outcomes for uncertain fields.
+  CLI and both MCP protocols retain the evidence; CLI text explains the stop without field values.
+  Evidence is limited to the action dispatch window and does not establish navigation causation.
+
+### Fixed — popup closure during adoption
+
+- Pages that close during registration are refused without leaving page inventory, download
+  state or engine listeners. Cleanup is initialized before synchronous removal can run.
+- Popups that close before adoption finishes are not announced as available pages. Browser-owned
+  closure uses the same named-handler cleanup as explicit closure and preserves caller handlers.
+
 ### Added — observed navigation denials on completed actions
 
 - Playwright actions can return a bounded `navigationObservation` containing `status: blocked`,
@@ -22,7 +42,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   cannot report a pass for that stopped plan. REST, SDK, CLI and MCP preserve the evidence.
 - Observation adds no settlement wait. A denial arriving after dispatch is not reported on that
   action or a later one; absence is not a navigation-success claim. Explicit navigation and wait
-  actions retain their existing behavior. Autofill does not yet stop on this additive evidence.
+  actions retain their existing behavior.
 
 ### Fixed — scope denial reporting for page creation and downloads
 

@@ -1,5 +1,6 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { ActionNavigationObservationSchema } from './action-navigation.js';
 import { parseExecutionReport } from './validators.js';
 
 const text = () => Type.String({ minLength: 1, maxLength: 512 });
@@ -105,6 +106,7 @@ export const AutofillReceiptSchema = Type.Object(
     resolvedRef: Type.Optional(Type.String()),
     blockIdentity: Type.Optional(Type.String()),
     actionId: Type.Optional(Type.String()),
+    navigationObservation: Type.Optional(ActionNavigationObservationSchema),
     status: Type.Union(
       (['verified', 'unverified', 'skipped', 'failed', 'uncertain', 'not_attempted'] as const).map(
         (value) => Type.Literal(value)
@@ -296,6 +298,7 @@ export function parseAutofillReport(input: unknown, expectedFields?: number): Au
         report.receipts.every(
           (receipt, index) =>
             receipt.field === index &&
+            receipt.navigationObservation === undefined &&
             receipt.error === undefined &&
             ((receipt.status === 'verified' && receipt.verified) ||
               (receipt.status === 'unverified' && !receipt.verified))

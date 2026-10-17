@@ -2442,7 +2442,7 @@
       "post": {
         "operationId": "autofillPage",
         "summary": "Fill structured fields serially and return verification receipts",
-        "description": "One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.",
+        "description": "One controlled mutation for native inputs/selects and explicitly selected qualified react-select/chip-multiselect widgets. Unique fieldset scope and bounded read-only retries. Uncertain writes or observed blocked navigation stop remaining actions and fields without replay. A navigationObservation reports a denial during dispatch, not causation or field verification; absence does not imply navigation success. Includes a raw HTML artifact; no explicit submit action.",
         "tags": [
           "pages"
         ],
@@ -2786,6 +2786,62 @@
                           },
                           "actionId": {
                             "type": "string"
+                          },
+                          "navigationObservation": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "status",
+                              "reason",
+                              "scope",
+                              "observedDuring"
+                            ],
+                            "properties": {
+                              "status": {
+                                "const": "blocked",
+                                "type": "string"
+                              },
+                              "reason": {
+                                "const": "egress_policy",
+                                "type": "string"
+                              },
+                              "scope": {
+                                "anyOf": [
+                                  {
+                                    "const": "SCOPE_HOST_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_PATH_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_METHOD_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_IDENTITY_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_EXPIRED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "observedDuring": {
+                                "const": "action",
+                                "type": "string"
+                              }
+                            }
                           },
                           "status": {
                             "anyOf": [
