@@ -255,4 +255,30 @@ describe('scope status contract (ADR-015)', () => {
       await service.shutdown();
     }
   });
+
+  it.each([
+    ['cdpEndpoint', { cdpEndpoint: 'ws://127.0.0.1:9222' }, /trusted startup configuration/],
+    ['operatorCdp', { operatorCdp: true }, /trusted startup configuration/],
+    ['credentialSource', { credentialSource: 'handoff' }, /server-assigned/],
+    [
+      'a top-level scope',
+      { scope: { allowedHosts: ['in.example'] } },
+      /belongs under policy\.scope/,
+    ],
+  ])(
+    'refuses %s with its own guidance, not a generic schema error',
+    async (_what, extra, message) => {
+      const { app, call } = await harness();
+      try {
+        const created = await call('POST', '/v1/sessions', 'key-one', {
+          tenantId: 'one',
+          ...extra,
+        });
+        expect(created.statusCode).toBe(400);
+        expect(created.json().error.message).toMatch(message);
+      } finally {
+        await app.close();
+      }
+    }
+  );
 });
