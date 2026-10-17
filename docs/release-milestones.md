@@ -1,5 +1,39 @@
 # Release milestones and acceptance gates
 
+## Release history and plan (current)
+
+```
+1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ✔ ─▶ 1.24 ─▶ 1.25 ─▶ 1.26
+journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2+    M3     M4
+```
+
+| Version | Date | main | Headline | Record |
+| --- | --- | --- | --- | --- |
+| 1.23.0 | 2026-10-17 | `82b06ca` | T10 M2: engagement ledger, export and offline verify | [record](spec/evidence/release-1.23.0.md) |
+| 1.22.0 | 2026-10-17 | `4eb7885` | T10 M2: scope status, dry run, `SCOPE_*` sub-codes; compact capture output | owner-released (field handoff) |
+| 1.21.0 | 2026-10-16 | `c921e1b` | T10 M1: POST/PUT/PATCH redirects checked; unscopable lanes refused | [record](spec/evidence/release-1.21.0.md) |
+| 1.20.0 | 2026-10-16 | `92a98ee` | disclosures as controls; policy-file approval rules; R14 closed | [record](spec/evidence/release-1.20.0.md) |
+| 1.19.0 | 2026-10-16 | `c963d4f` | durable browser parity (T5); site matches the release | [record](spec/evidence/release-1.19.0.md) |
+| 1.18.0 | 2026-10-15 | `9406045` | operator cookie handoff (TD-BROWSER-16); tags cut from main | [record](spec/evidence/release-1.18.0.md) |
+| 1.17.1 | 2026-10-13 | `cf7c03b` | Windows service as the bundled-Node zip; dependencies | [record](spec/evidence/release-1.17.1.md) |
+| 1.17.0 | 2026-10-12 | `9e3216e` | browser request guard, CORS off by default | [record](spec/evidence/release-1.17.0.md) |
+| 1.16.1 | 2026-10-10 | `3cdce8f` | formControls row/section context; Windows CI and winget | [record](spec/evidence/release-1.16.1.md) |
+| 1.16.0 | 2026-10-10 | `104e11d` | compact observations; MCP surface refresh | [record](spec/evidence/release-1.16.0.md) |
+| 1.15.2 | 2026-10-07 | `47a32a6` | observation secret redaction (TD-BROWSER-13); T7 slices | [record](spec/evidence/release-1.15.2.md) |
+| 1.15.1 | 2026-10-03 | `57f6988` | large site scripts admitted by operator policy | — |
+| 1.15.0 | 2026-10-02 | `c277e3c` | child-frame observation and refs (T6) | [record](spec/evidence/release-1.15.0.md) |
+| 1.14.0 | 2026-09-30 | `31e3a31` | T5 journal foundation (internal) | — |
+
+| Planned | Milestone | Scope |
+| --- | --- | --- |
+| 1.24.0 | T10 M2 completion | denial reporting on page creation, downloads, completed actions and autofill; unknown scope and policy fields refused |
+| 1.25.0 | T10 M3 | program-scope fields (excludes, schemes, ports, rate limit, program metadata), scope importer, findings bound to the engagement |
+| 1.26.0 | T10 M4 | saved plan runs from the CLI and CI action |
+
+Every release: clean adversarial review and green CI on the exact head, version sync, promotion
+(merge commit), tag on main, owner npm approval, verified channels, tap, record, back-sync.
+The sections below are the earlier delivered checkpoints, kept as written.
+
 ## Delivered checkpoint: 1.13.0 chromium args and lint enforcement (2026-09-27)
 
 Version 1.13.0 is published from protected main `feddad9` after preparation

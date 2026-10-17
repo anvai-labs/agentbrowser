@@ -9,9 +9,13 @@ hide:
 loopback REST service, a TypeScript SDK, a compiled CLI, or an MCP stdio
 server — with safety enforced *in the service*, not in the prompt.
 
-> **New in 1.16 — compact observations:** filter by `roles` / `name`, scope to
-> a subtree, cap results. **96% fewer bytes** on a 373-element page
-> (27.5 KB → 1.0 KB) with every ref still actionable. [CLI for agents →](cli-agent-usage.md#compact-observations-after-1160)
+> **New in 1.21–1.23 — engagements for authorized testing:** a scope checked on every
+> request and redirect hop, lanes it cannot check refused, live scope status and a dry run,
+> and an opt-in hash-chained metadata ledger you export and verify offline.
+> [Engagements →](operations.md#engagements-authorized-testing)
+>
+> Since 1.16: compact observations — **96% fewer bytes** on a 373-element page with every ref
+> still actionable. [CLI for agents →](cli-agent-usage.md#compact-observations-after-1160)
 
 ---
 
@@ -24,6 +28,7 @@ server — with safety enforced *in the service*, not in the prompt.
 | Wandering into internal networks | Egress choke point: loopback / private IPs / cloud metadata denied by default |
 | One-shot destructive mistakes | Single-use approval tokens bound to session + page revision |
 | Cross-tenant leakage | Hashed tenant keys, per-route ownership, ephemeral isolated contexts |
+| Testing beyond what is authorized | Engagement scope on every request and redirect hop; unknown scope fields refused; an exportable, hash-chained ledger |
 
 ## The loop
 
@@ -85,11 +90,12 @@ agentbrowser --json observe SESSION PAGE --roles dialog --name policy   # compac
 
 ## Status
 
-- **v1.x shipped**; post-MVP packets [T0–T9](spec/tasks/README.md):
+- **1.23.0 released** (2026-10-17, [release history](release-milestones.md)); post-MVP packets
+  [T0–T10](spec/tasks/README.md):
 
-    | Complete | Active (gated on owner or infrastructure) |
-    | --- | --- |
-    | T0 · T2 · T3 · T7 | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
+    | Complete | In progress | Gated on owner or infrastructure |
+    | --- | --- | --- |
+    | T0 · T2 · T3 · T7 | T10 engagements (1.24.0 → 1.26.0) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
 
 - Every claim is adversarially reviewable via the [evidence index](spec/evidence/t0-foundation.md).
-- Defaults (1.16): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.
+- Defaults (1.23): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.
