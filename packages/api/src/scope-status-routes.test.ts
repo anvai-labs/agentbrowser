@@ -272,6 +272,7 @@ describe('scope status contract (ADR-015)', () => {
     ['a URL', 'https://app.example', ['app.example']],
     ['a host that is not allowed', 'other.example', ['app.example']],
     ['a suffix that overlaps no allowed host', '.other.example', ['app.example', '.app.example']],
+    ['an exact host no allowed suffix covers', 'other.example', ['.app.example']],
   ])(
     'refuses a path rule bound to %s (it would leave the host unrestricted)',
     async (_what, hostSuffix, allowedHosts) => {
@@ -349,4 +350,22 @@ describe('scope status contract (ADR-015)', () => {
       }
     }
   );
+
+  it('accepts a broader rule suffix over a narrower allowed suffix (they overlap)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['.cdn.example'],
+            pathRules: [{ prefix: '/a', hostSuffix: '.example' }],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
 });

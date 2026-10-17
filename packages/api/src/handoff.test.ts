@@ -197,6 +197,22 @@ describe('the handoff floors (ADR-025 s3 step 1)', () => {
         },
       })
     ).rejects.toMatchObject({ code: 'INVALID_REQUEST', details: { rule: 'scope.unbound' } });
+
+    // Defense in depth: a path rule whose suffix is broader than the allowed host
+    // (it binds, so creation succeeds) still trips the handoff allowlist floor.
+    const wide = await handoffFixture({
+      create: {
+        scope: {
+          allowedHosts: ['a.example.com'],
+          pathRules: [{ hostSuffix: '.example.com', prefix: '/' }],
+        },
+      },
+    });
+    wide.login.state.cookies = [cookie({ domain: 'a.example.com' })];
+    const wideRefusal = await refused(
+      wide.service.handoffCookies(wide.sessionId, { domains: ['a.example.com'] })
+    );
+    expect(ruleOf(wideRefusal)).toBe('floor.handoff.allowlist');
   });
 
   it('a policy deny for one domain fails the whole handoff', async () => {
