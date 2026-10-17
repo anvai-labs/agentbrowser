@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the MCP `scope` tool (T10 M2)
+
+- `scope {sessionId}` returns the engagement scope in effect, budget used/remaining, expiry and
+  denials by sub-code; `scope {sessionId, url, method?}` runs the dry-run check (no budget, no
+  denial counted, identity bindings not evaluated). Structured output
+  `urn:agentbrowser:scope-tool:v1`.
+- In every browser profile (unbound 20 tools, delegated 17); not in the application profile. The
+  release smoke's pinned tool lists include it; the catalog is regenerated.
+
 ### Changed — wire-level scope denials carry the sub-code (T10 M2)
 
 | Where a scope denies | Now carries `scope: SCOPE_…` |

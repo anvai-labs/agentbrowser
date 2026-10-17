@@ -735,6 +735,52 @@ describe('AgentBrowser MCP server', () => {
   });
 
   describe('tools/list', () => {
+    it('T10 M2: the scope tool reads status, runs a dry-run check, and stays out of the application profile', async () => {
+      const status = {
+        allowedHosts: ['a.example'],
+        pathRules: [],
+        identityBindings: [],
+        expired: false,
+        denials: {},
+      };
+      sessions.scopeStatus = vi.fn().mockResolvedValue(status);
+      sessions.checkScope = vi
+        .fn()
+        .mockResolvedValue({ allowed: false, scope: 'SCOPE_HOST_DENIED' });
+      const read = JSON.parse(await call('scope-status', 'scope', { sessionId: 'ses_1' })).result;
+      expect(JSON.parse(read.content[0].text)).toEqual({ sessionId: 'ses_1', status });
+      expect(sessions.scopeStatus).toHaveBeenCalledWith('ses_1');
+      const check = JSON.parse(
+        await call('scope-check', 'scope', {
+          sessionId: 'ses_1',
+          url: 'https://b.example/',
+          method: 'POST',
+        })
+      ).result;
+      expect(JSON.parse(check.content[0].text)).toEqual({
+        sessionId: 'ses_1',
+        check: { allowed: false, scope: 'SCOPE_HOST_DENIED' },
+      });
+      expect(sessions.checkScope).toHaveBeenCalledWith('ses_1', {
+        url: 'https://b.example/',
+        method: 'POST',
+      });
+      const methodOnly = JSON.parse(
+        await call('scope-bad', 'scope', { sessionId: 'ses_1', method: 'POST' })
+      ).result;
+      expect(methodOnly.isError).toBe(true);
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'application' });
+      const names = JSON.parse(await request('scope-app', 'tools/list')).result.tools.map(
+        (tool: { name: string }) => tool.name
+      );
+      expect(names).not.toContain('scope');
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'bounty' });
+      const bounty = JSON.parse(await request('scope-bounty', 'tools/list')).result.tools.map(
+        (tool: { name: string }) => tool.name
+      );
+      expect(bounty).toContain('scope');
+    });
+
     it('projects a fixed connection profile and rejects direct calls to omitted tools', async () => {
       sessions.autofill = vi.fn();
       server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'audit' });

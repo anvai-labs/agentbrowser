@@ -1,7 +1,11 @@
 import { Type } from '@sinclair/typebox';
 import { ControlViewSchema, OperationRecordSchema } from './control.js';
 import { SessionEventsPageSchema } from './event-replay.js';
-import { SessionResponseSchema } from './schemas.js';
+import {
+  EngagementScopeStatusSchema,
+  ScopeCheckResultSchema,
+  SessionResponseSchema,
+} from './schemas.js';
 import { SessionViewSchema } from './session-diagnostics.js';
 
 /**
@@ -241,6 +245,20 @@ export const SessionInspectionResultSchema = Type.Object(
     pages: Type.Array(Type.Object(pageProperties)),
   },
   { $id: 'urn:agentbrowser:session-inspection:v1' }
+);
+
+/** MCP `scope` (T10 M2): the scope status, or a dry-run verdict when a url was given. */
+export const ScopeToolResultSchema = Type.Object(
+  {
+    sessionId: Type.String({ minLength: 1 }),
+    status: Type.Optional(
+      Type.Unsafe<Record<string, unknown>>(relaxForClients(EngagementScopeStatusSchema))
+    ),
+    check: Type.Optional(
+      Type.Unsafe<Record<string, unknown>>(relaxForClients(ScopeCheckResultSchema))
+    ),
+  },
+  { $id: 'urn:agentbrowser:scope-tool:v1' }
 );
 
 /** MCP `operation` (delegated sessions): the operation record, relaxed for clients. */
