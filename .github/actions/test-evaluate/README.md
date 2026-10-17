@@ -12,7 +12,7 @@ action; `version` separately pins the CLI it installs.
 ```yaml
 - uses: anvai-labs/agentbrowser/.github/actions/test-evaluate@<commit-sha> # release that ships it
   with:
-    version: v1.21.0            # the CLI release to install (verified against sha256sums.txt)
+    version: v1.23.0            # the CLI release to install (verified against sha256sums.txt)
     bundles: |
       test-results/agentbrowser  # a directory: every *.json in it
     junit: agentbrowser-evaluate.xml
