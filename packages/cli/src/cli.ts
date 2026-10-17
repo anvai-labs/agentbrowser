@@ -514,6 +514,18 @@ export function buildCli(deps: CliDependencies): Cli {
                 (rule) => `  path:    ${rule.hostSuffix ? `${rule.hostSuffix} ` : ''}${rule.prefix}`
               ),
               ...(status.allowedMethods ? [`  methods: ${status.allowedMethods.join(', ')}`] : []),
+              ...(status.excludeHosts ? [`  exclude: ${status.excludeHosts.join(', ')}`] : []),
+              ...(status.excludePaths ?? []).map(
+                (rule) =>
+                  `  exclude path: ${rule.hostSuffix ? `${rule.hostSuffix} ` : ''}${rule.prefix}`
+              ),
+              ...(status.allowedSchemes ? [`  schemes: ${status.allowedSchemes.join(', ')}`] : []),
+              ...(status.allowedPorts ? [`  ports:   ${status.allowedPorts.join(', ')}`] : []),
+              ...(status.program
+                ? [
+                    `  program: ${status.program.id}${status.program.version ? ` (${status.program.version})` : ''}, authorized by ${status.program.authorizedBy} at ${status.program.authorizedAt}`,
+                  ]
+                : []),
               ...status.identityBindings.map(
                 (binding) =>
                   `  identity: ${binding.header} bound to ${binding.allowedHosts.join(', ')}`
@@ -700,8 +712,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--scope-file <path>',
           'engagement scope JSON (T7): {allowedHosts, pathRules?, allowedMethods?, ' +
-            'expiresAt?, requestBudget?, identityBindings?} — enforced per request and per ' +
-            'redirect hop on top of every other policy layer (1 MiB bound, no symlink follow)'
+            'expiresAt?, requestBudget?, identityBindings?, ledger?, excludeHosts?, ' +
+            'excludePaths?, allowedSchemes?, allowedPorts?, program?} — enforced per request and ' +
+            'per redirect hop on top of every other policy layer; unknown fields are refused ' +
+            '(1 MiB bound, no symlink follow)'
         )
         .option(
           '--allow-service-workers',

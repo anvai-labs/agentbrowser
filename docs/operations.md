@@ -734,6 +734,21 @@ and its stated residuals.
 | `scope` at the top level | refused, `400 INVALID_REQUEST` (it would skip validation) |
 | `+ cdpAttach` | refused, `400 INVALID_REQUEST`, `floor.cdp.options` |
 | `+ allowServiceWorkers: true` | refused, `400 INVALID_REQUEST`, `scope.lane.serviceWorkers` |
+| an unknown field (scope, path rule, identity binding, program) | refused, `400`: a restriction the server cannot enforce is never ignored |
+
+Program restrictions (T10 M3) only narrow. Each denial reuses an existing sub-code:
+
+| Field | Meaning | Denial |
+| --- | --- | --- |
+| `excludeHosts` | exact or `.suffix` hosts removed even when `allowedHosts` admits them | `SCOPE_HOST_DENIED` |
+| `excludePaths` | `[{hostSuffix?, prefix}]` segment-bounded prefixes removed, even inside a `pathRules` prefix | `SCOPE_PATH_DENIED` |
+| `allowedSchemes` | e.g. `["https"]`; lowercase, no `:` | `SCOPE_HOST_DENIED` |
+| `allowedPorts` | e.g. `[443, 8443]`; a URL without a port uses its scheme's default (80/443) | `SCOPE_HOST_DENIED` |
+| `program` | `{id, version?, authorizedBy, authorizedAt}`: recorded in the scope status and the ledger, never enforced | — |
+
+A scheme, port or exclusion rule that cannot be checked because a request carries no URL denies
+(fail closed). A server older than 1.24.0 ignores unknown scope fields: confirm what is in effect
+with `session scope <id>` before relying on a restriction.
 
 | Read the scope (T10 M2) | REST | SDK | CLI |
 | --- | --- | --- | --- |

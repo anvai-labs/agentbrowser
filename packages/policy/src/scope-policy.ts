@@ -46,6 +46,25 @@ export interface EngagementScopeOptions {
   requestBudget?: number;
   /** Identity markers that must not leave their bound hosts. */
   identityBindings?: ScopeIdentityBinding[];
+  /** T10 M3: hosts (exact or ".suffix") removed from scope even when allowed. */
+  excludeHosts?: string[];
+  /** T10 M3: segment-bounded path prefixes removed from scope (optionally host-bound). */
+  excludePaths?: ScopePathRule[];
+  /** T10 M3: URL schemes in scope, lowercase without ":" (absent = any). */
+  allowedSchemes?: string[];
+  /** T10 M3: ports in scope; an absent URL port means the scheme's default (absent = any). */
+  allowedPorts?: number[];
+  /** T10 M3: the program this engagement runs under (metadata only; reported, never enforced). */
+  program?: ScopeProgram;
+}
+
+/** T10 M3: who authorized the engagement, under which published program scope. */
+export interface ScopeProgram {
+  id: string;
+  version?: string;
+  authorizedBy: string;
+  /** ISO 8601 timestamp of the authorization. */
+  authorizedAt: string;
 }
 
 /** The scope in effect, as `EngagementScopePolicy.status()` reports it (T10 M2). */
@@ -62,7 +81,19 @@ export interface EngagementScopeStatus {
   denials: Record<string, number>;
   /** Why all traffic stopped (the ledger is full or failed, or the session is closing). */
   stopped?: string;
+  excludeHosts?: string[];
+  excludePaths?: ScopePathRule[];
+  allowedSchemes?: string[];
+  allowedPorts?: number[];
+  program?: ScopeProgram;
 }
+
+const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 };
+
+/** Segment-bounded prefix: "/api" admits "/api" and "/api/x", never "/apix". */
+const underPrefix = (pathname: string, prefix: string): boolean =>
+  pathname === prefix ||
+  (pathname.startsWith(prefix) && (prefix.endsWith('/') || pathname.charAt(prefix.length) === '/'));
 
 const DENIED = 'POLICY_DENIED' as const;
 
@@ -149,6 +180,11 @@ export class EngagementScopePolicy {
   private readonly expiresAt: number | undefined;
   private readonly now: () => number;
   private readonly budget: number | undefined;
+  private readonly excludedHosts: string[];
+  private readonly excludedPaths: ScopePathRule[];
+  private readonly schemes: Set<string> | undefined;
+  private readonly ports: Set<number> | undefined;
+  private readonly program: ScopeProgram | undefined;
   private spent = 0;
   /** Hops already spent by checkRedirectChain — callers may re-submit the
    * accumulated chain per redirect (the download transport does), and the
@@ -197,6 +233,14 @@ export class EngagementScopePolicy {
     this.expiresAt = scope.expiresAt;
     this.now = scope.now ?? Date.now;
     this.budget = scope.requestBudget;
+    this.excludedHosts = (scope.excludeHosts ?? []).map((host) => host.toLowerCase());
+    this.excludedPaths = scope.excludePaths ?? [];
+    this.schemes =
+      scope.allowedSchemes !== undefined
+        ? new Set(scope.allowedSchemes.map((s) => s.toLowerCase()))
+        : undefined;
+    this.ports = scope.allowedPorts !== undefined ? new Set(scope.allowedPorts) : undefined;
+    this.program = scope.program !== undefined ? { ...scope.program } : undefined;
   }
 
   /** Denials raised on the wire or in the navigation preflight, by sub-code. */
@@ -254,6 +298,13 @@ export class EngagementScopePolicy {
         : {}),
       denials: Object.fromEntries(this.denials),
       ...(this.stopped !== undefined ? { stopped: this.stopped } : {}),
+      ...(this.excludedHosts.length > 0 ? { excludeHosts: [...this.excludedHosts] } : {}),
+      ...(this.excludedPaths.length > 0
+        ? { excludePaths: this.excludedPaths.map((rule) => ({ ...rule })) }
+        : {}),
+      ...(this.schemes !== undefined ? { allowedSchemes: [...this.schemes] } : {}),
+      ...(this.ports !== undefined ? { allowedPorts: [...this.ports] } : {}),
+      ...(this.program !== undefined ? { program: { ...this.program } } : {}),
     };
   }
 
@@ -307,6 +358,32 @@ export class EngagementScopePolicy {
     if (!this.allowed.some((pattern) => hostMatches(hostname, pattern))) {
       throw scopeDenial('SCOPE_HOST_DENIED', `host ${hostname} is outside the engagement scope`);
     }
+    if (this.excludedHosts.some((pattern) => hostMatches(hostname, pattern))) {
+      throw scopeDenial(
+        'SCOPE_HOST_DENIED',
+        `host ${hostname} is excluded from the engagement scope`
+      );
+    }
+    if (this.schemes !== undefined || this.ports !== undefined) {
+      // Fail closed: an origin rule cannot be checked without the URL.
+      if (request.url === undefined) {
+        throw scopeDenial('SCOPE_HOST_DENIED', `origin of ${hostname} cannot be checked (no URL)`);
+      }
+      const parsed = new URL(request.url);
+      const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+      if (this.schemes !== undefined && !this.schemes.has(scheme)) {
+        throw scopeDenial('SCOPE_HOST_DENIED', `scheme ${scheme} is outside the engagement scope`);
+      }
+      if (this.ports !== undefined) {
+        const port = parsed.port !== '' ? Number(parsed.port) : DEFAULT_PORTS[scheme];
+        if (port === undefined || !this.ports.has(port)) {
+          throw scopeDenial(
+            'SCOPE_HOST_DENIED',
+            `port ${port ?? '(unknown)'} on ${hostname} is outside the engagement scope`
+          );
+        }
+      }
+    }
     if (this.methods !== undefined) {
       const method = request.method?.toUpperCase();
       if (method === undefined || !this.methods.has(method)) {
@@ -326,15 +403,27 @@ export class EngagementScopePolicy {
         (rule) => rule.hostSuffix === undefined || hostMatches(hostname, rule.hostSuffix)
       );
       const inPath =
-        boundRules.length === 0 ||
-        boundRules.some(
-          (rule) =>
-            pathname === rule.prefix ||
-            (pathname.startsWith(rule.prefix) &&
-              (rule.prefix.endsWith('/') || pathname.charAt(rule.prefix.length) === '/'))
-        );
+        boundRules.length === 0 || boundRules.some((rule) => underPrefix(pathname, rule.prefix));
       if (!inPath) {
         throw scopeDenial('SCOPE_PATH_DENIED', `path ${pathname} is outside the engagement scope`);
+      }
+    }
+    if (this.excludedPaths.length > 0) {
+      // Fail closed: an exclusion cannot be checked without the URL.
+      if (request.url === undefined) {
+        throw scopeDenial('SCOPE_PATH_DENIED', `path on ${hostname} cannot be checked (no URL)`);
+      }
+      const pathname = new URL(request.url).pathname;
+      const excluded = this.excludedPaths.some(
+        (rule) =>
+          (rule.hostSuffix === undefined || hostMatches(hostname, rule.hostSuffix)) &&
+          underPrefix(pathname, rule.prefix)
+      );
+      if (excluded) {
+        throw scopeDenial(
+          'SCOPE_PATH_DENIED',
+          `path ${pathname} is excluded from the engagement scope`
+        );
       }
     }
     for (const binding of this.identities) {
