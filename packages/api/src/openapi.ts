@@ -1199,7 +1199,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           description:
             'Sessions are page-less by default; create pages through this endpoint. ' +
             'An optional url lands the new page on it (validated like navigate); ' +
-            'without it the page starts on about:blank.',
+            'without it the page starts on about:blank. Blocked or timed-out initial navigation ' +
+            'returns a bounded error and removes only the new page, except when human takeover ' +
+            'retains ownership. Do not automatically retry creation after a failure.',
           tags: ['pages'],
           parameters: [sessionIdParam],
           requestBody: {
@@ -1212,8 +1214,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           responses: {
             '201': { description: 'Page created.', content: json(ref('PageSummary')) },
             '400': INVALID_REQUEST,
+            '403': errorResponse(
+              'Navigation was denied by policy; includes a bounded reason and any recognized scope code.'
+            ),
             '404': NOT_FOUND,
             '500': INTERNAL,
+            '504': errorResponse(
+              'Initial navigation timed out; the error does not imply the request had no effect.'
+            ),
           },
         },
       },

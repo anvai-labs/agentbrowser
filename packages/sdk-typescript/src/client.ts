@@ -171,6 +171,7 @@ export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
+  downloadFailureDetail,
   formatErrorForUser,
   navigationFailureDetail,
   parseActionNavigationObservation,

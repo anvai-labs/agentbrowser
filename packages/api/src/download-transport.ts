@@ -11,7 +11,11 @@ import {
   type ProtocolErrorCode,
   type RequestPolicy,
 } from '@agentbrowser/engine';
-import { isScopeDenialCode } from '@agentbrowser/protocol';
+import {
+  DOWNLOAD_TRANSFER_FAILURE_REASON,
+  type DownloadTransferStage,
+  isScopeDenialCode,
+} from '@agentbrowser/protocol';
 import {
   ConnectionAuthority,
   ConnectionBudget,
@@ -29,7 +33,9 @@ export interface DownloadTransportOptions extends DownloadOptions {
   policy: RequestPolicy;
 }
 type Payload = { bytes: Uint8Array; contentType: string };
-type Stage = 'admission' | 'connect' | 'tls' | 'headers' | 'response' | 'redirect' | 'body';
+// The protocol owns the stage list (DOWNLOAD_TRANSFER_STAGES); this alias
+// keeps local call sites short while deriving from that single source.
+type Stage = DownloadTransferStage;
 export interface DownloadOutcome {
   generation: string;
   transferId: string;
@@ -51,7 +57,7 @@ function safeError(cause: unknown, stage: Stage): EngineError {
     false,
     {
       stage,
-      reason: 'transferFailed',
+      reason: DOWNLOAD_TRANSFER_FAILURE_REASON,
       ...(isScopeDenialCode(scope) ? { scope } : {}),
     }
   );

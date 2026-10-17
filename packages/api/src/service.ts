@@ -4,6 +4,8 @@ import {
   isNavigationFailureReason,
   isScopeDenialCode,
   MAX_PLAN_STEPS,
+  type NavigationFailureReason,
+  navigationFailureDetailFromParts,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
 import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
@@ -3869,16 +3871,34 @@ export class AgentBrowserService {
     if (request?.url !== undefined) {
       try {
         const navigation = await this.navigate(sessionId, pageId, { url: request.url });
-        const scope = navigation.scope;
-        if (navigation.status === 'blocked' && isScopeDenialCode(scope)) {
-          // Redirect denials return an outcome instead of throwing. Report the
-          // same bounded refusal as a preflight denial and use its teardown path.
-          throw new ServiceError(
-            'POLICY_DENIED',
-            `Navigation failed: egress_policy (${scope})`,
-            false,
-            { reason: 'egress_policy', scope }
-          );
+        if (navigation.status === 'blocked' || navigation.status === 'timeout') {
+          // Engines may return a failed outcome instead of throwing. Creation
+          // must not turn that outcome into a ready page; use the same bounded
+          // error and teardown path as a thrown navigation failure.
+          const scopeValue = navigation.scope;
+          const scope =
+            navigation.status === 'blocked' && isScopeDenialCode(scopeValue)
+              ? scopeValue
+              : undefined;
+          // navigate() is the single reason normalization point: every
+          // non-success result it returns already carries a valid reason
+          // (its own 'engine_error' fallback included), so no re-validation.
+          const reason = (
+            scope !== undefined ? 'egress_policy' : navigation.reason
+          ) as NavigationFailureReason;
+          const code =
+            navigation.status === 'timeout'
+              ? 'NAVIGATION_TIMEOUT'
+              : reason === 'egress_policy'
+                ? 'POLICY_DENIED'
+                : 'INTERNAL';
+          // One envelope (protocol) for the message and details; the wire
+          // code stays the service-level ProtocolErrorCode above.
+          const detail = navigationFailureDetailFromParts({
+            reason,
+            ...(scope !== undefined ? { scope } : {}),
+          });
+          throw new ServiceError(code, detail.message, detail.retryable, detail.details);
         }
       } catch (error) {
         if (this.authority.get(sessionId)?.view().state === 'PAUSE_REQUESTED') throw error;

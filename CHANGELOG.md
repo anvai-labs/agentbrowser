@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — page creation failures and compact download receipts
+
+- Page creation with a URL now fails when initial navigation returns blocked or timed out.
+  Policy denials return HTTP 403, timeouts 504, and other navigation failures 500, with only a
+  bounded reason and recognized scope code. Cleanup removes only the newly created page;
+  human takeover retains its ownership. No automatic retry is introduced.
+- CLI `download` and `download collect` with `--out` emit one compact receipt after the private
+  file save completes. Artifact retrieval or save failures emit no success record. Empty files
+  are valid, and the saved byte count reflects the written content. Download errors use bounded
+  messages and validated details, including JSON on stderr under `--json`.
+
 ### Fixed — autofill stops on observed navigation denials
 
 - Autofill preserves bounded `navigationObservation` evidence and the action ID on the affected
@@ -48,13 +59,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - Creating a page with an initially allowed URL that redirects outside its scope now returns
   `POLICY_DENIED` with a validated scope sub-code and removes the new page. Sibling pages remain
-  available. Non-scope blocked and timeout outcomes keep their existing behavior.
+  available. Generic blocked and timeout outcomes now use the same failure cleanup path.
 - CLI `page create --json` emits bounded JSON navigation errors on stderr and exits 1. MCP
   `page_create` uses the same bounded navigation-error projection on both supported protocols;
   neither projection includes raw driver prose, URLs, or arbitrary error details.
 - Direct download errors retain recognized scope sub-codes through connection and transfer
   sanitization, including redirect denials. Existing stages and generic messages remain.
-- CLI download errors retain their existing generic formatting.
+- CLI download errors use the bounded formatting described above.
 
 ## [1.23.0] — 2026-10-17
 

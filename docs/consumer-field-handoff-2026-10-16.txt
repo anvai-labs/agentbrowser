@@ -513,3 +513,34 @@ AUTOFILL NAVIGATION AND POPUP LIFECYCLE FOLLOW-UP — 2026-10-17
 - All browser validation uses isolated fixtures. The active headed Fiverr session,
   installed service and verification challenges remain untouched; no live API
   credentials were read, printed, shortened or mixed with page/session identifiers.
+
+PAGE CREATION AND DOWNLOAD OUTPUT FOLLOW-UP — 2026-10-17
+- Continued from develop e8e2ff63 after PR #568. Page creation with a requested URL
+  now rejects returned blocked/timeout navigation outcomes instead of claiming
+  ready. Policy denials map to HTTP 403, timeouts 504 and other blocked failures
+  500. Only validated reason/scope survive; no driver prose, URLs or redirects.
+  Failed creation cleans up only the new page; siblings and the session remain
+  usable. Human takeover retains the page. No retry is introduced.
+- CLI download and download collect --out now save privately before emitting one
+  compact artifact/path/actual-byte-count receipt. Retrieval/write failures emit
+  no stdout success; empty files are valid. Supplied inline content avoids a second
+  artifact fetch but is never echoed. Without --out, output stays a metadata-only
+  artifact reference. CLI JSON errors go to stderr with fixed prose, known error
+  codes, validated scope/transport stage and bounded operation IDs only.
+- Validation reproduced false page-ready outcomes and CLI double/premature output
+  before fixes. API navigation/service suites passed 191 tests, full CLI passed
+  385 tests, MCP page-provisioning/server passed 103, and the shared download error
+  helper passed 19. Real Chromium redirect denial produced zero forbidden-target
+  requests and retained a usable sibling. Independent review passed 21 download
+  output tests and 19 protocol tests with no remaining blocker. Workspace build,
+  API/CLI type-check and diff checks passed. Mandatory commit/push gates and final
+  CI results are recorded in the associated PR before merge.
+- Remaining original consumer work includes the fixed ten-step context/token
+  benchmark, redacted cookie preflight, compact non-secret identifiers/context,
+  observation and hydration completeness, hard cancellation, and live-site
+  qualification. Artifact fetching still transfers base64 internally; streaming
+  and ranges remain a separate efficiency improvement. Broader T10 M3/M4 is not a
+  prerequisite for closing this consumer handoff.
+- All browser tests used isolated fixtures. No active headed Fiverr session,
+  installed service, API credentials or verification challenge was accessed or
+  modified. Credentials remain separate from session/page identifiers.

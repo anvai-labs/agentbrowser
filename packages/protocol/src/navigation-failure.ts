@@ -41,6 +41,32 @@ export function isScopeDenialCode(value: unknown): value is ScopeDenialCode {
   return typeof value === 'string' && scopeCodes.has(value);
 }
 
+/**
+ * The bounded navigation-failure envelope, built from parts. The REST surface
+ * (createPage's teardown path) and the client projection (below) share this
+ * one constructor so the same blocked navigation can never render one message
+ * over REST and another through the CLI/MCP projection of that error.
+ */
+export function navigationFailureDetailFromParts(input: {
+  reason: NavigationFailureReason;
+  scope?: ScopeDenialCode;
+  code?: ErrorCode;
+  operationId?: string;
+}): ApiErrorDetail {
+  return {
+    code: input.code ?? ErrorCode.INTERNAL,
+    message: `Navigation failed: ${input.reason}${input.scope !== undefined ? ` (${input.scope})` : ''}`,
+    retryable: false,
+    details: {
+      reason: input.reason,
+      ...(input.scope !== undefined ? { scope: input.scope } : {}),
+      ...(input.operationId !== undefined && CONTROL_OPERATION_ID.test(input.operationId)
+        ? { operationId: input.operationId }
+        : {}),
+    },
+  };
+}
+
 /** Shared bounded client projection: no adapter prose, addresses or arbitrary details. */
 export function navigationFailureDetail(error: unknown): ApiErrorDetail | undefined {
   if (!error || typeof error !== 'object') return undefined;
@@ -52,21 +78,15 @@ export function navigationFailureDetail(error: unknown): ApiErrorDetail | undefi
   if (!isNavigationFailureReason(reason)) return undefined;
   const code = Object.values(ErrorCode).includes(candidate.code as ErrorCode)
     ? (candidate.code as ErrorCode)
-    : ErrorCode.INTERNAL;
+    : undefined;
   const operationId = candidate.details?.operationId;
   // Read once: a getter must not pass the check and then return something else.
   const scopeValue = candidate.details?.scope;
   const scope = isScopeDenialCode(scopeValue) ? scopeValue : undefined;
-  return {
-    code,
-    message: `Navigation failed: ${reason}${scope !== undefined ? ` (${scope})` : ''}`,
-    retryable: false,
-    details: {
-      reason,
-      ...(scope !== undefined ? { scope } : {}),
-      ...(typeof operationId === 'string' && CONTROL_OPERATION_ID.test(operationId)
-        ? { operationId }
-        : {}),
-    },
-  };
+  return navigationFailureDetailFromParts({
+    reason,
+    ...(code !== undefined ? { code } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(typeof operationId === 'string' ? { operationId } : {}),
+  });
 }

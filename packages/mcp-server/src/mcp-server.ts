@@ -422,6 +422,7 @@ export function buildTools(
       description:
         'Create a page in an existing session, sharing its cookies and policy. ' +
         'Returns the server-generated pageId; never invent page IDs. Optional url navigates before returning. ' +
+        'Blocked or timed-out navigation returns a bounded error; the new page is removed unless human takeover retains it. ' +
         'Do not retry an uncertain create automatically. Operation-ID deduplication applies only to controlled sessions; ' +
         'operation status does not retain the created pageId. pages shows inventory, not create-result correlation.',
       inputSchema: {
