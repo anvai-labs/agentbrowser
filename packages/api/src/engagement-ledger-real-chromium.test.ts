@@ -490,4 +490,61 @@ describe('engagement ledger (T10 M2)', () => {
     ).toBe(true);
     expect(text).not.toContain('worker-secret');
   }, 60_000);
+
+  it("an engine crash keeps the engine's close-time records and marks the ledger crashed", async () => {
+    const dir = await engagementDir();
+    let recorder: ((record: unknown) => void) | undefined;
+    class SweepingEngine extends FakeEngine {
+      override async createSession(options: Parameters<FakeEngine['createSession']>[0]) {
+        const session = await super.createSession(options);
+        recorder = options?.requestRecorder as never;
+        const close = session.close.bind(session);
+        session.close = async () => {
+          // What the redirect guard's close sweep does for an unobserved POST.
+          recorder?.({
+            type: 'request.failed',
+            timestamp: new Date().toISOString(),
+            data: {
+              method: 'POST',
+              url: 'https://a.example/hang',
+              detail: 'no outcome observed (recorded at close)',
+            },
+          });
+          await close();
+        };
+        return session;
+      }
+    }
+    const engine = new SweepingEngine();
+    const service = new AgentBrowserService({
+      engine,
+      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
+    });
+    try {
+      const { sessionId } = await service.createSession({
+        tenantId: 'one',
+        scope: { allowedHosts: ['a.example'], ledger: true },
+      });
+      const { pageId } = await service.createPage(sessionId);
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await service.observe(sessionId, pageId, {}).catch(() => {});
+      const records = (await readLedger(dir))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(records.map((r) => r.type)).toEqual([
+        'engagement.opened',
+        'request',
+        'engagement.closed',
+      ]);
+      expect(records[1].data.url).toBe('https://a.example/hang');
+      expect(records[2].data).toMatchObject({
+        crashed: true,
+        scope: { stopped: 'engine crashed' },
+      });
+    } finally {
+      await service.shutdown().catch(() => {});
+    }
+  });
 });

@@ -1597,10 +1597,25 @@ export class AgentBrowserService {
     reason: string,
     errorDetail?: string
   ): Promise<void> {
+    // T10 M2: a ledgered session keeps its ledger open until the engine session is
+    // gone, so the engine's close-time records (outcomes never observed) are kept.
+    // The scope stops first: no new traffic while the session is torn down.
+    const ledger = this.sessionLedgers.get(sessionId);
+    const scope = this.sessionScopes.get(sessionId);
+    if (ledger !== undefined) {
+      scope?.stop('engine crashed');
+      this.sessionLedgers.delete(sessionId);
+    }
     this.deleteSessionState(sessionId);
     await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
       // The session may already be gone; the audit entry stands.
     });
+    if (ledger !== undefined) {
+      const status = scope?.status();
+      await ledger
+        .close({ crashed: true, ...(status !== undefined ? { scope: status } : {}) })
+        .catch(() => {});
+    }
     this.metrics?.incrementCounter('sessions_crashed_total');
     this.logger?.error('session.crashed', { sessionId, reason, errorDetail });
     this.crashLog.push({
