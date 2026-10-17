@@ -383,3 +383,34 @@ PUBLICATION VERIFIED — 2026-10-17
 - No installed binary was upgraded, no service/browser was restarted, and the
   active headed Fiverr session remains untouched. Product limitations recorded
   above remain; publication does not establish live-site recovery qualification.
+
+DISTRIBUTION FOLLOW-UP — 2026-10-17
+- Homebrew updated through the existing update-agentbrowser workflow. It downloaded
+  and hashed all 12 formula assets; independent comparison found no mismatch with
+  the verified immutable 1.22.0 release. Only artifact URLs and hashes changed.
+- Tap PR https://github.com/anvai-labs/homebrew-tap/pull/109 passed formula validation,
+  real Linux brew install and binary tests, macOS cask checks, and CI Success.
+  Merged as aa01607c; all 12 URLs on tap main now point to v1.22.0. Validation ran
+  on isolated CI runners, without changing the local installation or active service.
+- Winget's initial package PR microsoft/winget-pkgs#454058 has passed CLA and all
+  ten validation stages but still requires community-moderator approval. Keep the
+  prepared ab-agentbrowser-1.22.0 branch ready rather than creating a competing
+  initial-package submission. Its installer URL and SHA-256 match the published
+  Windows ZIP. After the initial package is accepted, submit 1.22.0 through an
+  authorized upstream PR route; the release integration cannot create that PR.
+- No local upgrade, restart, credential change, or verification-challenge action
+  was performed. The active headed Fiverr session remains untouched.
+- Local validation after integrating PRs #550 and #556 exposed macOS temporary-path
+  aliases in configuration and export test fixtures. Canonicalized them with realpath;
+  production directory/privacy validation and the unsafe-path refusal cases remain.
+
+SESSION SCOPE FOLLOW-UP — 2026-10-17
+- Scope is already bound to sessions; restrictions, status and dry-run checks ship
+  in 1.22.0. Ledger recording (#550), unfinished-request outcomes (#558), and export
+  with offline verification (#556) are merged into develop but remain unreleased.
+- Remaining M2 reporting work: act-driven and page-create redirect denials can be
+  event-only; downloads lack scope sub-codes; CLI page create --json can emit text.
+- T10 M3 remains: restrictive scope fields, program authorization metadata/import,
+  engagement-bound findings and SARIF drafts. M4 covers saved-plan execution and
+  JUnit/JSON/CI integration. Objective/completion-criteria metadata is not a current
+  T10 requirement. Shared-worker and worker-WebSocket qualification remains limited.

@@ -1,7 +1,7 @@
 // T10 M2: export a tenant's engagement ledger, during and after the session,
 // across a restart; never another tenant's.
 import { createHash } from 'node:crypto';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyEngagementLedger } from '@agentbrowser/core';
@@ -36,7 +36,8 @@ describe('engagement export (T10 M2)', () => {
   it('exports the caller’s ledger verbatim, open then closed, and after a restart', async () => {
     dir = await mkdtemp(join(tmpdir(), 'eng-export-'));
     await chmod(dir, 0o700);
-    process.env.AGENTBROWSER_ENGAGEMENT_DIR = dir;
+    // macOS can expose tmpdir() through a symlink; valid fixtures must be canonical.
+    process.env.AGENTBROWSER_ENGAGEMENT_DIR = await realpath(dir);
     let app = await server();
     let engagementId: string;
     try {
@@ -129,7 +130,8 @@ describe('engagement export (T10 M2)', () => {
   it("the operator key exports its tenant's ledger; keyless deployments get 401", async () => {
     dir = await mkdtemp(join(tmpdir(), 'eng-export-'));
     await chmod(dir, 0o700);
-    process.env.AGENTBROWSER_ENGAGEMENT_DIR = dir;
+    // macOS can expose tmpdir() through a symlink; valid fixtures must be canonical.
+    process.env.AGENTBROWSER_ENGAGEMENT_DIR = await realpath(dir);
     const operatorFile = join(dir, 'operator.keys');
     await writeFile(operatorFile, 'operator-key-eng-export-0001:one\n', { mode: 0o600 });
     process.env.AGENTBROWSER_OPERATOR_KEYS_FILE = operatorFile;
