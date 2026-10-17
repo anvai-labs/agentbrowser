@@ -6842,6 +6842,7 @@
           "pathRules": {
             "type": "array",
             "items": {
+              "additionalProperties": false,
               "type": "object",
               "required": [
                 "prefix"
@@ -8738,6 +8739,7 @@
                 "type": "boolean"
               },
               "scope": {
+                "additionalProperties": false,
                 "type": "object",
                 "required": [
                   "allowedHosts"
@@ -8755,6 +8757,7 @@
                     "minItems": 1,
                     "type": "array",
                     "items": {
+                      "additionalProperties": false,
                       "type": "object",
                       "required": [
                         "prefix"
@@ -8791,6 +8794,7 @@
                     "minItems": 1,
                     "type": "array",
                     "items": {
+                      "additionalProperties": false,
                       "type": "object",
                       "required": [
                         "header",

@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — engagement scopes refuse fields they cannot enforce (T10)
+
+- `policy.scope`, its `pathRules` entries and its `identityBindings` entries now reject unknown
+  fields with `400` instead of ignoring them. A scope may only narrow; an ignored restriction
+  (for example an exclusion a newer client sends to an older server) would silently widen it.
+  Servers before this release still ignore unknown scope fields: verify what is in effect with
+  `GET /v1/sessions/{id}/scope` (CLI `scope status`).
+
 ### Fixed — page creation failures and compact download receipts
 
 - Page creation with a URL now fails when initial navigation returns blocked or timed out.
