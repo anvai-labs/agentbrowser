@@ -1607,14 +1607,23 @@ export class AgentBrowserService {
       this.sessionLedgers.delete(sessionId);
     }
     this.deleteSessionState(sessionId);
-    await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
-      // The session may already be gone; the audit entry stands.
-    });
-    if (ledger !== undefined) {
-      const status = scope?.status();
-      await ledger
-        .close({ crashed: true, ...(status !== undefined ? { scope: status } : {}) })
-        .catch(() => {});
+    const terminate = () =>
+      this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
+        // The session may already be gone; the audit entry stands.
+      });
+    if (ledger === undefined) {
+      await terminate();
+    } else {
+      // Tracked like any ledger close, so closeSession and shutdown wait for it.
+      const closing = (async () => {
+        await terminate();
+        const status = scope?.status();
+        await ledger
+          .close({ crashed: true, ...(status !== undefined ? { scope: status } : {}) })
+          .catch(() => {});
+      })().finally(() => this.ledgerClosings.delete(sessionId));
+      this.ledgerClosings.set(sessionId, closing);
+      await closing;
     }
     this.metrics?.incrementCounter('sessions_crashed_total');
     this.logger?.error('session.crashed', { sessionId, reason, errorDetail });

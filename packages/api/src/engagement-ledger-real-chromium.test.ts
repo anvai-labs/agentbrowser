@@ -547,4 +547,58 @@ describe('engagement ledger (T10 M2)', () => {
       await service.shutdown().catch(() => {});
     }
   });
+
+  it('shutdown during crash recovery waits for the crashed ledger to close', async () => {
+    const dir = await engagementDir();
+    class SlowCloseEngine extends FakeEngine {
+      override async createSession(options: Parameters<FakeEngine['createSession']>[0]) {
+        const session = await super.createSession(options);
+        const close = session.close.bind(session);
+        session.close = async () => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await close();
+        };
+        return session;
+      }
+    }
+    const engine = new SlowCloseEngine();
+    // A slow ledger close: a shutdown that does not wait for it reads an unclosed file.
+    const { EngagementLedger } = await import('./engagement-ledger.js');
+    const realClose = EngagementLedger.prototype.close;
+    EngagementLedger.prototype.close = async function (
+      this: InstanceType<typeof EngagementLedger>,
+      data
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return realClose.call(this, data);
+    };
+    const restore = () => {
+      EngagementLedger.prototype.close = realClose;
+    };
+    const service = new AgentBrowserService({
+      engine,
+      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
+    });
+    const { sessionId } = await service.createSession({
+      tenantId: 'one',
+      scope: { allowedHosts: ['a.example'], ledger: true },
+    });
+    const { pageId } = await service.createPage(sessionId);
+    const ids = engine.getSessionIds();
+    engine.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+    const recovering = service.observe(sessionId, pageId, {}).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await service.shutdown().catch(() => {});
+    // No wait after shutdown: the crashed ledger is already closed.
+    const records = (await readLedger(dir))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    try {
+      expect(records.at(-1)).toMatchObject({ type: 'engagement.closed', data: { crashed: true } });
+    } finally {
+      restore();
+      await recovering;
+    }
+  });
 });
