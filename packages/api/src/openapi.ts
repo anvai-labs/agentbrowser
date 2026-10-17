@@ -705,7 +705,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               content: { 'application/x-ndjson': { schema: { type: 'string' } } },
             },
             '401': errorResponse('A valid bearer credential is required.'),
-            '403': errorResponse('The credential names no tenant.'),
+            '403': errorResponse('A delegated agent grant, or a credential that names no tenant.'),
             '404': errorResponse("No such engagement for the caller's tenant."),
             '500': INTERNAL,
           },

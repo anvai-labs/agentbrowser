@@ -15,7 +15,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 | verify a ledger offline | CLI `engagement verify FILE` (exit 1 when the chain is broken) |
 
 - Tenant-scoped: the file path is derived from the caller's tenant, so another tenant's id is
-  `404`. Keyless deployments have no export route. `--out` creates the file exclusively, mode
+  `404`. Keyless deployments get `401` (no credential names a tenant). `--out` creates the file exclusively, mode
   0600, and verifies it.
 - The chain format and verifier now live in `@agentbrowser/core`, shared by the server-side writer
   and the CLI.

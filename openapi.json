@@ -1764,7 +1764,7 @@
             }
           },
           "403": {
-            "description": "The credential names no tenant.",
+            "description": "A delegated agent grant, or a credential that names no tenant.",
             "content": {
               "application/json": {
                 "schema": {

@@ -1040,7 +1040,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       // no surface (no credential names a tenant).
       v1.get(
         '/engagements/:engagementId',
-        { config: { publication: 'lifecycle' } },
+        { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
           const principal = principals.get(request);
           if (!principal)

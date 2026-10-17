@@ -79,4 +79,25 @@ describe('engagement commands (T10 M2)', () => {
     });
     expect(again.code).not.toBe(0);
   });
+
+  it('export --out exits 1 when the downloaded chain is broken (the file is still written)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cli-eng-'));
+    dirs.push(dir);
+    const file = join(dir, 'broken.jsonl');
+    const broken = sample.replace('a.example', 'b.example');
+    const result = await run(['engagement', 'export', 'eng_x', '--out', file], {
+      engagements: { export: vi.fn().mockResolvedValue(broken) },
+    });
+    expect(result.code).toBe(1);
+    expect(await readFile(file, 'utf8')).toBe(broken);
+    expect(result.out.join('\n')).toContain('CHAIN BROKEN at seq 1');
+  });
+
+  it('export without --out prints the NDJSON verbatim (no extra trailing newline)', async () => {
+    const result = await run(['engagement', 'export', 'eng_x'], {
+      engagements: { export: vi.fn().mockResolvedValue(sample) },
+    });
+    expect(result.code).toBe(0);
+    expect(`${result.out.join('\n')}\n`).toBe(sample);
+  });
 });

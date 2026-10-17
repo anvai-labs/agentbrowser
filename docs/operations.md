@@ -791,7 +791,8 @@ engagement.opened → request … preflight.denied … → engagement.closed
 | verify offline (recomputes the chain; exit 1 if broken) | CLI `engagement verify FILE` |
 
 Export takes a tenant API key or the operator key and is scoped to that tenant (another tenant's
-id is `404`); keyless deployments have no export surface — read the files directly.
+id is `404`; a delegated agent grant is `403`); keyless deployments get `401` — read the files
+directly. `--json` does not change `export` output: it is the NDJSON itself.
 
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an
