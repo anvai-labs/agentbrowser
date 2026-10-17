@@ -456,4 +456,25 @@ describe('scope status contract (ADR-015)', () => {
       await app.close();
     }
   });
+
+  it('refuses an exclusion bound to a host outside the scope (it would exclude nothing)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['app.example'],
+            excludePaths: [{ prefix: '/admin', hostSuffix: 'other.example' }],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(400);
+      expect(created.json().error.details?.rule ?? created.json().error.message).toMatch(
+        /scope\.unbound|binds no allowed host/
+      );
+    } finally {
+      await app.close();
+    }
+  });
 });

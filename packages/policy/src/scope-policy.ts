@@ -145,14 +145,19 @@ const patternsOverlap = (a: string, b: string): boolean => {
 export function scopeConfigurationIssues(scope: {
   allowedHosts: string[];
   pathRules?: Array<{ hostSuffix?: string }>;
+  excludePaths?: Array<{ hostSuffix?: string }>;
 }): string[] {
   const allowed = scope.allowedHosts.map(normalizeHost);
   const issues: string[] = [];
-  for (const [index, rule] of (scope.pathRules ?? []).entries()) {
-    if (rule.hostSuffix === undefined) continue;
-    const host = normalizeHost(rule.hostSuffix);
-    if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
-      issues.push(`pathRules[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
+  // pathRules: an unbound rule leaves its host unrestricted. excludePaths: an unbound
+  // exclusion is a restriction silently ignored. Both are refused.
+  for (const field of ['pathRules', 'excludePaths'] as const) {
+    for (const [index, rule] of (scope[field] ?? []).entries()) {
+      if (rule.hostSuffix === undefined) continue;
+      const host = normalizeHost(rule.hostSuffix);
+      if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
+        issues.push(`${field}[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
+    }
   }
   return issues;
 }
