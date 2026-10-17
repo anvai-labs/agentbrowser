@@ -601,4 +601,40 @@ describe('engagement ledger (T10 M2)', () => {
       await recovering;
     }
   });
+
+  for (const how of ['closeSession', 'shutdown'] as const) {
+    it(`${how} resolves only after a slow ledger close has written its closing record`, async () => {
+      const dir = await engagementDir();
+      const { EngagementLedger } = await import('./engagement-ledger.js');
+      const realClose = EngagementLedger.prototype.close;
+      EngagementLedger.prototype.close = async function (
+        this: InstanceType<typeof EngagementLedger>,
+        data
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return realClose.call(this, data);
+      };
+      const service = new AgentBrowserService({
+        engine: new FakeEngine(),
+        engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
+      });
+      try {
+        const { sessionId } = await service.createSession({
+          tenantId: 'one',
+          scope: { allowedHosts: ['a.example'], ledger: true },
+        });
+        if (how === 'closeSession') await service.closeSession(sessionId);
+        else await service.shutdown();
+        // No wait: the closing record is already on disk.
+        const records = (await readLedger(dir))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        expect(records.at(-1)?.type).toBe('engagement.closed');
+      } finally {
+        EngagementLedger.prototype.close = realClose;
+        await service.shutdown().catch(() => {});
+      }
+    });
+  }
 });
