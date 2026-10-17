@@ -2442,7 +2442,7 @@
       "post": {
         "operationId": "autofillPage",
         "summary": "Fill structured fields serially and return verification receipts",
-        "description": "One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.",
+        "description": "One controlled mutation for native inputs/selects and explicitly selected qualified react-select/chip-multiselect widgets. Unique fieldset scope and bounded read-only retries. Uncertain writes or observed blocked navigation stop remaining actions and fields without replay. A navigationObservation reports a denial during dispatch, not causation or field verification; absence does not imply navigation success. Includes a raw HTML artifact; no explicit submit action.",
         "tags": [
           "pages"
         ],
@@ -2786,6 +2786,62 @@
                           },
                           "actionId": {
                             "type": "string"
+                          },
+                          "navigationObservation": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "status",
+                              "reason",
+                              "scope",
+                              "observedDuring"
+                            ],
+                            "properties": {
+                              "status": {
+                                "const": "blocked",
+                                "type": "string"
+                              },
+                              "reason": {
+                                "const": "egress_policy",
+                                "type": "string"
+                              },
+                              "scope": {
+                                "anyOf": [
+                                  {
+                                    "const": "SCOPE_HOST_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_PATH_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_METHOD_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_IDENTITY_DENIED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_EXPIRED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                                    "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "observedDuring": {
+                                "const": "action",
+                                "type": "string"
+                              }
+                            }
                           },
                           "status": {
                             "anyOf": [
@@ -3557,7 +3613,7 @@
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
-        "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank.",
+        "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank. Blocked or timed-out initial navigation returns a bounded error and removes only the new page, except when human takeover retains ownership. Do not automatically retry creation after a failure.",
         "tags": [
           "pages"
         ],
@@ -3619,6 +3675,16 @@
               }
             }
           },
+          "403": {
+            "description": "Navigation was denied by policy; includes a bounded reason and any recognized scope code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "The session or page does not exist.",
             "content": {
@@ -3641,6 +3707,16 @@
           },
           "500": {
             "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Initial navigation timed out; the error does not imply the request had no effect.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6766,6 +6842,7 @@
           "pathRules": {
             "type": "array",
             "items": {
+              "additionalProperties": false,
               "type": "object",
               "required": [
                 "prefix"
@@ -6773,10 +6850,12 @@
               "properties": {
                 "hostSuffix": {
                   "minLength": 2,
+                  "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
                   "type": "string"
                 },
                 "prefix": {
                   "minLength": 1,
+                  "pattern": "^/",
                   "type": "string"
                 }
               }
@@ -8468,6 +8547,7 @@
         }
       },
       "SessionRequest": {
+        "additionalProperties": false,
         "type": "object",
         "properties": {
           "cdpAttach": {
@@ -8594,6 +8674,7 @@
             }
           },
           "policy": {
+            "additionalProperties": false,
             "type": "object",
             "properties": {
               "allowedHosts": {
@@ -8618,6 +8699,7 @@
                 "type": "number"
               },
               "approval": {
+                "additionalProperties": false,
                 "type": "object",
                 "properties": {
                   "review": {
@@ -8662,6 +8744,7 @@
                 "type": "boolean"
               },
               "scope": {
+                "additionalProperties": false,
                 "type": "object",
                 "required": [
                   "allowedHosts"
@@ -8679,6 +8762,7 @@
                     "minItems": 1,
                     "type": "array",
                     "items": {
+                      "additionalProperties": false,
                       "type": "object",
                       "required": [
                         "prefix"
@@ -8686,10 +8770,12 @@
                       "properties": {
                         "hostSuffix": {
                           "minLength": 2,
+                          "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
                           "type": "string"
                         },
                         "prefix": {
                           "minLength": 1,
+                          "pattern": "^/",
                           "type": "string"
                         }
                       }
@@ -8715,6 +8801,7 @@
                     "minItems": 1,
                     "type": "array",
                     "items": {
+                      "additionalProperties": false,
                       "type": "object",
                       "required": [
                         "header",
@@ -10827,6 +10914,62 @@
                 "actionId": {
                   "type": "string"
                 },
+                "navigationObservation": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "reason",
+                    "scope",
+                    "observedDuring"
+                  ],
+                  "properties": {
+                    "status": {
+                      "const": "blocked",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "const": "egress_policy",
+                      "type": "string"
+                    },
+                    "scope": {
+                      "anyOf": [
+                        {
+                          "const": "SCOPE_HOST_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_PATH_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_METHOD_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_IDENTITY_DENIED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_EXPIRED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_BUDGET_EXHAUSTED",
+                          "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_LEDGER_UNAVAILABLE",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "observedDuring": {
+                      "const": "action",
+                      "type": "string"
+                    }
+                  }
+                },
                 "remap": {
                   "type": "object",
                   "required": [
@@ -11499,6 +11642,62 @@
                     "actionId": {
                       "type": "string"
                     },
+                    "navigationObservation": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "status",
+                        "reason",
+                        "scope",
+                        "observedDuring"
+                      ],
+                      "properties": {
+                        "status": {
+                          "const": "blocked",
+                          "type": "string"
+                        },
+                        "reason": {
+                          "const": "egress_policy",
+                          "type": "string"
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "const": "SCOPE_HOST_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_PATH_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_METHOD_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_IDENTITY_DENIED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_EXPIRED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_BUDGET_EXHAUSTED",
+                              "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_LEDGER_UNAVAILABLE",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "observedDuring": {
+                          "const": "action",
+                          "type": "string"
+                        }
+                      }
+                    },
                     "remap": {
                       "type": "object",
                       "required": [
@@ -11910,6 +12109,62 @@
                     "type": "string"
                   }
                 ]
+              }
+            }
+          },
+          "navigationObservation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "status",
+              "reason",
+              "scope",
+              "observedDuring"
+            ],
+            "properties": {
+              "status": {
+                "const": "blocked",
+                "type": "string"
+              },
+              "reason": {
+                "const": "egress_policy",
+                "type": "string"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "SCOPE_HOST_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_PATH_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_METHOD_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_IDENTITY_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_EXPIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
+                  }
+                ]
+              },
+              "observedDuring": {
+                "const": "action",
+                "type": "string"
               }
             }
           },
@@ -13511,6 +13766,62 @@
           "status"
         ],
         "properties": {
+          "navigationObservation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "status",
+              "reason",
+              "scope",
+              "observedDuring"
+            ],
+            "properties": {
+              "status": {
+                "const": "blocked",
+                "type": "string"
+              },
+              "reason": {
+                "const": "egress_policy",
+                "type": "string"
+              },
+              "scope": {
+                "anyOf": [
+                  {
+                    "const": "SCOPE_HOST_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_PATH_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_METHOD_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_IDENTITY_DENIED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_EXPIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_BUDGET_EXHAUSTED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
+                  }
+                ]
+              },
+              "observedDuring": {
+                "const": "action",
+                "type": "string"
+              }
+            }
+          },
           "status": {
             "type": "string",
             "examples": [

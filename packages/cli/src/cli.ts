@@ -39,6 +39,7 @@ import {
   createPlanReportParser,
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_WAIT_TYPES,
+  downloadFailureDetail,
   evaluateTestCaseRun,
   FormMappingSchema,
   FormValuesSchema,
@@ -58,6 +59,7 @@ import {
   PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
+  parseActionNavigationObservation,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytesText,
@@ -84,7 +86,7 @@ import {
   type JsonInputStream,
 } from './json-input.js';
 import { observationReceipt, writeObservationFile } from './observation-file.js';
-import { writePrivateFile } from './private-file.js';
+import { PrivateFileError, writePrivateFile } from './private-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
   COOKIE_USAGE,
@@ -1244,15 +1246,26 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--url <url>', 'navigate the new page to this URL')
         .action(
           action(async (ctx, sessionId: string, options: { url?: string }) => {
-            const created = await ctx.client.sessions.createPage(
-              sessionId,
-              options.url ? { url: options.url } : undefined
-            );
-            ctx.emit(created, () => [
-              `Page ${created.pageId}`,
-              `  session: ${created.sessionId ?? sessionId}`,
-              `  status:  ${created.status ?? 'unknown'}`,
-            ]);
+            try {
+              const created = await ctx.client.sessions.createPage(
+                sessionId,
+                options.url ? { url: options.url } : undefined
+              );
+              ctx.emit(created, () => [
+                `Page ${created.pageId}`,
+                `  session: ${created.sessionId ?? sessionId}`,
+                `  status:  ${created.status ?? 'unknown'}`,
+              ]);
+            } catch (error) {
+              const detail = navigationFailureDetail(error);
+              if (detail === undefined) throw error;
+              exitCode = 1;
+              deps.err(
+                ctx.json
+                  ? JSON.stringify({ error: detail }, null, 2)
+                  : `${detail.code}: ${detail.message}`
+              );
+            }
           })
         );
 
@@ -2841,7 +2854,7 @@ export function buildCli(deps: CliDependencies): Cli {
       const autofill = program
         .command('autofill')
         .description(
-          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. Optional scope.url preflights and pins a complete stage; use form prepare for reusable mappings. A failed report exits 1; inspect receipts for verification.'
+          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. Uncertain writes or observed blocked navigation stop remaining writes without replay. Optional scope.url preflights and pins a complete stage; use form prepare for reusable mappings. A failed report exits 1; inspect receipts for verification.'
         )
         .argument('<sessionId>')
         .argument('<pageId>')
@@ -2895,6 +2908,11 @@ export function buildCli(deps: CliDependencies): Cli {
                 for (const r of report.receipts) {
                   const label = `field ${r.field}: ${r.status}`;
                   lines.push(`  ${label}${r.resolvedRef ? ` (${r.resolvedRef})` : ''}`);
+                  if (r.navigationObservation) {
+                    lines.push(
+                      `    navigation blocked during action (${r.navigationObservation.scope}); autofill stopped; inspect current state before another write`
+                    );
+                  }
                 }
                 if (report.snapshot?.artifactId) {
                   lines.push(`  snapshot: ${report.snapshot.artifactId}`);
@@ -2931,19 +2949,20 @@ export function buildCli(deps: CliDependencies): Cli {
               url: string,
               options: { filename?: string; out?: string }
             ) => {
-              const artifact = await ctx.client.sessions.download(sessionId, pageId, {
-                url,
-                ...(options.filename !== undefined ? { filename: options.filename } : {}),
-              });
-              ctx.emit(artifactReference(artifact), () => [
-                `Download ${artifact.artifactId}`,
-                `  bytes: ${artifact.sizeBytes}`,
-              ]);
-              if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
-                ]);
+              try {
+                const artifact = await ctx.client.sessions.download(sessionId, pageId, {
+                  url,
+                  ...(options.filename !== undefined ? { filename: options.filename } : {}),
+                });
+                await emitDownload(ctx, sessionId, artifact, options.out);
+              } catch (error) {
+                const usage = downloadUsageError(error);
+                if (usage) throw usage;
+                const detail = downloadFailureDetail(error);
+                exitCode = 1;
+                deps.err(
+                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
+                );
               }
             }
           )
@@ -2969,20 +2988,21 @@ export function buildCli(deps: CliDependencies): Cli {
             ) => {
               // Commander may parse this shared option on the parent download command.
               const output = options.out ?? download.opts().out;
-              const artifact = await ctx.client.sessions.collectDownload(
-                sessionId,
-                pageId,
-                downloadIdOrFilename
-              );
-              ctx.emit(artifactReference(artifact), () => [
-                `Download ${artifact.artifactId}`,
-                `  bytes: ${artifact.sizeBytes}`,
-              ]);
-              if (output) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, output);
-                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
-                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
-                ]);
+              try {
+                const artifact = await ctx.client.sessions.collectDownload(
+                  sessionId,
+                  pageId,
+                  downloadIdOrFilename
+                );
+                await emitDownload(ctx, sessionId, artifact, output);
+              } catch (error) {
+                const usage = downloadUsageError(error);
+                if (usage) throw usage;
+                const detail = downloadFailureDetail(error);
+                exitCode = 1;
+                deps.err(
+                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
+                );
               }
             }
           )
@@ -3185,9 +3205,15 @@ async function runAction(
     ? ctx.client.sessions.executeAction(sessionId, pageId, request)
     : ctx.client.sessions.executeAction(sessionId, pageId, request, execution));
 
+  const navigationObservation = parseActionNavigationObservation(result.navigationObservation);
   ctx.emit(result, () => [
     `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
+    ...(navigationObservation
+      ? [
+          `  navigation observed during action: blocked (${navigationObservation.scope}); action completed, do not replay`,
+        ]
+      : []),
   ]);
 }
 
@@ -3215,16 +3241,38 @@ function refTarget(ref: string): { ref: string } {
 }
 
 /**
- * Fetch an artifact's bytes through the session-scoped authenticated route
- * and write them to a file. Artifact `url` fields carry short-lived signed
+ * Local download failures surface as actionable usage errors — the same
+ * mapping observation and cookie output files use — while server failures
+ * keep the bounded download projection (never echoes URLs, filenames or
+ * adapter prose). Returns the usage error to rethrow, or undefined when the
+ * failure is server-shaped and belongs to downloadFailureDetail.
+ */
+function downloadUsageError(error: unknown): UsageError | undefined {
+  if (error instanceof UsageError) return error;
+  if (error instanceof PrivateFileError && error.stage === 'write') {
+    // Retain incomplete private output: this pathname may now identify
+    // another file; removing it could delete a concurrent replacement.
+    return new UsageError('Could not write download output file.');
+  }
+  if (error instanceof PrivateFileError) {
+    return new UsageError(
+      `Could not exclusively create download output file (${error.code}: path exists, parent missing, is a symlink, is not writable, or could not be made owner-only).`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Resolve an artifact's bytes: inline content when present, else the
+ * session-scoped authenticated artifact route. Shared by capture and download
+ * so one fix serves both. Artifact `url` fields carry short-lived signed
  * tokens and a relative path; never dereference them here.
  */
-async function emitCapture(
+async function artifactBytes(
   ctx: CommandContext,
   sessionId: string,
-  artifact: ArtifactRef,
-  options: { out?: string | undefined; inline?: boolean | undefined }
-): Promise<void> {
+  artifact: ArtifactRef
+): Promise<{ contentBase64: string; bytes: Buffer }> {
   const contentBase64 =
     artifact.inline?.contentBase64 ??
     (await ctx.client.sessions.artifact(sessionId, artifact.artifactId)).contentBase64;
@@ -3232,7 +3280,16 @@ async function emitCapture(
     throw new UsageError(
       'Artifact bytes are unavailable; the artifact may have expired. No content was printed.'
     );
-  const bytes = Buffer.from(contentBase64, 'base64');
+  return { contentBase64, bytes: Buffer.from(contentBase64, 'base64') };
+}
+
+async function emitCapture(
+  ctx: CommandContext,
+  sessionId: string,
+  artifact: ArtifactRef,
+  options: { out?: string | undefined; inline?: boolean | undefined }
+): Promise<void> {
+  const { contentBase64, bytes } = await artifactBytes(ctx, sessionId, artifact);
   let file: { path: string; bytes: number; expiresAt?: number } | undefined;
   if (options.out) file = await writePrivateFile(options.out, bytes);
   else if (!options.inline) file = await cacheLocalArtifact(bytes, artifact.contentType);
@@ -3249,24 +3306,29 @@ async function emitCapture(
   );
 }
 
-async function saveArtifactBytes(
+async function emitDownload(
   ctx: CommandContext,
   sessionId: string,
   artifact: ArtifactRef,
-  out: string
-): Promise<{ path: string; sizeBytes: number }> {
-  const stored = await ctx.client.sessions.artifact(sessionId, artifact.artifactId);
-  if (!stored.contentBase64) {
-    throw new UsageError(
-      `Artifact ${artifact.artifactId} has no inline content to save (it may have expired).`
-    );
+  out: string | undefined
+): Promise<void> {
+  if (!out) {
+    ctx.emit(artifactReference(artifact), () => [
+      `Download ${artifact.artifactId}`,
+      `  bytes: ${artifact.sizeBytes}`,
+    ]);
+    return;
   }
-  const bytes = Buffer.from(stored.contentBase64, 'base64');
-  await writePrivateFile(out, bytes);
-  return {
-    path: out,
+  const { bytes } = await artifactBytes(ctx, sessionId, artifact);
+  const saved = await writePrivateFile(out, bytes);
+  const receipt = {
+    ...artifactReference(artifact),
+    saved: saved.path,
     sizeBytes: bytes.length,
   };
+  ctx.emit(receipt, () => [
+    `Saved ${artifact.artifactId} to ${saved.path} (${bytes.length} bytes)`,
+  ]);
 }
 
 function parseViewport(value: string): { width: number; height: number } {

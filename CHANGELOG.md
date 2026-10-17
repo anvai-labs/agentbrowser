@@ -7,6 +7,118 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.24.0] — 2026-10-17
+
+Entries are newest first. T10 milestone M2 completes: scope denials are reported everywhere, and a
+session request can no longer carry a restriction the server ignores. **Upgrading from 1.23.x:**
+
+| Who | What changes |
+| --- | --- |
+| REST clients sending policy fields at the top level of `POST /v1/sessions` (`allowedHosts`, `blockedHosts`, `approval`, `allowDownloads`, `maxDownloadBytes`, `allowServiceWorkers`) | **breaking:** refused `400`. This undocumented shape was honored without validation; send these under `policy`. The SDK, CLI and MCP already do |
+| Any session-create request | an unknown key in the request, `policy`, `policy.approval` or `policy.scope` (and its path rules and identity bindings) is refused `400`, never ignored |
+| Engagement scopes | configured hosts are lowercased and stripped of trailing dots (a `hostSuffix` with uppercase letters used to bind nothing and leave the host's paths unrestricted); a path-rule `prefix` must start with `/`; a `hostSuffix` must be an ASCII hostname, `.suffix` or bracketed IPv6 literal; a path rule binding no allowed host is refused (`scope.unbound`) |
+| In-process embedders | `AgentBrowserService.createSession` validates the scope and approval policy (`scope.invalid`, `approval.invalid`) |
+| Page creation with a `url` (REST, SDK, MCP `page_create`, CLI `page create`) | **behaviour change:** an initial navigation that is blocked or times out now fails the create (`403` policy denial, `504` timeout, `500` otherwise) and removes the new page (human takeover keeps it), instead of returning a ready page |
+| CLI `download` / `download collect --out` | saves first, then prints one compact receipt (artifact, path, byte count); with `--json`, errors go to stderr as JSON. Scripts parsing the old two-document output must adapt |
+| Actions, plans, autofill | scope denials keep their sub-code; completed actions can carry `navigationObservation`; plans and autofill stop on an observed denial (see the entries below) |
+| MCP clients | `page_create` and `autofill` descriptions, the `act`/`plan`/`autofill` output schemas (`navigationObservation`) and the `scope` tool's output schema changed (catalog digest changed); `create`'s input schema is unchanged |
+| Requests already using `policy` with known fields | unchanged |
+
+### Security — scope rules bind exactly the hosts they name (T10)
+
+- A `pathRules` entry whose `hostSuffix` had uppercase letters or a trailing dot bound no host,
+  so its path restriction silently disappeared and every path on that host was in scope. Every
+  configured host (`allowedHosts`, `pathRules[].hostSuffix`, `identityBindings[].allowedHosts`)
+  is now lowercased and stripped of trailing dots; the scope status reports the normalized form.
+- A path-rule `prefix` must start with `/`, and a `hostSuffix` must be an ASCII hostname or
+  `.suffix` (punycode for IDNs) or a bracketed IPv6 literal: no scheme, port or Unicode. A path
+  rule whose host binds none of the `allowedHosts` is refused too (`400`, `scope.unbound`): it
+  would leave that host's paths unrestricted. The MCP catalog digest changed (the `scope` tool's
+  output schema).
+
+### Docs — the site matches 1.23.0 and the T10 plan
+
+- Home: the 1.21–1.23 engagement features, a "testing beyond what is authorized" row, T0–T10
+  status (T10 in progress), defaults stamped 1.23 (unchanged values).
+- Release milestones: a release history 1.14.0–1.23.0 (date, main commit, headline, record) and
+  the 1.24.0–1.26.0 plan, above the earlier checkpoints.
+- Spec overview: baseline 1.23.0 (was 1.10.0). Operations: engagements get their own heading.
+
+### Changed — engagement scopes refuse fields they cannot enforce (T10)
+
+- `policy.scope`, its `pathRules` entries and its `identityBindings` entries now reject unknown
+  fields with `400` instead of ignoring them. A scope may only narrow; an ignored restriction
+  (for example an exclusion a newer client sends to an older server) would silently widen it.
+  Servers before this release still ignore unknown scope fields: verify what is in effect with
+  `GET /v1/sessions/{id}/scope` (CLI `scope status`).
+- The same rule now covers the whole session-create request: unknown keys in the request,
+  `policy` and `policy.approval` are refused (`400`). This includes policy fields sent at the
+  top level (`blockedHosts`, `approval`, `allowDownloads`, …), which were honored there without
+  validation; send them under `policy`.
+- In-process embedders (`AgentBrowserService.createSession`) validate the scope and the approval
+  policy too (`INVALID_REQUEST`, `scope.invalid` / `approval.invalid`): a value built at runtime
+  never crosses the REST validator.
+
+### Fixed — page creation failures and compact download receipts
+
+- Page creation with a URL now fails when initial navigation returns blocked or timed out.
+  Policy denials return HTTP 403, timeouts 504, and other navigation failures 500, with only a
+  bounded reason and recognized scope code. Cleanup removes only the newly created page;
+  human takeover retains its ownership. No automatic retry is introduced.
+- CLI `download` and `download collect` with `--out` emit one compact receipt after the private
+  file save completes. Artifact retrieval or save failures emit no success record. Empty files
+  are valid, and the saved byte count reflects the written content. Download errors use bounded
+  messages and validated details, including JSON on stderr under `--json`.
+
+### Fixed — autofill stops on observed navigation denials
+
+- Autofill preserves bounded `navigationObservation` evidence and the action ID on the affected
+  field receipt, then stops remaining widget actions and fields with `AUTOFILL_NAVIGATION_BLOCKED`.
+  Skip and retry policies cannot resume writes. Completed actions do not establish exact field
+  verification: interrupted exact or multi-action fields remain `uncertain`; a completed native
+  `verify: none` action remains `unverified`, while the overall report fails. Post-effect action
+  errors retain their original bounded error code alongside any navigation evidence.
+- Previously verified fields still receive a final read-only check, and confirmed chip effects
+  remain in partial receipts. Durable operations preserve unknown outcomes for uncertain fields.
+  CLI and both MCP protocols retain the evidence; CLI text explains the stop without field values.
+  Evidence is limited to the action dispatch window and does not establish navigation causation.
+
+### Fixed — popup closure during adoption
+
+- Pages that close during registration are refused without leaving page inventory, download
+  state or engine listeners. Cleanup is initialized before synchronous removal can run.
+- Popups that close before adoption finishes are not announced as available pages. Browser-owned
+  closure uses the same named-handler cleanup as explicit closure and preserves caller handlers.
+
+### Added — observed navigation denials on completed actions
+
+- Playwright actions can return a bounded `navigationObservation` containing `status: blocked`,
+  `reason: egress_policy`, a recognized scope code, and `observedDuring: action`. This reports
+  a main-document request observed during dispatch; it does not prove the action caused it.
+  No URLs, bodies, headers, or driver messages are included. Stale requests, other frames/pages,
+  ambiguous chains, overlapping actions, and concurrent direct navigation are excluded.
+- Completed actions keep `status: success` and their action ID. Follow-up waits/observations are
+  skipped when this evidence is present. Required fill verification still takes precedence:
+  missing verification evidence retains its nonretryable post-effect unknown outcome.
+- Plans and action batches retain the completed step, count it in `completed`, and stop before
+  the next step with `PLAN_NAVIGATION_BLOCKED`; they do not replay the action. Outcome runs
+  cannot report a pass for that stopped plan. REST, SDK, CLI and MCP preserve the evidence.
+- Observation adds no settlement wait. A denial arriving after dispatch is not reported on that
+  action or a later one; absence is not a navigation-success claim. Explicit navigation and wait
+  actions retain their existing behavior.
+
+### Fixed — scope denial reporting for page creation and downloads
+
+- Creating a page with an initially allowed URL that redirects outside its scope now returns
+  `POLICY_DENIED` with a validated scope sub-code and removes the new page. Sibling pages remain
+  available. Generic blocked and timeout outcomes now use the same failure cleanup path.
+- CLI `page create --json` emits bounded JSON navigation errors on stderr and exits 1. MCP
+  `page_create` uses the same bounded navigation-error projection on both supported protocols;
+  neither projection includes raw driver prose, URLs, or arbitrary error details.
+- Direct download errors retain recognized scope sub-codes through connection and transfer
+  sanitization, including redirect denials. Existing stages and generic messages remain.
+- CLI download errors use the bounded formatting described above.
+
 ## [1.23.0] — 2026-10-17
 
 Entries are newest first. T10 milestone M2 completes: the engagement ledger. **Upgrading from 1.22.x:**

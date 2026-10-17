@@ -11,6 +11,59 @@ import type { McpClient, McpDependencies } from './mcp-server';
 import { buildMcpServer } from './mcp-server';
 
 describe('AgentBrowser MCP server', () => {
+  it.each(['2024-11-05', '2025-06-18'])(
+    'keeps completed action evidence and stopped plan receipts (%s)',
+    async (protocolVersion) => {
+      await request('init-navigation', 'initialize', {
+        protocolVersion,
+        capabilities: {},
+        clientInfo: { name: 'fixture', version: '1' },
+      });
+      const navigationObservation = {
+        status: 'blocked',
+        reason: 'egress_policy',
+        scope: 'SCOPE_PATH_DENIED',
+        observedDuring: 'action',
+      };
+      const effect = { status: 'success', actionId: 'once', newRevision: 2, navigationObservation };
+      sessions.executeAction.mockResolvedValue(effect);
+      const act = JSON.parse(
+        (await call('act-navigation', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'press',
+          key: 'Enter',
+        }))!
+      );
+      expect(act.result.isError).toBeUndefined();
+      expect(textOf(act)).toEqual(effect);
+      const plan = {
+        ok: false,
+        completed: 1,
+        results: [{ step: 0, ok: true, actionId: 'once', navigationObservation }],
+        error: {
+          code: 'PLAN_NAVIGATION_BLOCKED',
+          message: 'Navigation was blocked; action completed.',
+        },
+      };
+      sessions.plan.mockResolvedValue(plan);
+      const planned = JSON.parse(
+        (await call('plan-navigation', 'plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [
+            { action: 'press', key: 'Enter' },
+            { action: 'press', key: 'Tab' },
+          ],
+        }))!
+      );
+      expect(planned.result.isError).toBe(true);
+      expect(textOf(planned)).toEqual(plan);
+      expect(sessions.executeAction).toHaveBeenCalledOnce();
+      expect(sessions.plan).toHaveBeenCalledOnce();
+    }
+  );
+
   let sessions: Record<string, ReturnType<typeof vi.fn>>;
   let deps: McpDependencies;
   let server: ReturnType<typeof buildMcpServer>;
@@ -286,6 +339,41 @@ describe('AgentBrowser MCP server', () => {
         expect(result.structuredContent).toEqual(receiptReport);
         expect(JSON.parse(result.content[0].text)).toEqual(receiptReport);
         expect(result.isError).toBe(ok ? undefined : true);
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it.each(['2024-11-05', '2025-06-18'])(
+      'preserves stopped autofill navigation receipts on %s without replay',
+      async (version) => {
+        await initialize(version);
+        const stopped = {
+          ...report,
+          ok: false,
+          receipts: [
+            {
+              ...report.receipts[0],
+              status: 'uncertain',
+              verified: false,
+              actionId: 'act_completed',
+              navigationObservation: {
+                status: 'blocked',
+                reason: 'egress_policy',
+                scope: 'SCOPE_PATH_DENIED',
+                observedDuring: 'action',
+              },
+              error: {
+                code: 'AUTOFILL_NAVIGATION_BLOCKED',
+                message: 'Inspect current state before another write',
+              },
+            },
+          ],
+        };
+        sessions.autofill = vi.fn().mockResolvedValue(stopped);
+        const result = JSON.parse(await call('navigation-stopped', 'autofill', args)).result;
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.content[0].text)).toEqual(stopped);
+        expect(result.structuredContent).toEqual(version === '2025-06-18' ? stopped : undefined);
         expect(sessions.autofill).toHaveBeenCalledTimes(1);
       }
     );

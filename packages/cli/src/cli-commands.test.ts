@@ -563,9 +563,9 @@ describe('AgentBrowser CLI remaining command surface', () => {
       expect(await run('download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1', '--out', file)).toBe(
         1
       );
-      expect(err.join(' ')).toContain('dl_1 has no inline content');
+      expect(err.join(' ')).toContain('Artifact bytes are unavailable');
       expect(existsSync(file)).toBe(false);
-      expect(out.join('\n')).not.toContain('Saved dl_1');
+      expect(out).toEqual([]);
     });
 
     it('saving an expired screenshot artifact fails without writing a file', async () => {

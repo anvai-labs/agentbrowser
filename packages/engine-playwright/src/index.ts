@@ -2403,6 +2403,18 @@ class PlaywrightSession implements EngineSession {
         return;
       }
       const popup = await this.registerPlaywrightPage(playwrightPage);
+      // Registration yields to its caller. A popup or its opener may already
+      // have closed; do not announce a page the operator cannot subsequently use.
+      if (
+        this.closed ||
+        playwrightPage.isClosed() ||
+        opener.isClosed() ||
+        this.pageMap.get(popup.id) !== popup ||
+        this.pageMap.get(openerPage.id) !== openerPage
+      ) {
+        await popup.close().catch(() => {});
+        return;
+      }
       openerPage.emitExternalEvent({
         type: 'page.created',
         timestamp: new Date().toISOString(),
@@ -2443,6 +2455,8 @@ class PlaywrightSession implements EngineSession {
       await playwrightPage.setViewportSize(viewport);
     }
     if (this.closed) throw new Error('Session is closed');
+    if (playwrightPage.isClosed())
+      throw new EngineError('PAGE_NOT_FOUND', 'Page closed during registration');
 
     const pageId = `page-${this.pageCounter++}`;
     this.ownedPlaywrightPages.add(playwrightPage);
@@ -2454,16 +2468,6 @@ class PlaywrightSession implements EngineSession {
       this.requestSink?.navigationFailures,
       this.attached?.navigationPreflight
     );
-    this.pageMap.set(pageId, page);
-    page.registerRemoval(() => {
-      this.pageMap.delete(pageId);
-      this.downloads.delete(pageId);
-      if (this.attached === undefined) playwrightPage.off('download', onDownload);
-    });
-    if (this.attached === undefined) {
-      this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
-    }
-
     // In-page download interception (spec 10): accept the download, hold
     // its bytes, and surface created/finished events on the page stream.
     const onDownload = (download: import('playwright').Download) => {
@@ -2511,9 +2515,24 @@ class PlaywrightSession implements EngineSession {
         )
         .finally(() => download.delete().catch(() => {}));
     };
+    this.pageMap.set(pageId, page);
     // Existing-profile download behavior belongs to the operator browser.
     // Do not intercept, cancel, retain, or claim attached-profile downloads.
-    if (this.attached === undefined) playwrightPage.on('download', onDownload);
+    if (this.attached === undefined) {
+      this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
+      playwrightPage.on('download', onDownload);
+    }
+    // registerRemoval may run synchronously for a page that has already closed.
+    // Initialize and attach every owned resource before exposing its cleanup.
+    page.registerRemoval(() => {
+      this.pageMap.delete(pageId);
+      this.downloads.delete(pageId);
+      if (this.attached === undefined) playwrightPage.off('download', onDownload);
+    });
+    if (playwrightPage.isClosed()) {
+      await page.close().catch(() => {});
+      throw new EngineError('PAGE_NOT_FOUND', 'Page closed during registration');
+    }
 
     return page;
   }
@@ -2649,6 +2668,9 @@ function navigationEvidenceUrl(value: string): string {
  * PlaywrightPage implements EnginePage
  */
 class PlaywrightPage implements EnginePage {
+  private actionDispatches = 0;
+  private navigationDispatches = 0;
+  private actionNavigationEpoch: object = {};
   private formIdentityState: JSHandle<FormIdentityState> | undefined;
   /** Per-frame form-identity states for frame-owned controls (T6 slice 2). */
   private readonly frameIdentityStates = new Map<
@@ -2795,13 +2817,9 @@ class PlaywrightPage implements EnginePage {
     // The browser can close pages without PlaywrightPage.close() running
     // (engine.close()); Playwright's own close event ends the iterator.
     this.onPageClose = () => {
-      this.removeSelf();
-      this.eventsClosed = true;
-      const waiters = this.eventWaiters;
-      this.eventWaiters = [];
-      for (const wake of waiters) {
-        wake();
-      }
+      // Use the same cleanup as an explicit close: remove only our named
+      // handlers, release refs, and end the stream even for self-closing popups.
+      void this.close().catch(() => {});
     };
     this.page.on('close', this.onPageClose);
 
@@ -3046,11 +3064,16 @@ class PlaywrightPage implements EnginePage {
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
+    // A concurrent direct navigation makes an action's temporal evidence ambiguous.
+    this.actionNavigationEpoch = {};
+    this.navigationDispatches += 1;
     try {
       return await this.performNavigation(request);
     } catch (error) {
       const failure = normalizeNavigationFailure(error);
       throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+    } finally {
+      this.navigationDispatches -= 1;
     }
   }
 
@@ -4834,6 +4857,81 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {
+    let dispatched = false;
+    let isolated = false;
+    let epoch: object | undefined;
+    let root: import('playwright').Request | undefined;
+    let latest: import('playwright').Request | undefined;
+    const chain = new WeakSet<import('playwright').Request>();
+    let navigationObservation: ActionEffect['navigationObservation'];
+    const inspect = (request: import('playwright').Request) => {
+      if (!chain.has(request)) return;
+      const failure = this.navigationFailures?.get(request);
+      if (failure?.kind === 'blocked' && isScopeDenialCode(failure.scope)) {
+        navigationObservation = {
+          status: 'blocked',
+          reason: 'egress_policy',
+          scope: failure.scope,
+          observedDuring: 'action',
+        };
+      }
+    };
+    const started = (request: import('playwright').Request) => {
+      try {
+        if (!request.isNavigationRequest() || request.frame() !== this.page.mainFrame()) return;
+        const previous = request.redirectedFrom();
+        if (previous !== null) {
+          // A redirect from a request predating this dispatch is not its evidence.
+          if (!chain.has(previous)) {
+            isolated = false;
+            return;
+          }
+        } else if (root !== undefined) {
+          // More than one independent main-document chain cannot be attributed.
+          isolated = false;
+          return;
+        } else {
+          root = request;
+        }
+        chain.add(request);
+        latest = request;
+      } catch {
+        // Detached/worker requests have no reliable main-document attribution.
+      }
+    };
+    const responded = (response: import('playwright').Response) => inspect(response.request());
+    const onDispatch = () => {
+      dispatched = true;
+      this.actionDispatches += 1;
+      epoch = this.actionNavigationEpoch = {};
+      isolated = this.actionDispatches === 1 && this.navigationDispatches === 0;
+      // Explicit navigate has its own result. Waits do not dispatch an interaction.
+      if (action.type === 'navigate' || action.type === 'wait') isolated = false;
+      if (!isolated || this.navigationFailures === undefined) return;
+      this.page.on('request', started);
+      this.page.on('response', responded);
+      this.page.on('requestfailed', inspect);
+    };
+    try {
+      const effect = await this.dispatchAction(action, onDispatch);
+      // Read only this dispatch's one bounded chain; no last-denial state or grace wait.
+      if (root !== undefined) inspect(root);
+      if (latest !== undefined && latest !== root) inspect(latest);
+      if (isolated && epoch === this.actionNavigationEpoch && navigationObservation !== undefined)
+        return { ...effect, navigationObservation };
+      return effect;
+    } finally {
+      this.page.off('request', started);
+      this.page.off('response', responded);
+      this.page.off('requestfailed', inspect);
+      if (dispatched) this.actionDispatches -= 1;
+    }
+  }
+
+  private async dispatchAction(
+    action: EngineAction,
+    onDispatch: () => void
+  ): Promise<ActionEffect> {
     const integrityError = validateUploadIntegrity(action);
     if (integrityError) throw new EngineError('INVALID_REQUEST', integrityError);
     // Upload skips the visibility gate: file inputs are hidden by design and
@@ -4884,6 +4982,7 @@ class PlaywrightPage implements EnginePage {
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
 
+    onDispatch();
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
     switch (action.type) {

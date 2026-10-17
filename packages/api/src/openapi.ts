@@ -8,6 +8,7 @@
  */
 
 import {
+  ActionNavigationObservationSchema,
   ActionResultSchema,
   AgentModeSchema,
   ApiErrorDetailSchema,
@@ -983,7 +984,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           operationId: 'autofillPage',
           summary: 'Fill structured fields serially and return verification receipts',
           description:
-            'One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.',
+            'One controlled mutation for native inputs/selects and explicitly selected qualified react-select/chip-multiselect widgets. Unique fieldset scope and bounded read-only retries. Uncertain writes or observed blocked navigation stop remaining actions and fields without replay. A navigationObservation reports a denial during dispatch, not causation or field verification; absence does not imply navigation success. Includes a raw HTML artifact; no explicit submit action.',
           tags: ['pages'],
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
@@ -1198,7 +1199,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           description:
             'Sessions are page-less by default; create pages through this endpoint. ' +
             'An optional url lands the new page on it (validated like navigate); ' +
-            'without it the page starts on about:blank.',
+            'without it the page starts on about:blank. Blocked or timed-out initial navigation ' +
+            'returns a bounded error and removes only the new page, except when human takeover ' +
+            'retains ownership. Do not automatically retry creation after a failure.',
           tags: ['pages'],
           parameters: [sessionIdParam],
           requestBody: {
@@ -1211,8 +1214,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           responses: {
             '201': { description: 'Page created.', content: json(ref('PageSummary')) },
             '400': INVALID_REQUEST,
+            '403': errorResponse(
+              'Navigation was denied by policy; includes a bounded reason and any recognized scope code.'
+            ),
             '404': NOT_FOUND,
             '500': INTERNAL,
+            '504': errorResponse(
+              'Initial navigation timed out; the error does not imply the request had no effect.'
+            ),
           },
         },
       },
@@ -2212,6 +2221,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           type: 'object',
           required: ['status'],
           properties: {
+            navigationObservation: ActionNavigationObservationSchema,
             status: { type: 'string', examples: ['success'] },
             actionId: { type: 'string' },
             newRevision: {

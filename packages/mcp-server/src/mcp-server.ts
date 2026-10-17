@@ -422,6 +422,7 @@ export function buildTools(
       description:
         'Create a page in an existing session, sharing its cookies and policy. ' +
         'Returns the server-generated pageId; never invent page IDs. Optional url navigates before returning. ' +
+        'Blocked or timed-out navigation returns a bounded error; the new page is removed unless human takeover retains it. ' +
         'Do not retry an uncertain create automatically. Operation-ID deduplication applies only to controlled sessions; ' +
         'operation status does not retain the created pageId. pages shows inventory, not create-result correlation.',
       inputSchema: {
@@ -634,7 +635,7 @@ export function buildTools(
       outputSchema: AutofillReportSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
       description:
-        'Fill and verify structured fields in one serial server operation. Match labels within a unique fieldset block (id or legend label). Supports native inputs/selects and explicitly selected qualified react-select/chip-multiselect shapes. Optional exact URL scope preflights all fields and pins stage identities. Verification retries only read; uncertain writes stop the batch. Returns per-field receipts and an authorized raw HTML artifact. Performs no explicit submit action; page input/change handlers may commit effects. After a lost response, reconcile the operation under current authorization before any further write: use operation in delegated mode or SDK/REST operation status otherwise.',
+        'Fill and verify structured fields in one serial server operation. Match labels within a unique fieldset block (id or legend label). Supports native inputs/selects and explicitly selected qualified react-select/chip-multiselect shapes. Optional exact URL scope preflights all fields and pins stage identities. Verification retries only read; uncertain writes or observed blocked navigation stop the batch without replay. A navigationObservation records a denial during dispatch, not causation or field verification; missing evidence does not imply navigation success. Returns per-field receipts and an authorized raw HTML artifact. Performs no explicit submit action; page input/change handlers may commit effects. After a lost response, reconcile the operation under current authorization before any further write: use operation in delegated mode or SDK/REST operation status otherwise.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -1474,7 +1475,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             return ok(message.id, textResult(result, structured, navigationFailed));
           } catch (err) {
             const navigationFailure =
-              name === 'navigate' ? navigationFailureDetail(err) : undefined;
+              name === 'navigate' || name === 'page_create'
+                ? navigationFailureDetail(err)
+                : undefined;
             if (navigationFailure !== undefined)
               return ok(message.id, navigationErrorResult(navigationFailure));
             const code = (err as { code?: string }).code;

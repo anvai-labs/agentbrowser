@@ -149,4 +149,223 @@ describe('scope status contract (ADR-015)', () => {
       })
     ).toBe(false);
   });
+
+  // A scope may only narrow: a field this server cannot enforce must be refused,
+  // never ignored (an ignored exclusion silently widens the engagement).
+  it.each([
+    ['top level', { allowedHosts: ['in.example'], excludeHosts: ['admin.in.example'] }],
+    ['path rule', { allowedHosts: ['in.example'], pathRules: [{ prefix: '/api', exclude: true }] }],
+    [
+      'identity binding',
+      {
+        allowedHosts: ['in.example'],
+        identityBindings: [
+          { header: 'x-id', value: 'v', allowedHosts: ['in.example'], scope: 'x' },
+        ],
+      },
+    ],
+  ])('refuses an unknown scope field (%s) instead of ignoring it', async (_where, scope) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope },
+      });
+      expect(created.statusCode).toBe(400);
+      expect((await call('GET', '/v1/sessions')).json().sessions ?? []).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('still accepts every known scope field', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['in.example', '.in.example'],
+            pathRules: [{ hostSuffix: 'in.example', prefix: '/api' }],
+            allowedMethods: ['GET'],
+            expiresAt: Date.now() + 60_000,
+            requestBudget: 10,
+            identityBindings: [{ header: 'x-id', value: 'v', allowedHosts: ['in.example'] }],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ['policy', { allowedHosts: ['in.example'], notARealPolicyField: true }],
+    ['approval', { approval: { transactions: 'deny', notARealApprovalField: true } }],
+  ])('refuses an unknown %s field instead of ignoring it', async (_where, policy) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', { tenantId: 'one', policy });
+      expect(created.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('refuses a path rule prefix that does not start with "/" (it could never match)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope: { allowedHosts: ['in.example'], pathRules: [{ prefix: 'api' }] } },
+      });
+      expect(created.statusCode).toBe(400);
+      const dots = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['in.example'],
+            pathRules: [{ prefix: '/api', hostSuffix: '..' }],
+          },
+        },
+      });
+      expect(dots.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('refuses an unknown scope field from an in-process embedder too', async () => {
+    const { AgentBrowserService } = await import('./service.js');
+    const service = new AgentBrowserService({ engine: new FakeEngine() });
+    try {
+      // Built at runtime (as from JSON), so TypeScript's excess-property check cannot catch it.
+      const scope = JSON.parse('{"allowedHosts":["in.example"],"notARealScopeField":["x"]}');
+      await expect(service.createSession({ tenantId: 'one', scope })).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+      expect(service.listSessions()).toHaveLength(0);
+    } finally {
+      await service.shutdown();
+    }
+  });
+
+  it.each([
+    ['blockedHosts', { blockedHosts: ['evil.example'] }],
+    ['approval', { approval: { transactions: 'deny' } }],
+    ['allowDownloads', { allowDownloads: true }],
+    ['an unknown key', { notARealRequestKey: 1 }],
+  ])('refuses a top-level %s (policy fields belong under policy)', async (_what, extra) => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', { tenantId: 'one', ...extra });
+      expect(created.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ['a Unicode host (requests use punycode)', 'bücher.example', ['xn--bcher-kva.example']],
+    ['a host with a port', 'app.example:443', ['app.example']],
+    ['a URL', 'https://app.example', ['app.example']],
+    ['a host that is not allowed', 'other.example', ['app.example']],
+    ['a suffix that overlaps no allowed host', '.other.example', ['app.example', '.app.example']],
+    ['an exact host no allowed suffix covers', 'other.example', ['.app.example']],
+  ])(
+    'refuses a path rule bound to %s (it would leave the host unrestricted)',
+    async (_what, hostSuffix, allowedHosts) => {
+      const { app, call } = await harness();
+      try {
+        const created = await call('POST', '/v1/sessions', 'key-one', {
+          tenantId: 'one',
+          policy: { scope: { allowedHosts, pathRules: [{ prefix: '/public', hostSuffix }] } },
+        });
+        expect(created.statusCode).toBe(400);
+      } finally {
+        await app.close();
+      }
+    }
+  );
+
+  it('accepts path rules that bind an allowed host (exact, suffix, overlapping suffix)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['app.example', '.cdn.example', 'xn--bcher-kva.example'],
+            pathRules: [
+              { prefix: '/a', hostSuffix: 'App.Example.' },
+              { prefix: '/b', hostSuffix: '.img.cdn.example' },
+              { prefix: '/c', hostSuffix: '.example' },
+              { prefix: '/d', hostSuffix: 'xn--bcher-kva.example' },
+            ],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('refuses an unknown approval field from an in-process embedder', async () => {
+    const { AgentBrowserService } = await import('./service.js');
+    const service = new AgentBrowserService({ engine: new FakeEngine() });
+    try {
+      const approval = JSON.parse('{"transactions":"deny","notARealApprovalField":true}');
+      await expect(service.createSession({ tenantId: 'one', approval })).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+      });
+    } finally {
+      await service.shutdown();
+    }
+  });
+
+  it.each([
+    ['cdpEndpoint', { cdpEndpoint: 'ws://127.0.0.1:9222' }, /trusted startup configuration/],
+    ['operatorCdp', { operatorCdp: true }, /trusted startup configuration/],
+    ['credentialSource', { credentialSource: 'handoff' }, /server-assigned/],
+    [
+      'a top-level scope',
+      { scope: { allowedHosts: ['in.example'] } },
+      /belongs under policy\.scope/,
+    ],
+  ])(
+    'refuses %s with its own guidance, not a generic schema error',
+    async (_what, extra, message) => {
+      const { app, call } = await harness();
+      try {
+        const created = await call('POST', '/v1/sessions', 'key-one', {
+          tenantId: 'one',
+          ...extra,
+        });
+        expect(created.statusCode).toBe(400);
+        expect(created.json().error.message).toMatch(message);
+      } finally {
+        await app.close();
+      }
+    }
+  );
+
+  it('accepts a broader rule suffix over a narrower allowed suffix (they overlap)', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: {
+            allowedHosts: ['.cdn.example'],
+            pathRules: [{ prefix: '/a', hostSuffix: '.example' }],
+          },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await app.close();
+    }
+  });
 });

@@ -4,6 +4,8 @@ import {
   isNavigationFailureReason,
   isScopeDenialCode,
   MAX_PLAN_STEPS,
+  type NavigationFailureReason,
+  navigationFailureDetailFromParts,
   sessionLeaseRemainingMs,
 } from '@agentbrowser/protocol';
 import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
@@ -132,6 +134,7 @@ import {
   type EngagementScopeStatus,
   type NetworkPolicy,
   SessionHostPolicy,
+  scopeConfigurationIssues,
 } from '@agentbrowser/policy';
 import {
   type Authorizer,
@@ -142,6 +145,7 @@ import {
   TenantBindingAuthorizer,
 } from '@agentbrowser/policy-engine';
 import type {
+  ActionNavigationObservation,
   ObservationRequest,
   OperatorApprovalView,
   OutcomeRunReport,
@@ -162,6 +166,7 @@ import {
   type DeliveredExtractFormat,
   decodeWireAction,
   MAX_FORM_CONTROLS_PER_ROOT,
+  parseActionNavigationObservation,
   parseExtractMaxBytes,
   parseOutcomeRunRequest,
   parseRef,
@@ -172,7 +177,9 @@ import {
   validateApplicationBinding,
   validateApplicationExecute,
   validateApplicationReview,
+  validateApprovalPolicy,
   validateDeliveredWaitCondition,
+  validateEngagementScope,
   validateObservationRequest,
   validateScreenshotRequest,
 } from '@agentbrowser/protocol';
@@ -401,6 +408,8 @@ export interface ServiceActResult {
   remap?: { from: string; to: string } | undefined;
   /** Evidence payload, present only for actions that produce one (upload: attached files). */
   result?: unknown;
+  /** A scoped navigation was blocked while the completed action was running. */
+  navigationObservation?: ActionNavigationObservation;
 }
 
 /** One step's outcome inside a batch (F3); failures are in-band. */
@@ -412,6 +421,7 @@ export interface ServiceBatchStepResult {
   remap?: { from: string; to: string } | undefined;
   /** Per-action evidence (upload: attached files), matching single-act. */
   result?: unknown;
+  navigationObservation?: ActionNavigationObservation;
   error?: string;
 }
 
@@ -1737,6 +1747,43 @@ export class AgentBrowserService {
         !request.tenantId)
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
+    if (request.scope !== undefined) {
+      // In-process embedders never cross the REST validator: an unknown scope
+      // field is refused here too, never ignored (it would widen the engagement).
+      const scopeCheck = validateEngagementScope(request.scope);
+      if (!scopeCheck.ok)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid engagement scope: ${scopeCheck.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path || '/'} ${issue.message}`)
+            .join('; ')}`,
+          false,
+          { rule: 'scope.invalid' }
+        );
+      // A rule that binds no allowed host would leave that host unrestricted: refuse it.
+      const issues = scopeConfigurationIssues(request.scope);
+      if (issues.length > 0)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Engagement scope cannot be enforced as written: ${issues.slice(0, 3).join('; ')}`,
+          false,
+          { rule: 'scope.unbound' }
+        );
+    }
+    if (request.approval !== undefined) {
+      const approvalCheck = validateApprovalPolicy(request.approval);
+      if (!approvalCheck.ok)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid approval policy: ${approvalCheck.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path || '/'} ${issue.message}`)
+            .join('; ')}`,
+          false,
+          { rule: 'approval.invalid' }
+        );
+    }
     if (request.scope !== undefined && request.allowServiceWorkers === true)
       throw new ServiceError(...SCOPE_SERVICE_WORKERS);
     if (request.scope?.ledger === true && this.engagement === undefined)
@@ -2518,6 +2565,34 @@ export class AgentBrowserService {
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
+    const recordEffect = (index: number, effect: ServiceActResult) => {
+      this.decayChurn(churnKey);
+      const navigationObservation = parseActionNavigationObservation(effect.navigationObservation);
+      results.push({
+        step: index,
+        ok: true,
+        actionId: effect.actionId,
+        ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
+        ...(effect.result !== undefined ? { result: effect.result } : {}),
+        ...(navigationObservation !== undefined ? { navigationObservation } : {}),
+      });
+      if (navigationObservation !== undefined) {
+        // The effect completed. Keep its receipt and stop before dispatching another
+        // step; this is not a failed binding to heal or an action to replay.
+        return {
+          ok: false,
+          completed: index + 1,
+          results,
+          mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
+          error: {
+            code: 'PLAN_NAVIGATION_BLOCKED',
+            message: `Action completed; a navigation was blocked during the action (${navigationObservation.scope}). Remaining steps were not attempted.`,
+          },
+        };
+      }
+      return undefined;
+    };
     for (const [index, step] of steps.entries()) {
       // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
       // prior step. A caller cannot know the ref of an element that does
@@ -2565,14 +2640,8 @@ export class AgentBrowserService {
       }
       try {
         const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
-        this.decayChurn(churnKey);
-        results.push({
-          step: index,
-          ok: true,
-          actionId: effect.actionId,
-          ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
-          ...(effect.result !== undefined ? { result: effect.result } : {}),
-        });
+        const stopped = recordEffect(index, effect);
+        if (stopped) return stopped;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
@@ -2662,17 +2731,8 @@ export class AgentBrowserService {
                 ...effectiveStep,
                 target: { ref: remapped },
               })) as ServiceActResult;
-              // Fix: the primary success path decays churn (below); the
-              // remap-retry success path did not, so a plan of repeated
-              // remapped steps never cooled back down out of VERIFIED mode.
-              this.decayChurn(churnKey);
-              results.push({
-                step: index,
-                ok: true,
-                actionId: retry.actionId,
-                ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
-                ...(retry.result !== undefined ? { result: retry.result } : {}),
-              });
+              const stopped = recordEffect(index, retry);
+              if (stopped) return stopped;
               continue;
             } catch (retryError) {
               const retryMessage =
@@ -3850,7 +3910,36 @@ export class AgentBrowserService {
     // of silently ignoring the field.
     if (request?.url !== undefined) {
       try {
-        await this.navigate(sessionId, pageId, { url: request.url });
+        const navigation = await this.navigate(sessionId, pageId, { url: request.url });
+        if (navigation.status === 'blocked' || navigation.status === 'timeout') {
+          // Engines may return a failed outcome instead of throwing. Creation
+          // must not turn that outcome into a ready page; use the same bounded
+          // error and teardown path as a thrown navigation failure.
+          const scopeValue = navigation.scope;
+          const scope =
+            navigation.status === 'blocked' && isScopeDenialCode(scopeValue)
+              ? scopeValue
+              : undefined;
+          // navigate() is the single reason normalization point: every
+          // non-success result it returns already carries a valid reason
+          // (its own 'engine_error' fallback included), so no re-validation.
+          const reason = (
+            scope !== undefined ? 'egress_policy' : navigation.reason
+          ) as NavigationFailureReason;
+          const code =
+            navigation.status === 'timeout'
+              ? 'NAVIGATION_TIMEOUT'
+              : reason === 'egress_policy'
+                ? 'POLICY_DENIED'
+                : 'INTERNAL';
+          // One envelope (protocol) for the message and details; the wire
+          // code stays the service-level ProtocolErrorCode above.
+          const detail = navigationFailureDetailFromParts({
+            reason,
+            ...(scope !== undefined ? { scope } : {}),
+          });
+          throw new ServiceError(code, detail.message, detail.retryable, detail.details);
+        }
       } catch (error) {
         if (this.authority.get(sessionId)?.view().state === 'PAUSE_REQUESTED') throw error;
         // Runtime navigate failures (DNS, refused, egress policy) happen
@@ -4576,6 +4665,11 @@ export class AgentBrowserService {
       page.revision = result.newRevision;
       // T5 B-dur (B2): the effect is done; anything that fails from here on followed it.
       try {
+        const navigationObservation = parseActionNavigationObservation(
+          result.navigationObservation
+        );
+        // Navigation evidence does not satisfy a requested value verification.
+        // Keep the existing post-effect failure and durable unknown classification.
         if (
           request.action === 'fill' &&
           request.expectValue !== undefined &&
@@ -4584,8 +4678,30 @@ export class AgentBrowserService {
           throw new ServiceError(
             'ENGINE_UNSUPPORTED',
             'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
-            false
+            false,
+            navigationObservation !== undefined
+              ? { navigationObservation, actionId: result.actionId }
+              : undefined
           );
+        const receipt: ServiceActResult = {
+          status: 'success',
+          actionId: result.actionId,
+          newRevision: result.newRevision,
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          ...(navigationObservation !== undefined ? { navigationObservation } : {}),
+          // Only publish the comparison boolean, never a field value.
+          ...(request.action === 'fill' &&
+          request.expectValue !== undefined &&
+          (result.result as { verified?: unknown } | undefined)?.verified === true
+            ? { result: { verified: true } }
+            : {}),
+          ...(request.action === 'upload' && result.result != null
+            ? { result: result.result }
+            : {}),
+        };
+        // Follow-up waits or reads could mask the completed action and its observed
+        // refusal. Return that evidence first so the caller can inspect current state.
+        if (navigationObservation !== undefined) return receipt;
 
         // Post-action wait (spec 11.1): an explicit wait runs to its deadline
         // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
@@ -4607,22 +4723,9 @@ export class AgentBrowserService {
         }
 
         return {
-          status: 'success',
-          actionId: result.actionId,
-          newRevision: result.newRevision,
+          ...receipt,
           observation,
           waitReason,
-          ...(result.remap !== undefined ? { remap: result.remap } : {}),
-          // Only publish the comparison boolean, never a field value.
-          ...(request.action === 'fill' &&
-          request.expectValue !== undefined &&
-          (result.result as { verified?: unknown } | undefined)?.verified === true
-            ? { result: { verified: true } }
-            : {}),
-          // Upload reports its separate attached-file evidence.
-          ...(request.action === 'upload' && result.result != null
-            ? { result: result.result }
-            : {}),
         };
       } catch (error) {
         throw afterEffect(error);

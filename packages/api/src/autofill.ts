@@ -7,6 +7,7 @@ import {
   ErrorCode,
   labelPattern,
   type PageElement,
+  parseActionNavigationObservation,
   parseAutofillRequest,
 } from '@agentbrowser/protocol';
 import type { ServiceActRequest } from './service.js';
@@ -627,9 +628,26 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           // Only a subsequent complete observation can authorize raw artifact capture again.
           if (request.scope) scopeValid = false;
           Reflect.deleteProperty(receipt, 'actionId');
-          const effect = await ports.act(action, () => {
-            if (execution.state === 'not_started') execution.state = 'dispatched';
-          });
+          let effect: unknown;
+          try {
+            effect = await ports.act(action, () => {
+              if (execution.state === 'not_started') execution.state = 'dispatched';
+            });
+          } catch (error) {
+            // Post-effect verification failures can carry the same bounded evidence.
+            // Preserve it without turning the original failure into a completed field.
+            const details = (
+              error as { details?: { navigationObservation?: unknown; actionId?: unknown } } | null
+            )?.details;
+            const navigationObservation = parseActionNavigationObservation(
+              details?.navigationObservation
+            );
+            if (navigationObservation !== undefined) {
+              receipt.navigationObservation = navigationObservation;
+              if (typeof details?.actionId === 'string') receipt.actionId = details.actionId;
+            }
+            throw error;
+          }
           if (
             effect &&
             typeof effect === 'object' &&
@@ -637,6 +655,24 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
             typeof effect.actionId === 'string'
           )
             receipt.actionId = effect.actionId;
+          const navigationObservation = parseActionNavigationObservation(
+            (effect as { navigationObservation?: unknown } | null)?.navigationObservation
+          );
+          if (navigationObservation !== undefined) {
+            receipt.navigationObservation = navigationObservation;
+            // A native action is the whole write; a widget action may only have
+            // opened, filtered, or partly changed it. Neither proves exact value.
+            if (
+              !strategy.run &&
+              execution.state !== 'not_started' &&
+              (effect as { status?: unknown } | null)?.status === 'success'
+            )
+              execution.state = 'completed';
+            throw new AutofillFailure(
+              'AUTOFILL_NAVIGATION_BLOCKED',
+              'A navigation was blocked during an action; autofill stopped without replaying the write'
+            );
+          }
           guard();
           return effect;
         });
@@ -751,6 +787,13 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       // Authority loss must escape to the enclosing operation/output guard.
       ports.assert();
       receipt.status = execution.state === 'not_started' ? 'failed' : 'uncertain';
+      if (
+        error instanceof AutofillFailure &&
+        error.code === 'AUTOFILL_NAVIGATION_BLOCKED' &&
+        execution.state === 'completed' &&
+        field.verify === 'none'
+      )
+        receipt.status = 'unverified';
       receipt.error =
         error instanceof AutofillFailure
           ? { code: error.code, message: error.message }
@@ -759,6 +802,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
               message: 'Operation failed; inspect current state before another write',
             };
       if (
+        receipt.navigationObservation === undefined &&
         execution.state === 'not_started' &&
         receipt.error.code === 'TARGET_AMBIGUOUS' &&
         policy.onAmbiguous === 'skip'
@@ -830,7 +874,11 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   }
   ports.assert();
   const report: AutofillReport = {
-    ok: receipts.every((r) => r.status === 'verified' || r.status === 'unverified'),
+    ok: receipts.every(
+      (r) =>
+        r.navigationObservation === undefined &&
+        (r.status === 'verified' || r.status === 'unverified')
+    ),
     receipts,
     diagnostics,
     elapsedMs: performance.now() - started,

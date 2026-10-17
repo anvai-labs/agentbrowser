@@ -66,6 +66,40 @@ export interface EngagementScopeStatus {
 
 const DENIED = 'POLICY_DENIED' as const;
 
+/**
+ * A configured host as the request side sees it: lowercase, no trailing dot. Every rule
+ * that binds a host goes through this, so a rule binds exactly what it names; an
+ * un-normalized rule would bind nothing (and an unbound path rule widens the scope).
+ */
+const normalizeHost = (host: string): string => host.toLowerCase().replace(/\.+$/, '');
+
+/** Do two host patterns (exact or ".suffix") admit at least one common host? */
+const patternsOverlap = (a: string, b: string): boolean => {
+  if (!a.startsWith('.') && !b.startsWith('.')) return a === b;
+  if (!a.startsWith('.')) return a.endsWith(b);
+  if (!b.startsWith('.')) return b.endsWith(a);
+  return a.endsWith(b) || b.endsWith(a);
+};
+
+/**
+ * Configuration a scope cannot enforce as written, refused at create time: a path rule
+ * whose host binds none of the allowed hosts would leave that host's paths unrestricted.
+ */
+export function scopeConfigurationIssues(scope: {
+  allowedHosts: string[];
+  pathRules?: Array<{ hostSuffix?: string }>;
+}): string[] {
+  const allowed = scope.allowedHosts.map(normalizeHost);
+  const issues: string[] = [];
+  for (const [index, rule] of (scope.pathRules ?? []).entries()) {
+    if (rule.hostSuffix === undefined) continue;
+    const host = normalizeHost(rule.hostSuffix);
+    if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
+      issues.push(`pathRules[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
+  }
+  return issues;
+}
+
 const hostMatches = (hostname: string, pattern: string): boolean => {
   const host = hostname.toLowerCase();
   if (pattern.startsWith('.')) {
@@ -147,13 +181,19 @@ export class EngagementScopePolicy {
     },
     scope: EngagementScopeOptions
   ) {
-    this.allowed = scope.allowedHosts.map((host) => host.toLowerCase());
-    this.paths = scope.pathRules ?? [];
+    this.allowed = scope.allowedHosts.map(normalizeHost);
+    this.paths = (scope.pathRules ?? []).map((rule) => ({
+      ...rule,
+      ...(rule.hostSuffix !== undefined ? { hostSuffix: normalizeHost(rule.hostSuffix) } : {}),
+    }));
     this.methods =
       scope.allowedMethods !== undefined
         ? new Set(scope.allowedMethods.map((m) => m.toUpperCase()))
         : undefined;
-    this.identities = scope.identityBindings ?? [];
+    this.identities = (scope.identityBindings ?? []).map((binding) => ({
+      ...binding,
+      allowedHosts: binding.allowedHosts.map(normalizeHost),
+    }));
     this.expiresAt = scope.expiresAt;
     this.now = scope.now ?? Date.now;
     this.budget = scope.requestBudget;

@@ -1037,6 +1037,37 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('action commands', () => {
+    it.each([false, true])(
+      'reports completed action and observed navigation denial without replay (json=%s)',
+      async (json) => {
+        const result = {
+          status: 'success',
+          actionId: 'once',
+          newRevision: 2,
+          navigationObservation: {
+            status: 'blocked',
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED',
+            observedDuring: 'action',
+          },
+        };
+        sessions.executeAction.mockResolvedValue(result);
+        expect(
+          await run(...(json ? ['--json'] : []), 'act', 'click', 'ses_1', 'pg_1', 'e1_0')
+        ).toBe(0);
+        if (json) expect(lastJson()).toEqual(result);
+        else {
+          expect(out.join('\n')).toContain('click e1_0: success');
+          expect(out.join('\n')).toContain(
+            'navigation observed during action: blocked (SCOPE_HOST_DENIED)'
+          );
+          expect(out.join('\n')).toContain('do not replay');
+        }
+        expect(err).toEqual([]);
+        expect(sessions.executeAction).toHaveBeenCalledOnce();
+      }
+    );
+
     it('should execute a click', async () => {
       const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0');
 
@@ -1515,6 +1546,52 @@ describe('AgentBrowser CLI', () => {
       expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
     });
 
+    it.each([false, true])(
+      'retains a stopped autofill navigation receipt (json=%s)',
+      async (json) => {
+        const report = {
+          ok: false,
+          receipts: [
+            {
+              field: 0,
+              match: { label: 'Name' },
+              status: 'uncertain',
+              verified: false,
+              actionId: 'act_completed',
+              navigationObservation: {
+                status: 'blocked',
+                reason: 'egress_policy',
+                scope: 'SCOPE_PATH_DENIED',
+                observedDuring: 'action',
+              },
+              error: {
+                code: 'AUTOFILL_NAVIGATION_BLOCKED',
+                message: 'Inspect current state before another write',
+              },
+            },
+          ],
+          elapsedMs: 10,
+        };
+        sessions.autofill.mockResolvedValue(report);
+        expect(
+          await run(
+            ...(json ? ['--json'] : []),
+            'autofill',
+            'ses_1',
+            'pg_1',
+            JSON.stringify(payload)
+          )
+        ).toBe(1);
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+        expect(err).toEqual([]);
+        if (json) expect(lastJson()).toEqual(report);
+        else {
+          expect(out.join('\n')).toContain('navigation blocked during action (SCOPE_PATH_DENIED)');
+          expect(out.join('\n')).toContain('inspect current state before another write');
+        }
+      }
+    );
+
     it('rejects contradictory autofill success without echoing it or retrying', async () => {
       sessions.autofill.mockResolvedValue({
         ok: true,
@@ -1902,6 +1979,108 @@ describe('AgentBrowser CLI', () => {
       const code = await run('page', 'create', 'ses_1', '--url', 'https://example.com/x');
       expect(code).toBe(0);
       expect(sessions.createPage).toHaveBeenCalledWith('ses_1', { url: 'https://example.com/x' });
+    });
+
+    it.each([false, true])('page create reports a bounded scope denial (json=%s)', async (json) => {
+      sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private redirect https://private.invalid/?token=canary'), {
+          code: 'POLICY_DENIED',
+          details: {
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED',
+            operationId: 'create-page-once',
+            url: 'https://private.invalid/?token=canary',
+            headers: { authorization: 'synthetic-private-marker' },
+          },
+        })
+      );
+
+      expect(
+        await run(
+          ...(json ? ['--json'] : []),
+          'page',
+          'create',
+          'ses_1',
+          '--url',
+          'https://example.com'
+        )
+      ).toBe(1);
+      expect(sessions.createPage).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err).toHaveLength(1);
+      if (json) {
+        expect(JSON.parse(err[0])).toEqual({
+          error: {
+            code: 'POLICY_DENIED',
+            message: 'Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+            retryable: false,
+            details: {
+              reason: 'egress_policy',
+              scope: 'SCOPE_HOST_DENIED',
+              operationId: 'create-page-once',
+            },
+          },
+        });
+      } else {
+        expect(err).toEqual([
+          'POLICY_DENIED: Navigation failed: egress_policy (SCOPE_HOST_DENIED)',
+        ]);
+      }
+      expect(err.join('\n')).not.toMatch(/private|canary|authorization/);
+    });
+
+    it.each([
+      ['NAVIGATION_TIMEOUT', 'dns_timeout', false],
+      ['NAVIGATION_TIMEOUT', 'dns_timeout', true],
+      ['INTERNAL', 'browser_error_document', false],
+      ['INTERNAL', 'browser_error_document', true],
+      ['INTERNAL', 'engine_error', false],
+      ['INTERNAL', 'engine_error', true],
+    ])('page create bounds %s/%s errors (json=%s)', async (code, reason, json) => {
+      sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private adapter https://private.invalid/?token=canary'), {
+          code,
+          details: { reason, operationId: 'create-page-once', url: 'https://private.invalid' },
+        })
+      );
+      expect(await run(...(json ? ['--json'] : []), 'page', 'create', 'ses_1')).toBe(1);
+      expect(sessions.createPage).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err).toHaveLength(1);
+      if (json) {
+        expect(JSON.parse(err[0])).toEqual({
+          error: {
+            code,
+            message: `Navigation failed: ${reason}`,
+            retryable: false,
+            details: { reason, operationId: 'create-page-once' },
+          },
+        });
+      } else expect(err).toEqual([`${code}: Navigation failed: ${reason}`]);
+      expect(err.join('\n')).not.toMatch(/private|canary|https/);
+    });
+
+    it('page create omits unrecognized scope and operation identifiers from JSON errors', async () => {
+      sessions.createPage.mockRejectedValueOnce(
+        Object.assign(new Error('private adapter prose'), {
+          code: 'POLICY_DENIED',
+          details: {
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED private-marker',
+            operationId: 'invalid id private-marker',
+          },
+        })
+      );
+      expect(await run('--json', 'page', 'create', 'ses_1')).toBe(1);
+      expect(out).toEqual([]);
+      expect(JSON.parse(err.join('\n'))).toEqual({
+        error: {
+          code: 'POLICY_DENIED',
+          message: 'Navigation failed: egress_policy',
+          retryable: false,
+          details: { reason: 'egress_policy' },
+        },
+      });
     });
 
     it('page get and close round trip', async () => {

@@ -928,6 +928,8 @@ export interface ActionResult {
   newRevision: number;
   result: unknown;
   navigationStatus?: NavigationStatus;
+  /** A bounded navigation denial observed during dispatch; not a causal assertion. */
+  navigationObservation?: import('./action-navigation.js').ActionNavigationObservation;
   targetFingerprint?: string;
   policyDecision?: PolicyDecision;
   approvalDecision?: ApprovalDecision;
@@ -946,6 +948,7 @@ export interface NavigationStatus {
   url: string;
   redirectChain: string[];
   reason?: import('./navigation-failure.js').NavigationFailureReason;
+  scope?: import('./navigation-failure.js').ScopeDenialCode;
 }
 
 /**

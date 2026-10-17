@@ -414,3 +414,133 @@ SESSION SCOPE FOLLOW-UP — 2026-10-17
   engagement-bound findings and SARIF drafts. M4 covers saved-plan execution and
   JUnit/JSON/CI integration. Objective/completion-criteria metadata is not a current
   T10 requirement. Shared-worker and worker-WebSocket qualification remains limited.
+
+SCOPE REPORTING IMPLEMENTATION — 2026-10-17
+- Continued from current develop after the 1.23.0 promotion; earlier "unreleased"
+  ledger notes describe their timestamp, not current publication status. The 1.23.0
+  GitHub release was not yet available when this follow-up checked publication.
+- Page creation now rejects scope-blocked redirect outcomes with POLICY_DENIED and
+  a validated scope sub-code, closes only the newly created page, and preserves
+  sibling pages. A cleanup failure does not mask the bounded denial.
+- CLI page create --json now returns bounded navigation-error JSON on stderr with
+  exit 1. MCP page_create applies the same projection on both protocol versions.
+  Neither includes raw driver prose, URLs, or arbitrary error details; no retry.
+- Direct download connection/transfer errors preserve only recognized scope codes.
+  Initial and redirect refusals retain existing generic messages and failure stages;
+  malformed or unrecognized scope values and arbitrary details are omitted.
+- Validation: reproduced failures before fixes; 170 API page/service tests, 117
+  download/connection tests, 151 CLI tests and 97 MCP tests passed. Real Chromium
+  REST coverage verifies HTTP 403, the scope code, zero denied-target requests and
+  no leaked page inventory; a sibling page remains usable. Full local commit gates
+  passed (type-check, lint, build and 5,852 tests; 20 optional/platform skips).
+  Review added a passing human-pause regression using the real authority state
+  machine: takeover keeps the new page for the operator and settles HUMAN_ACTIVE.
+  Final push/CI results are recorded in the associated PR before merge.
+- Remaining: action/plan navigation-denial correlation, non-scope blocked/timeout
+  page-create reporting, and generic CLI download error formatting. Broader T10 M3/M4
+  and the original identifier, hard-cancellation, live-site, streaming and benchmark
+  follow-ups remain. This change does not shorten credentials or identifiers.
+- Parallel implementation and independent review use isolated fixtures only. The
+  active headed Fiverr session, installed service and verification challenges remain
+  untouched; no live credentials are read or printed.
+
+ACTION NAVIGATION FOLLOW-UP — 2026-10-17
+- Added URL-free navigationObservation on completed actions and plan receipts:
+  blocked/egress_policy, a recognized scope code, and observedDuring: action.
+  This is temporal evidence from one main-document request chain during dispatch,
+  not a claim that the action caused that navigation. Request identity and epochs
+  exclude stale/late requests, subresources, iframes, other pages, multiple chains,
+  overlapping actions and concurrent direct navigation. No grace wait or replay.
+- Single-action success and actionId remain intact. Plans/batches preserve and count
+  the completed step, then stop with PLAN_NAVIGATION_BLOCKED. Post-action waits/reads
+  cannot mask this receipt. SDK/CLI/MCP and generated OpenAPI/catalogs carry it.
+- Independent review found a verification-order regression before delivery: the
+  new receipt initially bypassed the expectValue verification-evidence guard. Fixed
+  by running that guard first; an unverified fill remains a nonretryable post-effect
+  unknown outcome, with bounded observation/actionId details and no replay. Its plan
+  preserves the earlier successful prefix, not a falsely completed verified fill.
+- Validation: engine 57 focused tests (17 new) passed; service/fill/durable/outcome
+  suites 210 passed; independent reviewer reran 11 verification cases. Protocol 36,
+  core 54, CLI 153 and MCP 88 focused tests passed. Two real Chromium REST tests
+  cover GET/POST redirects through act and plan: effects occur once, denied targets
+  receive zero requests, reports retain the receipt, and no secret query is emitted.
+  Full commit/push gates and final-head CI are required and recorded in the PR.
+- Limits: only denials observed during dispatch are included; missing evidence is
+  not success. Autofill currently ignores this additive observation and is not
+  claimed to stop. Explicit navigation/wait behavior and hard cancellation remain
+  unchanged. Earlier identifier, streaming and benchmark follow-ups remain open.
+- Newly reproduced separate popup lifecycle issue: a popup closing during adoption
+  can invoke registerRemoval before onDownload is initialized, raising a temporal-
+  dead-zone ReferenceError in registerPlaywrightPage (engine-playwright/index.ts).
+  The fixture awaits adoption before teardown; production lifecycle code is unchanged.
+  This race needs its own focused fix and regression.
+- Work used isolated fixtures and parallel implementation plus independent review.
+  No active headed Fiverr session, installed service or verification challenge was
+  accessed, restarted or automated; no live credentials were read or printed.
+
+AUTOFILL NAVIGATION AND POPUP LIFECYCLE FOLLOW-UP — 2026-10-17
+- Continued from develop after action-navigation PR #567 merged as 238d4219.
+  Autofill now retains bounded navigationObservation/actionId evidence on field
+  receipts and stops remaining widget actions and fields. Successful actions with
+  this evidence stop with AUTOFILL_NAVIGATION_BLOCKED; post-effect action errors
+  preserve their original bounded code. Skip/retry policies cannot resume writes.
+- An action completing does not prove exact field verification: interrupted exact
+  or multi-action widget fields remain uncertain. A completed native verify:none
+  action remains unverified, with ok:false for the run. Confirmed chip effects are
+  preserved; later fields remain not_attempted. Earlier verified fields still get
+  a final read-only recheck or uncertain downgrade. Durable unknown classification
+  remains intact for uncertain fields. CLI text and both MCP versions preserve the
+  stop reason; shared protocol/OpenAPI schemas accept the additive evidence.
+- Popup registration now rejects pages that close before or during adoption, with
+  cleanup initialized before synchronous removal can execute. It avoids false
+  creation announcements, phantom page/download inventory and retained engine
+  handlers. Browser-owned closure follows named-handler cleanup, preserving caller
+  listeners and ownership boundaries.
+- Validation reproduced failures before implementation: real Chromium GET/POST
+  autofill redirects lost the navigation evidence; CLI/MCP rejected the new receipt;
+  closed-page registration raised the onDownload initialization ReferenceError.
+  Focused validation passed: 144 API runner/service/durable tests, 48 protocol tests,
+  155 CLI tests, 90 MCP tests and two real Chromium REST tests. Real redirects
+  produced exactly one effect, zero denied-target hits and zero subsequent writes.
+  Popup/ownership/action suites passed 55 tests; the final popup regressions passed
+  7/7. Workspace build and API/engine type-check passed. Required commit/push gates
+  and final-head CI are recorded in the associated PR before merge.
+- Limits: navigation evidence still covers only a single unambiguous request chain
+  during action dispatch; absence is not navigation success. No hard cancellation
+  or navigation settlement wait was added. Original compact identifier, streaming,
+  token benchmark and live-site qualification follow-ups remain. Broader T10 M3/M4
+  work and distribution follow-ups are separate from these two fixes.
+- All browser validation uses isolated fixtures. The active headed Fiverr session,
+  installed service and verification challenges remain untouched; no live API
+  credentials were read, printed, shortened or mixed with page/session identifiers.
+
+PAGE CREATION AND DOWNLOAD OUTPUT FOLLOW-UP — 2026-10-17
+- Continued from develop e8e2ff63 after PR #568. Page creation with a requested URL
+  now rejects returned blocked/timeout navigation outcomes instead of claiming
+  ready. Policy denials map to HTTP 403, timeouts 504 and other blocked failures
+  500. Only validated reason/scope survive; no driver prose, URLs or redirects.
+  Failed creation cleans up only the new page; siblings and the session remain
+  usable. Human takeover retains the page. No retry is introduced.
+- CLI download and download collect --out now save privately before emitting one
+  compact artifact/path/actual-byte-count receipt. Retrieval/write failures emit
+  no stdout success; empty files are valid. Supplied inline content avoids a second
+  artifact fetch but is never echoed. Without --out, output stays a metadata-only
+  artifact reference. CLI JSON errors go to stderr with fixed prose, known error
+  codes, validated scope/transport stage and bounded operation IDs only.
+- Validation reproduced false page-ready outcomes and CLI double/premature output
+  before fixes. API navigation/service suites passed 191 tests, full CLI passed
+  385 tests, MCP page-provisioning/server passed 103, and the shared download error
+  helper passed 19. Real Chromium redirect denial produced zero forbidden-target
+  requests and retained a usable sibling. Independent review passed 21 download
+  output tests and 19 protocol tests with no remaining blocker. Workspace build,
+  API/CLI type-check and diff checks passed. Mandatory commit/push gates and final
+  CI results are recorded in the associated PR before merge.
+- Remaining original consumer work includes the fixed ten-step context/token
+  benchmark, redacted cookie preflight, compact non-secret identifiers/context,
+  observation and hydration completeness, hard cancellation, and live-site
+  qualification. Artifact fetching still transfers base64 internally; streaming
+  and ranges remain a separate efficiency improvement. Broader T10 M3/M4 is not a
+  prerequisite for closing this consumer handoff.
+- All browser tests used isolated fixtures. No active headed Fiverr session,
+  installed service, API credentials or verification challenge was accessed or
+  modified. Credentials remain separate from session/page identifiers.

@@ -24,6 +24,7 @@ import {
   createApiErrorDetail,
   DELIVERED_ACTION_TYPES,
   ErrorCode,
+  parseActionNavigationObservation,
   parseRef,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
@@ -149,8 +150,10 @@ export class ActionExecutor {
       if (effect.remap !== undefined) {
         result.remap = effect.remap;
       }
+      const navigationObservation = parseActionNavigationObservation(effect.navigationObservation);
+      if (navigationObservation !== undefined) result.navigationObservation = navigationObservation;
 
-      if (request.observeAfter) {
+      if (request.observeAfter && navigationObservation === undefined) {
         result.observation = await this.observeAfter(request, context, effect, result.newRevision);
       }
 

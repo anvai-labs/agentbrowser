@@ -7,6 +7,7 @@
 
 import { type Static, type TSchema, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { ActionNavigationObservationSchema } from './action-navigation.js';
 import { NavigationFailureReasonSchema, SCOPE_DENIAL_CODES } from './navigation-failure.js';
 import {
   DELIVERED_ACTION_TYPES,
@@ -97,47 +98,68 @@ export const EngineTypeSchema = Type.Union([
   Type.Literal('auto'),
 ]);
 
-export const ApprovalPolicySchema = Type.Object({
-  review: Type.Optional(Type.Literal('operator')),
-  transactions: Type.Optional(
-    Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
-  ),
-  externalMessages: Type.Optional(
-    Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
-  ),
-});
+export const ApprovalPolicySchema = Type.Object(
+  {
+    review: Type.Optional(Type.Literal('operator')),
+    transactions: Type.Optional(
+      Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
+    ),
+    externalMessages: Type.Optional(
+      Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
+    ),
+  },
+  { additionalProperties: false }
+);
 
-export const ScopePathRuleSchema = Type.Object({
-  // Exact host or ".suffix" (subdomains only — the apex needs its own
-  // exact entry, matching SessionHostRules semantics). Absent = the rule
-  // binds every allowed host.
-  hostSuffix: Type.Optional(Type.String({ minLength: 2 })),
-  prefix: Type.String({ minLength: 1 }),
-});
+export const ScopePathRuleSchema = Type.Object(
+  {
+    // Exact host or ".suffix" (subdomains only — the apex needs its own
+    // exact entry, matching SessionHostRules semantics). Absent = the rule
+    // binds every allowed host.
+    hostSuffix: Type.Optional(
+      Type.String({
+        minLength: 2,
+        // A hostname or ".suffix" in ASCII (punycode for IDNs), or a bracketed IPv6 literal: no
+        // scheme, port or Unicode, any of which would bind no request host.
+        pattern: '^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$',
+      })
+    ),
+    prefix: Type.String({ minLength: 1, pattern: '^/' }),
+  },
+  { additionalProperties: false }
+);
 
-export const ScopeIdentityBindingSchema = Type.Object({
-  header: Type.String({ minLength: 1 }),
-  value: Type.String({ minLength: 1 }),
-  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-});
+export const ScopeIdentityBindingSchema = Type.Object(
+  {
+    header: Type.String({ minLength: 1 }),
+    value: Type.String({ minLength: 1 }),
+    allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
 
 // T7 slice 2: engagement scope (authorized security testing). Enforced
 // per request and per redirect hop by EngagementScopePolicy over the
 // session's base policy; restrict-only — the base always runs.
-export const EngagementScopeSchema = Type.Object({
-  // Exhaustive when set: exact hosts and ".suffix" entries in scope.
-  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-  pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
-  allowedMethods: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
-  // Epoch ms; the scope is expired at or after this instant.
-  expiresAt: Type.Optional(Type.Number({ minimum: 0 })),
-  // Total choke-point requests in scope, redirect hops included.
-  requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
-  identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
-  // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
-  // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
-  ledger: Type.Optional(Type.Boolean()),
-});
+export const EngagementScopeSchema = Type.Object(
+  {
+    // Exhaustive when set: exact hosts and ".suffix" entries in scope.
+    allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+    pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
+    allowedMethods: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    // Epoch ms; the scope is expired at or after this instant.
+    expiresAt: Type.Optional(Type.Number({ minimum: 0 })),
+    // Total choke-point requests in scope, redirect hops included.
+    requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
+    identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
+    // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
+    // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
+    ledger: Type.Optional(Type.Boolean()),
+    // A scope may only narrow: a field this server cannot enforce is refused (400), never
+    // ignored — an ignored exclusion would silently widen the engagement.
+  },
+  { additionalProperties: false }
+);
 
 // T10 M2: the scope in effect for a session (GET /v1/sessions/{id}/scope).
 // Identity bindings report header and hosts only: the marker value is the
@@ -186,25 +208,29 @@ export const ScopeCheckResultSchema = Type.Union([
 export type EngagementScopeStatus = Static<typeof EngagementScopeStatusSchema>;
 export type ScopeCheckResult = Static<typeof ScopeCheckResultSchema>;
 
-export const SessionPolicySchema = Type.Object({
-  // Optional since Phase 3: requiring allowedHosts meant a policy object
-  // carrying ONLY blockedHosts (or only download rules) could not be
-  // expressed - every restrict-only combination is legitimate.
-  allowedHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
-  blockedHosts: Type.Optional(Type.Array(Type.String())),
-  allowDownloads: Type.Optional(Type.Boolean()),
-  maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
-  approval: Type.Optional(ApprovalPolicySchema),
-  // ADR-019: off by default. Explicit per-session acceptance that service
-  // workers bypass this session's egress choke point (Playwright cannot
-  // route service-worker-originated requests), needed by destinations whose
-  // anti-fraud tooling keys off service-worker presence.
-  allowServiceWorkers: Type.Optional(Type.Boolean()),
-  // T7 slice 2a: engagement scope (hosts/paths/methods/identities/time/
-  // budget) enforced on top of every other layer of the session's policy
-  // chain.
-  scope: Type.Optional(EngagementScopeSchema),
-});
+export const SessionPolicySchema = Type.Object(
+  {
+    // Optional since Phase 3: requiring allowedHosts meant a policy object
+    // carrying ONLY blockedHosts (or only download rules) could not be
+    // expressed - every restrict-only combination is legitimate.
+    allowedHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+    blockedHosts: Type.Optional(Type.Array(Type.String())),
+    allowDownloads: Type.Optional(Type.Boolean()),
+    maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
+    approval: Type.Optional(ApprovalPolicySchema),
+    // ADR-019: off by default. Explicit per-session acceptance that service
+    // workers bypass this session's egress choke point (Playwright cannot
+    // route service-worker-originated requests), needed by destinations whose
+    // anti-fraud tooling keys off service-worker presence.
+    allowServiceWorkers: Type.Optional(Type.Boolean()),
+    // T7 slice 2a: engagement scope (hosts/paths/methods/identities/time/
+    // budget) enforced on top of every other layer of the session's policy
+    // chain.
+    scope: Type.Optional(EngagementScopeSchema),
+    // Restrict-only: an unknown policy field is refused (400), never ignored.
+  },
+  { additionalProperties: false }
+);
 
 export const SessionCookieSchema = Type.Object({
   name: Type.String({ minLength: 1 }),
@@ -219,23 +245,28 @@ export const SessionCookieSchema = Type.Object({
   ),
 });
 
-export const SessionRequestSchema = Type.Object({
-  cdpAttach: Type.Optional(Type.Boolean()),
-  controlMode: Type.Optional(Type.Literal('delegated')),
-  tenantId: Type.Optional(Type.String({ minLength: 1 })),
-  // Known engine names plus any registered engine name (TD-BROWSER-7
-  // registry routes arbitrary names; unknown names fail at the service).
-  engine: Type.Optional(Type.Union([EngineTypeSchema, Type.String({ minLength: 1 })])),
-  ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
-  idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
-  viewport: Type.Optional(ViewportSchema),
-  locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
-  timezoneId: Type.Optional(Type.String()),
-  headless: Type.Optional(Type.Boolean()),
-  cookies: Type.Optional(Type.Array(SessionCookieSchema)),
-  policy: Type.Optional(SessionPolicySchema),
-  snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
-});
+export const SessionRequestSchema = Type.Object(
+  {
+    cdpAttach: Type.Optional(Type.Boolean()),
+    controlMode: Type.Optional(Type.Literal('delegated')),
+    tenantId: Type.Optional(Type.String({ minLength: 1 })),
+    // Known engine names plus any registered engine name (TD-BROWSER-7
+    // registry routes arbitrary names; unknown names fail at the service).
+    engine: Type.Optional(Type.Union([EngineTypeSchema, Type.String({ minLength: 1 })])),
+    ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
+    idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
+    viewport: Type.Optional(ViewportSchema),
+    locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
+    timezoneId: Type.Optional(Type.String()),
+    headless: Type.Optional(Type.Boolean()),
+    cookies: Type.Optional(Type.Array(SessionCookieSchema)),
+    policy: Type.Optional(SessionPolicySchema),
+    snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
+    // Strict: an unknown or misplaced key (a policy field outside `policy`) is refused,
+    // never passed through unvalidated or ignored.
+  },
+  { additionalProperties: false }
+);
 
 /**
  * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request. Domains are
@@ -839,6 +870,7 @@ export const NavigationStatusSchema = Type.Object({
 export const ActOutcomeSchema = Type.Object(
   {
     status: Type.Literal('success'),
+    navigationObservation: Type.Optional(ActionNavigationObservationSchema),
     actionId: Type.String(),
     newRevision: Type.Integer({ minimum: 1 }),
     observation: Type.Optional(PageStateSchema),
@@ -952,6 +984,7 @@ export const ActionResultSchema = Type.Object({
   newRevision: Type.Integer({ minimum: 1 }),
   result: Type.Unknown(),
   navigationStatus: Type.Optional(NavigationStatusSchema),
+  navigationObservation: Type.Optional(ActionNavigationObservationSchema),
   targetFingerprint: Type.Optional(Type.String()),
   policyDecision: Type.Optional(PolicyDecisionSchema),
   approvalDecision: Type.Optional(ApprovalDecisionSchema),

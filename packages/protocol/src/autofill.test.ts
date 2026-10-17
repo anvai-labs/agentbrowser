@@ -7,6 +7,47 @@ import {
 } from './autofill.js';
 
 const field = { match: { label: 'Company' }, value: 'Example' };
+const navigationObservation = {
+  status: 'blocked',
+  reason: 'egress_policy',
+  scope: 'SCOPE_HOST_DENIED',
+  observedDuring: 'action',
+} as const;
+it('accepts bounded navigation evidence on stopped autofill receipts, never on an ok report', () => {
+  const report = {
+    ok: false,
+    elapsedMs: 1,
+    receipts: [
+      {
+        field: 0,
+        match: field.match,
+        status: 'uncertain',
+        verified: false,
+        actionId: 'action-1',
+        navigationObservation,
+      },
+    ],
+  };
+  expect(parseAutofillReport(report)).toEqual(report);
+  expect(() =>
+    parseAutofillReport({
+      ...report,
+      ok: true,
+      receipts: [{ ...report.receipts[0], status: 'unverified' }],
+    })
+  ).toThrow();
+  expect(() =>
+    parseAutofillReport({
+      ...report,
+      receipts: [
+        {
+          ...report.receipts[0],
+          navigationObservation: { ...navigationObservation, url: 'https://secret.invalid/' },
+        },
+      ],
+    })
+  ).toThrow();
+});
 it.each([
   { fields: [] },
   { fields: Array(51).fill(field) },

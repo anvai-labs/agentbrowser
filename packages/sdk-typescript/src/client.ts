@@ -150,6 +150,7 @@ export { validateWireAction } from '@agentbrowser/protocol';
 
 export interface ActionResult {
   status: string;
+  navigationObservation?: import('@agentbrowser/protocol').ActionNavigationObservation;
   actionId?: string;
   newRevision?: number;
   observation?: ObservationResponse;
@@ -170,8 +171,10 @@ export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
+  downloadFailureDetail,
   formatErrorForUser,
   navigationFailureDetail,
+  parseActionNavigationObservation,
   parseAutofillRequest,
   parseExtractMaxBytesText,
   parseRef,
