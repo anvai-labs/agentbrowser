@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — an engine crash keeps the ledger's close-time records (T10 M2)
+
+- On an engine crash the session now stops the scope, terminates the engine session, and only
+  then closes the ledger, so the engine's close-time records (POST/PUT/PATCH outcomes never
+  observed) are written. The closing record carries `crashed: true` and `scope.stopped:
+  "engine crashed"`. Previously the ledger closed first and those records were lost uncounted.
+
+### Tests — the release smoke covers the engagement ledger (T10 M2)
+
+- `scripts/scope-consumer-smoke.mjs` runs a ledgered session (in-scope navigation and a POST
+  redirected out of scope), exports it over REST, verifies it with the released CLI
+  (`engagement verify`), and checks that an edited copy is refused.
+
 ### Added — export and verify engagement ledgers (T10 M2)
 
 | Need | Surface |

@@ -1,7 +1,7 @@
 /** Build first. Engagement-scope release smoke (T10 M1): one scoped session, every surface. */
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,6 +64,11 @@ const waitFor = async (predicate, timeoutMs, message) => {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 };
+
+// T10 M2: an operator engagement directory (private, canonical) for the ledger checks.
+const engagementDir = await realpath(await mkdtemp(join(tmpdir(), 'scope-smoke-ledger-')));
+await chmod(engagementDir, 0o700);
+process.env.AGENTBROWSER_ENGAGEMENT_DIR = engagementDir;
 
 const key = randomUUID();
 const server = await buildServer({
@@ -251,8 +256,70 @@ try {
   } finally {
     await client.sessions.close(session.sessionId);
   }
+
+  // 3. The engagement ledger: a ledgered session records its traffic decisions,
+  //    exports verbatim over REST, and verifies offline with the CLI; an edited
+  //    copy fails verification.
+  const ledgered = await client.sessions.create({
+    tenantId: 'scope-smoke',
+    policy: { scope: { ...scope, ledger: true } },
+  });
+  assert.match(ledgered.engagementId ?? '', /^eng_[0-9a-f]{24}$/);
+  const ledgerPage = await client.sessions.createPage(ledgered.sessionId);
+  await client.sessions.navigate(ledgered.sessionId, ledgerPage.pageId, {
+    url: at(IN_HOST, '/start'),
+  });
+  const hitsBefore = hits.length;
+  await client.sessions
+    .navigate(ledgered.sessionId, ledgerPage.pageId, { url: at(IN_HOST, '/post-out') })
+    .catch(() => {});
+  await waitFor(
+    () => hits.slice(hitsBefore).some((hit) => hit.method === 'POST' && hit.path === '/hop-out'),
+    15_000,
+    'the ledgered form POST never reached the in-scope host'
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  await client.sessions.close(ledgered.sessionId);
+  const exported = await fetch(`${baseUrl}/v1/engagements/${ledgered.engagementId}`, {
+    headers: { authorization: `Bearer ${key}` },
+  });
+  assert.equal(exported.status, 200);
+  const ledgerText = await exported.text();
+  assert.match(ledgerText, /"type":"engagement\.opened"/);
+  assert.match(ledgerText, /"type":"engagement\.closed"/);
+  assert.match(ledgerText, /"url":"http:\/\/127\.0\.0\.1:\d+\/start"/);
+  assert.match(ledgerText, /"blocked":true/);
+  assert.match(ledgerText, /"scope":"SCOPE_HOST_DENIED"/);
+  const goodFile = join(scratch, 'ledger.jsonl');
+  const badFile = join(scratch, 'ledger-edited.jsonl');
+  await writeFile(goodFile, ledgerText);
+  await writeFile(badFile, ledgerText.replace('/start', '/forged'));
+  const verified = await runExecutable(
+    [...cliCommand, '--json', 'engagement', 'verify', goodFile],
+    {
+      env,
+      timeoutMs: 60_000,
+      expectedExitCode: 0,
+    }
+  );
+  const verdict = JSON.parse(verified.stdout.trim());
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.closed, true);
+  const tampered = await runExecutable([...cliCommand, '--json', 'engagement', 'verify', badFile], {
+    env,
+    timeoutMs: 60_000,
+    expectedExitCode: 1,
+  });
+  assert.equal(JSON.parse(tampered.stdout.trim()).ok, false);
+  check('engagement ledger', {
+    records: verdict.records,
+    export: exported.status,
+    verify: 'ok',
+    edited: 'refused',
+  });
 } finally {
   await rm(scratch, { recursive: true, force: true });
+  await rm(engagementDir, { recursive: true, force: true });
   await server.close();
   fixture.closeAllConnections();
   await new Promise((resolve) => fixture.close(resolve));
