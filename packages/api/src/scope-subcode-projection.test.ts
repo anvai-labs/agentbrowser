@@ -84,6 +84,17 @@ it('projects each scope denial with its sub-code', async () => {
         return scope.checkRequest({ hostname: host, url: `http://${host}/` });
       },
     ],
+    [
+      'SCOPE_RATE_LIMITED',
+      async () => {
+        const scope = new EngagementScopePolicy(base(), {
+          allowedHosts: [host],
+          rateLimit: { requests: 1, perSeconds: 60 },
+        });
+        await scope.checkRequest({ hostname: host, url: `http://${host}/a` });
+        return scope.checkRequest({ hostname: host, url: `http://${host}/b` });
+      },
+    ],
   ];
   expect(cases.map(([code]) => code).sort()).toEqual([...SCOPE_DENIAL_CODES].sort());
   for (const [code, check] of cases) {

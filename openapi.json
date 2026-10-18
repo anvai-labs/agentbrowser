@@ -2834,6 +2834,10 @@
                                   {
                                     "const": "SCOPE_LEDGER_UNAVAILABLE",
                                     "type": "string"
+                                  },
+                                  {
+                                    "const": "SCOPE_RATE_LIMITED",
+                                    "type": "string"
                                   }
                                 ]
                               },
@@ -11155,6 +11159,10 @@
                         {
                           "const": "SCOPE_LEDGER_UNAVAILABLE",
                           "type": "string"
+                        },
+                        {
+                          "const": "SCOPE_RATE_LIMITED",
+                          "type": "string"
                         }
                       ]
                     },
@@ -11883,6 +11891,10 @@
                             {
                               "const": "SCOPE_LEDGER_UNAVAILABLE",
                               "type": "string"
+                            },
+                            {
+                              "const": "SCOPE_RATE_LIMITED",
+                              "type": "string"
                             }
                           ]
                         },
@@ -12301,6 +12313,10 @@
                   {
                     "const": "SCOPE_LEDGER_UNAVAILABLE",
                     "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_RATE_LIMITED",
+                    "type": "string"
                   }
                 ]
               }
@@ -12352,6 +12368,10 @@
                   },
                   {
                     "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_RATE_LIMITED",
                     "type": "string"
                   }
                 ]
@@ -13170,6 +13190,10 @@
               },
               {
                 "const": "SCOPE_LEDGER_UNAVAILABLE",
+                "type": "string"
+              },
+              {
+                "const": "SCOPE_RATE_LIMITED",
                 "type": "string"
               }
             ]
@@ -14006,6 +14030,10 @@
                   },
                   {
                     "const": "SCOPE_LEDGER_UNAVAILABLE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "SCOPE_RATE_LIMITED",
                     "type": "string"
                   }
                 ]
