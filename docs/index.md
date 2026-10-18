@@ -90,12 +90,12 @@ agentbrowser --json observe SESSION PAGE --roles dialog --name policy   # compac
 
 ## Status
 
-- **1.24.0 released** (2026-10-17, [release history](release-milestones.md)); post-MVP packets
+- **1.25.0 released** (2026-10-18, [release history](release-milestones.md)); post-MVP packets
   [T0–T10](spec/tasks/README.md):
 
     | Complete | In progress | Gated on owner or infrastructure |
     | --- | --- | --- |
-    | T0 · T2 · T3 · T7 | T10 engagements (1.25.0 → 1.26.0) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
+    | T0 · T2 · T3 · T7 | T10 engagements (1.26.0: automation runs) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
 
 - Every claim is adversarially reviewable via the [evidence index](spec/evidence/t0-foundation.md).
-- Defaults (1.24): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.
+- Defaults (1.25): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.
