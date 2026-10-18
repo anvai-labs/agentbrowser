@@ -45,6 +45,7 @@ import {
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_WAIT_TYPES,
   downloadFailureDetail,
+  ErrorCode,
   evaluateTestCaseRun,
   FormMappingSchema,
   FormValuesSchema,
@@ -348,6 +349,8 @@ async function promptOperatorKey(deps: {
   return line;
 }
 
+const KNOWN_ERROR_CODES = new Set<string>(Object.values(ErrorCode));
+
 /** XML-escape for JUnit attributes (the same rules as the CI action's writer). */
 const junitXml = (value: string): string =>
   Array.from(value, (c) => {
@@ -390,11 +393,14 @@ export function planJunit(
     }
     if (result.ok) return `${open}/>`;
     failures += 1;
-    // A code only: the step's own error prefix, else the plan's error code, else FAILED.
-    const reportCode = /^[A-Z][A-Z0-9_]*$/.test(report.error?.code ?? '')
-      ? report.error?.code
-      : undefined;
-    const code = /^[A-Z][A-Z0-9_]*(?=:|$)/.exec(result.error ?? '')?.[0] ?? reportCode ?? 'FAILED';
+    // A known error code only: the step's own error prefix, else the plan's error code, else
+    // FAILED. Anything else (which could be page-derived text) never enters the artifact.
+    const known = (value: string | undefined) =>
+      value !== undefined && KNOWN_ERROR_CODES.has(value) ? value : undefined;
+    const code =
+      known(/^[A-Z][A-Z0-9_]*(?=:|$)/.exec(result.error ?? '')?.[0]) ??
+      known(report.error?.code) ??
+      'FAILED';
     return `${open}>\n      <failure message="${junitXml(code)}"/>\n    </testcase>`;
   });
   return [
@@ -1858,6 +1864,27 @@ export function buildCli(deps: CliDependencies): Cli {
               const steps = parsePlanSteps(
                 await readCommandJson(runCommand, `@${planFile}`, 'plan steps')
               );
+              if (steps.length === 0)
+                throw new UsageError('The plan file has no steps: nothing to run.');
+              let startUrl: URL;
+              try {
+                startUrl = new URL(options.url);
+              } catch {
+                throw new UsageError('--url must be an absolute http(s) URL.');
+              }
+              if (startUrl.protocol !== 'http:' && startUrl.protocol !== 'https:')
+                throw new UsageError('--url must be an absolute http(s) URL.');
+              if (options.junit !== undefined) {
+                const { lstat } = await import('node:fs/promises');
+                const exists = await lstat(options.junit).then(
+                  () => true,
+                  () => false
+                );
+                if (exists)
+                  throw new UsageError(
+                    `--junit ${options.junit} already exists; choose a new path (it is created exclusively).`
+                  );
+              }
               const request: SessionRequest = { tenantId: String(options.tenant) };
               if (options.scopeFile !== undefined) {
                 const text = await createTextArgumentReader({ noFollow: true })(
@@ -1886,13 +1913,6 @@ export function buildCli(deps: CliDependencies): Cli {
                   await ctx.client.sessions.plan(sessionId, pageId, steps)
                 );
                 if (!report.ok) exitCode = 1;
-                if (options.junit !== undefined) {
-                  const { writeFile } = await import('node:fs/promises');
-                  await writeFile(options.junit, planJunit(planFile, steps, report), {
-                    flag: 'wx',
-                    mode: 0o600,
-                  });
-                }
                 ctx.emit(
                   {
                     ok: report.ok,
@@ -1914,6 +1934,14 @@ export function buildCli(deps: CliDependencies): Cli {
                     ...(options.keepSession ? [`  session ${sessionId}, page ${pageId}`] : []),
                   ]
                 );
+                // After the report: a write failure never hides the results.
+                if (options.junit !== undefined) {
+                  const { writeFile } = await import('node:fs/promises');
+                  await writeFile(options.junit, planJunit(planFile, steps, report), {
+                    flag: 'wx',
+                    mode: 0o600,
+                  });
+                }
               } finally {
                 if (!options.keepSession)
                   await ctx.client.sessions.close(sessionId).catch(() => {});

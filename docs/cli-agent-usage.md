@@ -444,8 +444,10 @@ plan.json ─▶ agentbrowser run plan.json --url START --tenant T ─▶ create
 | `--junit FILE` | one testcase per step: pass, failure (error **code** only, never page text) or skipped; mode 0600, created exclusively |
 | `--keep-session` | leave the session open and report its ids |
 
-Exit 0 only when every step completed. The plan file is validated before any session exists, and
-the session is closed on every path, including a start page that cannot be opened.
+Exit 0 only when every step completed. The plan file (an empty plan is refused), `--url` and an
+existing `--junit` path are checked before any session exists, and the session is closed on every
+path, including a start page that cannot be opened. An interrupted process (Ctrl-C, SIGTERM) does
+not reach that close: the session then ends at its idle or TTL expiry.
 
 ## Attach the bytes you reviewed (develop slice)
 

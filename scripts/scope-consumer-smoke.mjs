@@ -355,10 +355,15 @@ try {
       runScope,
       '--junit',
       junitFile,
+      '--keep-session',
     ],
     { env, timeoutMs: 120_000, expectedExitCode: 0 }
   );
   const runReport = JSON.parse(ran.stdout.trim());
+  // The scope reached the run's session: its live status reports the scope file's hosts.
+  const runScopeStatus = await client.sessions.scopeStatus(runReport.sessionId);
+  assert.deepEqual(runScopeStatus.allowedHosts, scope.allowedHosts);
+  await client.sessions.close(runReport.sessionId);
   assert.equal(runReport.ok, true);
   assert.equal(runReport.completed, 2);
   assert.ok(
@@ -394,6 +399,7 @@ try {
   assert.equal((left.sessions ?? left).length, 0, 'a plan run left a session open');
   check('saved plan run', {
     steps: runReport.completed,
+    scoped: true,
     junit: 'ok',
     failed: 'exit 1',
     sessionsLeft: 0,

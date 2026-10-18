@@ -34,6 +34,7 @@ export {
   DEFAULT_AGENT_MODE,
   DELIVERED_WAIT_TYPES,
   DeliveredWaitConditionSchema,
+  ErrorCode,
   evaluateTestCaseRun,
   FormMappingSchema,
   FormValuesSchema,

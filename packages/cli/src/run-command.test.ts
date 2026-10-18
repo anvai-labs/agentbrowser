@@ -210,4 +210,47 @@ describe('run <planFile> (T10 M4)', () => {
     const xml = readFileSync(junit, 'utf8');
     expect(xml).toContain('name="a&amp;b&lt;&quot;c&quot;&gt;\uFFFD.json"');
   });
+
+  it('refuses an existing --junit path before creating a session (#590 review F1)', async () => {
+    const { sessions, calls } = fakeSessions(okReport);
+    const existing = write('exists.xml', 'old');
+    const result = await run(
+      ['run', planFile, '--url', 'https://app.test/', '--tenant', 't1', '--junit', existing],
+      sessions
+    );
+    expect(result.code).not.toBe(0);
+    expect(calls).toEqual([]);
+    expect(readFileSync(existing, 'utf8')).toBe('old');
+  });
+
+  it('refuses an empty plan and a non-http(s) --url before creating a session (F2, F4)', async () => {
+    const { sessions, calls } = fakeSessions(okReport);
+    const empty = write('empty.json', '[]');
+    expect(
+      (await run(['run', empty, '--url', 'https://app.test/', '--tenant', 't1'], sessions)).code
+    ).not.toBe(0);
+    for (const url of ['not a url', 'file:///etc/passwd', 'javascript:alert(1)'])
+      expect(
+        (await run(['run', planFile, '--url', url, '--tenant', 't1'], sessions)).code,
+        url
+      ).not.toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  it('JUnit writes only known error codes, never another all-caps token (F3)', async () => {
+    const { sessions } = fakeSessions({
+      ok: false,
+      completed: 0,
+      results: [{ step: 0, ok: false, error: 'SECRETPAGEWORD' }],
+      error: { code: 'ALSOSECRET', message: 'x' },
+    });
+    const junit = join(dir, 'unknown.xml');
+    await run(
+      ['run', planFile, '--url', 'https://app.test/', '--tenant', 't1', '--junit', junit],
+      sessions
+    );
+    const xml = readFileSync(junit, 'utf8');
+    expect(xml).toContain('<failure message="FAILED"/>');
+    expect(xml).not.toMatch(/SECRET/);
+  });
 });
