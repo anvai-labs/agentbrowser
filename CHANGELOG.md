@@ -14,10 +14,10 @@ Entries are newest first. T10 milestone M3: program scope and findings bound to 
 
 | Who | What changes |
 | --- | --- |
-| Engagement scopes | new optional narrowing fields: `excludeHosts`, `excludePaths`, `allowedSchemes`, `allowedPorts`, `rateLimit {requests, perSeconds}`, and `program` metadata. Exclusions match a canonical path, and a `hostSuffix` / `excludeHosts` entry must be an ASCII hostname, `.suffix` or bracketed IPv6 literal |
+| Engagement scopes | new optional narrowing fields: `excludeHosts`, `excludePaths`, `allowedSchemes`, `allowedPorts`, `rateLimit {requests, perSeconds}`, and `program` metadata. Exclusions match a canonical path, and `excludeHosts` and `excludePaths[].hostSuffix` follow the same host pattern as `pathRules[].hostSuffix` (since 1.24.0) |
 | Sessions with a `rateLimit` | requests over the limit wait for a slot for up to 15 s (queue included); past that they are denied `SCOPE_RATE_LIMITED` instead of being sent after the caller gave up |
 | TypeScript consumers | `SCOPE_RATE_LIMITED` is a new member of the scope sub-code and navigation-failure unions: exhaustive `switch`es need a case |
-| CLI | new `scope import FILE --from h1\|bugcrowd\|text`, which converts a published program scope offline. It refuses what it cannot express; an inexpressible exclusion fails the import |
+| CLI | new `scope import FILE --from h1\|bugcrowd\|text`, which converts a published program scope offline. It refuses what it cannot express; an inexpressible exclusion fails the import. The oversized-input error for every file or JSON input (`--scope-file`, autofill payloads, cookie files) now reads "Input exceeds N bytes." (was "JSON input exceeds N bytes."); scripts matching the old text must adapt |
 | Library consumers | `importProgramScope` in `@agentbrowser/core`; `checkEngagementFindings` and `buildEngagementSarif` in `@agentbrowser/audit` (also `@agentbrowser/audit/engagement-findings`). There is no CLI or MCP command for findings yet: the audit package stays out of those closures (T7) |
 | MCP clients | the `create` tool's scope schema adds the new fields, `ledger`, and the strict host and prefix patterns; the `scope` tool's output reports the new fields and `rateLimit.paced` (catalog digest changed) |
 | Scopes without the new fields | unchanged |
