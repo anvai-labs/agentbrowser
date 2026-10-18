@@ -7,6 +7,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.25.0 release record
+
+- `docs/spec/evidence/release-1.25.0.md`; baselines move to 1.25.0.
+
 ## [1.25.0] — 2026-10-18
 
 Entries are newest first. T10 milestone M3: program scope and findings bound to the engagement.
