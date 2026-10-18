@@ -33,6 +33,7 @@ export const SCOPE_DENIAL_CODES = Object.freeze([
   'SCOPE_EXPIRED',
   'SCOPE_BUDGET_EXHAUSTED',
   'SCOPE_LEDGER_UNAVAILABLE',
+  'SCOPE_RATE_LIMITED',
 ] as const);
 export type ScopeDenialCode = (typeof SCOPE_DENIAL_CODES)[number];
 const scopeCodes = new Set<string>(SCOPE_DENIAL_CODES);

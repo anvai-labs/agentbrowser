@@ -156,6 +156,8 @@ export interface EngagementScope {
   allowedPorts?: number[];
   /** T10 M3: the program this engagement runs under (metadata only). */
   program?: ScopeProgram;
+  /** T10 M3: at most `requests` per `perSeconds`; paced (waits for a slot), never denied. */
+  rateLimit?: { requests: number; perSeconds: number };
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */

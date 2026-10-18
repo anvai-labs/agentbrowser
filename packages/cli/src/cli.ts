@@ -521,6 +521,11 @@ export function buildCli(deps: CliDependencies): Cli {
               ),
               ...(status.allowedSchemes ? [`  schemes: ${status.allowedSchemes.join(', ')}`] : []),
               ...(status.allowedPorts ? [`  ports:   ${status.allowedPorts.join(', ')}`] : []),
+              ...(status.rateLimit
+                ? [
+                    `  rate:    ${status.rateLimit.requests} per ${status.rateLimit.perSeconds}s (${status.rateLimit.paced} paced)`,
+                  ]
+                : []),
               ...(status.program
                 ? [
                     `  program: ${status.program.id}${status.program.version ? ` (${status.program.version})` : ''}, authorized by ${status.program.authorizedBy} at ${status.program.authorizedAt}`,
@@ -713,7 +718,8 @@ export function buildCli(deps: CliDependencies): Cli {
           '--scope-file <path>',
           'engagement scope JSON (T7): {allowedHosts, pathRules?, allowedMethods?, ' +
             'expiresAt?, requestBudget?, identityBindings?, ledger?, excludeHosts?, ' +
-            'excludePaths?, allowedSchemes?, allowedPorts?, program?} — enforced per request and ' +
+            'excludePaths?, allowedSchemes?, allowedPorts?, rateLimit?, program?} — enforced per ' +
+            'request and ' +
             'per redirect hop on top of every other policy layer; unknown fields are refused ' +
             '(1 MiB bound, no symlink follow)'
         )

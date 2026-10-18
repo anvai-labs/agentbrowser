@@ -744,6 +744,7 @@ Program restrictions (T10 M3) only narrow. Each denial reuses an existing sub-co
 | `excludePaths` | `[{hostSuffix?, prefix}]` segment-bounded prefixes removed, even inside a `pathRules` prefix | `SCOPE_PATH_DENIED` |
 | `allowedSchemes` | e.g. `["https"]`; lowercase, no `:` | `SCOPE_HOST_DENIED` |
 | `allowedPorts` | e.g. `[443, 8443]`; a URL without a port uses its scheme's default (80/443) | `SCOPE_HOST_DENIED` |
+| `rateLimit` | `{requests, perSeconds}`: at most that many in-scope requests per window (every redirect hop counts). A request over the limit **waits** for a slot, for up to 15 s including time queued behind others; one that would wait longer is denied at once, so nothing is sent after its navigation has given up (Playwright's navigation timeout is 30 s). `stop()` (ledger full, session closing) wakes waiting requests, which are then denied. The dry run and preflight never wait; the status reports how many requests were paced | `SCOPE_RATE_LIMITED` (past the 15 s cap) |
 | `program` | `{id, version?, authorizedBy, authorizedAt}`: recorded in the scope status and the ledger, never enforced | — |
 
 A scheme, port or exclusion rule that cannot be checked because a request carries no URL denies
