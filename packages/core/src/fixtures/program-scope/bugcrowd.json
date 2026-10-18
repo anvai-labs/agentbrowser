@@ -1,0 +1,19 @@
+{
+  "target_groups": [
+    {
+      "in_scope": true,
+      "targets": [
+        { "name": "Main site", "uri": "https://shop.example.test", "category": "website" },
+        { "name": "*.api.example.test", "category": "api" },
+        { "name": "iOS app", "uri": "https://apps.apple.com/app/id1", "category": "ios" }
+      ]
+    },
+    {
+      "in_scope": false,
+      "targets": [
+        { "name": "Blog", "uri": "https://shop.example.test/blog", "category": "website" },
+        { "name": "Unrelated", "uri": "https://elsewhere.test", "category": "website" }
+      ]
+    }
+  ]
+}
