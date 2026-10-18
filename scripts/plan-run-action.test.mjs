@@ -5,7 +5,15 @@
  * (never a key on argv), plan path, start URL, tenant, JUnit path and keep-session.
  */
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -25,8 +33,15 @@ function stubCli(exitCode = 0) {
   writeFileSync(
     path,
     `#!/usr/bin/env node
-import { appendFileSync } from 'node:fs';
-appendFileSync(${JSON.stringify(join(work, 'argv.log'))}, JSON.stringify(process.argv.slice(2)) + '\\n');
+import { appendFileSync, readFileSync, statSync } from 'node:fs';
+const keyAt = process.argv.indexOf('--api-key-file');
+let keySeen = null;
+if (keyAt !== -1) {
+  try {
+    keySeen = { mode: statSync(process.argv[keyAt + 1]).mode, content: readFileSync(process.argv[keyAt + 1], 'utf8') };
+  } catch {}
+}
+appendFileSync(${JSON.stringify(join(work, 'argv.log'))}, JSON.stringify({ argv: process.argv.slice(2), keySeen }) + '\\n');
 process.exit(${exitCode});
 `
   );
@@ -50,7 +65,7 @@ function runMain(cli, extra = {}) {
       INPUT_TENANT: 'ci',
       INPUT_PLAN: plan,
       INPUT_START_URL: 'https://app.test/login',
-      INPUT_API_KEY_FILE: join(work, 'key.txt'),
+      INPUT_API_KEY: 'sekrit',
       INPUT_JUNIT: junitPath,
       ...extra,
     },
@@ -98,7 +113,7 @@ describe('planRunArgs', () => {
 });
 
 describe('main (plan run)', () => {
-  it('passes the base URL and key file, never the key itself; exits with the CLI; cleans the key dir', async () => {
+  it('passes the base URL and key file, never the key itself; removes the key after the run', async () => {
     const before = argvLogSafe().length;
     function argvLogSafe() {
       try {
@@ -111,15 +126,20 @@ describe('main (plan run)', () => {
     assert.equal(code, 0);
     const calls = argvLog().slice(before);
     assert.equal(calls.length, 1);
-    const [argv] = calls;
+    const [entry] = calls;
+    const argv = entry.argv;
     assert.equal(argv[0], '--base-url');
     assert.equal(argv[1], 'http://127.0.0.1:5709');
     const keyIndex = argv.indexOf('--api-key-file');
     assert.ok(keyIndex !== -1, 'the key goes through --api-key-file');
     const keyPath = argv[keyIndex + 1];
-    assert.equal(statSync(keyPath).mode & 0o777, 0o600, 'the key file is 0600');
-    assert.ok(readFileSync(keyPath, 'utf8') === 'sekrit');
     assert.ok(!argv.includes('sekrit'), 'the key never rides argv');
+    // During the run the stub saw the key file: 0600, holding the key.
+    const keySeen = entry.keySeen ?? {};
+    assert.equal(keySeen.mode & 0o777, 0o600, 'the key file is 0600 during the run');
+    assert.equal(keySeen.content, 'sekrit');
+    // After the run it is gone: the workspace holding it was removed in main's finally (L-a).
+    assert.equal(existsSync(keyPath), false, 'the key file is removed after main');
   });
 
   it('kills a CLI that never exits once the timeout fires (L-b: SIGKILL path)', async () => {

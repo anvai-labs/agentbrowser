@@ -31,13 +31,15 @@ export function planRunArgs(env) {
   return { args, junitPath: resolve(junit) };
 }
 
-/** How the CLI authenticates: never on argv. A given key is written to a private 0600 file. */
-export async function keyArgs(env, workspace = join(tmpdir(), 'agentbrowser-plan-run')) {
+/** How the CLI authenticates: never on argv. A given key is written to a private 0600 file in
+ * the caller's workspace, which the caller removes in its finally — no second temp dir leaks. */
+export async function keyArgs(env, workspace) {
   if (env.INPUT_API_KEY_FILE) return ['--api-key-file', resolve(env.INPUT_API_KEY_FILE)];
   if (env.INPUT_API_KEY) {
-    const file = join(mkdtempSync(workspace), 'key');
+    if (workspace === undefined) throw new PlanRunError('keyArgs needs the run workspace.');
+    const file = join(workspace, 'api-key');
     writeFileSync(file, env.INPUT_API_KEY, { mode: 0o600 });
-    return ['--api-key-file', file, { cleanup: file }];
+    return ['--api-key-file', file];
   }
   // No explicit key: the CLI falls back to AGENTBROWSER_API_KEY in its own environment.
   return [];
