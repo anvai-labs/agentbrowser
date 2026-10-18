@@ -25,10 +25,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 ### Tests — async, recycled-option and partial-effect widget coverage (T6)
 
 - `autofill-react-select-async-real.test.ts` (real react-select, Chromium): asynchronously loaded
-  options commit exactly when the readiness budget covers the load and otherwise fail safely
-  (`uncertain`, nothing committed); recycled option nodes commit the exact option; a later
-  field's failure leaves earlier fields committed and reported, with nothing undone or
-  submitted. `bulk-autofill.md` documents the readiness budget for slow option sources.
+  options commit exactly ("Chicago", listed after "Chicago Heights") when the readiness budget
+  covers the load; options that never load fail safely (`uncertain`, nothing committed); options
+  keyed by index (React reuses their DOM nodes) commit the exact option; a later field's failure
+  leaves earlier fields committed and reported, with nothing undone or submitted. `bulk-autofill.md` documents the readiness budget for slow option sources.
 
 ### Docs — the 1.25.0 release record
 

@@ -6,7 +6,8 @@
  * | Case | Shape | Expected |
  * | --- | --- | --- |
  * | async options | `react-select/async`, options load 400 ms after typing | the exact option commits |
- * | recycled options | a MenuList that keys option wrappers by index, so DOM nodes are reused across filters | the exact option commits, never a stale node |
+ * | recycled options | a MenuList that keys the options themselves by index, so React reuses option DOM nodes across filters | the exact option commits, never a stale node |
+ * | never-loading options | a loader that never resolves | `uncertain`, nothing committed or submitted |
  * | partial effects | a later field's option never loads | earlier fields stay committed and are reported; nothing is undone or submitted |
  */
 import { createHash } from 'node:crypto';
@@ -19,15 +20,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';
 
 const APP = `
-import { createElement as e, useEffect, useState } from 'react';
+import { cloneElement, createElement as e, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import Select, { components } from 'react-select';
 import AsyncSelect from 'react-select/async';
+// "Chicago Heights" sorts first, so a prefix or first-match regression would pick it.
 const cities = [
-  { value: 'chi', label: 'Chicago' },
   { value: 'chh', label: 'Chicago Heights' },
+  { value: 'chi', label: 'Chicago' },
   { value: 'bos', label: 'Boston' },
 ];
+// Never resolves: no readiness budget can cover it.
+const loadNever = () => new Promise(() => {});
 const loadCities = (input) =>
   new Promise((resolve) =>
     setTimeout(
@@ -36,20 +40,24 @@ const loadCities = (input) =>
     )
   );
 const many = Array.from({ length: 50 }, (_, i) => ({ value: 'o' + i, label: 'Option ' + i }));
-// Option wrappers keyed by index: filtering re-uses the same DOM nodes for different options.
+// Options keyed by index: React reuses the same option DOM nodes across filter changes and
+// patches their text, so a stale node is possible (each node is tagged to prove reuse).
 function RecyclingMenuList(props) {
   const items = [].concat(props.children).slice(0, 6);
-  return e(components.MenuList, props, items.map((child, i) => e('div', { key: i }, child)));
+  return e(components.MenuList, props, items.map((child, i) => cloneElement(child, { key: i })));
 }
 function App() {
   const [city, setCity] = useState(null);
   const [pick, setPick] = useState(null);
+  const [slow, setSlow] = useState(null);
   useEffect(() => {
-    fetch('/state', { method: 'POST', body: JSON.stringify({ city: city && city.label, pick: pick && pick.label }) });
-  }, [city, pick]);
+    fetch('/state', { method: 'POST', body: JSON.stringify({ city: city && city.label, pick: pick && pick.label, slow: slow && slow.label }) });
+  }, [city, pick, slow]);
   return e('form', { onSubmit: (event) => { event.preventDefault(); fetch('/submitted', { method: 'POST' }); } },
     e('label', { htmlFor: 'city' }, 'Async City'),
     e(AsyncSelect, { inputId: 'city', classNamePrefix: 'select', loadOptions: loadCities, value: city, onChange: setCity }),
+    e('label', { htmlFor: 'slow' }, 'Slow City'),
+    e(AsyncSelect, { inputId: 'slow', classNamePrefix: 'select', loadOptions: loadNever, value: slow, onChange: setSlow }),
     e('label', { htmlFor: 'pick' }, 'Recycled Pick'),
     e(Select, { inputId: 'pick', classNamePrefix: 'select', options: many, value: pick, onChange: setPick, components: { MenuList: RecyclingMenuList } }),
     e('button', { type: 'submit' }, 'Submit'));
@@ -59,7 +67,10 @@ createRoot(document.getElementById('root')).render(e(App));
 
 let fixture: Server;
 let bundle = '';
-let state: { city: string | null; pick: string | null } = { city: null, pick: null };
+let state: { city: string | null; pick: string | null; slow?: string | null } = {
+  city: null,
+  pick: null,
+};
 let submissions = 0;
 
 beforeAll(async () => {
@@ -103,7 +114,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  state = { city: null, pick: null };
+  state = { city: null, pick: null, slow: null };
   submissions = 0;
 });
 
@@ -208,33 +219,40 @@ describe('T6 async, recycled and partial-effect coverage (real react-select, Chr
       expect(response.statusCode, response.body).toBe(200);
       const receipts = response.json().receipts as Array<{ status: string }>;
       expect(receipts[0]?.status).toBe('verified');
-      expect(receipts[1]?.status).not.toBe('verified');
+      expect(receipts[1]).toMatchObject({
+        status: 'uncertain',
+        error: { code: 'TARGET_NOT_FOUND' },
+      });
       // The earlier field's effect stands (reported verified), with no guessed compensation.
       await new Promise((settle) => setTimeout(settle, 600));
-      expect(state).toEqual({ city: null, pick: 'Option 12' });
+      expect(state).toEqual({ city: null, pick: 'Option 12', slow: null });
       expect(submissions).toBe(0);
     } finally {
       await server.close();
     }
   }, 120_000);
 
-  it('async options under a too-short readiness budget fail safely: uncertain, nothing committed or submitted', async () => {
+  it('options that never load fail safely: uncertain, nothing committed or submitted', async () => {
     const { server, autofill } = await openApp();
     try {
-      const response = await autofill('async-short', [
-        {
-          match: { role: 'combobox', label: 'Async City' },
-          strategy: 'react-select',
-          option: { value: 'Chicago' },
-        },
-      ]);
+      const response = await autofill(
+        'never-loads',
+        [
+          {
+            match: { role: 'combobox', label: 'Slow City' },
+            strategy: 'react-select',
+            option: { value: 'Chicago' },
+          },
+        ],
+        { settleMs: 200, maxReobserve: 5 }
+      );
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().receipts[0]).toMatchObject({
         status: 'uncertain',
         error: { code: 'TARGET_NOT_FOUND' },
       });
-      await new Promise((settle) => setTimeout(settle, 800));
-      expect(state.city).toBeNull();
+      await new Promise((settle) => setTimeout(settle, 500));
+      expect(state.slow ?? null).toBeNull();
       expect(submissions).toBe(0);
     } finally {
       await server.close();

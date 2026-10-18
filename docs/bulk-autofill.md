@@ -94,12 +94,14 @@ refusal is uncertain and stops the suffix. See the
 
 | Case | Result |
 | --- | --- |
-| options loaded asynchronously (`react-select/async`, 400 ms) | the exact option commits when `settleMs × maxReobserve` covers the load (e.g. `settleMs: 200, maxReobserve: 5`); a shorter budget fails safely: `uncertain`, `TARGET_NOT_FOUND`, nothing committed or submitted |
-| recycled option nodes (a menu that keys option wrappers by index) | the exact option commits, never a stale node |
+| options loaded asynchronously (`react-select/async`, 400 ms) | the exact option commits ("Chicago", listed after "Chicago Heights") when the readiness budget covers the load (e.g. `settleMs: 200, maxReobserve: 5`) |
+| options that never load | `uncertain`, `TARGET_NOT_FOUND`, nothing committed or submitted |
+| recycled option nodes (a menu that keys the options by index, so React reuses option DOM nodes) | the exact option commits, never a stale node |
 | a later field fails | earlier fields stay committed and are reported `verified`; nothing is undone (no guessed rollback) and nothing submits |
 
-For slow option sources, raise `settleMs` and `maxReobserve` (up to 2000 ms × 5) rather than
-retrying the whole fill.
+`settleMs × maxReobserve` is a lower bound on how long the readiness wait lasts (each re-read is a
+full observation, which adds time), not an upper bound. For slow option sources, raise `settleMs`
+and `maxReobserve` (up to 2000 ms × 5) rather than retrying the whole fill.
 
 ## Co-design decisions and next qualification
 
