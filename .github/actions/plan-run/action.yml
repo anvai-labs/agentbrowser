@@ -1,0 +1,63 @@
+name: AgentBrowser plan run
+description: >-
+  Run a saved AgentBrowser plan file against an already-running AgentBrowser service with a
+  pinned, checksum-verified release CLI, and write a JUnit report. Creates the session, opens
+  the start URL, runs the plan and closes the session (unless keep-session is set).
+inputs:
+  cli-version:
+    description: AgentBrowser release tag providing the CLI, e.g. v1.25.0.
+    required: true
+  base-url:
+    description: URL of the running AgentBrowser REST service.
+    required: true
+  tenant:
+    description: Tenant identifier for the session.
+    required: true
+  plan:
+    description: Saved plan file (JSON steps, as for `agentbrowser plan`).
+    required: true
+  start-url:
+    description: Page the run opens before the steps.
+    required: true
+  api-key:
+    description: Service API key. Passed to the CLI through a private 0600 file, never argv.
+    required: false
+    default: ''
+  api-key-file:
+    description: File holding the service API key. Takes precedence over api-key.
+    required: false
+    default: ''
+  scope-file:
+    description: Engagement scope JSON for the session, as `session create --scope-file`.
+    required: false
+    default: ''
+  junit:
+    description: JUnit output path (created exclusively, mode 0600).
+    required: false
+    default: agentbrowser-plan.xml
+  keep-session:
+    description: '"true" to leave the session open (its ids appear in the JSON output).'
+    required: false
+    default: 'false'
+  timeout-ms:
+    description: Whole-run timeout in milliseconds.
+    required: false
+    default: '900000'
+runs:
+  using: composite
+  steps:
+    - name: Run plan
+      shell: bash
+      env:
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+        INPUT_BASE_URL: ${{ inputs.base-url }}
+        INPUT_TENANT: ${{ inputs.tenant }}
+        INPUT_PLAN: ${{ inputs.plan }}
+        INPUT_START_URL: ${{ inputs.start-url }}
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_API_KEY_FILE: ${{ inputs.api-key-file }}
+        INPUT_SCOPE_FILE: ${{ inputs.scope-file }}
+        INPUT_JUNIT: ${{ inputs.junit }}
+        INPUT_KEEP_SESSION: ${{ inputs.keep-session }}
+        INPUT_TIMEOUT_MS: ${{ inputs.timeout-ms }}
+      run: node "$GITHUB_ACTION_PATH/run.mjs"

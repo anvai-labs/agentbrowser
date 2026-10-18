@@ -9,6 +9,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added — run a saved plan end to end (T10 M4)
 
+- `.github/actions/plan-run`: a composite action that runs a saved plan against an
+  already-running service with a pinned, checksum-verified release CLI (reusing the
+  `test-evaluate` installer). The API key passes through a private 0600 file, never argv; exit
+  code and JUnit come from `run` itself.
+
 - `agentbrowser run PLAN.json --url START --tenant T [--scope-file S] [--junit FILE] [--keep-session]`
   creates a session, opens the start page, runs the saved plan through the existing `plan`
   endpoint and closes the session (on every path). Exit 0 only when every step completed.

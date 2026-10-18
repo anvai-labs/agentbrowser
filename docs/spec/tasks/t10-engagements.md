@@ -63,6 +63,7 @@ automatic submission or outside communication of findings.
 | M3: findings bound to the engagement | `checkEngagementFindings` / `buildEngagementSarif` in audit (`engagement-findings.test.ts`): out-of-scope URLs and blocked, failed or mismatched citations refused; SARIF draft, manual submission. CLI/MCP exposure pending the T7 closure gate |
 | M3: released in 1.25.0 | [release record](../evidence/release-1.25.0.md): the released CLI's `scope import` and the scope and ledger smoke passed on the extracted candidate |
 | M4: saved plan runs | `run PLAN --url … [--junit]` (`run-command.test.ts`; release smoke runs a scoped sign-in plan, JUnit, failure exit 1, no session left); CI-action input and durable runs next |
+| M4: CI action | `.github/actions/plan-run` (`plan-run-action.test.mjs`): checksum-verified CLI, key off argv, exit code from the plan |
 | M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors (#549); released in 1.22.0 |
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |
