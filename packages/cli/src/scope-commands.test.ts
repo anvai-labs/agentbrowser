@@ -92,6 +92,7 @@ describe('scope commands (T10 M2)', () => {
       excludePaths: [{ hostSuffix: 'in.example', prefix: '/logout' }],
       allowedSchemes: ['https'],
       allowedPorts: [443, 8443],
+      rateLimit: { requests: 5, perSeconds: 2, paced: 3 },
       program: {
         id: 'acme-vdp',
         version: '2026-10-01',
@@ -107,6 +108,7 @@ describe('scope commands (T10 M2)', () => {
       'exclude path: in.example /logout',
       'schemes: https',
       'ports:   443, 8443',
+      'rate:    5 per 2s (3 paced)',
       'program: acme-vdp (2026-10-01), authorized by researcher@example.test at 2026-10-17T00:00:00Z',
     ])
       expect(text).toContain(line);

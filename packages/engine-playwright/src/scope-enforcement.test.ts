@@ -390,4 +390,28 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
       await closeFixture(fixture);
     }
   }, 60_000);
+
+  it("T10 M3: a rate limit spreads a page's requests out in time instead of refusing them", async () => {
+    const fixture = await startFixture();
+    try {
+      const scope = new EngagementScopePolicy(new NetworkPolicy({ blockLoopback: false }), {
+        allowedHosts: [IN_HOST],
+        rateLimit: { requests: 1, perSeconds: 1 },
+      });
+      const times: number[] = [];
+      fixture.server.on('request', () => times.push(Date.now()));
+      await withSession(scope, async (page) => {
+        expect((await page.navigate({ url: fixture.url('/one') })).status).toBe('success');
+        expect((await page.navigate({ url: fixture.url('/two') })).status).toBe('success');
+        expect((await page.navigate({ url: fixture.url('/three') })).status).toBe('success');
+      });
+      for (const path of ['/one', '/two', '/three'])
+        expect(fixture.hits.some((hit) => hit.path === path)).toBe(true);
+      // One request per second: three documents need at least ~2 s between first and last.
+      expect(times.at(-1)! - times[0]!).toBeGreaterThanOrEqual(1800);
+      expect(scope.status().rateLimit?.paced).toBeGreaterThanOrEqual(2);
+    } finally {
+      await closeFixture(fixture);
+    }
+  }, 60_000);
 });

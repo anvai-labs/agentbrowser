@@ -744,6 +744,7 @@ Program restrictions (T10 M3) only narrow. Each denial reuses an existing sub-co
 | `excludePaths` | `[{hostSuffix?, prefix}]` segment-bounded prefixes removed, even inside a `pathRules` prefix | `SCOPE_PATH_DENIED` |
 | `allowedSchemes` | e.g. `["https"]`; lowercase, no `:` | `SCOPE_HOST_DENIED` |
 | `allowedPorts` | e.g. `[443, 8443]`; a URL without a port uses its scheme's default (80/443) | `SCOPE_HOST_DENIED` |
+| `rateLimit` | `{requests, perSeconds}`: at most that many in-scope requests per window (every redirect hop counts); a request over the limit **waits** for a slot, so a page slows down instead of breaking. The dry run and preflight never wait; the status reports how many requests were paced | — (never denies) |
 | `program` | `{id, version?, authorizedBy, authorizedAt}`: recorded in the scope status and the ledger, never enforced | — |
 
 A scheme, port or exclusion rule that cannot be checked because a request carries no URL denies

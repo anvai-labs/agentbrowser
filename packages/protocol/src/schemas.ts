@@ -189,6 +189,16 @@ export const EngagementScopeSchema = Type.Object(
       Type.Array(Type.Integer({ minimum: 1, maximum: 65535 }), { minItems: 1 })
     ),
     program: Type.Optional(ScopeProgramSchema),
+    // T10 M3: at most `requests` per `perSeconds`; paced (waits for a slot), never denied.
+    rateLimit: Type.Optional(
+      Type.Object(
+        {
+          requests: Type.Integer({ minimum: 1, maximum: 10000 }),
+          perSeconds: Type.Integer({ minimum: 1, maximum: 3600 }),
+        },
+        { additionalProperties: false }
+      )
+    ),
     // A scope may only narrow: a field this server cannot enforce is refused (400), never
     // ignored — an ignored exclusion would silently widen the engagement.
   },
@@ -231,6 +241,16 @@ export const EngagementScopeStatusSchema = Type.Object(
     allowedSchemes: Type.Optional(Type.Array(Type.String())),
     allowedPorts: Type.Optional(Type.Array(Type.Integer())),
     program: Type.Optional(ScopeProgramSchema),
+    rateLimit: Type.Optional(
+      Type.Object(
+        {
+          requests: Type.Integer({ minimum: 1 }),
+          perSeconds: Type.Integer({ minimum: 1 }),
+          paced: Type.Integer({ minimum: 0 }),
+        },
+        { additionalProperties: false }
+      )
+    ),
   },
   { additionalProperties: false }
 );

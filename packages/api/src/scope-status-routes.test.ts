@@ -494,4 +494,35 @@ describe('scope status contract (ADR-015)', () => {
       await app.close();
     }
   });
+
+  it('accepts a rate limit, reports it with the paced count, and refuses bad bounds', async () => {
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: {
+          scope: { allowedHosts: ['in.example'], rateLimit: { requests: 5, perSeconds: 2 } },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const status = (await call('GET', `/v1/sessions/${created.json().sessionId}/scope`)).json();
+      expect(status.rateLimit).toEqual({ requests: 5, perSeconds: 2, paced: 0 });
+      for (const rateLimit of [
+        { requests: 0, perSeconds: 1 },
+        { requests: 1, perSeconds: 0 },
+        { requests: 1.5, perSeconds: 1 },
+        { requests: 1, perSeconds: 4000 },
+        { requests: 1 },
+        { requests: 1, perSeconds: 1, burst: 3 },
+      ]) {
+        const refused = await call('POST', '/v1/sessions', 'key-one', {
+          tenantId: 'one',
+          policy: { scope: { allowedHosts: ['in.example'], rateLimit } },
+        });
+        expect(refused.statusCode, JSON.stringify(rateLimit)).toBe(400);
+      }
+    } finally {
+      await app.close();
+    }
+  });
 });

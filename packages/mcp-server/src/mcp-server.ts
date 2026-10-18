@@ -320,7 +320,8 @@ export function buildTools(
               '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
               '[{header, value, allowedHosts}] (the marker is denied on unbound hosts), ledger ' +
               '(operator-configured engagement ledger). Narrowing only: excludeHosts, ' +
-              'excludePaths [{hostSuffix?, prefix}], allowedSchemes, allowedPorts; program ' +
+              'excludePaths [{hostSuffix?, prefix}], allowedSchemes, allowedPorts, rateLimit ' +
+              '{requests, perSeconds} (paces, never denies); program ' +
               '{id, version?, authorizedBy, authorizedAt} is recorded, never enforced. Unknown ' +
               'fields are refused. Refused together with allowServiceWorkers: true, a lane the ' +
               'scope cannot check.',
@@ -395,6 +396,15 @@ export function buildTools(
                 type: 'array',
                 items: { type: 'integer', minimum: 1, maximum: 65535 },
                 minItems: 1,
+              },
+              rateLimit: {
+                type: 'object',
+                properties: {
+                  requests: { type: 'integer', minimum: 1, maximum: 10000 },
+                  perSeconds: { type: 'integer', minimum: 1, maximum: 3600 },
+                },
+                required: ['requests', 'perSeconds'],
+                additionalProperties: false,
               },
               program: {
                 type: 'object',

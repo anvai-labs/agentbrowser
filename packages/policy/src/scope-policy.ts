@@ -56,6 +56,13 @@ export interface EngagementScopeOptions {
   allowedPorts?: number[];
   /** T10 M3: the program this engagement runs under (metadata only; reported, never enforced). */
   program?: ScopeProgram;
+  /**
+   * T10 M3: at most `requests` in-scope requests per `perSeconds` window. Paces (waits for a
+   * free slot) rather than denying, so a page load slows down instead of breaking.
+   */
+  rateLimit?: { requests: number; perSeconds: number };
+  /** Injected sleep for movement-testable pacing (default setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */
@@ -86,6 +93,8 @@ export interface EngagementScopeStatus {
   allowedSchemes?: string[];
   allowedPorts?: number[];
   program?: ScopeProgram;
+  /** The rate limit in effect and how many requests waited for a slot. */
+  rateLimit?: { requests: number; perSeconds: number; paced: number };
 }
 
 const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 };
@@ -263,6 +272,13 @@ export class EngagementScopePolicy {
   private readonly schemes: Set<string> | undefined;
   private readonly ports: Set<number> | undefined;
   private readonly program: ScopeProgram | undefined;
+  private readonly rate: { requests: number; perSeconds: number } | undefined;
+  private readonly sleep: (ms: number) => Promise<void>;
+  /** Admission times inside the current window, oldest first. */
+  private admitted: number[] = [];
+  /** Pacing is serialized so concurrent requests cannot burst past the limit. */
+  private paceQueue: Promise<void> = Promise.resolve();
+  private paced = 0;
   private spent = 0;
   /** Hops already spent by checkRedirectChain — callers may re-submit the
    * accumulated chain per redirect (the download transport does), and the
@@ -322,6 +338,35 @@ export class EngagementScopePolicy {
         : undefined;
     this.ports = scope.allowedPorts !== undefined ? new Set(scope.allowedPorts) : undefined;
     this.program = scope.program !== undefined ? { ...scope.program } : undefined;
+    this.rate = scope.rateLimit !== undefined ? { ...scope.rateLimit } : undefined;
+    this.sleep = scope.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /**
+   * Waits until the request fits the rate limit, then records its admission. Returns
+   * whether it waited (the caller re-checks the scope: it may have expired or stopped).
+   */
+  private async pace(): Promise<boolean> {
+    const rate = this.rate;
+    if (rate === undefined) return false;
+    const windowMs = rate.perSeconds * 1000;
+    let waited = false;
+    const turn = this.paceQueue.then(async () => {
+      let now = this.now();
+      this.admitted = this.admitted.filter((at) => at > now - windowMs);
+      if (this.admitted.length >= rate.requests) {
+        const oldest = this.admitted[this.admitted.length - rate.requests] ?? now;
+        waited = true;
+        this.paced += 1;
+        await this.sleep(Math.max(0, oldest + windowMs - now));
+        now = this.now();
+        this.admitted = this.admitted.filter((at) => at > now - windowMs);
+      }
+      this.admitted.push(now);
+    });
+    this.paceQueue = turn.catch(() => {});
+    await turn;
+    return waited;
   }
 
   /** Denials raised on the wire or in the navigation preflight, by sub-code. */
@@ -386,6 +431,7 @@ export class EngagementScopePolicy {
       ...(this.schemes !== undefined ? { allowedSchemes: [...this.schemes] } : {}),
       ...(this.ports !== undefined ? { allowedPorts: [...this.ports] } : {}),
       ...(this.program !== undefined ? { program: { ...this.program } } : {}),
+      ...(this.rate !== undefined ? { rateLimit: { ...this.rate, paced: this.paced } } : {}),
     };
   }
 
@@ -530,6 +576,8 @@ export class EngagementScopePolicy {
   }): Promise<void> {
     // Deny-if runs BEFORE the spend: denied attempts consume no budget.
     this.denyIf(request);
+    // Pacing waits for a slot; a scope that expired or stopped meanwhile still denies.
+    if (await this.pace()) this.denyIf(request);
     if (this.budget !== undefined) {
       this.spent += 1;
     }
