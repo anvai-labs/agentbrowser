@@ -19,6 +19,7 @@ describe('importProgramScope (T10 M3)', () => {
       excludeHosts: ['admin.acme.test'],
       excludePaths: [{ hostSuffix: 'www.acme.test', prefix: '/logout' }],
       allowedSchemes: ['http', 'https'],
+      allowedPorts: [80, 443],
     });
     const refused = result.report.filter((entry) => entry.decision === 'refused');
     expect(refused.map((entry) => entry.entry)).toEqual([
@@ -37,6 +38,7 @@ describe('importProgramScope (T10 M3)', () => {
       allowedHosts: ['shop.example.test', '.api.example.test'],
       excludePaths: [{ hostSuffix: 'shop.example.test', prefix: '/blog' }],
       allowedSchemes: ['http', 'https'],
+      allowedPorts: [80, 443],
     });
     const byEntry = Object.fromEntries(result.report.map((entry) => [entry.entry, entry.decision]));
     expect(byEntry['https://apps.apple.com/app/id1']).toBe('refused');
@@ -52,6 +54,7 @@ describe('importProgramScope (T10 M3)', () => {
       excludeHosts: ['vpn.corp.test'],
       excludePaths: [{ hostSuffix: 'portal.corp.test', prefix: '/app/admin' }],
       allowedSchemes: ['http', 'https'],
+      allowedPorts: [80, 443],
     });
   });
 
@@ -69,6 +72,16 @@ describe('importProgramScope (T10 M3)', () => {
     expect(mixed.report[0]?.note).toMatch(/schemes are scope-wide/);
     const unstated = importProgramScope('a.test\n', 'text');
     expect(unstated.ok && unstated.scope.allowedSchemes).toEqual(['http', 'https']);
+    expect(https.ok && https.scope.allowedPorts).toEqual([443]);
+    expect(unstated.ok && unstated.scope.allowedPorts).toEqual([80, 443]);
+  });
+
+  it('an encoded "*" in an exclusion path is a glob, not a literal', () => {
+    expect(importProgramScope('app.test\n- app.test/admin/%2A\n', 'text')).toMatchObject({
+      ok: true,
+      scope: { excludePaths: [{ hostSuffix: 'app.test', prefix: '/admin' }] },
+    });
+    expect(importProgramScope('app.test\n- app.test/admin%2a\n', 'text').ok).toBe(false);
   });
 
   it('maps a trailing "/*" to its prefix; other path wildcards are inexpressible', () => {

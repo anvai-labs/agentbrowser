@@ -72,6 +72,7 @@ describe('scope import (T10 M3)', () => {
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({
       allowedHosts: ['app.test'],
       allowedSchemes: ['http', 'https'],
+      allowedPorts: [80, 443],
       program: {
         id: 'acme',
         authorizedBy: 'researcher@example.test',

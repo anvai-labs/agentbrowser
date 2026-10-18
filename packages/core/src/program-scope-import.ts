@@ -172,7 +172,9 @@ function classify(raw: string): Classified {
     return { ok: false, reason: 'not an ASCII hostname (write IDNs in punycode)' };
   // A trailing "/*" means "everything under": the bare prefix, exact under segment-bounded
   // matching. Any other "*" in a path (e.g. "/admin*", "/a/*/b") has no segment-bounded form.
-  let trimmed = path.endsWith('/*') ? path.slice(0, -2) : path;
+  // An encoded "*" is a glob too: decode it before the check.
+  const unescaped = path.replace(/%2a/gi, '*');
+  let trimmed = unescaped.endsWith('/*') ? unescaped.slice(0, -2) : unescaped;
   if (trimmed.includes('*'))
     return { ok: false, reason: 'a path wildcard other than a trailing "/*" is not expressible' };
   trimmed = trimmed.replace(/\/+$/, '');
@@ -304,6 +306,10 @@ export function importProgramScope(
     allowedHosts,
     ...(pathRules.length > 0 ? { pathRules } : {}),
     allowedSchemes: schemes,
+    // Every accepted entry is on its scheme's default port (per-host ports are refused).
+    allowedPorts: [...new Set(schemes.map((scheme) => (scheme === 'https' ? 443 : 80)))].sort(
+      (a, b) => a - b
+    ),
     ...(excludeHosts.length > 0 ? { excludeHosts } : {}),
     ...(excludePaths.length > 0 ? { excludePaths } : {}),
     ...(meta.programId !== undefined &&

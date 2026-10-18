@@ -790,7 +790,8 @@ A refused in-scope entry only narrows the result. A refused **out-of-scope** ent
 scope wider than the program, so the import fails (exit 1) and writes nothing. Out-of-scope entries
 of a non-web type are ignored (reported as `ignored`); check that the program did not file a web
 exclusion under such a type. Schemes are scope-wide: one scheme shared by every in-scope entry is
-kept, otherwise `allowedSchemes` is `["http", "https"]` (noted in the report). Path rules are per
+kept, otherwise `allowedSchemes` is `["http", "https"]` (noted in the report), and `allowedPorts` is
+the default port of each kept scheme (per-host ports are refused). Path rules are per
 host, so a `*.x/api` rule also restricts a host listed in full under `.x` (noted). Program authorization is never inferred:
 pass `--program-id`, `--authorized-by` and `--authorized-at`, or the scope carries no `program`. A
 published scope is not permission: test only what you are authorized to test. Formats: HackerOne
