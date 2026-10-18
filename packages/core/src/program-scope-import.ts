@@ -147,6 +147,8 @@ function classify(raw: string): Classified {
     path = slash === -1 ? '' : (text.slice(slash).split(/[?#]/)[0] ?? '');
   }
   if (authority.includes('@')) return { ok: false, reason: 'credentials in the entry' };
+  if (!authority.startsWith('[') && (authority.match(/:/g)?.length ?? 0) > 1)
+    return { ok: false, reason: 'an IPv6 literal must be bracketed' };
   let host = authority.toLowerCase();
   const port = host.match(/:(\d+)$/);
   if (port !== null) {
@@ -162,13 +164,19 @@ function classify(raw: string): Classified {
     const base = host.slice(2);
     if (!host.startsWith('*.') || base.includes('*'))
       return { ok: false, reason: 'an ambiguous wildcard is not expressible' };
-    if (!base.includes('.') || getPublicSuffix(base) === base)
+    if (!base.includes('.') || getPublicSuffix(base, { allowPrivateDomains: true }) === base)
       return { ok: false, reason: 'a wildcard over a public suffix is not expressible' };
     pattern = `.${base}`;
   }
   if (pattern === '' || !HOST.test(pattern))
     return { ok: false, reason: 'not an ASCII hostname (write IDNs in punycode)' };
-  const prefix = path === '' || path === '/' ? undefined : path.replace(/\/+$/, '');
+  // A trailing "/*" means "everything under": the bare prefix, exact under segment-bounded
+  // matching. Any other "*" in a path (e.g. "/admin*", "/a/*/b") has no segment-bounded form.
+  let trimmed = path.endsWith('/*') ? path.slice(0, -2) : path;
+  if (trimmed.includes('*'))
+    return { ok: false, reason: 'a path wildcard other than a trailing "/*" is not expressible' };
+  trimmed = trimmed.replace(/\/+$/, '');
+  const prefix = trimmed === '' ? undefined : trimmed;
   return {
     ok: true,
     pattern,
@@ -259,6 +267,11 @@ export function importProgramScope(
     }
     entry.mapped = `${item.pattern} ${item.path}`;
     pathRules.push({ hostSuffix: item.pattern, prefix: item.path });
+    const narrowed = full.filter(
+      (host) => !host.startsWith('.') && item.pattern.startsWith('.') && host.endsWith(item.pattern)
+    );
+    if (narrowed.length > 0)
+      entry.note = `this path rule also restricts ${narrowed.join(', ')}, listed in full (path rules are per host)`;
   }
   const excludeHosts: string[] = [];
   const excludePaths: ScopePathRule[] = [];
@@ -277,13 +290,20 @@ export function importProgramScope(
       entry.mapped = `${item.pattern} ${item.path}`;
     }
   }
-  const schemes = accepted.every((item) => item.scheme !== undefined)
-    ? [...new Set(accepted.map((item) => item.scheme as string))].sort()
-    : [];
+  // Schemes are scope-wide. One shared scheme set is kept as given; mixed or unstated schemes
+  // narrow to web traffic (http, https), noted in the report.
+  const named = [...new Set(accepted.map((item) => item.scheme ?? '*'))];
+  const schemes = named.length === 1 && named[0] !== '*' ? named : ['http', 'https'];
+  if (named.length > 1 || named[0] === '*')
+    for (const item of accepted) {
+      const entry = report[item.index] as ProgramScopeEntry;
+      const note = 'schemes are scope-wide: http and https are both allowed';
+      entry.note = entry.note === undefined ? note : `${entry.note}; ${note}`;
+    }
   const scope: EngagementScope = {
     allowedHosts,
     ...(pathRules.length > 0 ? { pathRules } : {}),
-    ...(schemes.length > 0 ? { allowedSchemes: schemes } : {}),
+    allowedSchemes: schemes,
     ...(excludeHosts.length > 0 ? { excludeHosts } : {}),
     ...(excludePaths.length > 0 ? { excludePaths } : {}),
     ...(meta.programId !== undefined &&

@@ -13,8 +13,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   --authorized-at …] [--out scope.json]` converts a published HackerOne, Bugcrowd or text program
   scope into an engagement scope, offline. `*.host` maps to subdomains only (the apex only when
   listed); URLs become host-bound path rules; out-of-scope entries become exclusions.
-- Ambiguous wildcards, public-suffix wildcards, CIDR ranges, per-host ports, non-web assets and
-  Unicode hosts are refused with a reason. An inexpressible exclusion fails the whole import
+- A trailing `/*` maps to its prefix. Ambiguous wildcards, public- and private-suffix wildcards,
+  other path wildcards, CIDR ranges, per-host ports, unbracketed IPv6, non-web assets and Unicode
+  hosts are refused with a reason. Schemes are scope-wide: a single shared scheme is kept, mixed or
+  unstated schemes become `["http", "https"]`. An inexpressible exclusion fails the whole import
   (exit 1, nothing written), since the scope would be wider than the program. Program authorization
   is recorded only as given. The converter (`importProgramScope`) lives in `@agentbrowser/core`;
   imported scopes are pinned to pass session create.

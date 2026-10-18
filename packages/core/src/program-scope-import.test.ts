@@ -18,6 +18,7 @@ describe('importProgramScope (T10 M3)', () => {
       pathRules: [{ hostSuffix: 'api.partner.test', prefix: '/v2' }],
       excludeHosts: ['admin.acme.test'],
       excludePaths: [{ hostSuffix: 'www.acme.test', prefix: '/logout' }],
+      allowedSchemes: ['http', 'https'],
     });
     const refused = result.report.filter((entry) => entry.decision === 'refused');
     expect(refused.map((entry) => entry.entry)).toEqual([
@@ -35,6 +36,7 @@ describe('importProgramScope (T10 M3)', () => {
     expect(result.scope).toEqual({
       allowedHosts: ['shop.example.test', '.api.example.test'],
       excludePaths: [{ hostSuffix: 'shop.example.test', prefix: '/blog' }],
+      allowedSchemes: ['http', 'https'],
     });
     const byEntry = Object.fromEntries(result.report.map((entry) => [entry.entry, entry.decision]));
     expect(byEntry['https://apps.apple.com/app/id1']).toBe('refused');
@@ -49,6 +51,7 @@ describe('importProgramScope (T10 M3)', () => {
       allowedHosts: ['.corp.test', 'corp.test'],
       excludeHosts: ['vpn.corp.test'],
       excludePaths: [{ hostSuffix: 'portal.corp.test', prefix: '/app/admin' }],
+      allowedSchemes: ['http', 'https'],
     });
   });
 
@@ -58,15 +61,84 @@ describe('importProgramScope (T10 M3)', () => {
     expect(result.report[0]?.note).toMatch(/apex only\.test is not in scope/);
   });
 
-  it('sets allowedSchemes only when every in-scope entry names the same schemes', () => {
+  it('keeps one shared scheme; mixed or unstated schemes narrow to http and https (noted)', () => {
     const https = importProgramScope('https://a.test\nhttps://b.test/x\n', 'text');
     expect(https.ok && https.scope.allowedSchemes).toEqual(['https']);
-    const mixed = importProgramScope('https://a.test\nb.test\n', 'text');
-    expect(mixed.ok && 'allowedSchemes' in mixed.scope).toBe(false);
+    const mixed = importProgramScope('https://a.test\nhttp://b.test\n', 'text');
+    expect(mixed.ok && mixed.scope.allowedSchemes).toEqual(['http', 'https']);
+    expect(mixed.report[0]?.note).toMatch(/schemes are scope-wide/);
+    const unstated = importProgramScope('a.test\n', 'text');
+    expect(unstated.ok && unstated.scope.allowedSchemes).toEqual(['http', 'https']);
+  });
+
+  it('maps a trailing "/*" to its prefix; other path wildcards are inexpressible', () => {
+    const glob = importProgramScope(
+      'app.test\n- https://app.test/admin/*\nhttps://api.test/v1/*\n',
+      'text'
+    );
+    expect(glob.ok).toBe(true);
+    if (!glob.ok) return;
+    expect(glob.scope.excludePaths).toEqual([{ hostSuffix: 'app.test', prefix: '/admin' }]);
+    expect(glob.scope.pathRules).toEqual([{ hostSuffix: 'api.test', prefix: '/v1' }]);
+    // An exclusion that cannot be expressed fails the import rather than excluding nothing.
+    for (const line of ['- app.test/admin*', '- app.test/a/*/b'])
+      expect(importProgramScope(`app.test\n${line}\n`, 'text').ok, line).toBe(false);
+    const inScope = importProgramScope('ok.test\napp.test/api*\n', 'text');
+    expect(inScope.ok && inScope.report[1]?.decision).toBe('refused');
+  });
+
+  it('a broader exclusion over a narrower wildcard is kept, not dropped', () => {
+    const result = importProgramScope('*.app.example.test\n- *.example.test\n', 'text');
+    expect(result.ok && result.scope.excludeHosts).toEqual(['.example.test']);
+  });
+
+  it('an apex path entry is not "covered" by its own subdomain wildcard', () => {
+    const result = importProgramScope('*.example.test\nexample.test/api\n', 'text');
+    expect(result.ok && result.scope.allowedHosts).toEqual(['.example.test', 'example.test']);
+    expect(result.ok && result.scope.pathRules).toEqual([
+      { hostSuffix: 'example.test', prefix: '/api' },
+    ]);
+  });
+
+  it('notes when a suffix path rule also restricts a host listed in full', () => {
+    const result = importProgramScope('*.example.test/api\nwww.example.test\n', 'text');
+    expect(result.report[0]?.note).toMatch(/also restricts www\.example\.test/);
+  });
+
+  it('trailing slashes, "//" and "!" are handled', () => {
+    const result = importProgramScope(
+      'https://a.test/x/\nhttps://b.test//\n! https://a.test/x/y\n',
+      'text'
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.scope.allowedHosts).toEqual(['a.test', 'b.test']);
+    expect(result.scope.pathRules).toEqual([{ hostSuffix: 'a.test', prefix: '/x' }]);
+    expect(result.scope.excludePaths).toEqual([{ hostSuffix: 'a.test', prefix: '/x/y' }]);
+  });
+
+  it('HackerOne: a missing eligible_for_submission is out of scope', () => {
+    const json = JSON.stringify({
+      data: [
+        {
+          attributes: {
+            asset_type: 'URL',
+            asset_identifier: 'in.test',
+            eligible_for_submission: true,
+          },
+        },
+        { attributes: { asset_type: 'URL', asset_identifier: 'maybe.test' } },
+      ],
+    });
+    const result = importProgramScope(json, 'h1');
+    expect(result.ok && result.scope.allowedHosts).toEqual(['in.test']);
   });
 
   it.each([
     ['a public-suffix wildcard', '*.com'],
+    ['a multi-label public suffix', '*.co.uk'],
+    ['a private-suffix wildcard', '*.github.io'],
+    ['an unbracketed IPv6 literal', '2001:db8::1'],
     ['a mid-label wildcard', 'api.*.test'],
     ['a partial wildcard', '*api.test'],
     ['a non-default port', 'https://a.test:8443'],
