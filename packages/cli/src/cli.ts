@@ -713,7 +713,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--max-download-bytes <n>', 'per-download byte cap when downloads are allowed')
         .option(
           '--allow-hosts <a,b>',
-          'restrict egress to these hosts; cannot override server private-IP, loopback or metadata blocks'
+          'restrict egress to these hosts (a bare domain like example.com covers its subdomains; .example.com is subdomains-only); cannot override server private-IP, loopback or metadata blocks'
         )
         .option(
           '--blocked-hosts <a,b>',
