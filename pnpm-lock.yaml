@@ -96,6 +96,12 @@ importers:
 
   packages/audit:
     dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbrowser/policy':
+        specifier: workspace:*
+        version: link:../policy
       axe-core:
         specifier: ^4.14.0
         version: 4.14.0

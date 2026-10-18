@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — findings bound to an engagement (T10 M3)
+
+- `checkEngagementFindings(ledgerText, findings)` in `@agentbrowser/audit` checks findings against
+  an exported, chain-verified ledger: the URL must be in the recorded scope; a confirmed finding
+  needs independent-reproduction evidence and must cite unblocked ledger requests to its own
+  origin+path. `buildEngagementSarif(check)` returns a SARIF 2.1.0 draft for manual submission,
+  citing the engagement, program and ledger entries.
+- Importable alone as `@agentbrowser/audit/engagement-findings`, without the image or DOM
+  libraries; `VisualAuditError` moves to a dependency-free module (re-exported unchanged). The
+  audit package stays out of the CLI, MCP and API closures (T7 gate), so there is no CLI command.
+
 ### Added — import a program scope (T10 M3)
 
 - `agentbrowser scope import FILE --from h1|bugcrowd|text [--program-id … --authorized-by …

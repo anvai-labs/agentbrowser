@@ -10,15 +10,9 @@ import { PNG } from 'pngjs';
  * closures (cli/mcp-server/api do not depend on it); consumption arrives
  * with the audit mode/profile selection slice. */
 
-export class VisualAuditError extends Error {
-  constructor(
-    public code: string,
-    message: string
-  ) {
-    super(message);
-    this.name = 'VisualAuditError';
-  }
-}
+import { VisualAuditError } from './audit-error.js';
+
+export { VisualAuditError };
 
 export interface VisualIdentity {
   label: string;
