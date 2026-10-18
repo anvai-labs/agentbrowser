@@ -3,7 +3,6 @@ import { type EngagementScopeOptions, EngagementScopePolicy } from '@agentbrowse
 import { type ConfirmationEvidence, confirmFinding } from './finding-confirmation.js';
 import {
   confirmationProperties,
-  encodeUri,
   type SarifReport,
   type SarifResult,
   type SarifRule,
@@ -119,6 +118,10 @@ function parseFindings(input: unknown, issues: FindingIssue[]): EngagementFindin
       bad('url must be an absolute URL');
       continue;
     }
+    if (url.username !== '' || url.password !== '') {
+      bad('url must not carry credentials');
+      continue;
+    }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       bad('url must be http(s)');
       continue;
@@ -139,7 +142,10 @@ function parseFindings(input: unknown, issues: FindingIssue[]): EngagementFindin
       bad('ledgerRefs must be an array of record sequence numbers');
       continue;
     }
-    findings.push(item as unknown as EngagementFinding);
+    // A copy: the check normalizes method and citations without touching the caller's objects.
+    const copy = { ...item } as unknown as EngagementFinding;
+    if (Array.isArray(item.ledgerRefs)) copy.ledgerRefs = [...(item.ledgerRefs as number[])];
+    findings.push(copy);
   }
   return findings;
 }
@@ -173,7 +179,10 @@ export function checkEngagementFindings(
   if (
     opened?.type !== 'engagement.opened' ||
     snapshot === undefined ||
-    typeof engagementId !== 'string'
+    typeof engagementId !== 'string' ||
+    !Array.isArray(snapshot.allowedHosts) ||
+    snapshot.allowedHosts.length === 0 ||
+    !snapshot.allowedHosts.every((host) => typeof host === 'string')
   )
     return {
       ok: false,
@@ -216,7 +225,18 @@ export function checkEngagementFindings(
       issues.push({ findingId: finding.id, issue });
     };
     const url = new URL(finding.url);
-    const method = (finding.method ?? 'GET').toUpperCase();
+    finding.ledgerRefs = [...new Set(finding.ledgerRefs ?? [])];
+    // With no method given, the cited requests decide it (they must agree); else GET.
+    const citedMethods = new Set(
+      finding.ledgerRefs
+        .map((ref) => bySeq.get(ref))
+        .filter((record) => record?.type === 'request' && typeof record.data.method === 'string')
+        .map((record) => String(record?.data.method).toUpperCase())
+    );
+    if (finding.method === undefined && citedMethods.size > 1)
+      bad(`the cited requests use different methods (${[...citedMethods].join(', ')}); set method`);
+    const method = (finding.method ?? [...citedMethods][0] ?? 'GET').toUpperCase();
+    finding.method = method;
     const verdictOf = scope.check({ url: finding.url, method });
     if (!verdictOf.allowed) bad(`the URL is outside the engagement scope (${verdictOf.scope})`);
     if (finding.status === 'confirmed') {
@@ -252,7 +272,7 @@ export function checkEngagementFindings(
         bad(
           `ledger record ${ref} (${String(record.data.url)}) does not match the finding URL ${originPath(url)}`
         );
-      else if (finding.method !== undefined && String(record.data.method).toUpperCase() !== method)
+      else if (String(record.data.method).toUpperCase() !== method)
         bad(`ledger record ${ref} method ${String(record.data.method)} does not match ${method}`);
     }
   }
@@ -294,14 +314,18 @@ export function buildEngagementSarif(
       // SARIF 2.1.0 §3.27.10: a result that is not `fail` has level `none`; risk rides in properties.
       level: confirmed ? LEVEL[finding.severity] : 'none',
       message: { text: `${finding.title}: ${finding.description}` },
-      locations: [{ physicalLocation: { artifactLocation: { uri: encodeUri(finding.url) } } }],
+      // Origin + path only: a researcher's URL may carry query tokens; WHATWG serialization is
+      // already a valid URI (IPv6 brackets kept).
+      locations: [
+        { physicalLocation: { artifactLocation: { uri: originPath(new URL(finding.url)) } } },
+      ],
       partialFingerprints: { findingId: finding.id },
       ...confirmationProperties(finding.status, finding.evidence, {
         findingId: finding.id,
         risk: finding.severity,
         engagementId: check.engagementId,
         ...(check.program !== undefined ? { program: check.program } : {}),
-        ...(finding.method !== undefined ? { method: finding.method.toUpperCase() } : {}),
+        method: (finding.method ?? 'GET').toUpperCase(),
         ledgerRefs: [...(finding.ledgerRefs ?? [])],
       }),
     };

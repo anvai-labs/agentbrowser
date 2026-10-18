@@ -157,8 +157,110 @@ describe('buildEngagementSarif (T10 M3)', () => {
         engagementId: 'eng_aaaaaaaaaaaaaaaaaaaaaaaa',
       },
     });
+    // Origin + path only: the query (which may hold tokens) never reaches the draft.
     expect(result.locations?.[0]?.physicalLocation?.artifactLocation?.uri).toBe(
-      'https://app.acme.test/api/invoices/7?view=full'
+      'https://app.acme.test/api/invoices/7'
     );
+    expect(JSON.stringify(sarif)).not.toContain('view=full');
+  });
+
+  describe('engagement findings hardening (T10 M3, #584 review)', () => {
+    it('refuses a finding URL that carries credentials', () => {
+      const result = checkEngagementFindings(text, [
+        { ...confirmed, url: 'https://user:secret@app.acme.test/api/invoices/7' },
+      ]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.issues[0]?.issue).toMatch(/credentials/);
+    });
+
+    it('keeps IPv6 brackets in the SARIF uri', () => {
+      const v6 = ledger([
+        {
+          type: 'engagement.opened',
+          data: {
+            engagementId: 'eng_cccccccccccccccccccccccc',
+            scope: { ...scope, allowedHosts: ['[::1]'], excludePaths: undefined },
+          },
+        },
+        request('https://[::1]/x'),
+      ]);
+      const check = checkEngagementFindings(v6, [
+        { ...confirmed, url: 'https://[::1]/x', ledgerRefs: [1] },
+      ]);
+      if (!check.ok) throw new Error(JSON.stringify(check.issues));
+      expect(
+        buildEngagementSarif(check).runs[0]?.results[0]?.locations?.[0]?.physicalLocation
+          ?.artifactLocation?.uri
+      ).toBe('https://[::1]/x');
+    });
+
+    it('a malformed scope snapshot returns issues instead of throwing', () => {
+      const bad = ledger([
+        {
+          type: 'engagement.opened',
+          data: { engagementId: 'eng_dddddddddddddddddddddddd', scope: { pathRules: [] } },
+        },
+      ]);
+      const result = checkEngagementFindings(bad, [confirmed]);
+      expect(result.ok).toBe(false);
+    });
+
+    it('without a method, the cited requests decide it (and must agree); refs are deduplicated', () => {
+      const post = ledger([
+        opened,
+        request('https://app.acme.test/api/invoices/7', { method: 'POST' }),
+        request('https://app.acme.test/api/invoices/7', { method: 'GET' }),
+      ]);
+      const postOnly = checkEngagementFindings(post, [{ ...confirmed, ledgerRefs: [1, 1, 1] }]);
+      expect(postOnly).toMatchObject({ ok: true, findings: [{ method: 'POST', ledgerRefs: [1] }] });
+      const mixed = checkEngagementFindings(post, [{ ...confirmed, ledgerRefs: [1, 2] }]);
+      expect(mixed.ok).toBe(false);
+      if (!mixed.ok)
+        expect(mixed.issues.map((i) => i.issue).join(' ')).toMatch(/different methods/);
+    });
+
+    it('a citation to a failed request is refused', () => {
+      const failed = ledger([
+        opened,
+        request('https://app.acme.test/api/invoices/7', { outcome: 'failed' }),
+      ]);
+      const result = checkEngagementFindings(failed, [confirmed]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.issues[0]?.issue).toMatch(/failed/);
+    });
+
+    it.each([
+      ['a port', { allowedPorts: [443] }, 'https://app.acme.test:8443/x'],
+      ['a scheme', { allowedSchemes: ['https'] }, 'http://app.acme.test/x'],
+      ['an excluded host', { excludeHosts: ['admin.acme.test'] }, 'https://admin.acme.test/x'],
+      ['a method', { allowedMethods: ['GET'] }, 'https://app.acme.test/x'],
+      ['a path rule', { pathRules: [{ prefix: '/api' }] }, 'https://app.acme.test/other'],
+    ])('the recorded scope holds a suspected finding to %s', (_what, extra, url) => {
+      const scoped = ledger([
+        {
+          type: 'engagement.opened',
+          data: { engagementId: 'eng_eeeeeeeeeeeeeeeeeeeeeeee', scope: { ...scope, ...extra } },
+        },
+      ]);
+      const suspected = {
+        id: 'S',
+        title: 't',
+        severity: 'low',
+        status: 'suspected',
+        url,
+        description: 'd',
+        ...(extra.allowedMethods ? { method: 'DELETE' } : {}),
+      };
+      const result = checkEngagementFindings(scoped, [suspected]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.issues[0]?.issue).toMatch(/outside the engagement scope/);
+    });
+  });
+
+  it("never modifies the caller's findings", () => {
+    const input = { ...confirmed, ledgerRefs: [1, 1] };
+    const snapshot = JSON.stringify(input);
+    checkEngagementFindings(text, [input]);
+    expect(JSON.stringify(input)).toBe(snapshot);
   });
 });

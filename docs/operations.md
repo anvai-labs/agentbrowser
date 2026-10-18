@@ -820,7 +820,11 @@ dependency closures (T7), so there is no CLI command for them yet.
 
 `buildEngagementSarif` returns a SARIF 2.1.0 draft (`draft: true`, `submission: manual`) whose results carry
 the engagement id, program and ledger references; suspected findings are level `none` with their
-risk in `properties.risk`. Nothing sends a finding anywhere.
+risk in `properties.risk`; result URIs are origin+path only (a finding URL with credentials is
+refused, and its query never reaches the draft). Nothing sends a finding anywhere. **Trust limit:** the
+check is only as trustworthy as the ledger, which has no key or external anchor. Whoever can write
+the file can rewrite it with a wider scope and re-hash it, so a reviewer of a submission should
+obtain the ledger from the engagement's operator, not from the submitter.
 
 **Engagement ledger (T10 M2).** A scoped session created with `policy.scope.ledger: true`
 writes an append-only, hash-chained record of its traffic decisions — metadata only.
