@@ -48,6 +48,7 @@ import {
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
+  SCOPE_HOST_PATTERN,
   ScopeToolResultSchema,
   ScreenshotRequestSchema,
   SessionClosedResultSchema,
@@ -317,8 +318,13 @@ export function buildTools(
               'covers subdomains only, list the apex separately), pathRules ' +
               '[{hostSuffix?, prefix}] (segment-boundary prefixes), allowedMethods, expiresAt ' +
               '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
-              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts). ' +
-              'Refused together with allowServiceWorkers: true, a lane the scope cannot check.',
+              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts), ledger ' +
+              '(operator-configured engagement ledger). Narrowing only: excludeHosts, ' +
+              'excludePaths [{hostSuffix?, prefix}], allowedSchemes, allowedPorts, rateLimit ' +
+              '{requests, perSeconds} (paces up to 15 s, then SCOPE_RATE_LIMITED); program ' +
+              '{id, version?, authorizedBy, authorizedAt} is recorded, never enforced. Unknown ' +
+              'fields are refused. Refused together with allowServiceWorkers: true, a lane the ' +
+              'scope cannot check.',
             properties: {
               allowedHosts: {
                 type: 'array',
@@ -330,10 +336,11 @@ export function buildTools(
                 items: {
                   type: 'object',
                   properties: {
-                    hostSuffix: { type: 'string', minLength: 2 },
-                    prefix: { type: 'string', minLength: 1 },
+                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
+                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
                   },
                   required: ['prefix'],
+                  additionalProperties: false,
                 },
                 minItems: 1,
               },
@@ -360,6 +367,60 @@ export function buildTools(
                   required: ['header', 'value', 'allowedHosts'],
                 },
                 minItems: 1,
+              },
+              ledger: { type: 'boolean' },
+              excludeHosts: {
+                type: 'array',
+                items: { type: 'string', minLength: 1, pattern: SCOPE_HOST_PATTERN },
+                minItems: 1,
+              },
+              excludePaths: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
+                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
+                  },
+                  required: ['prefix'],
+                  additionalProperties: false,
+                },
+                minItems: 1,
+              },
+              allowedSchemes: {
+                type: 'array',
+                items: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9+.-]*$' },
+                minItems: 1,
+              },
+              allowedPorts: {
+                type: 'array',
+                items: { type: 'integer', minimum: 1, maximum: 65535 },
+                minItems: 1,
+              },
+              rateLimit: {
+                type: 'object',
+                properties: {
+                  requests: { type: 'integer', minimum: 1, maximum: 10000 },
+                  perSeconds: { type: 'integer', minimum: 1, maximum: 3600 },
+                },
+                required: ['requests', 'perSeconds'],
+                additionalProperties: false,
+              },
+              program: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', minLength: 1, maxLength: 200 },
+                  version: { type: 'string', minLength: 1, maxLength: 200 },
+                  authorizedBy: { type: 'string', minLength: 1, maxLength: 200 },
+                  authorizedAt: {
+                    type: 'string',
+                    maxLength: 64,
+                    pattern:
+                      '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
+                  },
+                },
+                required: ['id', 'authorizedBy', 'authorizedAt'],
+                additionalProperties: false,
               },
             },
             required: ['allowedHosts'],

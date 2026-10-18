@@ -46,6 +46,34 @@ export interface EngagementScopeOptions {
   requestBudget?: number;
   /** Identity markers that must not leave their bound hosts. */
   identityBindings?: ScopeIdentityBinding[];
+  /** T10 M3: hosts (exact or ".suffix") removed from scope even when allowed. */
+  excludeHosts?: string[];
+  /** T10 M3: segment-bounded path prefixes removed from scope (optionally host-bound). */
+  excludePaths?: ScopePathRule[];
+  /** T10 M3: URL schemes in scope, lowercase without ":" (absent = any). */
+  allowedSchemes?: string[];
+  /** T10 M3: ports in scope; an absent URL port means the scheme's default (absent = any). */
+  allowedPorts?: number[];
+  /** T10 M3: the program this engagement runs under (metadata only; reported, never enforced). */
+  program?: ScopeProgram;
+  /**
+   * T10 M3: at most `requests` in-scope requests per `perSeconds` window. Paces (waits for a
+   * free slot) rather than denying, so a page load slows down instead of breaking.
+   */
+  rateLimit?: { requests: number; perSeconds: number };
+  /** Injected sleep for movement-testable pacing (default an unref'd setTimeout; resolves early on abort). */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Longest a request may wait for a rate-limit slot, queue included (default 15 s). */
+  maxPaceMs?: number;
+}
+
+/** T10 M3: who authorized the engagement, under which published program scope. */
+export interface ScopeProgram {
+  id: string;
+  version?: string;
+  authorizedBy: string;
+  /** ISO 8601 timestamp of the authorization. */
+  authorizedAt: string;
 }
 
 /** The scope in effect, as `EngagementScopePolicy.status()` reports it (T10 M2). */
@@ -62,7 +90,94 @@ export interface EngagementScopeStatus {
   denials: Record<string, number>;
   /** Why all traffic stopped (the ledger is full or failed, or the session is closing). */
   stopped?: string;
+  excludeHosts?: string[];
+  excludePaths?: ScopePathRule[];
+  allowedSchemes?: string[];
+  allowedPorts?: number[];
+  program?: ScopeProgram;
+  /** The rate limit in effect and how many requests waited for a slot. */
+  rateLimit?: { requests: number; perSeconds: number; paced: number };
 }
+
+const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 };
+
+/**
+ * The path an exclusion is matched against: every spelling a server might route to the
+ * same resource collapses to one form. Percent-escapes are decoded (repeatedly, for
+ * double encoding), case is folded, "\\" and repeated "/" become one "/", ";params" are
+ * cut from each segment and dot segments resolved. Over-matching only narrows the scope,
+ * so exclusions err toward matching; allow-side rules keep the literal path.
+ */
+const decodeRepeatedly = (path: string, keepSeparators: boolean): string => {
+  let current = path;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const decoded = current.replace(/%([0-9A-Fa-f]{2})/g, (match, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      // Form B keeps an encoded "/" or "\\" undecoded so ".." across it stays unresolved.
+      return keepSeparators && (code === 0x2f || code === 0x5c) ? match : String.fromCharCode(code);
+    });
+    if (decoded === current) break;
+    current = decoded;
+  }
+  return current;
+};
+
+/**
+ * How ".." and dot-and-space segments ("..%20", "...") are read: "parent" resolves them
+ * against the previous segment, "drop" skips dot-and-space segments, "literal" keeps ".."
+ * as a segment (a server that does not resolve across an encoded separator).
+ */
+type DotReading = 'parent' | 'drop' | 'literal';
+
+const resolveSegments = (path: string, dots: DotReading): string => {
+  const segments: string[] = [];
+  for (const raw of path
+    .toLowerCase()
+    .replace(/%2f|%5c/g, '/')
+    .replace(/\\/g, '/')
+    .split('/')) {
+    // Cut ";params" and anything after a NUL.
+    let segment = (raw.split(';')[0] ?? '').split('\u0000')[0] ?? '';
+    if (segment === '' || segment === '.') continue;
+    // A segment of dots and whitespace: IIS/Windows trim trailing dots and spaces, so
+    // "..%20" and "..." may reach the server as "..".
+    const dotsOnly = /^[.\s]+$/.test(segment);
+    const parent = segment === '..' || (dotsOnly && (segment.match(/\./g)?.length ?? 0) >= 2);
+    if (parent) {
+      if (dots === 'parent') segments.pop();
+      else if (dots === 'literal') segments.push('..');
+      continue;
+    }
+    if (dotsOnly) continue;
+    // Strip the trailing dots and whitespace IIS/Windows ignore.
+    segment = segment.replace(/[.\s]+$/, '');
+    if (segment !== '') segments.push(segment);
+  }
+  return `/${segments.join('/')}`;
+};
+
+/**
+ * The paths an exclusion is matched against: every spelling a server might route to the
+ * same resource. Form A decodes everything (repeatedly, for double encoding), then reads
+ * dot segments both as a parent step and, for dot-and-space segments, as dropped. Form B
+ * keeps an encoded separator undecoded so ".." across it stays literal. All fold case,
+ * map "\\" to "/", collapse repeated "/", cut ";params" and NUL tails, and strip trailing
+ * dots and whitespace per segment. An exclusion matches if any form falls under it:
+ * over-matching only narrows the scope. Allow-side rules keep the literal path.
+ */
+const canonicalPaths = (pathname: string): string[] => {
+  const decoded = decodeRepeatedly(pathname, false);
+  return [
+    resolveSegments(decoded, 'parent'),
+    resolveSegments(decoded, 'drop'),
+    resolveSegments(decodeRepeatedly(pathname, true), 'literal'),
+  ];
+};
+
+/** Segment-bounded prefix: "/api" admits "/api" and "/api/x", never "/apix". */
+const underPrefix = (pathname: string, prefix: string): boolean =>
+  pathname === prefix ||
+  (pathname.startsWith(prefix) && (prefix.endsWith('/') || pathname.charAt(prefix.length) === '/'));
 
 const DENIED = 'POLICY_DENIED' as const;
 
@@ -88,14 +203,19 @@ const patternsOverlap = (a: string, b: string): boolean => {
 export function scopeConfigurationIssues(scope: {
   allowedHosts: string[];
   pathRules?: Array<{ hostSuffix?: string }>;
+  excludePaths?: Array<{ hostSuffix?: string }>;
 }): string[] {
   const allowed = scope.allowedHosts.map(normalizeHost);
   const issues: string[] = [];
-  for (const [index, rule] of (scope.pathRules ?? []).entries()) {
-    if (rule.hostSuffix === undefined) continue;
-    const host = normalizeHost(rule.hostSuffix);
-    if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
-      issues.push(`pathRules[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
+  // pathRules: an unbound rule leaves its host unrestricted. excludePaths: an unbound
+  // exclusion is a restriction silently ignored. Both are refused.
+  for (const field of ['pathRules', 'excludePaths'] as const) {
+    for (const [index, rule] of (scope[field] ?? []).entries()) {
+      if (rule.hostSuffix === undefined) continue;
+      const host = normalizeHost(rule.hostSuffix);
+      if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
+        issues.push(`${field}[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
+    }
   }
   return issues;
 }
@@ -124,6 +244,7 @@ export const SCOPE_SUBCODES = Object.freeze([
   'SCOPE_EXPIRED',
   'SCOPE_BUDGET_EXHAUSTED',
   'SCOPE_LEDGER_UNAVAILABLE',
+  'SCOPE_RATE_LIMITED',
 ] as const);
 export type ScopeSubCode = (typeof SCOPE_SUBCODES)[number];
 
@@ -149,6 +270,21 @@ export class EngagementScopePolicy {
   private readonly expiresAt: number | undefined;
   private readonly now: () => number;
   private readonly budget: number | undefined;
+  private readonly excludedHosts: string[];
+  private readonly excludedPaths: ScopePathRule[];
+  private readonly schemes: Set<string> | undefined;
+  private readonly ports: Set<number> | undefined;
+  private readonly program: ScopeProgram | undefined;
+  private readonly rate: { requests: number; perSeconds: number } | undefined;
+  private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  private readonly maxPaceMs: number;
+  /** Aborted by stop(): waiting requests wake at once and are denied. */
+  private readonly wake = new AbortController();
+  /** Admission times inside the current window, oldest first. */
+  private admitted: number[] = [];
+  /** Pacing is serialized so concurrent requests cannot burst past the limit. */
+  private paceQueue: Promise<void> = Promise.resolve();
+  private paced = 0;
   private spent = 0;
   /** Hops already spent by checkRedirectChain — callers may re-submit the
    * accumulated chain per redirect (the download transport does), and the
@@ -197,6 +333,83 @@ export class EngagementScopePolicy {
     this.expiresAt = scope.expiresAt;
     this.now = scope.now ?? Date.now;
     this.budget = scope.requestBudget;
+    this.excludedHosts = (scope.excludeHosts ?? []).map(normalizeHost);
+    this.excludedPaths = (scope.excludePaths ?? []).map((rule) => ({
+      ...rule,
+      ...(rule.hostSuffix !== undefined ? { hostSuffix: normalizeHost(rule.hostSuffix) } : {}),
+    }));
+    this.schemes =
+      scope.allowedSchemes !== undefined
+        ? new Set(scope.allowedSchemes.map((s) => s.toLowerCase()))
+        : undefined;
+    this.ports = scope.allowedPorts !== undefined ? new Set(scope.allowedPorts) : undefined;
+    this.program = scope.program !== undefined ? { ...scope.program } : undefined;
+    this.rate = scope.rateLimit !== undefined ? { ...scope.rateLimit } : undefined;
+    this.sleep =
+      scope.sleep ??
+      ((ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          const timer = setTimeout(resolve, ms);
+          timer.unref?.();
+          signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true }
+          );
+        }));
+    this.maxPaceMs = scope.maxPaceMs ?? 15_000;
+  }
+
+  /**
+   * Waits until the request fits the rate limit, then records its admission. Returns
+   * whether it waited (the caller re-checks the scope: it may have expired or stopped).
+   * A request that would wait longer than `maxPaceMs` (its time in the queue included) is
+   * denied SCOPE_RATE_LIMITED instead, so nothing is sent after the caller's navigation
+   * has given up.
+   */
+  private async pace(): Promise<boolean> {
+    const rate = this.rate;
+    if (rate === undefined) return false;
+    const windowMs = rate.perSeconds * 1000;
+    const enqueuedAt = this.now();
+    let waited = false;
+    const turn = this.paceQueue.then(async () => {
+      for (;;) {
+        // A stopped scope admits nothing; the caller's re-check denies.
+        if (this.stopped !== undefined) {
+          waited = true;
+          return;
+        }
+        const now = this.now();
+        this.admitted = this.admitted.filter((at) => at > now - windowMs);
+        if (this.admitted.length < rate.requests) {
+          this.admitted.push(now);
+          return;
+        }
+        const oldest = this.admitted[this.admitted.length - rate.requests] ?? now;
+        const wait = Math.max(1, oldest + windowMs - now);
+        if (now - enqueuedAt + wait > this.maxPaceMs) {
+          this.denials.set('SCOPE_RATE_LIMITED', (this.denials.get('SCOPE_RATE_LIMITED') ?? 0) + 1);
+          throw scopeDenial(
+            'SCOPE_RATE_LIMITED',
+            `rate limit ${rate.requests} per ${rate.perSeconds}s would hold this request past ${this.maxPaceMs} ms`
+          );
+        }
+        if (!waited) {
+          waited = true;
+          this.paced += 1;
+        }
+        // Loop after waking: a timer may fire early or the clock may move backwards.
+        await this.sleep(wait, this.wake.signal);
+      }
+    });
+    this.paceQueue = turn.catch(() => {});
+    await turn;
+    return waited;
   }
 
   /** Denials raised on the wire or in the navigation preflight, by sub-code. */
@@ -210,6 +423,7 @@ export class EngagementScopePolicy {
    */
   stop(reason: string): void {
     this.stopped ??= reason;
+    this.wake.abort();
   }
 
   /** The rules, counted: a denial is recorded by sub-code before it is thrown. */
@@ -254,6 +468,14 @@ export class EngagementScopePolicy {
         : {}),
       denials: Object.fromEntries(this.denials),
       ...(this.stopped !== undefined ? { stopped: this.stopped } : {}),
+      ...(this.excludedHosts.length > 0 ? { excludeHosts: [...this.excludedHosts] } : {}),
+      ...(this.excludedPaths.length > 0
+        ? { excludePaths: this.excludedPaths.map((rule) => ({ ...rule })) }
+        : {}),
+      ...(this.schemes !== undefined ? { allowedSchemes: [...this.schemes] } : {}),
+      ...(this.ports !== undefined ? { allowedPorts: [...this.ports] } : {}),
+      ...(this.program !== undefined ? { program: { ...this.program } } : {}),
+      ...(this.rate !== undefined ? { rateLimit: { ...this.rate, paced: this.paced } } : {}),
     };
   }
 
@@ -307,6 +529,32 @@ export class EngagementScopePolicy {
     if (!this.allowed.some((pattern) => hostMatches(hostname, pattern))) {
       throw scopeDenial('SCOPE_HOST_DENIED', `host ${hostname} is outside the engagement scope`);
     }
+    if (this.excludedHosts.some((pattern) => hostMatches(hostname, pattern))) {
+      throw scopeDenial(
+        'SCOPE_HOST_DENIED',
+        `host ${hostname} is excluded from the engagement scope`
+      );
+    }
+    if (this.schemes !== undefined || this.ports !== undefined) {
+      // Fail closed: an origin rule cannot be checked without the URL.
+      if (request.url === undefined) {
+        throw scopeDenial('SCOPE_HOST_DENIED', `origin of ${hostname} cannot be checked (no URL)`);
+      }
+      const parsed = new URL(request.url);
+      const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+      if (this.schemes !== undefined && !this.schemes.has(scheme)) {
+        throw scopeDenial('SCOPE_HOST_DENIED', `scheme ${scheme} is outside the engagement scope`);
+      }
+      if (this.ports !== undefined) {
+        const port = parsed.port !== '' ? Number(parsed.port) : DEFAULT_PORTS[scheme];
+        if (port === undefined || !this.ports.has(port)) {
+          throw scopeDenial(
+            'SCOPE_HOST_DENIED',
+            `port ${port ?? '(unknown)'} on ${hostname} is outside the engagement scope`
+          );
+        }
+      }
+    }
     if (this.methods !== undefined) {
       const method = request.method?.toUpperCase();
       if (method === undefined || !this.methods.has(method)) {
@@ -326,15 +574,28 @@ export class EngagementScopePolicy {
         (rule) => rule.hostSuffix === undefined || hostMatches(hostname, rule.hostSuffix)
       );
       const inPath =
-        boundRules.length === 0 ||
-        boundRules.some(
-          (rule) =>
-            pathname === rule.prefix ||
-            (pathname.startsWith(rule.prefix) &&
-              (rule.prefix.endsWith('/') || pathname.charAt(rule.prefix.length) === '/'))
-        );
+        boundRules.length === 0 || boundRules.some((rule) => underPrefix(pathname, rule.prefix));
       if (!inPath) {
         throw scopeDenial('SCOPE_PATH_DENIED', `path ${pathname} is outside the engagement scope`);
+      }
+    }
+    if (this.excludedPaths.length > 0) {
+      // Fail closed: an exclusion cannot be checked without the URL.
+      if (request.url === undefined) {
+        throw scopeDenial('SCOPE_PATH_DENIED', `path on ${hostname} cannot be checked (no URL)`);
+      }
+      const pathname = new URL(request.url).pathname;
+      const forms = canonicalPaths(pathname);
+      const excluded = this.excludedPaths.some((rule) => {
+        if (rule.hostSuffix !== undefined && !hostMatches(hostname, rule.hostSuffix)) return false;
+        const prefix = canonicalPaths(rule.prefix)[0] ?? '/';
+        return forms.some((form) => underPrefix(form, prefix));
+      });
+      if (excluded) {
+        throw scopeDenial(
+          'SCOPE_PATH_DENIED',
+          `path ${pathname} is excluded from the engagement scope`
+        );
       }
     }
     for (const binding of this.identities) {
@@ -359,6 +620,8 @@ export class EngagementScopePolicy {
   }): Promise<void> {
     // Deny-if runs BEFORE the spend: denied attempts consume no budget.
     this.denyIf(request);
+    // Pacing waits for a slot; a scope that expired or stopped meanwhile still denies.
+    if (await this.pace()) this.denyIf(request);
     if (this.budget !== undefined) {
       this.spent += 1;
     }

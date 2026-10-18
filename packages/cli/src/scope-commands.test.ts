@@ -80,4 +80,37 @@ describe('scope commands (T10 M2)', () => {
     expect(checkScope).toHaveBeenCalledWith('ses_1', { url: 'https://in.example/' });
     expect(out.join('\n')).toContain('allowed by the scope');
   });
+
+  it('session scope human output lists the T10 M3 restrictions and program', async () => {
+    const scopeStatus = vi.fn().mockResolvedValue({
+      allowedHosts: ['.in.example'],
+      pathRules: [],
+      identityBindings: [],
+      expired: false,
+      denials: {},
+      excludeHosts: ['admin.in.example'],
+      excludePaths: [{ hostSuffix: 'in.example', prefix: '/logout' }],
+      allowedSchemes: ['https'],
+      allowedPorts: [443, 8443],
+      rateLimit: { requests: 5, perSeconds: 2, paced: 3 },
+      program: {
+        id: 'acme-vdp',
+        version: '2026-10-01',
+        authorizedBy: 'researcher@example.test',
+        authorizedAt: '2026-10-17T00:00:00Z',
+      },
+    });
+    const { code, out } = await run(['session', 'scope', 'ses_1'], { scopeStatus });
+    const text = out.join('\n');
+    expect(code).toBe(0);
+    for (const line of [
+      'exclude: admin.in.example',
+      'exclude path: in.example /logout',
+      'schemes: https',
+      'ports:   443, 8443',
+      'rate:    5 per 2s (3 paced)',
+      'program: acme-vdp (2026-10-01), authorized by researcher@example.test at 2026-10-17T00:00:00Z',
+    ])
+      expect(text).toContain(line);
+  });
 });

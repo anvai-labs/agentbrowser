@@ -129,7 +129,7 @@ measurements show it matters.
 - Ids stay opaque strings, and the session schema pattern is unchanged.
 - Release notes call out the new formats, the public ids in `page.created`, the CLI context
   commands, and the `x-agentbrowser-generation` header.
-- Phases 1 to 3 ship together in a minor release after 1.24.0. Phase 1 alone has no visible
+- Phases 1 to 3 ship together in a minor release after 1.25.0. Phase 1 alone has no visible
   change and could ship in a patch.
 
 ## Open questions

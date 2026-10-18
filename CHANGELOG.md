@@ -7,6 +7,80 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.25.0] — 2026-10-18
+
+Entries are newest first. T10 milestone M3: program scope and findings bound to the engagement.
+**Upgrading from 1.24.x:**
+
+| Who | What changes |
+| --- | --- |
+| Engagement scopes | new optional narrowing fields: `excludeHosts`, `excludePaths`, `allowedSchemes`, `allowedPorts`, `rateLimit {requests, perSeconds}`, and `program` metadata. Exclusions match a canonical path, and `excludeHosts` and `excludePaths[].hostSuffix` follow the same host pattern as `pathRules[].hostSuffix` (since 1.24.0) |
+| Sessions with a `rateLimit` | requests over the limit wait for a slot for up to 15 s (queue included); past that they are denied `SCOPE_RATE_LIMITED` instead of being sent after the caller gave up |
+| TypeScript consumers | `SCOPE_RATE_LIMITED` is a new member of the scope sub-code and navigation-failure unions: exhaustive `switch`es need a case |
+| CLI | new `scope import FILE --from h1\|bugcrowd\|text`, which converts a published program scope offline. It refuses what it cannot express; an inexpressible exclusion fails the import. The oversized-input error for every file or JSON input (`--scope-file`, autofill payloads, cookie files) now reads "Input exceeds N bytes." (was "JSON input exceeds N bytes."); scripts matching the old text must adapt |
+| Library consumers | `importProgramScope` in `@agentbrowser/core`; `checkEngagementFindings` and `buildEngagementSarif` in `@agentbrowser/audit` (also `@agentbrowser/audit/engagement-findings`). There is no CLI or MCP command for findings yet: the audit package stays out of those closures (T7) |
+| MCP clients | the `create` tool's scope schema adds the new fields, `ledger`, and the strict host and prefix patterns; the `scope` tool's output reports the new fields and `rateLimit.paced` (catalog digest changed) |
+| Scopes without the new fields | unchanged |
+
+### Added — findings bound to an engagement (T10 M3)
+
+- `checkEngagementFindings(ledgerText, findings)` in `@agentbrowser/audit` checks findings against
+  an exported, chain-verified ledger: the URL must be in the recorded scope; a confirmed finding
+  needs independent-reproduction evidence and must cite unblocked ledger requests to its own
+  origin+path. `buildEngagementSarif(check)` returns a SARIF 2.1.0 draft for manual submission,
+  citing the engagement, program and ledger entries.
+- Importable alone as `@agentbrowser/audit/engagement-findings`, without the image or DOM
+  libraries; `VisualAuditError` moves to a dependency-free module (re-exported unchanged). The
+  audit package stays out of the CLI, MCP and API closures (T7 gate), so there is no CLI command.
+
+### Added — import a program scope (T10 M3)
+
+- `agentbrowser scope import FILE --from h1|bugcrowd|text [--program-id … --authorized-by …
+  --authorized-at …] [--out scope.json]` converts a published HackerOne, Bugcrowd or text program
+  scope into an engagement scope, offline. `*.host` maps to subdomains only (the apex only when
+  listed); URLs become host-bound path rules; out-of-scope entries become exclusions.
+- A trailing `/*` maps to its prefix. Ambiguous wildcards, public- and private-suffix wildcards,
+  other path wildcards, CIDR ranges, per-host ports, unbracketed IPv6, non-web assets and Unicode
+  hosts are refused with a reason. Schemes are scope-wide: a single shared scheme is kept, mixed or
+  unstated schemes become `["http", "https"]`, and `allowedPorts` is each kept scheme's default port. An inexpressible exclusion fails the whole import
+  (exit 1, nothing written), since the scope would be wider than the program. Program authorization
+  is recorded only as given. The converter (`importProgramScope`) lives in `@agentbrowser/core`;
+  imported scopes are pinned to pass session create.
+
+### Added — program-scope restrictions (T10 M3)
+
+| Field | Narrows by | Denial |
+| --- | --- | --- |
+| `excludeHosts` | exact / `.suffix` hosts removed from an allowed set | `SCOPE_HOST_DENIED` |
+| `excludePaths` | segment-bounded path prefixes, optionally host-bound | `SCOPE_PATH_DENIED` |
+| `allowedSchemes`, `allowedPorts` | origin (a URL without a port uses the scheme default) | `SCOPE_HOST_DENIED` |
+| `rateLimit` | `{requests, perSeconds}`: paces in-scope requests (waits for a slot) for up to 15 s, queue included | `SCOPE_RATE_LIMITED` past the cap |
+| `program` | metadata only: `{id, version?, authorizedBy, authorizedAt}` | — |
+
+- No new sub-codes. Each field can only narrow, and fails closed when a request carries no URL.
+- Exclusions match a canonical path (percent-decoded, case-folded, `//` and `\` collapsed,
+  `;params` and NUL tails cut, trailing dots and spaces stripped, dot segments resolved — with and
+  without decoding an encoded `/` first), so re-spelled paths cannot slip past them. Exclusion
+  hosts are normalized like every configured host, and `excludeHosts` entries must be ASCII
+  hostnames, `.suffix`es or bracketed IPv6 literals (no scheme, port or Unicode). `program.authorizedAt` must be an ISO 8601
+  date or date-time.
+- `rateLimit` pacing is serialized (concurrent requests cannot burst past it), counts every
+  redirect hop, re-checks the window after waking and expiry and the ledger after a wait, and is
+  reported with a `paced` count. A request that would wait past 15 s is denied
+  `SCOPE_RATE_LIMITED` rather than sent after its caller gave up; stopping the scope wakes waiters.
+  `SCOPE_RATE_LIMITED` is a new member of the scope sub-code unions (TypeScript exhaustive
+  `switch`es need a case).
+- All six fields are reported by the scope status (REST, SDK, CLI `session scope`, MCP `scope`)
+  and in the ledger's `engagement.opened` snapshot.
+- Accepted on `POST /v1/sessions`, MCP `create`, and CLI `--scope-file`.
+- Gates: policy unit tests and a real-Chromium test where an excluded path and a disallowed port
+  never reach the fixture.
+
+### Docs — the 1.24.0 release record
+
+- `docs/spec/evidence/release-1.24.0.md`; baselines move to 1.24.0; the `[1.24.0]` page-creation
+  upgrade row is narrowed to what changed (navigations that complete as blocked or timed out).
+
 ## [1.24.0] — 2026-10-17
 
 Entries are newest first. T10 milestone M2 completes: scope denials are reported everywhere, and a
@@ -18,7 +92,7 @@ session request can no longer carry a restriction the server ignores. **Upgradin
 | Any session-create request | an unknown key in the request, `policy`, `policy.approval` or `policy.scope` (and its path rules and identity bindings) is refused `400`, never ignored |
 | Engagement scopes | configured hosts are lowercased and stripped of trailing dots (a `hostSuffix` with uppercase letters used to bind nothing and leave the host's paths unrestricted); a path-rule `prefix` must start with `/`; a `hostSuffix` must be an ASCII hostname, `.suffix` or bracketed IPv6 literal; a path rule binding no allowed host is refused (`scope.unbound`) |
 | In-process embedders | `AgentBrowserService.createSession` validates the scope and approval policy (`scope.invalid`, `approval.invalid`) |
-| Page creation with a `url` (REST, SDK, MCP `page_create`, CLI `page create`) | **behaviour change:** an initial navigation that is blocked or times out now fails the create (`403` policy denial, `504` timeout, `500` otherwise) and removes the new page (human takeover keeps it), instead of returning a ready page |
+| Page creation with a `url` (REST, SDK, MCP `page_create`, CLI `page create`) | **behaviour change:** a navigation that completes as blocked (for example on a redirect hop) or timed out now fails the create (`403` policy denial, `504` timeout, `500` otherwise) and removes the new page (human takeover keeps it), instead of returning a ready page. Navigations refused before the wire already failed in 1.23 |
 | CLI `download` / `download collect --out` | saves first, then prints one compact receipt (artifact, path, byte count); with `--json`, errors go to stderr as JSON. Scripts parsing the old two-document output must adapt |
 | Actions, plans, autofill | scope denials keep their sub-code; completed actions can carry `navigationObservation`; plans and autofill stop on an observed denial (see the entries below) |
 | MCP clients | `page_create` and `autofill` descriptions, the `act`/`plan`/`autofill` output schemas (`navigationObservation`) and the `scope` tool's output schema changed (catalog digest changed); `create`'s input schema is unchanged |

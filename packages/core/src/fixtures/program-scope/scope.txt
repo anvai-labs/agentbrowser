@@ -1,0 +1,7 @@
+# in scope
+*.corp.test
+corp.test
+https://portal.corp.test/app
+# out of scope
+- vpn.corp.test
+- https://portal.corp.test/app/admin

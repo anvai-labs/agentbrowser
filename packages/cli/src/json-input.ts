@@ -19,7 +19,7 @@ export function createTextArgumentReader(
   const maxBytes = options.maxBytes ?? MAX_JSON_INPUT_BYTES;
   const timeoutMs = options.timeoutMs ?? JSON_INPUT_TIMEOUT_MS;
   let stdinUsed = false;
-  const tooLarge = () => new UsageError(`JSON input exceeds ${maxBytes} bytes.`);
+  const tooLarge = () => new UsageError(`Input exceeds ${maxBytes} bytes.`);
 
   const readStream = (stream: Readable, label: string): Promise<Buffer> =>
     new Promise((resolve, reject) => {
