@@ -39,6 +39,13 @@ export const PlanReportSchema = Type.Object(
 );
 export type PlanReport = Static<typeof PlanReportSchema>;
 
+/** The plan-level error codes the service reports on a plan report's `error.code`. */
+export const PLAN_ERROR_CODES = Object.freeze([
+  'PLAN_STEP_FAILED',
+  'PLAN_NAVIGATION_BLOCKED',
+  'PLAN_WAIT_TIMEOUT',
+] as const);
+
 export function parsePlanSteps(input: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(input)) throw new UsageError('actions must be an array of plan steps.');
   if (input.length > MAX_PLAN_STEPS)
