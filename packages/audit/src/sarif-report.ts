@@ -42,6 +42,7 @@ export interface SarifReport {
       };
     };
     results: SarifResult[];
+    properties?: Record<string, unknown>;
   }>;
 }
 
@@ -52,7 +53,7 @@ import type { ScannerFinding, ScannerScanResult } from './scanner-regression.js'
 
 /** The confirmation labelling every security result carries (T7). Evidence appears only on a
  * confirmed result; the private payload never does (the evidence holds a description). */
-function confirmationProperties(
+export function confirmationProperties(
   status: 'suspected' | 'confirmed',
   evidence: ConfirmationEvidence | undefined,
   extra: Record<string, unknown> = {}
@@ -78,7 +79,7 @@ function confirmationProperties(
 
 /** RFC 3986 percent-encode a URI reference so SARIF consumers and strict
  * validators accept it (raw < > " etc. are not valid URI characters). */
-function encodeUri(uri: string): string {
+export function encodeUri(uri: string): string {
   try {
     // encodeURI preserves the URI structure (scheme, host, path separators)
     // while percent-encoding invalid characters like < > " and spaces.

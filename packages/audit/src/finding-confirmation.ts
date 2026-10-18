@@ -1,4 +1,4 @@
-import { VisualAuditError } from './visual-audit.js';
+import { VisualAuditError } from './audit-error.js';
 
 /** T7 acceptance: "Confirmed findings include independent evidence and cleanup; suspected
  * findings remain labeled." A finding moves from `suspected` to `confirmed` only here, and only

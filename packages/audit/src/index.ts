@@ -1,4 +1,6 @@
 export * from './accessibility-audit.js';
+export * from './audit-error.js';
+export * from './engagement-findings.js';
 export * from './finding-baseline-store.js';
 export * from './finding-confirmation.js';
 export * from './role-access-check.js';

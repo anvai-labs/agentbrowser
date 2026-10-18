@@ -798,6 +798,30 @@ published scope is not permission: test only what you are authorized to test. Fo
 structured scopes (`data[].attributes`, `eligible_for_submission`), Bugcrowd `target_groups`, and
 text (one entry per line, `-` for out of scope, `#` comments).
 
+**Findings bound to an engagement (T10 M3).** Findings are a researcher-owned JSON array
+(`id`, `title`, `severity`, `status: suspected|confirmed`, `url`, `description`, optional `method`,
+`ruleId`, `ledgerRefs`, `evidence`), checked offline against an exported ledger:
+
+```
+engagement export --out L.jsonl ─▶ checkEngagementFindings(ledger, findings) ─▶ buildEngagementSarif(check) ─▶ manual submission
+```
+
+The check and the SARIF builder are library functions in `@agentbrowser/audit` (importable alone as
+`@agentbrowser/audit/engagement-findings`); the audit package stays out of the CLI, MCP and API
+dependency closures (T7), so there is no CLI command for them yet.
+
+| Rule | A finding is refused when |
+| --- | --- |
+| chain | the ledger does not verify |
+| scope | its URL is outside the scope recorded in `engagement.opened` (hosts, paths, excludes, schemes, ports, methods) |
+| evidence | it is confirmed without `independent-reproduction` evidence (a scanner's confidence is not evidence) |
+| citations | it is confirmed and cites no ledger request |
+| each citation | the record is missing, not a request, blocked, failed, or its origin+path (or method) differs from the finding |
+
+`buildEngagementSarif` returns a SARIF 2.1.0 draft (`draft: true`, `submission: manual`) whose results carry
+the engagement id, program and ledger references; suspected findings are level `none` with their
+risk in `properties.risk`. Nothing sends a finding anywhere.
+
 **Engagement ledger (T10 M2).** A scoped session created with `policy.scope.ledger: true`
 writes an append-only, hash-chained record of its traffic decisions — metadata only.
 
