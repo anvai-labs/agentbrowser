@@ -63,6 +63,7 @@ import {
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PageStateSchema,
+  PLAN_ERROR_CODES,
   PlanActionsSchema,
   PlanReportSchema,
   parseActionNavigationObservation,
@@ -349,7 +350,7 @@ async function promptOperatorKey(deps: {
   return line;
 }
 
-const KNOWN_ERROR_CODES = new Set<string>(Object.values(ErrorCode));
+const KNOWN_ERROR_CODES = new Set<string>([...Object.values(ErrorCode), ...PLAN_ERROR_CODES]);
 
 /** XML-escape for JUnit attributes (the same rules as the CI action's writer). */
 const junitXml = (value: string): string =>
@@ -375,12 +376,22 @@ export function planJunit(
   planFile: string,
   steps: Array<Record<string, unknown>>,
   report: {
-    results: Array<{ step: number; ok: boolean; error?: string }>;
+    ok?: boolean;
+    results: Array<{ step: number; ok: boolean; error?: string; navigationObservation?: unknown }>;
     error?: { code?: string };
   }
 ): string {
   const suite = junitXml(planFile.split(/[\\/]/).pop() ?? planFile);
   const byStep = new Map(report.results.map((r) => [r.step, r]));
+  const known = (value: string | undefined) =>
+    value !== undefined && KNOWN_ERROR_CODES.has(value) ? value : undefined;
+  // A plan can stop with no failed step: a completed step whose navigation was blocked
+  // (PLAN_NAVIGATION_BLOCKED). That step carries the plan's failure, so the JUnit never reads green.
+  const anyFailed = report.results.some((r) => !r.ok);
+  const stopper =
+    report.ok === false && !anyFailed
+      ? report.results.find((r) => r.navigationObservation !== undefined)?.step
+      : undefined;
   let failures = 0;
   let skipped = 0;
   const cases = steps.map((step, index) => {
@@ -391,22 +402,29 @@ export function planJunit(
       skipped += 1;
       return `${open}>\n      <skipped/>\n    </testcase>`;
     }
-    if (result.ok) return `${open}/>`;
+    if (result.ok && result.step !== stopper) return `${open}/>`;
     failures += 1;
     // A known error code only: the step's own error prefix, else the plan's error code, else
     // FAILED. Anything else (which could be page-derived text) never enters the artifact.
-    const known = (value: string | undefined) =>
-      value !== undefined && KNOWN_ERROR_CODES.has(value) ? value : undefined;
     const code =
       known(/^[A-Z][A-Z0-9_]*(?=:|$)/.exec(result.error ?? '')?.[0]) ??
       known(report.error?.code) ??
       'FAILED';
     return `${open}>\n      <failure message="${junitXml(code)}"/>\n    </testcase>`;
   });
+  let tests = steps.length;
+  if (report.ok === false && failures === 0) {
+    // No step to pin the failure on: a plan-level testcase carries it.
+    failures += 1;
+    tests += 1;
+    cases.push(
+      `    <testcase classname="${suite}" name="plan">\n      <failure message="${junitXml(known(report.error?.code) ?? 'FAILED')}"/>\n    </testcase>`
+    );
+  }
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<testsuites tests="${steps.length}" failures="${failures}" errors="0" skipped="${skipped}">`,
-    `  <testsuite name="${suite}" tests="${steps.length}" failures="${failures}" errors="0">`,
+    `<testsuites tests="${tests}" failures="${failures}" errors="0" skipped="${skipped}">`,
+    `  <testsuite name="${suite}" tests="${tests}" failures="${failures}" errors="0">`,
     ...cases,
     '  </testsuite>',
     '</testsuites>',
@@ -1884,6 +1902,13 @@ export function buildCli(deps: CliDependencies): Cli {
                   throw new UsageError(
                     `--junit ${options.junit} already exists; choose a new path (it is created exclusively).`
                   );
+                const { dirname } = await import('node:path');
+                const parentIsDir = await lstat(dirname(options.junit)).then(
+                  (stat) => stat.isDirectory(),
+                  () => false
+                );
+                if (!parentIsDir)
+                  throw new UsageError(`--junit ${options.junit}: its directory does not exist.`);
               }
               const request: SessionRequest = { tenantId: String(options.tenant) };
               if (options.scopeFile !== undefined) {

@@ -253,4 +253,72 @@ describe('run <planFile> (T10 M4)', () => {
     expect(xml).toContain('<failure message="FAILED"/>');
     expect(xml).not.toMatch(/SECRET/);
   });
+
+  it('a plan stopped by a blocked navigation is a JUnit failure, never green (#590 r2 N1)', async () => {
+    const { sessions } = fakeSessions({
+      ok: false,
+      completed: 1,
+      results: [
+        {
+          step: 0,
+          ok: true,
+          navigationObservation: {
+            status: 'blocked',
+            reason: 'egress_policy',
+            scope: 'SCOPE_HOST_DENIED',
+            observedDuring: 'action',
+          },
+        },
+      ],
+      error: { code: 'PLAN_NAVIGATION_BLOCKED', message: 'A navigation was blocked' },
+    });
+    const junit = join(dir, 'blocked.xml');
+    const result = await run(
+      ['run', planFile, '--url', 'https://app.test/', '--tenant', 't1', '--junit', junit],
+      sessions
+    );
+    expect(result.code).toBe(1);
+    const xml = readFileSync(junit, 'utf8');
+    expect(xml).toContain('failures="1"');
+    expect(xml).toContain(
+      '<testcase classname="plan.json" name="step 1: fill">\n      <failure message="PLAN_NAVIGATION_BLOCKED"/>'
+    );
+    expect(xml).toContain('name="step 2: click">\n      <skipped/>');
+  });
+
+  it('a failed plan with no step to blame gets a plan-level failure; plan codes are kept', async () => {
+    const { sessions } = fakeSessions({
+      ok: false,
+      completed: 0,
+      results: [],
+      error: { code: 'PLAN_STEP_FAILED', message: 'x' },
+    });
+    const junit = join(dir, 'planlevel.xml');
+    await run(
+      ['run', planFile, '--url', 'https://app.test/', '--tenant', 't1', '--junit', junit],
+      sessions
+    );
+    const xml = readFileSync(junit, 'utf8');
+    expect(xml).toContain('tests="3" failures="1"');
+    expect(xml).toContain('name="plan">\n      <failure message="PLAN_STEP_FAILED"/>');
+  });
+
+  it('refuses a --junit path whose directory does not exist, before any session', async () => {
+    const { sessions, calls } = fakeSessions(okReport);
+    const result = await run(
+      [
+        'run',
+        planFile,
+        '--url',
+        'https://app.test/',
+        '--tenant',
+        't1',
+        '--junit',
+        join(dir, 'no-such-dir', 'r.xml'),
+      ],
+      sessions
+    );
+    expect(result.code).not.toBe(0);
+    expect(calls).toEqual([]);
+  });
 });

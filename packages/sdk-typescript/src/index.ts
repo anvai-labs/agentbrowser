@@ -51,6 +51,7 @@ export {
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PageStateSchema,
+  PLAN_ERROR_CODES,
   PlanActionsSchema,
   PlanReportSchema,
   parseAutofillReport,
