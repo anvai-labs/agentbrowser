@@ -1,5 +1,12 @@
 // T10 M4: `run` executes a saved plan file end to end (create, navigate, plan, close).
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -316,6 +323,32 @@ describe('run <planFile> (T10 M4)', () => {
         '--junit',
         join(dir, 'no-such-dir', 'r.xml'),
       ],
+      sessions
+    );
+    expect(result.code).not.toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  it('accepts a --junit path under a symlinked directory (macOS /tmp is one)', async () => {
+    const { sessions } = fakeSessions(okReport);
+    const real = join(dir, 'real-dir');
+    mkdirSync(real);
+    symlinkSync(real, join(dir, 'link-dir'));
+    const junit = join(dir, 'link-dir', 'r.xml');
+    const result = await run(
+      ['run', planFile, '--url', 'https://app.test/', '--tenant', 't1', '--junit', junit],
+      sessions
+    );
+    expect(result.code).toBe(0);
+    expect(readFileSync(join(real, 'r.xml'), 'utf8')).toContain('<testsuite');
+  });
+
+  it('still refuses a dangling-symlink --junit target', async () => {
+    const { sessions, calls } = fakeSessions(okReport);
+    const dangling = join(dir, 'dangling.xml');
+    symlinkSync(join(dir, 'nowhere.xml'), dangling);
+    const result = await run(
+      ['run', planFile, '--url', 'https://app.test/', '--tenant', 't1', '--junit', dangling],
       sessions
     );
     expect(result.code).not.toBe(0);

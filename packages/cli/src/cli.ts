@@ -1893,7 +1893,9 @@ export function buildCli(deps: CliDependencies): Cli {
               if (startUrl.protocol !== 'http:' && startUrl.protocol !== 'https:')
                 throw new UsageError('--url must be an absolute http(s) URL.');
               if (options.junit !== undefined) {
-                const { lstat } = await import('node:fs/promises');
+                // lstat on the target (a dangling symlink counts as existing); stat on the parent
+                // (a symlinked directory such as macOS /tmp is fine).
+                const { lstat, stat } = await import('node:fs/promises');
                 const exists = await lstat(options.junit).then(
                   () => true,
                   () => false
@@ -1903,7 +1905,7 @@ export function buildCli(deps: CliDependencies): Cli {
                     `--junit ${options.junit} already exists; choose a new path (it is created exclusively).`
                   );
                 const { dirname } = await import('node:path');
-                const parentIsDir = await lstat(dirname(options.junit)).then(
+                const parentIsDir = await stat(dirname(options.junit)).then(
                   (stat) => stat.isDirectory(),
                   () => false
                 );
