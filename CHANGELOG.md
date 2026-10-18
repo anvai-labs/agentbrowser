@@ -7,6 +7,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.24.0 release record
+
+- `docs/spec/evidence/release-1.24.0.md`; baselines move to 1.24.0; the `[1.24.0]` page-creation
+  upgrade row is narrowed to what changed (navigations that complete as blocked or timed out).
+
 ## [1.24.0] — 2026-10-17
 
 Entries are newest first. T10 milestone M2 completes: scope denials are reported everywhere, and a
@@ -18,7 +23,7 @@ session request can no longer carry a restriction the server ignores. **Upgradin
 | Any session-create request | an unknown key in the request, `policy`, `policy.approval` or `policy.scope` (and its path rules and identity bindings) is refused `400`, never ignored |
 | Engagement scopes | configured hosts are lowercased and stripped of trailing dots (a `hostSuffix` with uppercase letters used to bind nothing and leave the host's paths unrestricted); a path-rule `prefix` must start with `/`; a `hostSuffix` must be an ASCII hostname, `.suffix` or bracketed IPv6 literal; a path rule binding no allowed host is refused (`scope.unbound`) |
 | In-process embedders | `AgentBrowserService.createSession` validates the scope and approval policy (`scope.invalid`, `approval.invalid`) |
-| Page creation with a `url` (REST, SDK, MCP `page_create`, CLI `page create`) | **behaviour change:** an initial navigation that is blocked or times out now fails the create (`403` policy denial, `504` timeout, `500` otherwise) and removes the new page (human takeover keeps it), instead of returning a ready page |
+| Page creation with a `url` (REST, SDK, MCP `page_create`, CLI `page create`) | **behaviour change:** a navigation that completes as blocked (for example on a redirect hop) or timed out now fails the create (`403` policy denial, `504` timeout, `500` otherwise) and removes the new page (human takeover keeps it), instead of returning a ready page. Navigations refused before the wire already failed in 1.23 |
 | CLI `download` / `download collect --out` | saves first, then prints one compact receipt (artifact, path, byte count); with `--json`, errors go to stderr as JSON. Scripts parsing the old two-document output must adapt |
 | Actions, plans, autofill | scope denials keep their sub-code; completed actions can carry `navigationObservation`; plans and autofill stop on an observed denial (see the entries below) |
 | MCP clients | `page_create` and `autofill` descriptions, the `act`/`plan`/`autofill` output schemas (`navigationObservation`) and the `scope` tool's output schema changed (catalog digest changed); `create`'s input schema is unchanged |
