@@ -6,7 +6,7 @@
  */
 
 import { BlockList, isIP } from 'node:net';
-import { RingBuffer } from '@agentbrowser/core';
+import { RingBuffer, usableHost } from '@agentbrowser/core';
 import { classifyIPAddress, isMetadataHostname } from './ip-address.js';
 
 export interface NetworkPolicyOptions {
@@ -523,10 +523,16 @@ export function compilePrivateCIDRs(input: string[]): { cidrs: string[]; ranges:
 // ---------------------------------------------------------------------------
 
 export interface SessionHostRules {
-  /** Exact hosts and domain suffixes (".example.com") the session may reach.
-   * When set, the list is exhaustive: everything else is denied. */
+  /** Hosts the session may reach. When set, the list is exhaustive: everything
+   * else is denied. A bare entry that names a bounded domain ("example.com",
+   * "id.example.com") covers that host AND its whole subtree — the operator
+   * intent behind "allow example.com" is the site, not one hostname. Entries
+   * that cannot be bounded (IP literals, public suffixes like "github.io",
+   * unlisted/internal names) stay exact-only. An explicit dot entry
+   * (".example.com") keeps subdomains-only semantics (apex excluded). */
   allowedHosts?: string[];
-  /** Hosts denied on top of the base policy. */
+  /** Hosts denied on top of the base policy. Bare bounded domains deny the
+   * whole subtree (symmetric with the allowlist). */
   blockedHosts?: string[];
 }
 
@@ -614,6 +620,19 @@ export class SessionHostPolicy {
   }
 }
 
+/**
+ * A bare allow/block entry expands to its subtree only when it names a bounded
+ * domain: on the pinned public-suffix list (tldts, private section in force,
+ * same machinery as the cookie-domain relation), not an IP literal, no port,
+ * no trailing dot. This is what keeps the smart default from ever widening
+ * across sites: "github.io" is a public suffix, so it stays exact-only and
+ * can never cover a sibling tenant; "badexample.com" never matches
+ * "example.com" (the match is label-boundary, not a raw endsWith).
+ */
+function subtreeExpandable(host: string): boolean {
+  return usableHost(host).ok;
+}
+
 /** Single immutable host predicate shared by request and destination views. */
 class HostRules {
   private readonly allowedExact = new Set<string>();
@@ -624,20 +643,26 @@ class HostRules {
 
   constructor(rules: SessionHostRules) {
     for (const host of rules.allowedHosts ?? []) {
-      if (host.startsWith('.')) {
-        this.allowedSuffixes.add(host.toLowerCase());
-      } else {
-        this.allowedExact.add(host.toLowerCase());
-      }
+      this.add(this.allowedExact, this.allowedSuffixes, host);
     }
     for (const host of rules.blockedHosts ?? []) {
-      if (host.startsWith('.')) {
-        this.blockedSuffixes.add(host.toLowerCase());
-      } else {
-        this.blockedExact.add(host.toLowerCase());
-      }
+      this.add(this.blockedExact, this.blockedSuffixes, host);
     }
     this.hasAllowList = this.allowedExact.size > 0 || this.allowedSuffixes.size > 0;
+  }
+
+  /** Bare bounded domain → exact + subtree; dot entry → subtree only; anything
+   * unbounded (IP, public suffix, unlisted name) → exact only. */
+  private add(exact: Set<string>, suffixes: Set<string>, host: string): void {
+    const entry = host.toLowerCase();
+    if (entry.startsWith('.')) {
+      suffixes.add(entry);
+    } else if (subtreeExpandable(entry)) {
+      exact.add(entry);
+      suffixes.add(`.${entry}`);
+    } else {
+      exact.add(entry);
+    }
   }
 
   check(hostname: string): void {
