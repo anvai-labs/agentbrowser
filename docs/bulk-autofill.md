@@ -89,6 +89,18 @@ ownership is proven. Opening/typing may already have effects, so a later
 refusal is uncertain and stops the suffix. See the
 [owned-popup design](spec/design/t6-owned-popup-readiness.md) for the bounded contract.
 
+**Async, recycled and partial-effect coverage (T6).** Qualified against the real react-select
+(`autofill-react-select-async-real.test.ts`, Chromium):
+
+| Case | Result |
+| --- | --- |
+| options loaded asynchronously (`react-select/async`, 400 ms) | the exact option commits when `settleMs × maxReobserve` covers the load (e.g. `settleMs: 200, maxReobserve: 5`); a shorter budget fails safely: `uncertain`, `TARGET_NOT_FOUND`, nothing committed or submitted |
+| recycled option nodes (a menu that keys option wrappers by index) | the exact option commits, never a stale node |
+| a later field fails | earlier fields stay committed and are reported `verified`; nothing is undone (no guessed rollback) and nothing submits |
+
+For slow option sources, raise `settleMs` and `maxReobserve` (up to 2000 ms × 5) rather than
+retrying the whole fill.
+
 ## Co-design decisions and next qualification
 
 1. **Endpoint versus plan:** a dedicated endpoint wraps the existing action and observation primitives. It does not reuse the plan executor's ordinal remapping, and does not add a second transport or session owner. MCP stdio remains a client bridge to the same service admission.

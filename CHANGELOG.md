@@ -22,6 +22,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - The release smoke (`scope-consumer-smoke.mjs`) runs a scoped saved plan that submits a form,
   checks the JUnit, a failing plan's exit 1, and that no session is left open.
 
+### Tests — async, recycled-option and partial-effect widget coverage (T6)
+
+- `autofill-react-select-async-real.test.ts` (real react-select, Chromium): asynchronously loaded
+  options commit exactly when the readiness budget covers the load and otherwise fail safely
+  (`uncertain`, nothing committed); recycled option nodes commit the exact option; a later
+  field's failure leaves earlier fields committed and reported, with nothing undone or
+  submitted. `bulk-autofill.md` documents the readiness budget for slow option sources.
+
 ### Docs — the 1.25.0 release record
 
 - `docs/spec/evidence/release-1.25.0.md`; baselines move to 1.25.0.
