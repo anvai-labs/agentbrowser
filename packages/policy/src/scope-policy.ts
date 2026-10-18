@@ -61,8 +61,10 @@ export interface EngagementScopeOptions {
    * free slot) rather than denying, so a page load slows down instead of breaking.
    */
   rateLimit?: { requests: number; perSeconds: number };
-  /** Injected sleep for movement-testable pacing (default setTimeout). */
-  sleep?: (ms: number) => Promise<void>;
+  /** Injected sleep for movement-testable pacing (default an unref'd setTimeout; resolves early on abort). */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Longest a request may wait for a rate-limit slot, queue included (default 15 s). */
+  maxPaceMs?: number;
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */
@@ -242,6 +244,7 @@ export const SCOPE_SUBCODES = Object.freeze([
   'SCOPE_EXPIRED',
   'SCOPE_BUDGET_EXHAUSTED',
   'SCOPE_LEDGER_UNAVAILABLE',
+  'SCOPE_RATE_LIMITED',
 ] as const);
 export type ScopeSubCode = (typeof SCOPE_SUBCODES)[number];
 
@@ -273,7 +276,10 @@ export class EngagementScopePolicy {
   private readonly ports: Set<number> | undefined;
   private readonly program: ScopeProgram | undefined;
   private readonly rate: { requests: number; perSeconds: number } | undefined;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  private readonly maxPaceMs: number;
+  /** Aborted by stop(): waiting requests wake at once and are denied. */
+  private readonly wake = new AbortController();
   /** Admission times inside the current window, oldest first. */
   private admitted: number[] = [];
   /** Pacing is serialized so concurrent requests cannot burst past the limit. */
@@ -339,30 +345,67 @@ export class EngagementScopePolicy {
     this.ports = scope.allowedPorts !== undefined ? new Set(scope.allowedPorts) : undefined;
     this.program = scope.program !== undefined ? { ...scope.program } : undefined;
     this.rate = scope.rateLimit !== undefined ? { ...scope.rateLimit } : undefined;
-    this.sleep = scope.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.sleep =
+      scope.sleep ??
+      ((ms: number, signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          const timer = setTimeout(resolve, ms);
+          timer.unref?.();
+          signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true }
+          );
+        }));
+    this.maxPaceMs = scope.maxPaceMs ?? 15_000;
   }
 
   /**
    * Waits until the request fits the rate limit, then records its admission. Returns
    * whether it waited (the caller re-checks the scope: it may have expired or stopped).
+   * A request that would wait longer than `maxPaceMs` (its time in the queue included) is
+   * denied SCOPE_RATE_LIMITED instead, so nothing is sent after the caller's navigation
+   * has given up.
    */
   private async pace(): Promise<boolean> {
     const rate = this.rate;
     if (rate === undefined) return false;
     const windowMs = rate.perSeconds * 1000;
+    const enqueuedAt = this.now();
     let waited = false;
     const turn = this.paceQueue.then(async () => {
-      let now = this.now();
-      this.admitted = this.admitted.filter((at) => at > now - windowMs);
-      if (this.admitted.length >= rate.requests) {
-        const oldest = this.admitted[this.admitted.length - rate.requests] ?? now;
-        waited = true;
-        this.paced += 1;
-        await this.sleep(Math.max(0, oldest + windowMs - now));
-        now = this.now();
+      for (;;) {
+        // A stopped scope admits nothing; the caller's re-check denies.
+        if (this.stopped !== undefined) {
+          waited = true;
+          return;
+        }
+        const now = this.now();
         this.admitted = this.admitted.filter((at) => at > now - windowMs);
+        if (this.admitted.length < rate.requests) {
+          this.admitted.push(now);
+          return;
+        }
+        const oldest = this.admitted[this.admitted.length - rate.requests] ?? now;
+        const wait = Math.max(1, oldest + windowMs - now);
+        if (now - enqueuedAt + wait > this.maxPaceMs) {
+          this.denials.set('SCOPE_RATE_LIMITED', (this.denials.get('SCOPE_RATE_LIMITED') ?? 0) + 1);
+          throw scopeDenial(
+            'SCOPE_RATE_LIMITED',
+            `rate limit ${rate.requests} per ${rate.perSeconds}s would hold this request past ${this.maxPaceMs} ms`
+          );
+        }
+        if (!waited) {
+          waited = true;
+          this.paced += 1;
+        }
+        // Loop after waking: a timer may fire early or the clock may move backwards.
+        await this.sleep(wait, this.wake.signal);
       }
-      this.admitted.push(now);
     });
     this.paceQueue = turn.catch(() => {});
     await turn;
@@ -380,6 +423,7 @@ export class EngagementScopePolicy {
    */
   stop(reason: string): void {
     this.stopped ??= reason;
+    this.wake.abort();
   }
 
   /** The rules, counted: a denial is recorded by sub-code before it is thrown. */

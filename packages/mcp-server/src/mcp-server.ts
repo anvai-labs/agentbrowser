@@ -321,7 +321,7 @@ export function buildTools(
               '[{header, value, allowedHosts}] (the marker is denied on unbound hosts), ledger ' +
               '(operator-configured engagement ledger). Narrowing only: excludeHosts, ' +
               'excludePaths [{hostSuffix?, prefix}], allowedSchemes, allowedPorts, rateLimit ' +
-              '{requests, perSeconds} (paces, never denies); program ' +
+              '{requests, perSeconds} (paces up to 15 s, then SCOPE_RATE_LIMITED); program ' +
               '{id, version?, authorizedBy, authorizedAt} is recorded, never enforced. Unknown ' +
               'fields are refused. Refused together with allowServiceWorkers: true, a lane the ' +
               'scope cannot check.',

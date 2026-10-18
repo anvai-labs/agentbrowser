@@ -14,7 +14,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 | `excludeHosts` | exact / `.suffix` hosts removed from an allowed set | `SCOPE_HOST_DENIED` |
 | `excludePaths` | segment-bounded path prefixes, optionally host-bound | `SCOPE_PATH_DENIED` |
 | `allowedSchemes`, `allowedPorts` | origin (a URL without a port uses the scheme default) | `SCOPE_HOST_DENIED` |
-| `rateLimit` | `{requests, perSeconds}`: paces in-scope requests (waits for a slot), never denies | — |
+| `rateLimit` | `{requests, perSeconds}`: paces in-scope requests (waits for a slot) for up to 15 s, queue included | `SCOPE_RATE_LIMITED` past the cap |
 | `program` | metadata only: `{id, version?, authorizedBy, authorizedAt}` | — |
 
 - No new sub-codes. Each field can only narrow, and fails closed when a request carries no URL.
@@ -25,7 +25,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   hostnames, `.suffix`es or bracketed IPv6 literals (no scheme, port or Unicode). `program.authorizedAt` must be an ISO 8601
   date or date-time.
 - `rateLimit` pacing is serialized (concurrent requests cannot burst past it), counts every
-  redirect hop, re-checks expiry and the ledger after a wait, and is reported with a `paced` count.
+  redirect hop, re-checks the window after waking and expiry and the ledger after a wait, and is
+  reported with a `paced` count. A request that would wait past 15 s is denied
+  `SCOPE_RATE_LIMITED` rather than sent after its caller gave up; stopping the scope wakes waiters.
+  `SCOPE_RATE_LIMITED` is a new member of the scope sub-code unions (TypeScript exhaustive
+  `switch`es need a case).
 - All six fields are reported by the scope status (REST, SDK, CLI `session scope`, MCP `scope`)
   and in the ledger's `engagement.opened` snapshot.
 - Accepted on `POST /v1/sessions`, MCP `create`, and CLI `--scope-file`.
