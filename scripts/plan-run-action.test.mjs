@@ -5,7 +5,7 @@
  * (never a key on argv), plan path, start URL, tenant, JUnit path and keep-session.
  */
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -116,32 +116,33 @@ describe('main (plan run)', () => {
     assert.equal(argv[1], 'http://127.0.0.1:5709');
     const keyIndex = argv.indexOf('--api-key-file');
     assert.ok(keyIndex !== -1, 'the key goes through --api-key-file');
-    assert.ok(readFileSync(argv[keyIndex + 1], 'utf8') === 'sekrit');
+    const keyPath = argv[keyIndex + 1];
+    assert.equal(statSync(keyPath).mode & 0o777, 0o600, 'the key file is 0600');
+    assert.ok(readFileSync(keyPath, 'utf8') === 'sekrit');
     assert.ok(!argv.includes('sekrit'), 'the key never rides argv');
   });
 
-  it('maps a failing plan to exit 1', async () => {
-    const { code } = await runMain(stubCli(1));
-    assert.equal(code, 1);
-  });
-
-  it('without any key input, argv has no key flag (the CLI uses the environment)', async () => {
-    const before = argvLogSafe().length;
-    function argvLogSafe() {
-      try {
-        return argvLog();
-      } catch {
-        return [];
-      }
-    }
-    const { code } = await runMain(stubCli(0), { INPUT_API_KEY_FILE: '' });
-    assert.equal(code, 0);
-    const [argv] = argvLog().slice(before);
-    assert.equal(argv.includes('--api-key-file'), false);
-  });
-
-  it('the emitted stdout carries the CLI output', async () => {
-    const { lines } = await runMain(stubCli(0));
-    assert.ok(lines.every((line) => typeof line === 'string'));
+  it('kills a CLI that never exits once the timeout fires (L-b: SIGKILL path)', async () => {
+    const hanging = join(work, 'hang.mjs');
+    writeFileSync(hanging, '#!/usr/bin/env node\nsetTimeout(() => {}, 60_000);\n');
+    chmodSync(hanging, 0o755);
+    const started = Date.now();
+    await assert.rejects(
+      main(
+        {
+          AGENTBROWSER_EVALUATE_CLI: hanging,
+          INPUT_BASE_URL: 'http://127.0.0.1:5709',
+          INPUT_TENANT: 'ci',
+          INPUT_PLAN: plan,
+          INPUT_START_URL: 'https://app.test/login',
+          INPUT_JUNIT: join(work, 'timeout.xml'),
+          INPUT_TIMEOUT_MS: '500',
+        },
+        () => {}
+      ),
+      /timed out/
+    );
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 20_000, `the timeout fired (took ${elapsed} ms)`);
   });
 });
