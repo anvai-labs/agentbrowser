@@ -40,10 +40,9 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The published baseline is **1.23.0** (released 2026-10-17 from main `82b06ca`, release run
-39028240408, all 14 jobs green; see [release-1.23.0](../evidence/release-1.23.0.md)). Records for
-1.16.0 through 1.21.0 sit beside it (1.22.0 was owner-released, run 39008344538, recorded in the field handoff); [release-1.11.0](../evidence/release-1.11.0.md)
-and earlier per-release records remain historical references. Both `main` and `develop` are
+The published baseline is **1.24.0** (2026-10-17, main `400ba54`, run 39071090253, 14/14 green;
+[release-1.24.0](../evidence/release-1.24.0.md)). Earlier records sit beside it (1.22.0:
+owner-released, field handoff). Both `main` and `develop` are
 protected with the same 11 strict required contexts and require a pull request (zero approving
 reviews); `main` also enforces protection for admins, and neither allows force pushes or deletion. The eleven strict checks and immutable release assets
 remain required. Label acceptance phases and measure their timing before changing

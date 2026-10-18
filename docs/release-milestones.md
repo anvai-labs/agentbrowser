@@ -3,12 +3,13 @@
 ## Release history and plan (current)
 
 ```
-1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ✔ ─▶ 1.24 ─▶ 1.25 ─▶ 1.26
-journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2+    M3     M4
+1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ✔ ─▶ 1.25 ─▶ 1.26
+journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2 ✔   M3     M4
 ```
 
 | Version | GitHub release | main | Headline | Record |
 | --- | --- | --- | --- | --- |
+| 1.24.0 | 2026-10-17 | `400ba54` | T10 M2 complete: denial reporting everywhere; strict session requests (breaking: top-level policy fields); path rules bind their hosts | [record](spec/evidence/release-1.24.0.md) |
 | 1.23.0 | 2026-10-17 | `82b06ca` | T10 M2: engagement ledger, export and offline verify | [record](spec/evidence/release-1.23.0.md) |
 | 1.22.0 | 2026-10-17 | `4eb7885` | T10 M2: scope status, dry run, `SCOPE_*` sub-codes; compact capture output | owner-released (field handoff) |
 | 1.21.0 | 2026-10-16 | `c921e1b` | T10 M1: POST/PUT/PATCH redirects checked; unscopable lanes refused | [record](spec/evidence/release-1.21.0.md) |
@@ -26,7 +27,6 @@ journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2 
 
 | Planned | Milestone | Scope |
 | --- | --- | --- |
-| 1.24.0 | T10 M2 completion | denial reporting on page creation, downloads, completed actions and autofill; unknown or misplaced session-request fields refused (scope, policy, approval, and policy fields sent at the top level — **breaking** for that undocumented shape; send them under `policy`); path rules bind exactly the hosts they name |
 | 1.25.0 | T10 M3 | program-scope fields (excludes, schemes, ports, rate limit, program metadata), scope importer, findings bound to the engagement |
 | 1.26.0 | T10 M4 | saved plan runs from the CLI and CI action |
 

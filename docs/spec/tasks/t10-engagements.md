@@ -30,7 +30,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 ## Milestones and acceptance
 
 ```
-1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 M2 denial reporting (develop)
+1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 ✔ M2 denial reporting
   ─▶ 1.25.0 M3 program scope + findings ─▶ 1.26.0 M4 automation runs
 ```
 
@@ -57,7 +57,7 @@ automatic submission or outside communication of findings.
 | M1: release smoke | `scripts/scope-consumer-smoke.mjs`: lane refusals (REST rule ids; CLI/MCP service workers), out-of-scope navigation on all four surfaces, POST redirect blocked and recorded; local fixtures, run against the extracted release candidate |
 | M2: engagement ledger (recorder, fail closed) | `engagement-ledger.ts`; operator guide "Engagement ledger" |
 | M2: released in 1.23.0 | [release record](../evidence/release-1.23.0.md): the ledger smoke passed on the extracted release candidate |
-| M2: denial reporting on page creation, downloads and completed actions | #566, #567, #568, #569 on develop; strict requests #572, #574; path rules bind their hosts #576; released in 1.24.0 |
+| M2: denial reporting on page creation, downloads and completed actions | #566, #567, #568, #569 on develop; strict requests #572, #574; path rules bind their hosts #576; released in 1.24.0 ([record](../evidence/release-1.24.0.md)) |
 | M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors (#549); released in 1.22.0 |
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |
