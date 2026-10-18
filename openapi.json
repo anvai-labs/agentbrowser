@@ -6929,6 +6929,77 @@
           },
           "stopped": {
             "type": "string"
+          },
+          "excludeHosts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludePaths": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "prefix"
+              ],
+              "properties": {
+                "hostSuffix": {
+                  "minLength": 2,
+                  "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                  "type": "string"
+                },
+                "prefix": {
+                  "minLength": 1,
+                  "pattern": "^/",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "allowedSchemes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowedPorts": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "program": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "authorizedBy",
+              "authorizedAt"
+            ],
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "version": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "authorizedBy": {
+                "minLength": 1,
+                "maxLength": 200,
+                "type": "string"
+              },
+              "authorizedAt": {
+                "maxLength": 64,
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$",
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -8830,6 +8901,86 @@
                   },
                   "ledger": {
                     "type": "boolean"
+                  },
+                  "excludeHosts": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                      "type": "string"
+                    }
+                  },
+                  "excludePaths": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "prefix"
+                      ],
+                      "properties": {
+                        "hostSuffix": {
+                          "minLength": 2,
+                          "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                          "type": "string"
+                        },
+                        "prefix": {
+                          "minLength": 1,
+                          "pattern": "^/",
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "allowedSchemes": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*$",
+                      "type": "string"
+                    }
+                  },
+                  "allowedPorts": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minimum": 1,
+                      "maximum": 65535,
+                      "type": "integer"
+                    }
+                  },
+                  "program": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "authorizedBy",
+                      "authorizedAt"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "version": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "authorizedBy": {
+                        "minLength": 1,
+                        "maxLength": 200,
+                        "type": "string"
+                      },
+                      "authorizedAt": {
+                        "maxLength": 64,
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$",
+                        "type": "string"
+                      }
+                    }
                   }
                 }
               }

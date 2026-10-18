@@ -111,6 +111,13 @@ export const ApprovalPolicySchema = Type.Object(
   { additionalProperties: false }
 );
 
+/**
+ * A configured scope host: a hostname or ".suffix" in ASCII (punycode for IDNs), or a
+ * bracketed IPv6 literal. No scheme, port or Unicode, any of which would bind no request host.
+ */
+export const SCOPE_HOST_PATTERN =
+  '^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$';
+
 export const ScopePathRuleSchema = Type.Object(
   {
     // Exact host or ".suffix" (subdomains only — the apex needs its own
@@ -121,7 +128,7 @@ export const ScopePathRuleSchema = Type.Object(
         minLength: 2,
         // A hostname or ".suffix" in ASCII (punycode for IDNs), or a bracketed IPv6 literal: no
         // scheme, port or Unicode, any of which would bind no request host.
-        pattern: '^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$',
+        pattern: SCOPE_HOST_PATTERN,
       })
     ),
     prefix: Type.String({ minLength: 1, pattern: '^/' }),
@@ -134,6 +141,21 @@ export const ScopeIdentityBindingSchema = Type.Object(
     header: Type.String({ minLength: 1 }),
     value: Type.String({ minLength: 1 }),
     allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+// T10 M3: the program an engagement runs under. Metadata only: reported in the
+// scope status and the ledger, never used to widen or narrow traffic.
+export const ScopeProgramSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1, maxLength: 200 }),
+    version: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    authorizedBy: Type.String({ minLength: 1, maxLength: 200 }),
+    authorizedAt: Type.String({
+      maxLength: 64,
+      pattern: '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
+    }),
   },
   { additionalProperties: false }
 );
@@ -155,6 +177,18 @@ export const EngagementScopeSchema = Type.Object(
     // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
     // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
     ledger: Type.Optional(Type.Boolean()),
+    // T10 M3: restrictive program fields. Each can only narrow the scope.
+    excludeHosts: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, pattern: SCOPE_HOST_PATTERN }), { minItems: 1 })
+    ),
+    excludePaths: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
+    allowedSchemes: Type.Optional(
+      Type.Array(Type.String({ pattern: '^[A-Za-z][A-Za-z0-9+.-]*$' }), { minItems: 1 })
+    ),
+    allowedPorts: Type.Optional(
+      Type.Array(Type.Integer({ minimum: 1, maximum: 65535 }), { minItems: 1 })
+    ),
+    program: Type.Optional(ScopeProgramSchema),
     // A scope may only narrow: a field this server cannot enforce is refused (400), never
     // ignored — an ignored exclusion would silently widen the engagement.
   },
@@ -191,6 +225,12 @@ export const EngagementScopeStatusSchema = Type.Object(
     denials: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
     // T10 M2: why all traffic stopped (ledger full or failed, session closing).
     stopped: Type.Optional(Type.String()),
+    // T10 M3: present only when set on the scope.
+    excludeHosts: Type.Optional(Type.Array(Type.String())),
+    excludePaths: Type.Optional(Type.Array(ScopePathRuleSchema)),
+    allowedSchemes: Type.Optional(Type.Array(Type.String())),
+    allowedPorts: Type.Optional(Type.Array(Type.Integer())),
+    program: Type.Optional(ScopeProgramSchema),
   },
   { additionalProperties: false }
 );

@@ -363,4 +363,31 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
       await closeFixture(fixture);
     }
   }, 60_000);
+
+  it('T10 M3: excluded paths and disallowed ports never reach the wire', async () => {
+    const fixture = await startFixture();
+    const other = await startFixture();
+    try {
+      const scope = new EngagementScopePolicy(new NetworkPolicy({ blockLoopback: false }), {
+        allowedHosts: [IN_HOST],
+        excludePaths: [{ prefix: '/admin' }],
+        allowedSchemes: ['http'],
+        allowedPorts: [fixture.port()],
+      });
+      await withSession(scope, async (page) => {
+        // /probe fetches /admin (excluded) from the page itself.
+        expect((await page.navigate({ url: fixture.url('/probe') })).status).toBe('success');
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        expect(fixture.hits.some((hit) => hit.path === '/probe')).toBe(true);
+        expect(fixture.hits.some((hit) => hit.path === '/admin')).toBe(false);
+        // Same host, another port: refused before the wire.
+        const blocked = await page.navigate({ url: other.url('/never') });
+        expect(blocked.status).toBe('blocked');
+        expect(other.hits).toHaveLength(0);
+      });
+    } finally {
+      await closeFixture(other);
+      await closeFixture(fixture);
+    }
+  }, 60_000);
 });

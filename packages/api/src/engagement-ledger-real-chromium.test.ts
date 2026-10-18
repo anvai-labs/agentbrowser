@@ -637,4 +637,40 @@ describe('engagement ledger (T10 M2)', () => {
       }
     });
   }
+
+  it('the opening record carries the program and the M3 restrictions (T10 M3)', async () => {
+    const dir = await engagementDir();
+    const service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
+    });
+    try {
+      const program = {
+        id: 'acme-vdp',
+        version: '2026-10-01',
+        authorizedBy: 'researcher@example.test',
+        authorizedAt: '2026-10-17T00:00:00Z',
+      };
+      const { sessionId } = await service.createSession({
+        tenantId: 'one',
+        scope: {
+          allowedHosts: ['.a.example'],
+          excludeHosts: ['admin.a.example'],
+          allowedSchemes: ['https'],
+          ledger: true,
+          program,
+        },
+      });
+      await service.closeSession(sessionId);
+      const opened = JSON.parse((await readLedger(dir)).split('\n')[0]!);
+      expect(opened.type).toBe('engagement.opened');
+      expect(opened.data.scope).toMatchObject({
+        excludeHosts: ['admin.a.example'],
+        allowedSchemes: ['https'],
+        program,
+      });
+    } finally {
+      await service.shutdown().catch(() => {});
+    }
+  });
 });
