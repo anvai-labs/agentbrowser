@@ -1,5 +1,8 @@
 // T10 M2: scope status and a dry-run check over REST (FakeEngine; no browser).
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { importProgramScope } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';
@@ -521,6 +524,30 @@ describe('scope status contract (ADR-015)', () => {
         });
         expect(refused.statusCode, JSON.stringify(rateLimit)).toBe(400);
       }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ['h1.json', 'h1'],
+    ['bugcrowd.json', 'bugcrowd'],
+    ['scope.txt', 'text'],
+  ] as const)('a scope imported from %s is accepted by session create', async (name, format) => {
+    const input = readFileSync(
+      join(__dirname, '..', '..', 'core', 'src', 'fixtures', 'program-scope', name),
+      'utf8'
+    );
+    const result = importProgramScope(input, format);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { app, call } = await harness();
+    try {
+      const created = await call('POST', '/v1/sessions', 'key-one', {
+        tenantId: 'one',
+        policy: { scope: result.scope },
+      });
+      expect(created.statusCode).toBe(201);
     } finally {
       await app.close();
     }

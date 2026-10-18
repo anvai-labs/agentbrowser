@@ -7,7 +7,12 @@
  */
 
 import { isAbsolute } from 'node:path';
-import { assertCookieRequestSize, verifyEngagementLedger } from '@agentbrowser/core';
+import {
+  assertCookieRequestSize,
+  importProgramScope,
+  type ProgramScopeFormat,
+  verifyEngagementLedger,
+} from '@agentbrowser/core';
 import {
   artifactReference,
   cacheLocalArtifact,
@@ -2723,6 +2728,94 @@ export function buildCli(deps: CliDependencies): Cli {
             ]);
           })
         );
+      const scopeCommand = program
+        .command('scope')
+        .description('T10 engagement scopes: convert a published program scope (offline)');
+      scopeCommand
+        .command('import <file>')
+        .description(
+          'convert a HackerOne, Bugcrowd or text program scope into an engagement scope; ' +
+            'inexpressible entries are refused, never guessed (an inexpressible exclusion fails the import)'
+        )
+        .requiredOption('--from <format>', 'h1 | bugcrowd | text')
+        .option('--program-id <id>', 'program identifier recorded in the scope')
+        .option('--program-version <version>', 'program scope version recorded in the scope')
+        .option('--authorized-by <who>', 'who authorized this engagement (needs --authorized-at)')
+        .option('--authorized-at <iso>', 'when, as ISO 8601 (needs --authorized-by)')
+        .option('--out <file>', 'write the scope JSON here (created exclusively, mode 0600)')
+        .action(
+          action(
+            async (
+              ctx,
+              file: string,
+              options: {
+                from: string;
+                programId?: string;
+                programVersion?: string;
+                authorizedBy?: string;
+                authorizedAt?: string;
+                out?: string;
+              }
+            ) => {
+              if (!['h1', 'bugcrowd', 'text'].includes(options.from))
+                throw new UsageError('--from must be h1, bugcrowd or text.');
+              const input = await createTextArgumentReader({ noFollow: true })(
+                `@${file}`,
+                'program scope'
+              );
+              let result: ReturnType<typeof importProgramScope>;
+              try {
+                result = importProgramScope(input, options.from as ProgramScopeFormat, {
+                  ...(options.programId !== undefined ? { programId: options.programId } : {}),
+                  ...(options.programVersion !== undefined
+                    ? { programVersion: options.programVersion }
+                    : {}),
+                  ...(options.authorizedBy !== undefined
+                    ? { authorizedBy: options.authorizedBy }
+                    : {}),
+                  ...(options.authorizedAt !== undefined
+                    ? { authorizedAt: options.authorizedAt }
+                    : {}),
+                });
+              } catch (error) {
+                throw new UsageError((error as Error).message);
+              }
+              const lines = result.report.map(
+                (entry) =>
+                  `  ${entry.decision.padEnd(8)} ${entry.entry}${entry.mapped ? ` -> ${entry.mapped}` : ''}${entry.reason ? ` (${entry.reason})` : ''}${entry.note ? ` [${entry.note}]` : ''}`
+              );
+              if (!result.ok) {
+                ctx.emit({ ok: false, error: result.error, report: result.report }, () => [
+                  `IMPORT REFUSED: ${result.error}`,
+                  ...lines,
+                ]);
+                exitCode = 1;
+                return;
+              }
+              const json = `${JSON.stringify(result.scope, null, 2)}\n`;
+              if (options.out !== undefined) {
+                const { writeFile } = await import('node:fs/promises');
+                await writeFile(options.out, json, { flag: 'wx', mode: 0o600 });
+              }
+              const refused = result.report.filter((entry) => entry.decision === 'refused').length;
+              ctx.emit({ ok: true, scope: result.scope, report: result.report }, () => [
+                ...lines,
+                refused > 0
+                  ? `${refused} in-scope entr${refused === 1 ? 'y' : 'ies'} refused: the scope is narrower than the program`
+                  : 'every in-scope entry was expressed',
+                ...(result.scope.program === undefined
+                  ? [
+                      'no program authorization recorded (pass --program-id, --authorized-by, --authorized-at)',
+                    ]
+                  : []),
+                options.out !== undefined
+                  ? `wrote ${options.out}; use it with: session create --scope-file ${options.out}`
+                  : json.trimEnd(),
+              ]);
+            }
+          )
+        );
+
       const artifact = program.command('artifact').description('manage artifacts');
       artifact
         .command('get')

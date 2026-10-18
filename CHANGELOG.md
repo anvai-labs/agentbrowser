@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — import a program scope (T10 M3)
+
+- `agentbrowser scope import FILE --from h1|bugcrowd|text [--program-id … --authorized-by …
+  --authorized-at …] [--out scope.json]` converts a published HackerOne, Bugcrowd or text program
+  scope into an engagement scope, offline. `*.host` maps to subdomains only (the apex only when
+  listed); URLs become host-bound path rules; out-of-scope entries become exclusions.
+- A trailing `/*` maps to its prefix. Ambiguous wildcards, public- and private-suffix wildcards,
+  other path wildcards, CIDR ranges, per-host ports, unbracketed IPv6, non-web assets and Unicode
+  hosts are refused with a reason. Schemes are scope-wide: a single shared scheme is kept, mixed or
+  unstated schemes become `["http", "https"]`, and `allowedPorts` is each kept scheme's default port. An inexpressible exclusion fails the whole import
+  (exit 1, nothing written), since the scope would be wider than the program. Program authorization
+  is recorded only as given. The converter (`importProgramScope`) lives in `@agentbrowser/core`;
+  imported scopes are pinned to pass session create.
+
 ### Added — program-scope restrictions (T10 M3)
 
 | Field | Narrows by | Denial |

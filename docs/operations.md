@@ -771,6 +771,33 @@ judges the host, path, method (default `GET`), expiry and budget rules; it does 
 identity bindings (no headers are taken), and the base policy and DNS still apply when the
 request is made.
 
+**Importing a program scope (T10 M3).** `agentbrowser scope import FILE --from h1|bugcrowd|text`
+converts a published program scope offline. Nothing is guessed:
+
+```
+program file ─▶ scope import ─▶ decisions (in / out / refused / ignored) ─▶ scope.json ─▶ session create --scope-file
+```
+
+| Program entry | Becomes |
+| --- | --- |
+| `*.example.com` | `.example.com`: subdomains only; the apex only when listed |
+| exact host or IP | an exact host |
+| URL with a path | the host plus a host-bound path rule, unless another entry puts the whole host in scope; a trailing `/*` means the bare prefix (`/admin/*` → `/admin`) |
+| out-of-scope host or URL | `excludeHosts` / `excludePaths`, or dropped when already outside the scope |
+| ambiguous wildcard (`api.*.x`), public- or private-suffix wildcard (`*.co.uk`, `*.github.io`), any other path wildcard (`/admin*`), CIDR, per-host port, unbracketed IPv6, non-web asset, Unicode host | refused, with the reason |
+
+A refused in-scope entry only narrows the result. A refused **out-of-scope** entry would leave the
+scope wider than the program, so the import fails (exit 1) and writes nothing. Out-of-scope entries
+of a non-web type are ignored (reported as `ignored`); check that the program did not file a web
+exclusion under such a type. Schemes are scope-wide: one scheme shared by every in-scope entry is
+kept, otherwise `allowedSchemes` is `["http", "https"]` (noted in the report), and `allowedPorts` is
+the default port of each kept scheme (per-host ports are refused). Path rules are per
+host, so a `*.x/api` rule also restricts a host listed in full under `.x` (noted). Program authorization is never inferred:
+pass `--program-id`, `--authorized-by` and `--authorized-at`, or the scope carries no `program`. A
+published scope is not permission: test only what you are authorized to test. Formats: HackerOne
+structured scopes (`data[].attributes`, `eligible_for_submission`), Bugcrowd `target_groups`, and
+text (one entry per line, `-` for out of scope, `#` comments).
+
 **Engagement ledger (T10 M2).** A scoped session created with `policy.scope.ledger: true`
 writes an append-only, hash-chained record of its traffic decisions — metadata only.
 
