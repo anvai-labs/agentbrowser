@@ -1,7 +1,7 @@
 /** Build first. Engagement-scope release smoke (T10 M1): one scoped session, every surface. */
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +41,14 @@ const fixture = createServer((request, response) => {
       return;
     }
     response.writeHead(200, { 'content-type': 'text/html' });
+    if (url.pathname === '/login' || url.pathname === '/done') {
+      response.end(
+        url.pathname === '/done'
+          ? '<!doctype html><h1>Signed in</h1>'
+          : '<!doctype html><form action="/done" method="get"><label>Email <input name="email"></label><button type="submit">Submit</button></form>'
+      );
+      return;
+    }
     response.end(
       url.pathname === '/post-out'
         ? `<form id="f" method="post" action="/hop-out"><input type="hidden" name="blob" value="${'x'.repeat(50_000)}"></form><script>document.getElementById('f').submit()</script>`
@@ -316,6 +324,79 @@ try {
     export: exported.status,
     verify: 'ok',
     edited: 'refused',
+  });
+
+  // 4. A saved plan run (T10 M4): `run` creates a scoped session, opens the start page, runs
+  //    the plan file, writes JUnit and closes the session; a failing plan exits 1.
+  const planFile = join(scratch, 'signin.json');
+  await writeFile(
+    planFile,
+    JSON.stringify([
+      { action: 'fill', waitForLabel: 'Email', value: 'smoke@example.test' },
+      { action: 'click', waitForLabel: 'Submit' },
+    ])
+  );
+  const runScope = join(scratch, 'run-scope.json');
+  await writeFile(runScope, JSON.stringify(scope));
+  const junitFile = join(scratch, 'run.xml');
+  const ran = await runExecutable(
+    [
+      ...cliCommand,
+      '--base-url',
+      baseUrl,
+      '--json',
+      'run',
+      planFile,
+      '--url',
+      at(IN_HOST, '/login'),
+      '--tenant',
+      'scope-smoke',
+      '--scope-file',
+      runScope,
+      '--junit',
+      junitFile,
+    ],
+    { env, timeoutMs: 120_000, expectedExitCode: 0 }
+  );
+  const runReport = JSON.parse(ran.stdout.trim());
+  assert.equal(runReport.ok, true);
+  assert.equal(runReport.completed, 2);
+  assert.ok(
+    hits.some((hit) => hit.path === '/done'),
+    'the saved plan never submitted the form'
+  );
+  const junitText = await readFile(junitFile, 'utf8');
+  assert.match(junitText, /tests="2" failures="0"/);
+  const badPlan = join(scratch, 'missing.json');
+  await writeFile(
+    badPlan,
+    JSON.stringify([{ action: 'click', waitForLabel: 'Nope', waitMs: 500 }])
+  );
+  const badJunit = join(scratch, 'missing.xml');
+  await runExecutable(
+    [
+      ...cliCommand,
+      '--base-url',
+      baseUrl,
+      'run',
+      badPlan,
+      '--url',
+      at(IN_HOST, '/login'),
+      '--tenant',
+      'scope-smoke',
+      '--junit',
+      badJunit,
+    ],
+    { env, timeoutMs: 120_000, expectedExitCode: 1 }
+  );
+  assert.match(await readFile(badJunit, 'utf8'), /<failure message="PLAN_WAIT_TIMEOUT"\/>/);
+  const left = await client.sessions.list();
+  assert.equal((left.sessions ?? left).length, 0, 'a plan run left a session open');
+  check('saved plan run', {
+    steps: runReport.completed,
+    junit: 'ok',
+    failed: 'exit 1',
+    sessionsLeft: 0,
   });
 } finally {
   await rm(scratch, { recursive: true, force: true });

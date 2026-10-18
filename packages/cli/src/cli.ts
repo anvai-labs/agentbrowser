@@ -348,6 +348,66 @@ async function promptOperatorKey(deps: {
   return line;
 }
 
+/** XML-escape for JUnit attributes (the same rules as the CI action's writer). */
+const junitXml = (value: string): string =>
+  Array.from(value, (c) => {
+    const code = c.charCodeAt(0);
+    // XML 1.0 forbids C0 controls other than tab, newline and carriage return.
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) return '\uFFFD';
+    return (
+      (
+        { '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' } as Record<
+          string,
+          string
+        >
+      )[c] ?? c
+    );
+  }).join('');
+
+/**
+ * T10 M4: a JUnit report for one plan run: one testcase per step, verdicts and error codes
+ * only. Error messages can echo page content, so they never enter the artifact.
+ */
+export function planJunit(
+  planFile: string,
+  steps: Array<Record<string, unknown>>,
+  report: {
+    results: Array<{ step: number; ok: boolean; error?: string }>;
+    error?: { code?: string };
+  }
+): string {
+  const suite = junitXml(planFile.split(/[\\/]/).pop() ?? planFile);
+  const byStep = new Map(report.results.map((r) => [r.step, r]));
+  let failures = 0;
+  let skipped = 0;
+  const cases = steps.map((step, index) => {
+    const name = junitXml(`step ${index + 1}: ${String(step.action ?? 'step')}`);
+    const open = `    <testcase classname="${suite}" name="${name}"`;
+    const result = byStep.get(index);
+    if (result === undefined) {
+      skipped += 1;
+      return `${open}>\n      <skipped/>\n    </testcase>`;
+    }
+    if (result.ok) return `${open}/>`;
+    failures += 1;
+    // A code only: the step's own error prefix, else the plan's error code, else FAILED.
+    const reportCode = /^[A-Z][A-Z0-9_]*$/.test(report.error?.code ?? '')
+      ? report.error?.code
+      : undefined;
+    const code = /^[A-Z][A-Z0-9_]*(?=:|$)/.exec(result.error ?? '')?.[0] ?? reportCode ?? 'FAILED';
+    return `${open}>\n      <failure message="${junitXml(code)}"/>\n    </testcase>`;
+  });
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites tests="${steps.length}" failures="${failures}" errors="0" skipped="${skipped}">`,
+    `  <testsuite name="${suite}" tests="${steps.length}" failures="${failures}" errors="0">`,
+    ...cases,
+    '  </testsuite>',
+    '</testsuites>',
+    '',
+  ].join('\n');
+}
+
 export function buildCli(deps: CliDependencies): Cli {
   // The command tree is built per run(); the audit it produces is captured
   // here so jsonContractAudit() can serve the most recent run's snapshot.
@@ -1762,6 +1822,125 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       advertiseWireSchema(plan, { input: PlanActionsSchema, output: PlanReportSchema });
+      // T10 M4: run a saved plan file end to end. Composes existing calls: create a session,
+      // open the start page, run the plan, close the session. No new plan language.
+      const runCommand = program
+        .command('run')
+        .description(
+          'run a saved plan file end to end: create a session, open --url, run the plan, close the session. Exit 0 only when every step completed.'
+        )
+        .argument('<planFile>', 'saved plan steps (JSON array, as for `plan`)')
+        .requiredOption('--url <url>', 'start page')
+        .requiredOption('--tenant <id>', 'tenant identifier')
+        .option(
+          '--scope-file <path>',
+          'engagement scope JSON for the session (as for `session create`)'
+        )
+        .option(
+          '--junit <file>',
+          'write a JUnit report (verdicts and error codes only; mode 0600, created exclusively)'
+        )
+        .option('--keep-session', 'leave the session open (its ids are reported)')
+        .action(
+          action(
+            async (
+              ctx,
+              planFile: string,
+              options: {
+                url: string;
+                tenant: string;
+                scopeFile?: string;
+                junit?: string;
+                keepSession?: boolean;
+              }
+            ) => {
+              // Validate everything before any session exists.
+              const steps = parsePlanSteps(
+                await readCommandJson(runCommand, `@${planFile}`, 'plan steps')
+              );
+              const request: SessionRequest = { tenantId: String(options.tenant) };
+              if (options.scopeFile !== undefined) {
+                const text = await createTextArgumentReader({ noFollow: true })(
+                  `@${String(options.scopeFile)}`,
+                  'scope input'
+                );
+                try {
+                  request.policy = {
+                    scope: JSON.parse(text) as NonNullable<
+                      NonNullable<SessionRequest['policy']>['scope']
+                    >,
+                  };
+                } catch {
+                  throw new UsageError('--scope-file must contain valid engagement-scope JSON.');
+                }
+              }
+              const startedAt = Date.now();
+              const created = await ctx.client.sessions.create(request);
+              const sessionId = created.sessionId;
+              let pageId: string | undefined;
+              try {
+                const page = await ctx.client.sessions.createPage(sessionId, { url: options.url });
+                pageId = page.pageId;
+                const parseResponse = createPlanReportParser(steps);
+                const report = parseResponse(
+                  await ctx.client.sessions.plan(sessionId, pageId, steps)
+                );
+                if (!report.ok) exitCode = 1;
+                if (options.junit !== undefined) {
+                  const { writeFile } = await import('node:fs/promises');
+                  await writeFile(options.junit, planJunit(planFile, steps, report), {
+                    flag: 'wx',
+                    mode: 0o600,
+                  });
+                }
+                ctx.emit(
+                  {
+                    ok: report.ok,
+                    planFile,
+                    url: options.url,
+                    steps: steps.length,
+                    completed: report.completed,
+                    results: report.results,
+                    ...(report.error !== undefined ? { error: report.error } : {}),
+                    durationMs: Date.now() - startedAt,
+                    ...(options.keepSession ? { sessionId, pageId } : {}),
+                  },
+                  () => [
+                    `${report.ok ? 'ok' : 'failed'}: ${report.completed}/${steps.length} steps completed (${planFile})`,
+                    ...report.results.map(
+                      (r) =>
+                        `  step ${r.step + 1}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
+                    ),
+                    ...(options.keepSession ? [`  session ${sessionId}, page ${pageId}`] : []),
+                  ]
+                );
+              } finally {
+                if (!options.keepSession)
+                  await ctx.client.sessions.close(sessionId).catch(() => {});
+              }
+            }
+          )
+        );
+      advertiseWireSchema(runCommand, {
+        input: PlanActionsSchema,
+        // The run report: the plan's own results plus run identity and timing.
+        output: {
+          type: 'object',
+          required: ['ok', 'planFile', 'url', 'steps', 'completed', 'results', 'durationMs'],
+          properties: {
+            ok: { type: 'boolean' },
+            planFile: { type: 'string' },
+            url: { type: 'string' },
+            steps: { type: 'integer', minimum: 0 },
+            completed: { type: 'integer', minimum: 0 },
+            results: (PlanReportSchema as { properties: { results: object } }).properties.results,
+            error: { type: 'object' },
+            durationMs: { type: 'integer', minimum: 0 },
+            sessionId: { type: 'string' },
+            pageId: { type: 'string' },
+          },
+        },
+      });
 
       const outcome = program
         .command('outcome')

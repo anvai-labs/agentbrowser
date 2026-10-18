@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — run a saved plan end to end (T10 M4)
+
+- `agentbrowser run PLAN.json --url START --tenant T [--scope-file S] [--junit FILE] [--keep-session]`
+  creates a session, opens the start page, runs the saved plan through the existing `plan`
+  endpoint and closes the session (on every path). Exit 0 only when every step completed.
+- `--junit` writes one testcase per step: passed, failed (error code only; error messages can echo
+  page content and never enter the artifact) or skipped. Mode 0600, created exclusively.
+- The release smoke (`scope-consumer-smoke.mjs`) runs a scoped saved plan that submits a form,
+  checks the JUnit, a failing plan's exit 1, and that no session is left open.
+
 ### Docs — the 1.25.0 release record
 
 - `docs/spec/evidence/release-1.25.0.md`; baselines move to 1.25.0.
