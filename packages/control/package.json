@@ -24,6 +24,6 @@
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }
