@@ -6,7 +6,7 @@ itself; P0-3 (dialogs), P0-4 (engine-level egress with redirect
 enforcement) and P0-1 (authn/tenancy) landed as dedicated commits, along
 with P1-1 (/v1 versioning), P1-2 (per-session allowedHosts/blockedHosts),
 P1-3 (maxBytes observation bound) and P1-8 (threat model:
-docs/threat-model.md). The remaining P1s and P2s are re-prioritized
+docs/threat-model.md). The remaining P1s and P2s were re-prioritized
 below.
 
 Audited against `agentbrowser-mvp-spec.md` (the vision), the technical
@@ -101,24 +101,33 @@ so aligning the advertised list is a small, honest fix.
 
 ## P1 findings (spec completeness)
 
+> **2026-10-19 audit:** rows 2, 3, 4, 8, 9 and 10 have since shipped and are struck below — the
+> page is a dated audit record and is kept for provenance, not read as current gaps. The remaining
+> rows (1, 5, 6, 7, 11) are assessed against the current code in
+> [spec/tasks/t4-application-parity.md](spec/tasks/t4-application-parity.md).
+
 | # | Gap | Vision reference | Notes |
 | - | --- | ---------------- | ----- |
 | 1 | Unversioned routes (`/sessions`, not `/v1/sessions`) | §13.1 | All REST paths in the spec are `/v1/*` |
-| 2 | Per-session `allowedHosts`/`blockedHosts` unenforced | §13.2 policy | Field accepted, ignored; only SSRF defaults run |
-| 3 | `maxBytes` observation bound unused | §10 | Accepted everywhere, truncates by element count only |
-| 4 | Wait conditions beyond navigate `waitUntil` | §11.1 | `settled`, deadlines + completion reasons not implemented |
+| ~~2 | Per-session `allowedHosts`/`blockedHosts` unenforced~~ | §13.2 policy | **Shipped:** enforced per request (`packages/policy/src/network-policy.ts`) |
+| ~~3 | `maxBytes` observation bound unused~~ | §10 | **Shipped:** wired through observation and documented (`operations.md`) |
+| ~~4 | Wait conditions beyond navigate `waitUntil`~~ | §11.1 | **Shipped:** `settled` and `waitForLabel` with deadlines + completion reasons |
 | 5 | In-page downloads via engine events | §10 | Fetch-by-URL only (documented MVP cut) |
 | 6 | Short-lived artifact authorization | §13.1 | Tied to P0-1; artifacts currently open |
 | 7 | Schema-constrained extraction (model adapter) | §12.2 | Deterministic extractors done; pluggable provider missing |
-| 8 | Threat model never written | TD-006, Phase 0 exit, CLAUDE.md | P0 roadmap item, still absent |
-| 9 | `maskSensitive` screenshots unimplemented | §12/§16 | Accepted, ignored |
-| 10 | Response-size caps unwired | §17 threats | `checkResponse` tested, never called |
+| ~~8 | Threat model never written~~ | TD-006, Phase 0 exit, CLAUDE.md | **Shipped:** [threat-model.md](threat-model.md) |
+| ~~9 | `maskSensitive` screenshots unimplemented~~ | §12/§16 | **Shipped:** option implemented with an honesty note |
+| ~~10 | Response-size caps unwired~~ | §17 threats | **Shipped:** `checkResponse`/`checkBodySize` implemented and composed |
 | 11 | `text[]` content mode + frames | §10 | Content mode returns elements only; top frame only |
 
 ## P2 findings (polish)
 
-- CLI lacks `press`, `scroll`, and `extract` commands (API/SDK/MCP have
-  them).
+> Same audit caveat: this list is a dated record. The first bullet has since
+> shipped (the CLI has `press`, `scroll` and `extract`); the rest are tracked
+> by the task packets, not here.
+
+- ~~CLI lacks `press`, `scroll`, and `extract` commands (API/SDK/MCP have
+  them).~~ **Shipped.**
 - `bin.ts` constructs a `StructuredLogger` and never passes it to the
   service — production currently has no operation logging.
 - SDK `SessionRequest` (tenantId-based) has drifted from the protocol

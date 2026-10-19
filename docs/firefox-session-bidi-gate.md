@@ -84,7 +84,7 @@ behavior remains a CI qualification requirement, not a result of this macOS run.
 | Independent Firefox and application outcomes | Local commit `34380b5`; production-tree independence and shared UI/API outcome fixture covered |
 | Public page egress gate | Local commit `8beed93`; worker bypasses and service refusal covered |
 | Session-wide egress gate | Implemented here; the same bypasses remain, so promotion stops |
-| Product integration/release | Pending; these commits are isolated, unpushed work, not a delivered release |
+| Product integration/release | Shipped long since (`engine-firefox` has been a released package since v1.8.x; [engines.md](engines.md): experimental, trusted local qualification only — full contract/policy-bearing qualification is not claimed, and this page's session-wide interception never shipped: its gate failed) |
 
 The main AgentBrowser checkout remains at `5016364` and the codingagent checkout
 at `c8a0950fe` at this recheck. They were not modified. Codex/Claude registration
