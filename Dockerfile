@@ -4,7 +4,7 @@
 # Build stage: install, build the workspace, and produce a self-contained
 # production deployment of the API server via pnpm deploy.
 # ---------------------------------------------------------------------------
-FROM node:24.21.0-bookworm-slim AS build
+FROM node:24.22.0-bookworm-slim AS build
 RUN corepack enable
 
 WORKDIR /app
