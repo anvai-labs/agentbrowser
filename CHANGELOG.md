@@ -7,6 +7,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.26.0 release record
+
+- `docs/spec/evidence/release-1.26.0.md`; baselines move to 1.26.0.
+
 ## [1.26.0] — 2026-10-18
 
 Entries are newest first. T10 milestone M4: automation runs — a saved plan file runs end to end
