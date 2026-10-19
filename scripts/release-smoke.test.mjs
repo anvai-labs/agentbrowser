@@ -15,7 +15,14 @@ import {
 
 const command = (source) => [process.execPath, '--input-type=module', '-e', source, '--'];
 const options = { expectedVersion: '1.2.3', timeoutMs: 3000 };
-function mcp({ version = '1.2.3', protocol = '2024-11-05', tools = EXPECTED_TOOLS, reply = '', startup = '', afterReply = '' } = {}) {
+function mcp({
+  version = '1.2.3',
+  protocol = '2024-11-05',
+  tools = EXPECTED_TOOLS,
+  reply = '',
+  startup = '',
+  afterReply = '',
+} = {}) {
   return command(`
     import { createInterface } from 'node:readline';
     ${startup}
@@ -49,20 +56,41 @@ test('wrong MCP release version fails', async () => {
 });
 
 const delegatedTools = [
+  'act',
+  'artifact',
+  'autofill',
   'events_replay',
-  'page_create', 'pages',
-  'snapshot', 'plan', 'autofill', 'navigate', 'observe',
-  'act', 'artifact', 'extract', 'html', 'pdf',
-  'screenshot', 'session', 'operation', 'policy', 'scope',
+  'extract',
+  'html',
+  'navigate',
+  'observe',
+  'operation',
+  'page_create',
+  'pages',
+  'pdf',
+  'plan',
+  'policy',
+  'scope',
+  'screenshot',
+  'session',
+  'session_status',
+  'snapshot',
 ];
 
 test('delegated MCP acceptance requires the exact bound catalog', async () => {
-  const report = await checkMcp(mcp({ tools: delegatedTools }), { ...options, catalog: 'delegated' });
+  const report = await checkMcp(mcp({ tools: delegatedTools }), {
+    ...options,
+    catalog: 'delegated',
+  });
   assert.deepEqual(report.tools, [...delegatedTools].sort());
   for (const tool of ['create', 'close', 'cookies']) {
-    await assert.rejects(checkMcp(mcp({ tools: [...delegatedTools, tool] }), {
-      ...options, catalog: 'delegated',
-    }), /catalog/);
+    await assert.rejects(
+      checkMcp(mcp({ tools: [...delegatedTools, tool] }), {
+        ...options,
+        catalog: 'delegated',
+      }),
+      /catalog/
+    );
   }
 });
 
@@ -86,13 +114,21 @@ test('valid MCP responses cannot hide trailing output or unsuccessful shutdown',
 });
 
 test('MCP must exit after stdin EOF within its deadline', async () => {
-  await assert.rejects(checkMcp(mcp({ startup: 'setInterval(()=>{},1000);' }), {
-    ...options, timeoutMs: 800,
-  }), /deadline/);
+  await assert.rejects(
+    checkMcp(mcp({ startup: 'setInterval(()=>{},1000);' }), {
+      ...options,
+      timeoutMs: 800,
+    }),
+    /deadline/
+  );
 });
 
 test('incomplete or duplicated tool catalog fails', async () => {
-  for (const tools of [EXPECTED_TOOLS.slice(1), EXPECTED_TOOLS.filter(name => name !== 'autofill'), [...EXPECTED_TOOLS, EXPECTED_TOOLS[0]]]) {
+  for (const tools of [
+    EXPECTED_TOOLS.slice(1),
+    EXPECTED_TOOLS.filter((name) => name !== 'autofill'),
+    [...EXPECTED_TOOLS, EXPECTED_TOOLS[0]],
+  ]) {
     await assert.rejects(checkMcp(mcp({ tools }), options), /catalog/);
   }
 });
@@ -113,23 +149,36 @@ test('MCP JSON-RPC and tool errors cannot masquerade as successful acceptance', 
     "{jsonrpc:'2.0',id:request.id,result:{isError:true,content:[{type:'text',text:'fixture error'}]}}",
   ]) {
     const reply = `if(request.method==='tools/call'){console.log(JSON.stringify(${payload}));return;}`;
-    await assert.rejects(checkMcp(mcp({ reply }), {
-      ...options, exercise: async ({ callTool }) => callTool('create', {}),
-    }), /error/i);
+    await assert.rejects(
+      checkMcp(mcp({ reply }), {
+        ...options,
+        exercise: async ({ callTool }) => callTool('create', {}),
+      }),
+      /error/i
+    );
   }
 });
 
 test('MCP deadline kills a hung child even when graceful termination is ignored', async () => {
   let pid;
   const started = performance.now();
-  await assert.rejects(checkMcp(mcp({
-    startup: "process.on('SIGTERM',()=>{});",
-    reply: "if(request.method==='tools/call')return;",
-  }), {
-    ...options, timeoutMs: 800,
-    onSpawn(child) { pid = child.pid; },
-    exercise: async ({ callTool }) => callTool('create', {}),
-  }), /deadline/);
+  await assert.rejects(
+    checkMcp(
+      mcp({
+        startup: "process.on('SIGTERM',()=>{});",
+        reply: "if(request.method==='tools/call')return;",
+      }),
+      {
+        ...options,
+        timeoutMs: 800,
+        onSpawn(child) {
+          pid = child.pid;
+        },
+        exercise: async ({ callTool }) => callTool('create', {}),
+      }
+    ),
+    /deadline/
+  );
   assert.ok(performance.now() - started < 5000);
   assert.ok(pid);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
@@ -137,17 +186,30 @@ test('MCP deadline kills a hung child even when graceful termination is ignored'
 
 test('failed acceptance assertions close the owned process', async () => {
   let pid;
-  await assert.rejects(checkMcp(mcp(), {
-    ...options,
-    onSpawn(child) { pid = child.pid; },
-    exercise: async () => { throw new Error('injected acceptance failure'); },
-  }), /injected acceptance failure/);
+  await assert.rejects(
+    checkMcp(mcp(), {
+      ...options,
+      onSpawn(child) {
+        pid = child.pid;
+      },
+      exercise: async () => {
+        throw new Error('injected acceptance failure');
+      },
+    }),
+    /injected acceptance failure/
+  );
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });
 
 test('child output is bounded and nonzero exit/spawn errors fail', async () => {
-  await assert.rejects(runExecutable(command("process.stdout.write('x'.repeat(2048));"), { maxOutputBytes: 1024 }), /output/);
-  await assert.rejects(runExecutable(command("process.stderr.write('x'.repeat(2048));"), { maxOutputBytes: 1024 }), /output/);
+  await assert.rejects(
+    runExecutable(command("process.stdout.write('x'.repeat(2048));"), { maxOutputBytes: 1024 }),
+    /output/
+  );
+  await assert.rejects(
+    runExecutable(command("process.stderr.write('x'.repeat(2048));"), { maxOutputBytes: 1024 }),
+    /output/
+  );
   await assert.rejects(runExecutable(command('process.exit(7)'), {}), /exited/);
   await assert.rejects(runExecutable(['/definitely-missing-agentbrowser-fixture'], {}), /ENOENT/);
 });
@@ -257,13 +319,24 @@ test('public smoke commands accept explicit versions and propagate failure exit 
     else if (process.argv.includes('describe')) console.log(${JSON.stringify(JSON.stringify(evaluator))});
     else console.log('agentbrowser session act plan autofill pdf download health test');
   `);
-  for (const [kind, executable] of [['cli', cli], ['mcp-server', mcp()]]) {
-    const wrapper = fileURLToPath(new URL(`../packages/${kind}/scripts/smoke.mjs`, import.meta.url));
+  for (const [kind, executable] of [
+    ['cli', cli],
+    ['mcp-server', mcp()],
+  ]) {
+    const wrapper = fileURLToPath(
+      new URL(`../packages/${kind}/scripts/smoke.mjs`, import.meta.url)
+    );
     const base = [process.execPath, wrapper];
     const result = await runExecutable([...base, '--expected-version', '1.2.3', ...executable]);
     assert.equal(JSON.parse(result.stdout).version, '1.2.3');
-    await assert.rejects(runExecutable([...base, '--expected-version', '9.9.9', ...executable]), /exited unsuccessfully \(1\)/);
-    await assert.rejects(runExecutable([...base, '--expected-version']), /exited unsuccessfully \(2\)/);
+    await assert.rejects(
+      runExecutable([...base, '--expected-version', '9.9.9', ...executable]),
+      /exited unsuccessfully \(1\)/
+    );
+    await assert.rejects(
+      runExecutable([...base, '--expected-version']),
+      /exited unsuccessfully \(2\)/
+    );
   }
 });
 
@@ -278,7 +351,8 @@ test('CLI requires exact version, command help and the offline evaluator schema'
       },
     },
   });
-  const cli = (version, help, described = discovery()) => command(`
+  const cli = (version, help, described = discovery()) =>
+    command(`
     if (process.argv.includes('--version')) console.log(${JSON.stringify(version)});
     else if (process.argv.includes('describe')) {
       ${described === null ? 'process.exitCode = 1;' : `console.log(${JSON.stringify(JSON.stringify(described))});`}
@@ -305,10 +379,12 @@ test('CLI requires exact version, command help and the offline evaluator schema'
     /schema/
   );
   assert.equal(
-    (await checkCli(
-      cli('1.2.3', 'agentbrowser session act plan autofill pdf download health', null),
-      options
-    )).version,
+    (
+      await checkCli(
+        cli('1.2.3', 'agentbrowser session act plan autofill pdf download health', null),
+        options
+      )
+    ).version,
     '1.2.3'
   );
 });
@@ -316,9 +392,16 @@ test('CLI requires exact version, command help and the offline evaluator schema'
 test('version evidence clears the runtime MCP version override', async () => {
   const child = mcp({ version: '1.2.3' });
   child[3] = child[3].replace('"1.2.3"', 'process.env.AGENTBROWSER_MCP_VERSION ?? "1.2.3"');
-  assert.equal((await checkMcp(child, { ...options, env: { ...process.env, AGENTBROWSER_MCP_VERSION: '9.9.9' } })).version, '1.2.3');
+  assert.equal(
+    (
+      await checkMcp(child, {
+        ...options,
+        env: { ...process.env, AGENTBROWSER_MCP_VERSION: '9.9.9' },
+      })
+    ).version,
+    '1.2.3'
+  );
 });
-
 
 test('MCP smoke qualifies explicitly requested protocol versions without weakening legacy default', async () => {
   const modern = mcp({ protocol: '2025-06-18' });
@@ -332,12 +415,15 @@ test('MCP smoke rejects mismatched structured/text data and unflagged failed rep
     { content: [{ type: 'text', text: '{"ok":false}' }] },
   ]) {
     const reply = `if(request.method==='tools/call'){console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:${JSON.stringify(result)}}));return;}`;
-    await assert.rejects(checkMcp(mcp({ reply }), {
-      ...options, exercise: async ({ callTool }) => callTool('autofill', {}),
-    }), /structured|failed/);
+    await assert.rejects(
+      checkMcp(mcp({ reply }), {
+        ...options,
+        exercise: async ({ callTool }) => callTool('autofill', {}),
+      }),
+      /structured|failed/
+    );
   }
 });
-
 
 test('empty stdin EOF tolerates a closed reader but undelivered nonempty input fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-closed-stdin-'));
