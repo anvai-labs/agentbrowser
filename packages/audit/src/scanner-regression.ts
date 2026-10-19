@@ -1,4 +1,4 @@
-import { VisualAuditError } from './visual-audit.js';
+import { VisualAuditError } from '@agentbrowser/engagement';
 
 /** T7 slice 3: scanner-regression adapter. A bounded client over OWASP
  * ZAP's JSON API — the adapter drives an installed/launched scanner and

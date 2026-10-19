@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { VisualAuditError } from './visual-audit.js';
+import { VisualAuditError } from '@agentbrowser/engagement';
 
 /** Shared versioned baseline storage for the finding-based audit adapters
  * (accessibility, scanner-regression). The same discipline as the visual

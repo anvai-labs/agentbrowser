@@ -99,9 +99,9 @@ importers:
       '@agentbrowser/core':
         specifier: workspace:*
         version: link:../core
-      '@agentbrowser/policy':
+      '@agentbrowser/engagement':
         specifier: workspace:*
-        version: link:../policy
+        version: link:../engagement
       axe-core:
         specifier: ^4.14.0
         version: 4.14.0
@@ -179,6 +179,9 @@ importers:
       '@agentbrowser/core':
         specifier: workspace:^
         version: link:../core
+      '@agentbrowser/engagement':
+        specifier: workspace:*
+        version: link:../engagement
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript
@@ -233,6 +236,15 @@ importers:
       vitest:
         specifier: ^5.0.4
         version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
+
+  packages/engagement:
+    dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbrowser/policy':
+        specifier: workspace:*
+        version: link:../policy
 
   packages/engine:
     dependencies:

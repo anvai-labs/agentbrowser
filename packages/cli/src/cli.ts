@@ -18,6 +18,7 @@ import {
   cacheLocalArtifact,
   pruneArtifactCache,
 } from '@agentbrowser/core/local-artifacts';
+import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -3117,6 +3118,93 @@ export function buildCli(deps: CliDependencies): Cli {
               ]);
             }
           )
+        );
+
+      const finding = program
+        .command('finding')
+        .description(
+          'T10 findings bound to an engagement ledger (offline): check them, export a SARIF draft for manual submission'
+        );
+      const readFindingsInputs = async (options: { ledger: string; findings: string }) => {
+        // Ledgers are bounded by the operator (default 64 MiB); findings files stay small.
+        const ledgerText = await createTextArgumentReader({
+          noFollow: true,
+          maxBytes: 1024 * 1024 * 1024,
+        })(`@${options.ledger}`, 'engagement ledger');
+        const findingsText = await createTextArgumentReader({ noFollow: true })(
+          `@${options.findings}`,
+          'findings'
+        );
+        let findings: unknown;
+        try {
+          findings = JSON.parse(findingsText);
+        } catch {
+          throw new UsageError('--findings must contain a JSON array of findings.');
+        }
+        return checkEngagementFindings(ledgerText, findings);
+      };
+      const issueLines = (issues: Array<{ findingId: string; issue: string }>) =>
+        issues.map((issue) => `  ${issue.findingId}: ${issue.issue}`);
+      finding
+        .command('check')
+        .description(
+          'check findings against an exported ledger: in scope, confirmed ones cite unblocked requests to their URL'
+        )
+        .requiredOption('--ledger <file>', 'exported engagement ledger (engagement export --out)')
+        .requiredOption('--findings <file>', 'findings JSON array')
+        .action(
+          action(async (ctx, options: { ledger: string; findings: string }) => {
+            const result = await readFindingsInputs(options);
+            if (!result.ok) {
+              ctx.emit(result, () => ['FINDINGS REFUSED', ...issueLines(result.issues)]);
+              exitCode = 1;
+              return;
+            }
+            ctx.emit(
+              {
+                ok: true,
+                engagementId: result.engagementId,
+                closed: result.closed,
+                findings: result.findings.length,
+                warnings: result.warnings,
+              },
+              () => [
+                `${result.findings.length} finding(s) bound to ${result.engagementId}`,
+                ...result.warnings.map((warning) => `warning: ${warning}`),
+              ]
+            );
+          })
+        );
+      finding
+        .command('sarif')
+        .description('export checked findings as a SARIF 2.1.0 draft (manual submission only)')
+        .requiredOption('--ledger <file>', 'exported engagement ledger (engagement export --out)')
+        .requiredOption('--findings <file>', 'findings JSON array')
+        .option('--out <file>', 'write the SARIF here (created exclusively, mode 0600)')
+        .action(
+          action(async (ctx, options: { ledger: string; findings: string; out?: string }) => {
+            const result = await readFindingsInputs(options);
+            if (!result.ok) {
+              ctx.emit(result, () => ['FINDINGS REFUSED', ...issueLines(result.issues)]);
+              exitCode = 1;
+              return;
+            }
+            const sarif = buildEngagementSarif(result, PRODUCT_VERSION);
+            const text = `${JSON.stringify(sarif, null, 2)}\n`;
+            if (options.out !== undefined) {
+              const { writeFile } = await import('node:fs/promises');
+              await writeFile(options.out, text, { flag: 'wx', mode: 0o600 });
+              ctx.emit(
+                { ok: true, file: options.out, results: sarif.runs[0]?.results.length ?? 0 },
+                () => [
+                  `wrote ${options.out}: ${result.findings.length} finding(s), draft for manual submission`,
+                  ...result.warnings.map((warning) => `warning: ${warning}`),
+                ]
+              );
+              return;
+            }
+            ctx.out(text.trimEnd());
+          })
         );
 
       const artifact = program.command('artifact').description('manage artifacts');

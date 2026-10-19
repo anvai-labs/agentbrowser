@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@agentbrowser/core": "workspace:*",
-    "@agentbrowser/policy": "workspace:*",
+    "@agentbrowser/engagement": "workspace:*",
     "axe-core": "^4.14.0",
     "jsdom": "^30.1.2",
     "pixelmatch": "^7.2.0",
@@ -32,10 +32,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./engagement-findings": {
-      "types": "./dist/engagement-findings.d.ts",
-      "default": "./dist/engagement-findings.js"
     }
   }
 }

@@ -10,7 +10,7 @@ import { PNG } from 'pngjs';
  * closures (cli/mcp-server/api do not depend on it); consumption arrives
  * with the audit mode/profile selection slice. */
 
-import { VisualAuditError } from './audit-error.js';
+import { VisualAuditError } from '@agentbrowser/engagement';
 
 export { VisualAuditError };
 

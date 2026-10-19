@@ -806,9 +806,14 @@ text (one entry per line, `-` for out of scope, `#` comments).
 engagement export --out L.jsonl ─▶ checkEngagementFindings(ledger, findings) ─▶ buildEngagementSarif(check) ─▶ manual submission
 ```
 
-The check and the SARIF builder are library functions in `@agentbrowser/audit` (importable alone as
-`@agentbrowser/audit/engagement-findings`); the audit package stays out of the CLI, MCP and API
-dependency closures (T7), so there is no CLI command for them yet.
+The check and the SARIF builder live in the light `@agentbrowser/engagement` package (no DOM or
+image dependencies; importable as `@agentbrowser/engagement` or via `@agentbrowser/audit`). The CLI
+exposes both offline:
+
+```
+agentbrowser finding check --ledger L.jsonl --findings F.json   # exit 0 bound / 1 refused + reasons
+agentbrowser finding sarif --ledger L.jsonl --findings F.json --out report.sarif
+```
 
 | Rule | A finding is refused when |
 | --- | --- |
