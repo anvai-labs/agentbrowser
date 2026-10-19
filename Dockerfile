@@ -29,6 +29,7 @@ COPY packages/mcp-server/package.json packages/mcp-server/
 COPY packages/benchmarks/package.json packages/benchmarks/
 COPY packages/extraction/package.json packages/extraction/
 COPY packages/audit/package.json packages/audit/
+COPY packages/engagement/package.json packages/engagement/
 
 RUN pnpm install --frozen-lockfile
 
