@@ -7,7 +7,7 @@
  * non-zero unless every bundle passed. Builtins only; runs under Node 18 or later.
  *
  * Inputs (environment, as the composite action passes them):
- *   INPUT_VERSION      release tag, e.g. v1.25.0 (required unless AGENTBROWSER_EVALUATE_CLI)
+ *   INPUT_VERSION      release tag, e.g. v1.26.0 (required unless AGENTBROWSER_EVALUATE_CLI)
  *   INPUT_BUNDLES      newline-separated files or directories (directories: every *.json)
  *   INPUT_JUNIT        JUnit output path (default agentbrowser-evaluate.xml)
  *   INPUT_REPORTS_DIR  optional directory for the full JSON reports (private, mode 0600; they
@@ -61,7 +61,7 @@ async function download(url) {
 /** Downloads and verifies the pinned CLI; returns its path. Never runs an unverified binary. */
 export async function installCli(version, options = {}) {
   if (!TAG.test(version ?? ''))
-    throw new EvaluateError('version must be a release tag such as v1.25.0');
+    throw new EvaluateError('version must be a release tag such as v1.26.0');
   const base = (options.baseUrl ?? RELEASES).replace(/\/+$/, '');
   const asset = assetFor(options.platform, options.arch);
   const sums = (await download(`${base}/${version}/sha256sums.txt`)).toString('utf8');
