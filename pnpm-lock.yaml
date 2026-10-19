@@ -411,6 +411,9 @@ importers:
       '@agentbrowser/core':
         specifier: workspace:^
         version: link:../core
+      '@agentbrowser/engagement':
+        specifier: workspace:*
+        version: link:../engagement
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -420,9 +423,15 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.15
         version: 2.5.15
+      '@sinclair/typebox':
+        specifier: ^0.34.16
+        version: 0.34.52
       '@types/node':
         specifier: ^22.20.5
         version: 22.20.5
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2

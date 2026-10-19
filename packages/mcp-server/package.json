@@ -21,14 +21,17 @@
     "prepublishOnly": "pnpm build"
   },
   "devDependencies": {
+    "@agentbrowser/core": "workspace:^",
+    "@agentbrowser/engagement": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
     "@agentbrowser/sdk-typescript": "workspace:*",
     "@biomejs/biome": "^2.5.15",
+    "@sinclair/typebox": "^0.34.16",
     "@types/node": "^22.20.5",
+    "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.7.2",
-    "vitest": "^5.0.4",
-    "@agentbrowser/core": "workspace:^"
+    "vitest": "^5.0.4"
   },
   "files": [
     "dist"
