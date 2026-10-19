@@ -34,6 +34,14 @@ export const AGENT_CAPABILITIES = Object.freeze([
   'page.capture',
   'application.discover',
   'application.execute',
+  /**
+   * T10 M3: the engagement findings surface (offline ledger checks and SARIF
+   * drafts). Flows into every browser profile automatically; filtered OUT of
+   * the browser baseline and granted to the audit/appsec/bounty profiles
+   * explicitly, mirroring the application-capability pattern. Profile
+   * revision stays 1: capabilities only grew.
+   */
+  'engagement.findings',
 ] as const);
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
@@ -51,11 +59,22 @@ const APPLICATION_CAPABILITIES: readonly AgentCapability[] = [
   'application.discover',
   'application.execute',
 ];
+const ENGAGEMENT_CAPABILITIES: readonly AgentCapability[] = ['engagement.findings'];
 const BROWSER_PROFILE = AGENT_CAPABILITIES.filter(
-  (capability) => !APPLICATION_CAPABILITIES.includes(capability)
+  (capability) =>
+    !APPLICATION_CAPABILITIES.includes(capability) && !ENGAGEMENT_CAPABILITIES.includes(capability)
 );
 const FULL_BROWSER_PROFILE = BROWSER_PROFILE;
-const AUDIT_PROFILE = BROWSER_PROFILE.filter((capability) => capability !== 'page.form');
+const AUDIT_PROFILE = [
+  ...BROWSER_PROFILE.filter((capability) => capability !== 'page.form'),
+  ...ENGAGEMENT_CAPABILITIES,
+] as readonly AgentCapability[];
+// appsec/bounty keep the full browser surface (autofill included) and gain the findings
+// tools: nothing is narrowed, so the profile revision stays 1.
+const APPSEC_PROFILE = [
+  ...FULL_BROWSER_PROFILE,
+  ...ENGAGEMENT_CAPABILITIES,
+] as readonly AgentCapability[];
 // The application mode drives the application surface only: discovery,
 // execution and receipt reads. It never receives browser capabilities.
 const APPLICATION_PROFILE = [
@@ -67,8 +86,8 @@ const profiles = Object.freeze({
   qa: profile('qa', FULL_BROWSER_PROFILE),
   operations: profile('operations', FULL_BROWSER_PROFILE),
   audit: profile('audit', AUDIT_PROFILE),
-  appsec: profile('appsec', FULL_BROWSER_PROFILE),
-  bounty: profile('bounty', FULL_BROWSER_PROFILE),
+  appsec: profile('appsec', APPSEC_PROFILE),
+  bounty: profile('bounty', APPSEC_PROFILE),
   forms: profile('forms', FULL_BROWSER_PROFILE),
   application: profile('application', APPLICATION_PROFILE),
 } satisfies Record<AgentMode, AgentModeProfile>);

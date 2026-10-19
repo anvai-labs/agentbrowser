@@ -6,25 +6,49 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 
 export const EXPECTED_TOOLS = Object.freeze([
-  'create', 'page_create', 'pages', 'close', 'cookies', 'snapshot',
-  'plan', 'autofill', 'navigate', 'observe', 'act',
-  'extract', 'html', 'pdf', 'screenshot', 'session',
-  'events_replay', 'policy', 'cookie_handoff', 'scope', 'artifact',
+  // 1.27.0: session_create/close/status are the primaries; create/close/session
+  // are deprecated aliases of them and ship one more minor.
+  'session_create',
+  'create',
+  'page_create',
+  'pages',
+  'session_close',
+  'close',
+  'cookies',
+  'snapshot',
+  'plan',
+  'autofill',
+  'navigate',
+  'observe',
+  'act',
+  'extract',
+  'html',
+  'pdf',
+  'screenshot',
+  'session_status',
+  'session',
+  'events_replay',
+  'policy',
+  'cookie_handoff',
+  'scope',
+  'artifact',
 ]);
 
 export const EXPECTED_DELEGATED_TOOLS = Object.freeze([
   // cookie_handoff is unbound-only too: a bound delegated session can never
-  // be a handoff target (the floor refuses delegated sessions).
+  // be a handoff target (the floor refuses delegated sessions). The session
+  // management tools (new and deprecated alias) drop for the same reason.
   ...EXPECTED_TOOLS.filter(
-    (name) => !['create', 'close', 'cookies', 'cookie_handoff'].includes(name)
+    (name) =>
+      !['create', 'session_create', 'close', 'session_close', 'cookies', 'cookie_handoff'].includes(
+        name
+      )
   ),
   'operation',
 ]);
 
-export const TEST_EVALUATION_INPUT_SCHEMA_ID =
-  'urn:agentbrowser:test-case-evaluation-input:v1';
-export const TEST_EVALUATION_REPORT_SCHEMA_ID =
-  'urn:agentbrowser:test-case-evaluation-report:v1';
+export const TEST_EVALUATION_INPUT_SCHEMA_ID = 'urn:agentbrowser:test-case-evaluation-input:v1';
+export const TEST_EVALUATION_REPORT_SCHEMA_ID = 'urn:agentbrowser:test-case-evaluation-report:v1';
 
 export function validateCliTestEvaluationDiscovery(discovery, expectedVersion) {
   assert.equal(discovery?.productVersion, expectedVersion, 'CLI test evaluator version mismatch');
@@ -79,7 +103,9 @@ async function waitForExit(closed, milliseconds) {
   try {
     return await Promise.race([
       closed.then(() => true),
-      new Promise((resolve) => { timer = setTimeout(() => resolve(false), milliseconds); }),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), milliseconds);
+      }),
     ]);
   } finally {
     clearTimeout(timer);
@@ -87,7 +113,10 @@ async function waitForExit(closed, milliseconds) {
 }
 
 async function withProcess(command, options, exercise) {
-  assert.ok(Array.isArray(command) && command.length > 0 && command.every((arg) => typeof arg === 'string'), 'Expected command array');
+  assert.ok(
+    Array.isArray(command) && command.length > 0 && command.every((arg) => typeof arg === 'string'),
+    'Expected command array'
+  );
   const timeoutMs = positiveInteger(options.timeoutMs ?? 20_000, 'deadline');
   const maxOutputBytes = positiveInteger(options.maxOutputBytes ?? 1024 * 1024, 'output limit');
   const env = { ...(options.env ?? process.env) };
@@ -99,7 +128,9 @@ async function withProcess(command, options, exercise) {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let rejectFailure;
-  const failure = new Promise((_, reject) => { rejectFailure = reject; });
+  const failure = new Promise((_, reject) => {
+    rejectFailure = reject;
+  });
   // Install immediately: spawn/stream errors can precede the first request.
   failure.catch(() => {});
   let stdout = '';
@@ -109,13 +140,19 @@ async function withProcess(command, options, exercise) {
   let hasClosed = false;
   const fail = (error) => rejectFailure(error);
   const closed = new Promise((resolve) => {
-    child.once('close', (code, signal) => { hasClosed = true; resolve({ code, signal }); });
+    child.once('close', (code, signal) => {
+      hasClosed = true;
+      resolve({ code, signal });
+    });
   });
   child.once('error', fail);
   child.stdin.on('error', fail);
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
-  for (const [name, stream] of [['stdout', child.stdout], ['stderr', child.stderr]]) {
+  for (const [name, stream] of [
+    ['stdout', child.stdout],
+    ['stderr', child.stderr],
+  ]) {
     stream.on('error', fail);
     stream.on('data', (chunk) => {
       outputBytes += Buffer.byteLength(chunk);
@@ -126,15 +163,31 @@ async function withProcess(command, options, exercise) {
       if (name === 'stderr') stderr += chunk;
       else {
         stdout += chunk;
-        try { onData(chunk); } catch (error) { fail(error); }
+        try {
+          onData(chunk);
+        } catch (error) {
+          fail(error);
+        }
       }
     });
   }
-  const timer = setTimeout(() => fail(new Error('Executable acceptance deadline exceeded')), timeoutMs);
+  const timer = setTimeout(
+    () => fail(new Error('Executable acceptance deadline exceeded')),
+    timeoutMs
+  );
   try {
     options.onSpawn?.(child);
     return await Promise.race([
-      exercise({ child, closed, failure, fail, onData(callback) { onData = callback; }, output: () => ({ stdout, stderr }) }),
+      exercise({
+        child,
+        closed,
+        failure,
+        fail,
+        onData(callback) {
+          onData = callback;
+        },
+        output: () => ({ stdout, stderr }),
+      }),
       failure,
     ]);
   } finally {
@@ -143,7 +196,8 @@ async function withProcess(command, options, exercise) {
       child.kill('SIGTERM');
       if (!(await waitForExit(closed, 1000))) {
         child.kill('SIGKILL');
-        if (!(await waitForExit(closed, 1000))) throw new Error('Executable cleanup failed: child did not exit');
+        if (!(await waitForExit(closed, 1000)))
+          throw new Error('Executable cleanup failed: child did not exit');
       }
     }
   }
@@ -157,8 +211,14 @@ export async function runExecutable(command, options = {}) {
   );
   const maxInputBytes = positiveInteger(options.maxInputBytes ?? 1024 * 1024, 'input limit');
   const stdin = options.stdin ?? '';
-  assert.ok(typeof stdin === 'string' || Buffer.isBuffer(stdin), 'Executable stdin must be a string or Buffer');
-  assert.ok(Buffer.byteLength(stdin) <= maxInputBytes, 'Executable input exceeded the acceptance limit');
+  assert.ok(
+    typeof stdin === 'string' || Buffer.isBuffer(stdin),
+    'Executable stdin must be a string or Buffer'
+  );
+  assert.ok(
+    Buffer.byteLength(stdin) <= maxInputBytes,
+    'Executable input exceeded the acceptance limit'
+  );
   return withProcess(command, options, async ({ child, closed, output }) => {
     // Empty chunks still issue a pipe write and can EPIPE after a short-lived
     // child closes its reader. EOF alone needs no write; real input errors fail.
@@ -240,12 +300,19 @@ export async function checkMcp(command, options) {
         buffer = buffer.slice(newline + 1);
         if (!line) continue;
         let message;
-        try { message = JSON.parse(line); } catch { throw new Error('Invalid JSON on MCP stdout'); }
+        try {
+          message = JSON.parse(line);
+        } catch {
+          throw new Error('Invalid JSON on MCP stdout');
+        }
         assert.ok(message && message.jsonrpc === '2.0', 'Invalid JSON-RPC envelope');
         if (!Object.hasOwn(message, 'id') && typeof message.method === 'string') continue;
         const receive = pending.get(message.id);
         assert.ok(receive, 'Unexpected MCP response id');
-        assert.ok(Object.hasOwn(message, 'result') !== Object.hasOwn(message, 'error'), 'Invalid JSON-RPC result/error envelope');
+        assert.ok(
+          Object.hasOwn(message, 'result') !== Object.hasOwn(message, 'error'),
+          'Invalid JSON-RPC result/error envelope'
+        );
         pending.delete(message.id);
         receive(message);
       }
@@ -257,8 +324,11 @@ export async function checkMcp(command, options) {
       try {
         process.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
         const message = await Promise.race([
-          response, process.failure,
-          process.closed.then(() => { throw new Error('MCP exited before its response completed'); }),
+          response,
+          process.failure,
+          process.closed.then(() => {
+            throw new Error('MCP exited before its response completed');
+          }),
         ]);
         assert.ok(!Object.hasOwn(message, 'error'), 'MCP JSON-RPC error');
         return message.result;
@@ -278,12 +348,15 @@ export async function checkMcp(command, options) {
       return value;
     };
     const init = await request('initialize', {
-      protocolVersion, capabilities: {},
+      protocolVersion,
+      capabilities: {},
       clientInfo: { name: 'agentbrowser-release-smoke', version: '1.0.0' },
     });
     assert.equal(init?.protocolVersion, protocolVersion, 'MCP protocol version mismatch');
     assert.equal(init?.serverInfo?.version, options.expectedVersion, 'MCP version mismatch');
-    process.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+    process.child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`
+    );
     const catalog = await request('tools/list');
     const names = catalog?.tools?.map((tool) => tool.name).sort();
     assert.deepEqual(names, [...expectedTools].sort(), 'MCP tool catalog mismatch');
@@ -299,17 +372,42 @@ export async function checkMcp(command, options) {
   });
 }
 
-
 /** Qualify serialization/dispatch, not browser behavior, using an owned loopback fixture. */
 export async function checkMcpContracts(command, options) {
-  const payload = { fields: [{ match: { label: 'Name', block: { label: 'Current' } }, value: 'fixture-value' }] };
-  const report = { ok: true, receipts: [{ field: 0, match: payload.fields[0].match, status: 'unverified', verified: false }], elapsedMs: 1 };
-  const failed = { ...report, ok: false, receipts: [{ ...report.receipts[0], status: 'uncertain' }] };
-  const planReport = { ok: true, completed: 1, results: [{ step: 0, ok: true, actionId: 'fixture-action', result: { evidence: 'kept' } }], mode: 'stable', newRevision: 2 };
+  const payload = {
+    fields: [{ match: { label: 'Name', block: { label: 'Current' } }, value: 'fixture-value' }],
+  };
+  const report = {
+    ok: true,
+    receipts: [{ field: 0, match: payload.fields[0].match, status: 'unverified', verified: false }],
+    elapsedMs: 1,
+  };
+  const failed = {
+    ...report,
+    ok: false,
+    receipts: [{ ...report.receipts[0], status: 'uncertain' }],
+  };
+  const planReport = {
+    ok: true,
+    completed: 1,
+    results: [{ step: 0, ok: true, actionId: 'fixture-action', result: { evidence: 'kept' } }],
+    mode: 'stable',
+    newRevision: 2,
+  };
   const cases = [
     { route: 'autofill', payload, report, failed },
-    { route: 'plan', payload: { actions: [{ action: 'press', key: 'Tab', count: 2 }] }, report: planReport,
-      failed: { ...planReport, ok: false, completed: 0, results: [{ step: 0, ok: false, error: 'denied' }], error: { code: 'PLAN_STEP_FAILED', message: 'denied' } } },
+    {
+      route: 'plan',
+      payload: { actions: [{ action: 'press', key: 'Tab', count: 2 }] },
+      report: planReport,
+      failed: {
+        ...planReport,
+        ok: false,
+        completed: 0,
+        results: [{ step: 0, ok: false, error: 'denied' }],
+        error: { code: 'PLAN_STEP_FAILED', message: 'denied' },
+      },
+    },
   ];
   const requests = [];
   const fixture = createServer(async (request, response) => {
@@ -318,8 +416,12 @@ export async function checkMcpContracts(command, options) {
     requests.push({ path: request.url, method: request.method, headers: request.headers, body });
     const id = request.headers['x-agentbrowser-operation-id'];
     const scenario = cases.find((entry) => request.url.endsWith(`/${entry.route}`));
-    const result = id === 'invalid' ? { ...scenario.report, ok: 'PRIVATE-REPORT' }
-      : id === 'failed' ? scenario.failed : scenario.report;
+    const result =
+      id === 'invalid'
+        ? { ...scenario.report, ok: 'PRIVATE-REPORT' }
+        : id === 'failed'
+          ? scenario.failed
+          : scenario.report;
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify(result));
   });
@@ -331,58 +433,132 @@ export async function checkMcpContracts(command, options) {
     const bytes = [];
     for (const protocolVersion of ['2024-11-05', '2025-06-18']) {
       for (const catalog of ['unbound', 'delegated']) {
-        const env = { ...(options.env ?? process.env), AGENTBROWSER_BASE_URL: `http://127.0.0.1:${fixture.address().port}`, AGENTBROWSER_API_KEY: 'fixture-key' };
+        const env = {
+          ...(options.env ?? process.env),
+          AGENTBROWSER_BASE_URL: `http://127.0.0.1:${fixture.address().port}`,
+          AGENTBROWSER_API_KEY: 'fixture-key',
+        };
         delete env.AGENTBROWSER_SESSION_ID;
         if (catalog === 'delegated') env.AGENTBROWSER_SESSION_ID = 'fixture-session';
-        await checkMcp(command, { ...options, env, protocolVersion, catalog, exercise: async ({ request }) => {
-          const listed = await request('tools/list');
-          bytes.push({ protocolVersion, catalog, bytes: Buffer.byteLength(JSON.stringify(listed)) });
-          const autofill = listed.tools.find((tool) => tool.name === 'autofill');
-          const modern = protocolVersion === '2025-06-18';
-          if (modern) {
-            assert.equal(autofill.outputSchema?.$id, 'urn:agentbrowser:autofill-report:v1', 'Missing canonical output schema');
-            assert.equal(autofill.annotations?.readOnlyHint, false, 'Autofill must not claim read-only behavior');
-            assert.equal(autofill.annotations?.idempotentHint, false, 'Autofill must not imply safe replay');
-            assert.ok(autofill.outputSchema.anyOf[0].properties.receipts.items.properties.status.anyOf.some((entry) => entry.const === 'uncertain'), 'Lost nested output schema');
-            assert.deepEqual(autofill.outputSchema.anyOf[1].required, ['error'], 'Advertised schema must accept the structured-error envelope');
-          } else assert.ok(listed.tools.every((tool) => !tool.outputSchema && !tool.annotations), 'Legacy catalog gained modern fields');
-          assert.equal(autofill.inputSchema.properties.fields.items.properties.match.properties.block.properties.label.maxLength, 512, 'Lost nested match schema');
-          assert.equal(autofill.inputSchema.required.includes('operationId'), catalog === 'delegated');
-          const plan = listed.tools.find((tool) => tool.name === 'plan');
-          assert.equal(plan.inputSchema.properties.actions.items.properties.waitMs.maximum, 60000, 'Lost canonical plan input');
-          if (modern) assert.equal(plan.outputSchema?.$id, 'urn:agentbrowser:plan-report:v1', 'Missing canonical plan output');
-          for (const scenario of cases) {
-          const args = { ...scenario.payload, pageId: 'fixture-page', ...(catalog === 'unbound' ? { sessionId: 'fixture-session' } : {}) };
-          for (const [operationId, expected] of [['success', scenario.report], ['failed', scenario.failed], ['invalid', null]]) {
-            const before = requests.length;
-            const result = await request('tools/call', { name: `${scenario.route}`, arguments: { ...args, operationId } });
-            assert.equal(requests.length, before + 1, 'Write dispatch must happen exactly once');
-            const received = requests.at(-1);
-            assert.equal(received.path, `/v1/sessions/fixture-session/pages/fixture-page/${scenario.route}`);
-            assert.equal(received.method, 'POST');
-            assert.equal(received.headers['x-agentbrowser-operation-id'], operationId);
-            assert.equal(received.headers.authorization, 'Bearer fixture-key');
-            assert.deepEqual(JSON.parse(received.body), scenario.payload);
-            if (expected) {
-              assert.deepEqual(JSON.parse(result.content[0].text), expected);
-              assert.equal(result.isError, expected.ok ? undefined : true);
-              assert.deepEqual(result.structuredContent, modern ? expected : undefined);
-            } else {
-              assert.equal(result.isError, true);
-              if (modern) {
-                // Structured errors carry the allowlisted machine shape only.
-                assert.equal(result.structuredContent.error.code, 'INVALID_RESPONSE');
-                assert.equal(result.structuredContent.error.operationId, 'invalid');
-                assert.ok(!('details' in result.structuredContent.error));
-              } else {
-                assert.equal(result.structuredContent, undefined);
+        await checkMcp(command, {
+          ...options,
+          env,
+          protocolVersion,
+          catalog,
+          exercise: async ({ request }) => {
+            const listed = await request('tools/list');
+            bytes.push({
+              protocolVersion,
+              catalog,
+              bytes: Buffer.byteLength(JSON.stringify(listed)),
+            });
+            const autofill = listed.tools.find((tool) => tool.name === 'autofill');
+            const modern = protocolVersion === '2025-06-18';
+            if (modern) {
+              assert.equal(
+                autofill.outputSchema?.$id,
+                'urn:agentbrowser:autofill-report:v1',
+                'Missing canonical output schema'
+              );
+              assert.equal(
+                autofill.annotations?.readOnlyHint,
+                false,
+                'Autofill must not claim read-only behavior'
+              );
+              assert.equal(
+                autofill.annotations?.idempotentHint,
+                false,
+                'Autofill must not imply safe replay'
+              );
+              assert.ok(
+                autofill.outputSchema.anyOf[0].properties.receipts.items.properties.status.anyOf.some(
+                  (entry) => entry.const === 'uncertain'
+                ),
+                'Lost nested output schema'
+              );
+              assert.deepEqual(
+                autofill.outputSchema.anyOf[1].required,
+                ['error'],
+                'Advertised schema must accept the structured-error envelope'
+              );
+            } else
+              assert.ok(
+                listed.tools.every((tool) => !tool.outputSchema && !tool.annotations),
+                'Legacy catalog gained modern fields'
+              );
+            assert.equal(
+              autofill.inputSchema.properties.fields.items.properties.match.properties.block
+                .properties.label.maxLength,
+              512,
+              'Lost nested match schema'
+            );
+            assert.equal(
+              autofill.inputSchema.required.includes('operationId'),
+              catalog === 'delegated'
+            );
+            const plan = listed.tools.find((tool) => tool.name === 'plan');
+            assert.equal(
+              plan.inputSchema.properties.actions.items.properties.waitMs.maximum,
+              60000,
+              'Lost canonical plan input'
+            );
+            if (modern)
+              assert.equal(
+                plan.outputSchema?.$id,
+                'urn:agentbrowser:plan-report:v1',
+                'Missing canonical plan output'
+              );
+            for (const scenario of cases) {
+              const args = {
+                ...scenario.payload,
+                pageId: 'fixture-page',
+                ...(catalog === 'unbound' ? { sessionId: 'fixture-session' } : {}),
+              };
+              for (const [operationId, expected] of [
+                ['success', scenario.report],
+                ['failed', scenario.failed],
+                ['invalid', null],
+              ]) {
+                const before = requests.length;
+                const result = await request('tools/call', {
+                  name: `${scenario.route}`,
+                  arguments: { ...args, operationId },
+                });
+                assert.equal(
+                  requests.length,
+                  before + 1,
+                  'Write dispatch must happen exactly once'
+                );
+                const received = requests.at(-1);
+                assert.equal(
+                  received.path,
+                  `/v1/sessions/fixture-session/pages/fixture-page/${scenario.route}`
+                );
+                assert.equal(received.method, 'POST');
+                assert.equal(received.headers['x-agentbrowser-operation-id'], operationId);
+                assert.equal(received.headers.authorization, 'Bearer fixture-key');
+                assert.deepEqual(JSON.parse(received.body), scenario.payload);
+                if (expected) {
+                  assert.deepEqual(JSON.parse(result.content[0].text), expected);
+                  assert.equal(result.isError, expected.ok ? undefined : true);
+                  assert.deepEqual(result.structuredContent, modern ? expected : undefined);
+                } else {
+                  assert.equal(result.isError, true);
+                  if (modern) {
+                    // Structured errors carry the allowlisted machine shape only.
+                    assert.equal(result.structuredContent.error.code, 'INVALID_RESPONSE');
+                    assert.equal(result.structuredContent.error.operationId, 'invalid');
+                    assert.ok(!('details' in result.structuredContent.error));
+                  } else {
+                    assert.equal(result.structuredContent, undefined);
+                  }
+                  assert.ok(!JSON.stringify(result).includes('PRIVATE-REPORT'));
+                  assert.match(result.content[0].text, /may have executed/);
+                }
               }
-              assert.ok(!JSON.stringify(result).includes('PRIVATE-REPORT'));
-              assert.match(result.content[0].text, /may have executed/);
             }
-          }
-          }
-        } });
+          },
+        });
       }
     }
     return { catalogs: bytes };

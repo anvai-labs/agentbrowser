@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/audit",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "description": "T7 slice 1: visual audit adapter with baseline/versioned measurements (wraps pixelmatch; absent from default dependency closures)",
   "type": "module",
   "main": "dist/index.js",
@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@agentbrowser/core": "workspace:*",
-    "@agentbrowser/policy": "workspace:*",
+    "@agentbrowser/engagement": "workspace:*",
     "axe-core": "^4.14.0",
-    "jsdom": "^30.1.2",
+    "jsdom": "^30.1.3",
     "pixelmatch": "^7.2.0",
     "pngjs": "^7.0.0"
   },
@@ -26,16 +26,12 @@
     "@types/node": "^22.20.5",
     "@types/pngjs": "^6.0.5",
     "typescript": "^5.7.2",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./engagement-findings": {
-      "types": "./dist/engagement-findings.d.ts",
-      "default": "./dist/engagement-findings.js"
     }
   }
 }

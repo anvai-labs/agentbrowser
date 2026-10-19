@@ -9,7 +9,7 @@ hide:
 loopback REST service, a TypeScript SDK, a compiled CLI, or an MCP stdio
 server — with safety enforced *in the service*, not in the prompt.
 
-> **New in 1.21–1.23 — engagements for authorized testing:** a scope checked on every
+> **New in 1.21–1.26 — engagements and automation:** saved plans run end to end (`run`, the `plan-run` CI action, durable runs), program scopes import, findings bind to the ledger, and a scope enforced before every request: a scope checked on every
 > request and redirect hop, lanes it cannot check refused, live scope status and a dry run,
 > and an opt-in hash-chained metadata ledger you export and verify offline.
 > [Engagements →](operations.md#engagements-authorized-testing)
@@ -90,12 +90,12 @@ agentbrowser --json observe SESSION PAGE --roles dialog --name policy   # compac
 
 ## Status
 
-- **1.25.0 released** (2026-10-18, [release history](release-milestones.md)); post-MVP packets
+- **1.26.0 released** (2026-10-19, [release history](release-milestones.md)); post-MVP packets
   [T0–T10](spec/tasks/README.md):
 
     | Complete | In progress | Gated on owner or infrastructure |
     | --- | --- | --- |
-    | T0 · T2 · T3 · T7 | T10 engagements (1.26.0: automation runs) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
+    | T0 · T2 · T3 · T7 | T10 engagements (automation runs ✔ 1.26.0) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
 
 - Every claim is adversarially reviewable via the [evidence index](spec/evidence/t0-foundation.md).
-- Defaults (1.25): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.
+- Defaults (1.26): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.

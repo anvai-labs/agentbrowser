@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/extraction",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "private": true,
   "type": "module",
   "description": "Deterministic page extractors with evidence provenance (spec 12)",
@@ -28,6 +28,6 @@
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^22.20.5",
     "typescript": "^5.7.2",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }

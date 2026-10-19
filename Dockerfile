@@ -4,7 +4,7 @@
 # Build stage: install, build the workspace, and produce a self-contained
 # production deployment of the API server via pnpm deploy.
 # ---------------------------------------------------------------------------
-FROM node:24.21.0-bookworm-slim AS build
+FROM node:24.22.0-bookworm-slim AS build
 RUN corepack enable
 
 WORKDIR /app
@@ -29,6 +29,7 @@ COPY packages/mcp-server/package.json packages/mcp-server/
 COPY packages/benchmarks/package.json packages/benchmarks/
 COPY packages/extraction/package.json packages/extraction/
 COPY packages/audit/package.json packages/audit/
+COPY packages/engagement/package.json packages/engagement/
 
 RUN pnpm install --frozen-lockfile
 

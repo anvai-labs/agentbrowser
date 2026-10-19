@@ -3,12 +3,13 @@
 ## Release history and plan (current)
 
 ```
-1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ─ 1.25 ✔ ─▶ 1.26
+1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ─ 1.25 ─ 1.26 ✔ ─▶ 1.27
 journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2     M3 ✔   M4
 ```
 
 | Version | GitHub release | main | Headline | Record |
 | --- | --- | --- | --- | --- |
+| 1.26.0 | 2026-10-19 | `09e3bca` | T10 M4: `run` (saved plan end to end), the `plan-run` CI action, durable runs; owner #588 subtree domains | [record](spec/evidence/release-1.26.0.md) |
 | 1.25.0 | 2026-10-18 | `fa2cefe` | T10 M3: program-scope fields, rate limit, `scope import`, findings bound to the engagement (library) | [record](spec/evidence/release-1.25.0.md) |
 | 1.24.0 | 2026-10-17 | `400ba54` | T10 M2 complete: denial reporting everywhere; strict session requests (breaking: top-level policy fields); path rules bind their hosts | [record](spec/evidence/release-1.24.0.md) |
 | 1.23.0 | 2026-10-17 | `82b06ca` | T10 M2: engagement ledger, export and offline verify | [record](spec/evidence/release-1.23.0.md) |
@@ -28,7 +29,6 @@ journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2 
 
 | Planned | Milestone | Scope |
 | --- | --- | --- |
-| 1.26.0 | T10 M4 | saved plan runs from the CLI and CI action |
 
 Every release: clean adversarial review and green CI on the exact head, version sync, promotion
 (merge commit), tag on main, owner npm approval, verified channels, tap, record, back-sync.
@@ -145,8 +145,8 @@ T3 began from that synchronized baseline. Its first bounded report foundation
 and all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35459717523)
 passed. T3 was incomplete at that checkpoint; its later completion is recorded above.
 The subsequent
-[navigation-reset qualification](spec/evidence/t3-navigation-reset.md) is tracked separately. Production evidence/G6, durable recovery and
-independent UI/API parity also remain open. The repeatable release sequence
+[navigation-reset qualification](spec/evidence/t3-navigation-reset.md) is tracked separately. Durable recovery shipped 2026-10-15
+(1.24.x). Production evidence/G6 and independent UI/API parity remain open. The repeatable release sequence
 below remains applicable; earlier checkpoint statuses are historical.
 
 ## Historical checkpoint (2026-09-08)

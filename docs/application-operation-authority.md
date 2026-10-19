@@ -1,10 +1,11 @@
 # Application operations under delegated authority
 
-Status: typed in-process port, application-only lifecycle and REST/SDK/CLI surface are
-implemented. AgentBrowser 1.9.0 includes scoped delegated receipt permission and
-controlled G4 qualification. Develop includes operator binding/discovery UI (U0, #261); the current candidate
-adds explicit-ID status/receipt reconciliation (U1). MCP tools, production/G6 evidence
-and durable application receipts remain pending.
+Status (2026-10-19 audit): typed in-process port, application-only lifecycle and the
+REST/SDK/CLI surface are implemented. Shipped since this page was written: scoped delegated
+receipt permission and controlled G4 qualification (1.9.0), operator binding/discovery UI
+(U0, #261), explicit-ID status/receipt reconciliation (U1, #262) and durable application
+receipts (T5 C4b). Still pending: MCP tools, production/G6 evidence and P0c/P1 production
+qualification (tracked in [t4-application-parity.md](spec/tasks/t4-application-parity.md)).
 Transport, reconnection and durable recovery are specified in the
 [shared infrastructure design](shared-session-infrastructure.md).
 Historical design baseline: `develop` at `ed8ac67`, after PRs [156](https://github.com/anvai-labs/agentbrowser/pull/156),

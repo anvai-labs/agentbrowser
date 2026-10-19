@@ -1,0 +1,24 @@
+{
+  "name": "@agentbrowser/engagement",
+  "version": "1.27.0",
+  "description": "T10: findings bound to an engagement ledger, checked offline and exported as a SARIF draft (no DOM or image dependencies)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run",
+    "lint": "biome check src/",
+    "format": "biome format --write src/",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agentbrowser/core": "workspace:*",
+    "@agentbrowser/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.5"
+  }
+}

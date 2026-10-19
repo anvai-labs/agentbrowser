@@ -137,7 +137,7 @@ stateDiagram-v2
     in_doubt --> failed: operator reconcile, rejected (application writes only)
 ```
 
-| What | Application write | Browser `act` / `plan` / `autofill` |
+| What | Application write | Browser `act` / `plan` / `autofill` / `run` |
 | --- | --- | --- |
 | Opt in | `executionRequirement: "durable"` on execute | same field; CLI `--execution-requirement durable`; MCP `executionRequirement` |
 | Needs | open journal | open journal + controlled (delegated) session + operation ID |
@@ -806,9 +806,16 @@ text (one entry per line, `-` for out of scope, `#` comments).
 engagement export --out L.jsonl ─▶ checkEngagementFindings(ledger, findings) ─▶ buildEngagementSarif(check) ─▶ manual submission
 ```
 
-The check and the SARIF builder are library functions in `@agentbrowser/audit` (importable alone as
-`@agentbrowser/audit/engagement-findings`); the audit package stays out of the CLI, MCP and API
-dependency closures (T7), so there is no CLI command for them yet.
+The check and the SARIF builder live in the light `@agentbrowser/engagement` package (no DOM or
+image dependencies; importable as `@agentbrowser/engagement` or via `@agentbrowser/audit`). The CLI
+exposes both offline, and MCP clients in the audit/appsec/bounty modes get the same two surfaces as
+`finding_check` and `finding_sarif` (offline: the ledger and findings files live on the server
+host):
+
+```
+agentbrowser finding check --ledger L.jsonl --findings F.json   # exit 0 bound / 1 refused + reasons
+agentbrowser finding sarif --ledger L.jsonl --findings F.json --out report.sarif
+```
 
 | Rule | A finding is refused when |
 | --- | --- |

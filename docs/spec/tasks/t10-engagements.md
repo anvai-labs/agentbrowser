@@ -31,7 +31,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 
 ```
 1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 ✔ M2 denial reporting
-  ─▶ 1.25.0 ✔ M3 program scope + findings ─▶ 1.26.0 M4 automation runs
+  ─▶ 1.25.0 ✔ M3 program scope + findings ─▶ 1.26.0 ✔ M4 automation runs
 ```
 
 | Milestone | Release | Acceptance (each test-first; real Chromium where traffic is involved) |
@@ -60,11 +60,13 @@ automatic submission or outside communication of findings.
 | M2: denial reporting on page creation, downloads and completed actions | #566, #567, #568, #569 on develop; strict requests #572, #574; path rules bind their hosts #576; released in 1.24.0 ([record](../evidence/release-1.24.0.md)) |
 | M3: restrictive program fields | `excludeHosts`, `excludePaths`, `allowedSchemes`, `allowedPorts`, `program` (`scope-program-fields.test.ts`; real Chromium in `scope-enforcement.test.ts`); unknown scope fields refused (#572); `rateLimit` paces up to 15 s then `SCOPE_RATE_LIMITED` (serialized sliding window; real Chromium spreads three documents ≥ 1.8 s apart) |
 | M3: program scope importer | `scope import --from h1\|bugcrowd\|text` (`program-scope-import.test.ts` fixtures; imported scopes pass session create); inexpressible exclusions fail the import |
-| M3: findings bound to the engagement | `checkEngagementFindings` / `buildEngagementSarif` in audit (`engagement-findings.test.ts`): out-of-scope URLs and blocked, failed or mismatched citations refused; SARIF draft, manual submission. CLI/MCP exposure pending the T7 closure gate |
+| M3: findings bound to the engagement | `checkEngagementFindings` / `buildEngagementSarif` in the new light `@agentbrowser/engagement` package; CLI `finding check` / `finding sarif` (`finding-commands.test.ts`): out-of-scope URLs and blocked, failed or mismatched citations refused; SARIF draft, manual submission. MCP exposure still pending (mcp-server closure) |
 | M3: released in 1.25.0 | [release record](../evidence/release-1.25.0.md): the released CLI's `scope import` and the scope and ledger smoke passed on the extracted candidate |
-| M4: saved plan runs | `run PLAN --url … [--junit]` (`run-command.test.ts`; release smoke runs a scoped sign-in plan, JUnit, failure exit 1, no session left); CI-action input and durable runs next |
+| M3: MCP finding tools | `finding_check` / `finding_sarif` in the audit/appsec/bounty modes via `engagement.findings` (`finding-tools.test.ts`): same refusals as the library; visible only where the capability is granted |
+| M4: saved plan runs | `run PLAN --url … [--junit]` (`run-command.test.ts`; release smoke runs a scoped sign-in plan, JUnit, failure exit 1, no session left); CI-action input and durable runs delivered |
 | M4: CI action | `.github/actions/plan-run` (`plan-run-action.test.mjs`): checksum-verified CLI, key off argv, exit code from the plan |
 | M4: durable runs | `run --session SES --execution-requirement durable --operation-id ID` (`run-durable.test.ts`): refuses to create an ephemeral session for a durable plan; only the page closes |
+| M4: released in 1.26.0 | [release record](../evidence/release-1.26.0.md): the released CLI ran a scoped sign-in plan (JUnit, failure exit 1, no session left) and `scope import` on the extracted candidate |
 | M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors (#549); released in 1.22.0 |
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |

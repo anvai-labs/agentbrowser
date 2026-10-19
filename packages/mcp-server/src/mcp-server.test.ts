@@ -207,6 +207,49 @@ describe('AgentBrowser MCP server', () => {
       const plan = tools.find((tool: { name: string }) => tool.name === 'plan');
       expect(plan.inputSchema.properties.actions.maxItems).toBe(100);
       expect(plan.description).toContain('at most 100 steps per plan');
+      // Coverage: every listed tool declares its hints — absent annotations read as "unknown"
+      // to clients, which is weaker than a deliberate false on the mutating surfaces. A new
+      // tool without an annotation class fails here (name not in the map). Tools filtered out
+      // of this mode are covered by the other mode catalogs.
+      const classes: Record<string, { readOnlyHint: boolean; idempotentHint: boolean }> = {
+        create: { readOnlyHint: false, idempotentHint: false },
+        session_create: { readOnlyHint: false, idempotentHint: false },
+        session_close: { readOnlyHint: false, idempotentHint: false },
+        session_status: { readOnlyHint: true, idempotentHint: true },
+        page_create: { readOnlyHint: false, idempotentHint: false },
+        navigate: { readOnlyHint: false, idempotentHint: false },
+        close: { readOnlyHint: false, idempotentHint: false },
+        cookie_handoff: { readOnlyHint: false, idempotentHint: false },
+        act: { readOnlyHint: false, idempotentHint: false },
+        finding_check: { readOnlyHint: true, idempotentHint: true },
+        finding_sarif: { readOnlyHint: true, idempotentHint: true },
+        autofill: { readOnlyHint: false, idempotentHint: false },
+        plan: { readOnlyHint: false, idempotentHint: false },
+      };
+      for (const name of [
+        'policy',
+        'pages',
+        'cookies',
+        'snapshot',
+        'observe',
+        'extract',
+        'html',
+        'pdf',
+        'screenshot',
+        'scope',
+        'session',
+        'events_replay',
+        'artifact',
+      ]) {
+        classes[name] = { readOnlyHint: true, idempotentHint: true };
+      }
+      for (const tool of tools as Array<{
+        name: string;
+        annotations?: { readOnlyHint: boolean; idempotentHint: boolean };
+      }>) {
+        expect(classes, `${tool.name} needs an annotation class`).toHaveProperty(tool.name);
+        expect(tool.annotations, tool.name).toMatchObject(classes[tool.name]);
+      }
     });
 
     it('preserves legacy text-only catalogs and successful calls', async () => {

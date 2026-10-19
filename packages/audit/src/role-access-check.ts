@@ -1,5 +1,8 @@
-import { type ConfirmationEvidence, confirmFinding } from './finding-confirmation.js';
-import { VisualAuditError } from './visual-audit.js';
+import {
+  type ConfirmationEvidence,
+  confirmFinding,
+  VisualAuditError,
+} from '@agentbrowser/engagement';
 
 /** T7 slice 3: the role/business-logic fixture check. A scanner does not find broken access
  * control between identities (IDOR), so this check drives a FIXTURE: each resource belongs to one

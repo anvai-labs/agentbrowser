@@ -7,6 +7,45 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.27.0] — 2026-10-19
+
+Entries are newest first. T10 follow-through: the engagement findings surface completes (library,
+CLI, MCP), the MCP tool names become self-describing, and every tool declares its trust hints.
+**Upgrading from 1.26.x:**
+
+| Who | What changes |
+| --- | --- |
+| MCP clients | `create`/`close`/`session` are **deprecated aliases** of the new `session_create`/`session_close`/`session_status` (identical schema, handler and annotations) — migrate this release; the aliases drop in the next major. Every tool now declares `readOnlyHint`/`idempotentHint` |
+| MCP clients in audit/appsec/bounty modes | new `finding_check` and `finding_sarif` tools (offline; the ledger and findings files live on the server host) via the new `engagement.findings` capability. qa/forms/operations catalogs unchanged |
+| CLI | `finding check` / `finding sarif` via the new light `@agentbrowser/engagement` package (no DOM or image dependencies; audit re-exports it unchanged) |
+| TypeScript consumers | `PLAN_ERROR_CODES` and `ErrorCode` re-exported by the SDK; the engagement package exports `checkEngagementFindings`/`buildEngagementSarif` |
+| Dependency updates | node docker image 24.22, pnpm/action-setup 6.1.0, minor/patch group (fastify 5.12.7, vitest 5.0.5, playwright 1.64.1). The tldts 7 bump was **blocked** by the T8 footprint gate (MCP bridge idle RSS 81.7 MB vs 75) and stays at 6.1.76 |
+
+### Added — findings bound to an engagement (T10 M3)
+
+- `checkEngagementFindings(ledgerText, findings)` in the new light `@agentbrowser/engagement`
+  package checks findings against an exported, chain-verified ledger: the URL must be in the
+  recorded scope; a confirmed finding needs independent-reproduction evidence and must cite
+  unblocked ledger requests to its own origin+path. `buildEngagementSarif(check)` returns a SARIF
+  2.1.0 draft for manual submission, citing the engagement, program and ledger entries.
+- The CLI exposes them: `finding check --ledger L --findings F` and
+  `finding sarif ... [--out R.sarif]`. The audit package stays out of the CLI, MCP and API
+  closures (T7 gate) - the CLI depends on `engagement`, a different package.
+- MCP: `finding_check` and `finding_sarif` in the audit/appsec/bounty modes via the new
+  `engagement.findings` capability. Refusal results validate against the advertised
+  `anyOf [success, refusal]` schema (ajv-pinned in tests).
+
+### Changed - MCP surface refresh (1.27.0)
+
+- `session_create`/`session_close`/`session_status` replace `create`/`close`/`session`
+  (deprecated aliases ship this release and drop in the next major). Annotations on all 21+2
+  tools; coverage test pins the class map. Snapshot description trimmed to its decision core.
+
+### Docs - automating a flow (T10 M4)
+
+- The CLI guide's saved-plan section gains the `plan-run` CI-action usage and the durable-run
+  composition (`--session` + `--execution-requirement durable`).
+
 ## [1.26.0] — 2026-10-18
 
 Entries are newest first. T10 milestone M4: automation runs — a saved plan file runs end to end
@@ -75,9 +114,11 @@ Entries are newest first. T10 milestone M3: program scope and findings bound to 
   needs independent-reproduction evidence and must cite unblocked ledger requests to its own
   origin+path. `buildEngagementSarif(check)` returns a SARIF 2.1.0 draft for manual submission,
   citing the engagement, program and ledger entries.
-- Importable alone as `@agentbrowser/audit/engagement-findings`, without the image or DOM
-  libraries; `VisualAuditError` moves to a dependency-free module (re-exported unchanged). The
-  audit package stays out of the CLI, MCP and API closures (T7 gate), so there is no CLI command.
+- The check and the SARIF builder move to a new light `@agentbrowser/engagement` package
+  (dependencies: core and policy only; `VisualAuditError` and the SARIF primitives moved with it,
+  re-exported from `@agentbrowser/audit` unchanged), and the CLI exposes them: `finding check
+  --ledger L --findings F` and `finding sarif … [--out R.sarif]`. The audit package stays out of
+  the CLI, MCP and API closures (T7 gate) — the CLI depends on `engagement`, a different package.
 
 ### Added — import a program scope (T10 M3)
 

@@ -6,7 +6,7 @@ import {
   type SarifReport,
   type SarifResult,
   type SarifRule,
-} from './sarif-report.js';
+} from './sarif.js';
 
 /**
  * T10 M3: findings bound to an engagement. A finding is checked against an exported,

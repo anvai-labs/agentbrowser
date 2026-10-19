@@ -1,9 +1,10 @@
 # Shared infrastructure for sessions, pages and agents
 
-Status: proposed next architecture, grounded in the current service and the
-application-authority implementation on PR 169. This document does not claim
-HTTP MCP, durable recovery, or the event guarantees below are implemented.
-Reviewed against source and upstream transport documentation on 2026-09-15.
+Status (2026-10-19 audit): parts of this proposal have since landed separately — durable
+recovery shipped in 1.24.x (journal runtime, crash/close recovery, browser-operation
+classification). The shared-transport architecture itself (one gateway for HTTP MCP, CLI and
+sessions) remains proposed and unimplemented. Read the guarantees below as design intent, not
+delivery.
 
 ## Decision
 

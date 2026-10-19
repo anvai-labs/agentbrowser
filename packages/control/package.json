@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/control",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "private": true,
   "type": "module",
   "description": "Shared human and agent authority with browser-independent application operations",
@@ -24,6 +24,6 @@
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }
