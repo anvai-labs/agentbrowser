@@ -7,6 +7,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — automating a flow (T10 M4)
+
+- The CLI guide's saved-plan section gains the `plan-run` CI-action usage and the durable-run
+  composition (`--session` + `--execution-requirement durable`).
+
 ### Docs — the 1.26.0 release record
 
 - `docs/spec/evidence/release-1.26.0.md`; baselines move to 1.26.0.
