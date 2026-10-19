@@ -10,7 +10,7 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31ac0a5448410542c4e2d48b2d2be4725bda2045`
+Catalog SHA-256 (complete descriptions and schemas): `36a06b1bcdcf50218a4d5319e8bc39c2cba66df7a49beca9f8861f8bb627638b`
 
 ## unbound/qa (24 tools; 97736 result bytes)
 
@@ -118,7 +118,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `session_status` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (23 tools; 89710 result bytes)
+## unbound/audit (25 tools; 91953 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -130,6 +130,8 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `create` | tenantId | urn:agentbrowser:session-created:v1 | Deprecated alias of session_create; use session_create. |
 | `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `finding_check` | ledger, findings | text JSON | Check a findings JSON array against an exported engagement ledger (offline; both files live on the server host). |
+| `finding_sarif` | ledger, findings | text JSON | Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is sent anywhere). |
 | `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Capture HTML as a compact artifact reference (or a private file when configured). |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
@@ -146,7 +148,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `session_status` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/audit (18 tools; 66691 result bytes)
+## delegated/audit (20 tools; 68934 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -154,6 +156,8 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `artifact` | artifactId | urn:agentbrowser:artifact-read:v1 | Retrieve an existing session artifact by ID without recapturing the page. |
 | `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `finding_check` | ledger, findings | text JSON | Check a findings JSON array against an exported engagement ledger (offline; both files live on the server host). |
+| `finding_sarif` | ledger, findings | text JSON | Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is sent anywhere). |
 | `html` | pageId | urn:agentbrowser:page-html:v1 | Capture HTML as a compact artifact reference (or a private file when configured). |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
@@ -169,19 +173,20 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `session_status` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (24 tools; 97736 result bytes)
+## unbound/appsec (25 tools; 91953 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `artifact` | sessionId, artifactId | urn:agentbrowser:artifact-read:v1 | Retrieve an existing session artifact by ID without recapturing the page. |
-| `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | urn:agentbrowser:session-closed:v1 | Deprecated alias of session_close; use session_close. |
 | `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | urn:agentbrowser:session-created:v1 | Deprecated alias of session_create; use session_create. |
 | `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `finding_check` | ledger, findings | text JSON | Check a findings JSON array against an exported engagement ledger (offline; both files live on the server host). |
+| `finding_sarif` | ledger, findings | text JSON | Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is sent anywhere). |
 | `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Capture HTML as a compact artifact reference (or a private file when configured). |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
@@ -198,15 +203,16 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `session_status` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/appsec (19 tools; 74719 result bytes)
+## delegated/appsec (20 tools; 68934 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `artifact` | artifactId | urn:agentbrowser:artifact-read:v1 | Retrieve an existing session artifact by ID without recapturing the page. |
-| `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `finding_check` | ledger, findings | text JSON | Check a findings JSON array against an exported engagement ledger (offline; both files live on the server host). |
+| `finding_sarif` | ledger, findings | text JSON | Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is sent anywhere). |
 | `html` | pageId | urn:agentbrowser:page-html:v1 | Capture HTML as a compact artifact reference (or a private file when configured). |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
@@ -222,19 +228,20 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `session_status` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (24 tools; 97736 result bytes)
+## unbound/bounty (25 tools; 91953 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | sessionId, pageId, action | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `artifact` | sessionId, artifactId | urn:agentbrowser:artifact-read:v1 | Retrieve an existing session artifact by ID without recapturing the page. |
-| `autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `close` | sessionId | urn:agentbrowser:session-closed:v1 | Deprecated alias of session_close; use session_close. |
 | `cookie_handoff` | sessionId, domains | urn:agentbrowser:cookie-handoff:v1 | Hand the operator's login cookies for exact domains into this session (TD-BROWSER-16, ADR-025 s3). |
 | `cookies` | sessionId | urn:agentbrowser:cookie-list:v1 | Export the session context cookies (TD-BROWSER-6). |
 | `create` | tenantId | urn:agentbrowser:session-created:v1 | Deprecated alias of session_create; use session_create. |
 | `events_replay` | sessionId | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | sessionId, pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `finding_check` | ledger, findings | text JSON | Check a findings JSON array against an exported engagement ledger (offline; both files live on the server host). |
+| `finding_sarif` | ledger, findings | text JSON | Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is sent anywhere). |
 | `html` | sessionId, pageId | urn:agentbrowser:page-html:v1 | Capture HTML as a compact artifact reference (or a private file when configured). |
 | `navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |
@@ -251,15 +258,16 @@ Catalog SHA-256 (complete descriptions and schemas): `6857a75acfdda5de7f6d966c31
 | `session_status` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/bounty (19 tools; 74719 result bytes)
+## delegated/bounty (20 tools; 68934 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `act` | pageId, action, operationId | urn:agentbrowser:act-outcome:v1 | Act on an element by ref from observe — never CSS/XPath. |
 | `artifact` | artifactId | urn:agentbrowser:artifact-read:v1 | Retrieve an existing session artifact by ID without recapturing the page. |
-| `autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `events_replay` | none | urn:agentbrowser:session-events-page:v1 | Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). |
 | `extract` | pageId, format | urn:agentbrowser:extract-outcome:v1 | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `finding_check` | ledger, findings | text JSON | Check a findings JSON array against an exported engagement ledger (offline; both files live on the server host). |
+| `finding_sarif` | ledger, findings | text JSON | Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is sent anywhere). |
 | `html` | pageId | urn:agentbrowser:page-html:v1 | Capture HTML as a compact artifact reference (or a private file when configured). |
 | `navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
 | `observe` | pageId | text JSON | Get a semantic snapshot of the page: roles, names, form state, stable element refs. |

@@ -62,6 +62,7 @@ automatic submission or outside communication of findings.
 | M3: program scope importer | `scope import --from h1\|bugcrowd\|text` (`program-scope-import.test.ts` fixtures; imported scopes pass session create); inexpressible exclusions fail the import |
 | M3: findings bound to the engagement | `checkEngagementFindings` / `buildEngagementSarif` in the new light `@agentbrowser/engagement` package; CLI `finding check` / `finding sarif` (`finding-commands.test.ts`): out-of-scope URLs and blocked, failed or mismatched citations refused; SARIF draft, manual submission. MCP exposure still pending (mcp-server closure) |
 | M3: released in 1.25.0 | [release record](../evidence/release-1.25.0.md): the released CLI's `scope import` and the scope and ledger smoke passed on the extracted candidate |
+| M3: MCP finding tools | `finding_check` / `finding_sarif` in the audit/appsec/bounty modes via `engagement.findings` (`finding-tools.test.ts`): same refusals as the library; visible only where the capability is granted |
 | M4: saved plan runs | `run PLAN --url … [--junit]` (`run-command.test.ts`; release smoke runs a scoped sign-in plan, JUnit, failure exit 1, no session left); CI-action input and durable runs delivered |
 | M4: CI action | `.github/actions/plan-run` (`plan-run-action.test.mjs`): checksum-verified CLI, key off argv, exit code from the plan |
 | M4: durable runs | `run --session SES --execution-requirement durable --operation-id ID` (`run-durable.test.ts`): refuses to create an ephemeral session for a durable plan; only the page closes |

@@ -808,7 +808,9 @@ engagement export --out L.jsonl ─▶ checkEngagementFindings(ledger, findings)
 
 The check and the SARIF builder live in the light `@agentbrowser/engagement` package (no DOM or
 image dependencies; importable as `@agentbrowser/engagement` or via `@agentbrowser/audit`). The CLI
-exposes both offline:
+exposes both offline, and MCP clients in the audit/appsec/bounty modes get the same two surfaces as
+`finding_check` and `finding_sarif` (offline: the ledger and findings files live on the server
+host):
 
 ```
 agentbrowser finding check --ledger L.jsonl --findings F.json   # exit 0 bound / 1 refused + reasons

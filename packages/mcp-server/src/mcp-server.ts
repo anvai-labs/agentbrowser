@@ -10,7 +10,10 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { artifactReference, cacheLocalArtifact } from '@agentbrowser/core/local-artifacts';
+import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
 import type { AgentCapability, AgentMode, ArtifactRef } from '@agentbrowser/protocol';
 import {
   ActOutcomeSchema,
@@ -907,6 +910,133 @@ export function buildTools(
       annotations: { readOnlyHint: false, idempotentHint: false },
     },
 
+    {
+      name: 'finding_check',
+      requiredCapabilities: ['engagement.findings'],
+      outputSchema: {
+        type: 'object',
+        properties: {
+          ok: { type: 'boolean' },
+          engagementId: { type: 'string' },
+          closed: { type: 'boolean' },
+          findings: { type: 'number' },
+          warnings: { type: 'array', items: { type: 'string' } },
+          issues: { type: 'array', items: { type: 'object' } },
+        },
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      description:
+        'Check a findings JSON array against an exported engagement ledger (offline; ' +
+        'both files live on the server host). Refuses: a broken ledger chain, URLs outside ' +
+        'the recorded scope, confirmed findings without independent-reproduction evidence, ' +
+        'confirmed findings with no citations, and citations that are blocked, failed or do ' +
+        'not match the finding URL. Nothing is submitted anywhere.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ledger: {
+            type: 'string',
+            description: 'Path to the exported engagement ledger (engagement export --out).',
+          },
+          findings: {
+            type: 'string',
+            description: 'Path to the findings JSON array.',
+          },
+        },
+        required: ['ledger', 'findings'],
+      },
+      handler: async (args) => {
+        if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
+          throw new UsageError('ledger and findings paths are required.');
+        const { readFile } = await import('node:fs/promises');
+        const ledgerText = await readFile(args.ledger, 'utf8');
+        let findings: unknown;
+        try {
+          findings = JSON.parse(await readFile(args.findings, 'utf8'));
+        } catch {
+          throw new UsageError('--findings must contain a JSON array of findings.');
+        }
+        const result = checkEngagementFindings(ledgerText, findings);
+        if (!result.ok)
+          return {
+            ok: false,
+            issues: result.issues.map((issue) => ({
+              findingId: issue.findingId,
+              issue: issue.issue,
+            })),
+          };
+        return {
+          ok: true,
+          engagementId: result.engagementId,
+          closed: result.closed,
+          findings: result.findings.length,
+          warnings: result.warnings,
+        };
+      },
+    },
+    {
+      name: 'finding_sarif',
+      requiredCapabilities: ['engagement.findings'],
+      outputSchema: {
+        type: 'object',
+        properties: {
+          file: { type: 'string' },
+          results: { type: 'number' },
+        },
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      description:
+        'Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is ' +
+        'sent anywhere). Requires the findings to pass finding_check. Writes the report to ' +
+        'the server host (mode 0600, created exclusively) and returns the path.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ledger: {
+            type: 'string',
+            description: 'Path to the exported engagement ledger (engagement export --out).',
+          },
+          findings: {
+            type: 'string',
+            description: 'Path to the findings JSON array.',
+          },
+          out: {
+            type: 'string',
+            description: 'SARIF output path on the server host (created exclusively, mode 0600).',
+          },
+        },
+        required: ['ledger', 'findings'],
+      },
+      handler: async (args) => {
+        if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
+          throw new UsageError('ledger and findings paths are required.');
+        const { readFile } = await import('node:fs/promises');
+        const ledgerText = await readFile(args.ledger, 'utf8');
+        let findings: unknown;
+        try {
+          findings = JSON.parse(await readFile(args.findings, 'utf8'));
+        } catch {
+          throw new UsageError('--findings must contain a JSON array of findings.');
+        }
+        const result = checkEngagementFindings(ledgerText, findings);
+        if (!result.ok)
+          return {
+            ok: false,
+            issues: result.issues.map((issue) => ({
+              findingId: issue.findingId,
+              issue: issue.issue,
+            })),
+          };
+        const sarif = buildEngagementSarif(result);
+        const { writeFile } = await import('node:fs/promises');
+        const out =
+          typeof args.out === 'string' && args.out.trim() !== ''
+            ? args.out
+            : join(tmpdir(), `agentbrowser-findings-${Date.now()}.sarif`);
+        await writeFile(out, `${JSON.stringify(sarif, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+        return { file: out, results: sarif.runs[0]?.results.length ?? 0 };
+      },
+    },
     {
       name: 'extract',
       requiredCapabilities: ['page.extract'],

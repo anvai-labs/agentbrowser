@@ -411,6 +411,9 @@ importers:
       '@agentbrowser/core':
         specifier: workspace:^
         version: link:../core
+      '@agentbrowser/engagement':
+        specifier: workspace:*
+        version: link:../engagement
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
