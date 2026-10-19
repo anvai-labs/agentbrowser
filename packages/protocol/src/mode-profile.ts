@@ -62,14 +62,19 @@ const APPLICATION_CAPABILITIES: readonly AgentCapability[] = [
 const ENGAGEMENT_CAPABILITIES: readonly AgentCapability[] = ['engagement.findings'];
 const BROWSER_PROFILE = AGENT_CAPABILITIES.filter(
   (capability) =>
-    !APPLICATION_CAPABILITIES.includes(capability) &&
-    !ENGAGEMENT_CAPABILITIES.includes(capability)
+    !APPLICATION_CAPABILITIES.includes(capability) && !ENGAGEMENT_CAPABILITIES.includes(capability)
 );
 const FULL_BROWSER_PROFILE = BROWSER_PROFILE;
-const AUDIT_PROFILE = [...BROWSER_PROFILE.filter(
-  (capability) => capability !== 'page.form'
-), ...ENGAGEMENT_CAPABILITIES] as readonly AgentCapability[];
-const APPSEC_PROFILE = [...AUDIT_PROFILE] as readonly AgentCapability[];
+const AUDIT_PROFILE = [
+  ...BROWSER_PROFILE.filter((capability) => capability !== 'page.form'),
+  ...ENGAGEMENT_CAPABILITIES,
+] as readonly AgentCapability[];
+// appsec/bounty keep the full browser surface (autofill included) and gain the findings
+// tools: nothing is narrowed, so the profile revision stays 1.
+const APPSEC_PROFILE = [
+  ...FULL_BROWSER_PROFILE,
+  ...ENGAGEMENT_CAPABILITIES,
+] as readonly AgentCapability[];
 // The application mode drives the application surface only: discovery,
 // execution and receipt reads. It never receives browser capabilities.
 const APPLICATION_PROFILE = [

@@ -915,6 +915,7 @@ export function buildTools(
       requiredCapabilities: ['engagement.findings'],
       outputSchema: {
         type: 'object',
+        required: ['ok'],
         properties: {
           ok: { type: 'boolean' },
           engagementId: { type: 'string' },
@@ -979,6 +980,7 @@ export function buildTools(
       requiredCapabilities: ['engagement.findings'],
       outputSchema: {
         type: 'object',
+        required: ['file', 'results'],
         properties: {
           file: { type: 'string' },
           results: { type: 'number' },
