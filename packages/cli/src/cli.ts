@@ -1941,6 +1941,10 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const execution = browserExecution(options.executionRequirement);
               const usingExisting = options.session !== undefined;
+              // An explicit `ephemeral` in an existing session means "run there, journal nothing":
+              // no executionRequirement rides the body.
+              const effective =
+                usingExisting && execution.executionRequirement === 'ephemeral' ? {} : execution;
               if (execution.executionRequirement === 'durable') {
                 if (!usingExisting || options.session === undefined)
                   throw new UsageError(
@@ -1963,21 +1967,43 @@ export function buildCli(deps: CliDependencies): Cli {
                 const page = await ctx.client.sessions.createPage(sessionId, { url: options.url });
                 pageId = page.pageId;
                 const parseResponse = createPlanReportParser(steps);
-                const report = parseResponse(
-                  await (execution.executionRequirement === undefined
-                    ? ctx.client.sessions.plan(sessionId, pageId, steps)
-                    : ctx.client.sessions.plan(
-                        sessionId,
-                        pageId,
-                        steps,
-                        (options.operationId ?? ctx.operationId) !== undefined
-                          ? {
-                              executionRequirement: 'durable',
+                let report: ReturnType<ReturnType<typeof createPlanReportParser>>;
+                try {
+                  report = parseResponse(
+                    await (effective.executionRequirement === undefined
+                      ? ctx.client.sessions.plan(sessionId, pageId, steps)
+                      : ctx.client.sessions.plan(
+                          sessionId,
+                          pageId,
+                          steps,
+                          effective.executionRequirement === 'durable'
+                            ? {
+                                executionRequirement: 'durable',
+                                operationId: (options.operationId ?? ctx.operationId) as string,
+                              }
+                            : effective
+                        ))
+                  );
+                } catch (error) {
+                  if (usingExisting && effective.executionRequirement === 'durable') {
+                    // The durable contract: reconcile by operationId. The operator needs the
+                    // identity even when the response was lost.
+                    const code = (error as { code?: string }).code ?? 'UNKNOWN';
+                    deps.err(
+                      ctx.json
+                        ? JSON.stringify({
+                            reconcile: {
+                              sessionId,
+                              pageId,
                               operationId: (options.operationId ?? ctx.operationId) as string,
-                            }
-                          : execution
-                      ))
-                );
+                            },
+                            error: { code },
+                          })
+                        : `durable plan failed before a verdict: reconcile sessionId ${sessionId} page ${pageId} operationId ${(options.operationId ?? ctx.operationId) as string} (${code})`
+                    );
+                  }
+                  throw error;
+                }
                 if (!report.ok) exitCode = 1;
                 ctx.emit(
                   {

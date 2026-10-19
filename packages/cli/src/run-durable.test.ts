@@ -152,4 +152,55 @@ describe('run --execution-requirement durable (T10 M4)', () => {
     expect(result.code).toBe(1);
     expect(calls.at(-1)?.fn).toBe('closePage');
   });
+
+  it('a thrown durable plan prints the reconciliation identity (session, page, operation id)', async () => {
+    const sessions = {
+      createPage: vi.fn(async (sessionId: string) => ({
+        pageId: 'pg_9',
+        sessionId,
+        status: 'ready',
+      })),
+      plan: vi.fn(async () => {
+        throw new Error('CONNECTION_LOST: response never arrived');
+      }),
+      closePage: vi.fn(async () => ({})),
+    };
+    const result = await run(
+      [
+        ...base(planFile),
+        '--session',
+        'ses_ctl',
+        '--execution-requirement',
+        'durable',
+        '--operation-id',
+        'op-reconcile',
+      ],
+      sessions
+    );
+    expect(result.code).not.toBe(0);
+    const text = result.err + result.out;
+    expect(text).toMatch(/ses_ctl/);
+    expect(text).toMatch(/pg_9/);
+    expect(text).toMatch(/op-reconcile/);
+    expect(text).toMatch(/CONNECTION_LOST|reconcil/i);
+  });
+
+  it('--session with an explicit ephemeral requirement runs unjournalled in that session', async () => {
+    const sessions = {
+      createPage: vi.fn(async (sessionId: string) => ({
+        pageId: 'pg_2',
+        sessionId,
+        status: 'ready',
+      })),
+      plan: vi.fn(async () => ({ ok: true, completed: 1, results: [{ step: 0, ok: true }] })),
+      closePage: vi.fn(async () => ({})),
+    };
+    const result = await run(
+      [...base(planFile), '--session', 'ses_ctl', '--execution-requirement', 'ephemeral'],
+      sessions
+    );
+    expect(result.code).toBe(0);
+    const planCall = sessions.plan.mock.calls[0];
+    expect(planCall?.[3]).toBeUndefined();
+  });
 });
