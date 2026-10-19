@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ENGAGEMENT_GENESIS, engagementChainHash } from '@agentbrowser/core';
+import Ajv from 'ajv';
 import { describe, expect, it, vi } from 'vitest';
 import { buildMcpServer } from './mcp-server.js';
 
@@ -79,6 +80,30 @@ function serverFor(mode: string) {
   return buildMcpServer(deps);
 }
 
+async function advertisedSchemaFor(mode: string, name: string) {
+  const server = serverFor(mode);
+  // Negotiate the structured protocol first: the legacy path strips outputSchema.
+  await server.handle(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: 0,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 't', version: '0' },
+      },
+    })
+  );
+  const response = JSON.parse(
+    await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+  );
+  const tool = response.result.tools.find((tool: { name: string }) => tool.name === name);
+  if (tool?.outputSchema === undefined) throw new Error(`no advertised schema for ${name}`);
+  const ajv = new Ajv({ strict: false });
+  return ajv.compile(tool.outputSchema);
+}
+
 async function callTool(mode: string, name: string, args: Record<string, unknown>) {
   const server = serverFor(mode);
   const response = await server.handle(
@@ -151,6 +176,21 @@ describe('finding tools (T10 M3)', () => {
     expect(statSync(out).mode & 0o777).toBe(0o600);
     const sarif = JSON.parse(readFileSync(out, 'utf8'));
     expect(sarif.runs[0].properties).toMatchObject({ draft: true, submission: 'manual' });
+  });
+
+  it('both emitted shapes validate against the advertised schema (M: refusal arm)', async () => {
+    const schema = await advertisedSchemaFor('bounty', 'finding_sarif');
+    const good = write('shape-good.json', JSON.stringify([finding]));
+    const success = await callTool('bounty', 'finding_sarif', { ledger, findings: good });
+    expect(schema(success.result)).toBe(true);
+    const bad = write(
+      'shape-bad.json',
+      JSON.stringify([{ ...finding, url: 'https://evil.test/x' }])
+    );
+    const refusal = await callTool('bounty', 'finding_sarif', { ledger, findings: bad });
+    expect(refusal.result.ok).toBe(false);
+    expect(schema(refusal.result)).toBe(true);
+    expect(schema({})).toBe(false);
   });
 
   it('a tampered ledger is refused', async () => {

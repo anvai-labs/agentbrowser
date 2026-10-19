@@ -914,16 +914,36 @@ export function buildTools(
       name: 'finding_check',
       requiredCapabilities: ['engagement.findings'],
       outputSchema: advertisedOutputSchema({
-        type: 'object',
-        required: ['ok'],
-        properties: {
-          ok: { type: 'boolean' },
-          engagementId: { type: 'string' },
-          closed: { type: 'boolean' },
-          findings: { type: 'number' },
-          warnings: { type: 'array', items: { type: 'string' } },
-          issues: { type: 'array', items: { type: 'object' } },
-        },
+        anyOf: [
+          {
+            required: ['ok', 'engagementId', 'findings'],
+            properties: {
+              ok: { const: true },
+              engagementId: { type: 'string' },
+              closed: { type: 'boolean' },
+              findings: { type: 'number' },
+              warnings: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          {
+            type: 'object',
+            required: ['ok', 'issues'],
+            properties: {
+              ok: { const: false },
+              issues: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['findingId', 'issue'],
+                  properties: {
+                    findingId: { type: 'string' },
+                    issue: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        ],
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
       description:
@@ -979,12 +999,33 @@ export function buildTools(
       name: 'finding_sarif',
       requiredCapabilities: ['engagement.findings'],
       outputSchema: advertisedOutputSchema({
-        type: 'object',
-        required: ['file', 'results'],
-        properties: {
-          file: { type: 'string' },
-          results: { type: 'number' },
-        },
+        anyOf: [
+          {
+            required: ['file', 'results'],
+            properties: {
+              file: { type: 'string' },
+              results: { type: 'number' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['ok', 'issues'],
+            properties: {
+              ok: { const: false },
+              issues: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['findingId', 'issue'],
+                  properties: {
+                    findingId: { type: 'string' },
+                    issue: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        ],
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
       description:

@@ -10,7 +10,7 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a99076bdd3a66b712786fa1996e95658b89d55713e`
+Catalog SHA-256 (complete descriptions and schemas): `d235329b7b84d9c4a54ada6590b5d63e5a59d3318673f3ba409bd8a9b2920ff5`
 
 ## unbound/qa (24 tools; 97854 result bytes)
 
@@ -118,7 +118,7 @@ Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a990
 | `session_status` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (25 tools; 92535 result bytes)
+## unbound/audit (25 tools; 92971 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -148,7 +148,7 @@ Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a990
 | `session_status` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/audit (20 tools; 69516 result bytes)
+## delegated/audit (20 tools; 69952 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -173,7 +173,7 @@ Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a990
 | `session_status` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (26 tools; 100561 result bytes)
+## unbound/appsec (26 tools; 100997 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -204,7 +204,7 @@ Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a990
 | `session_status` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/appsec (21 tools; 77544 result bytes)
+## delegated/appsec (21 tools; 77980 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -230,7 +230,7 @@ Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a990
 | `session_status` | none | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (26 tools; 100561 result bytes)
+## unbound/bounty (26 tools; 100997 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -261,7 +261,7 @@ Catalog SHA-256 (complete descriptions and schemas): `a701b33515897ad0bd8be1a990
 | `session_status` | sessionId | urn:agentbrowser:session-inspection:v1 | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `snapshot` | sessionId, pageId | urn:agentbrowser:page-snapshot:v1 | Read a self-contained page snapshot with current refs. |
 
-## delegated/bounty (21 tools; 77544 result bytes)
+## delegated/bounty (21 tools; 77980 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
