@@ -132,7 +132,7 @@ describe('SARIF report adapter (T7 slice 4)', () => {
   });
 
   it('gate 8 (T7): suspected stays labelled as SARIF review; confirmed is fail with its evidence', async () => {
-    const { confirmFinding } = await import('./finding-confirmation.js');
+    const { confirmFinding } = await import('@agentbrowser/engagement');
     const [xss, csp] = scannerResult.findings;
     if (!xss || !csp) throw new Error('fixture');
     const confirmed = confirmFinding(xss, {

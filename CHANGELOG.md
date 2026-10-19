@@ -79,9 +79,11 @@ Entries are newest first. T10 milestone M3: program scope and findings bound to 
   needs independent-reproduction evidence and must cite unblocked ledger requests to its own
   origin+path. `buildEngagementSarif(check)` returns a SARIF 2.1.0 draft for manual submission,
   citing the engagement, program and ledger entries.
-- Importable alone as `@agentbrowser/audit/engagement-findings`, without the image or DOM
-  libraries; `VisualAuditError` moves to a dependency-free module (re-exported unchanged). The
-  audit package stays out of the CLI, MCP and API closures (T7 gate), so there is no CLI command.
+- The check and the SARIF builder move to a new light `@agentbrowser/engagement` package
+  (dependencies: core and policy only; `VisualAuditError` and the SARIF primitives moved with it,
+  re-exported from `@agentbrowser/audit` unchanged), and the CLI exposes them: `finding check
+  --ledger L --findings F` and `finding sarif … [--out R.sarif]`. The audit package stays out of
+  the CLI, MCP and API closures (T7 gate) — the CLI depends on `engagement`, a different package.
 
 ### Added — import a program scope (T10 M3)
 
