@@ -213,6 +213,9 @@ describe('AgentBrowser MCP server', () => {
       // of this mode are covered by the other mode catalogs.
       const classes: Record<string, { readOnlyHint: boolean; idempotentHint: boolean }> = {
         create: { readOnlyHint: false, idempotentHint: false },
+        session_create: { readOnlyHint: false, idempotentHint: false },
+        session_close: { readOnlyHint: false, idempotentHint: false },
+        session_status: { readOnlyHint: true, idempotentHint: true },
         page_create: { readOnlyHint: false, idempotentHint: false },
         navigate: { readOnlyHint: false, idempotentHint: false },
         close: { readOnlyHint: false, idempotentHint: false },
