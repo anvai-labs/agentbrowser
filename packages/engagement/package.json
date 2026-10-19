@@ -16,5 +16,9 @@
   "dependencies": {
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.4"
   }
 }
