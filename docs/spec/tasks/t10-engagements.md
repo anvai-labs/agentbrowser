@@ -31,7 +31,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 
 ```
 1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 ✔ M2 denial reporting
-  ─▶ 1.25.0 ✔ M3 program scope + findings ─▶ 1.26.0 M4 automation runs
+  ─▶ 1.25.0 ✔ M3 program scope + findings ─▶ 1.26.0 ✔ M4 automation runs
 ```
 
 | Milestone | Release | Acceptance (each test-first; real Chromium where traffic is involved) |
@@ -65,6 +65,7 @@ automatic submission or outside communication of findings.
 | M4: saved plan runs | `run PLAN --url … [--junit]` (`run-command.test.ts`; release smoke runs a scoped sign-in plan, JUnit, failure exit 1, no session left); CI-action input and durable runs next |
 | M4: CI action | `.github/actions/plan-run` (`plan-run-action.test.mjs`): checksum-verified CLI, key off argv, exit code from the plan |
 | M4: durable runs | `run --session SES --execution-requirement durable --operation-id ID` (`run-durable.test.ts`): refuses to create an ephemeral session for a durable plan; only the page closes |
+| M4: released in 1.26.0 | [release record](../evidence/release-1.26.0.md): the released CLI ran a scoped sign-in plan (JUnit, failure exit 1, no session left) and `scope import` on the extracted candidate |
 | M2: `SCOPE_*` sub-codes everywhere a scope denies | navigate preflight (#547); redirect hops, `request.failed` events, MCP structured errors (#549); released in 1.22.0 |
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |
