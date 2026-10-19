@@ -744,7 +744,7 @@ export function buildTools(
       outputSchema: PlanReportSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
       description:
-        'Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). Best paired with snapshot: address refs from its `fields` in one round trip. A step for a field that only appears after a prior step may declare waitForLabel (substring of the element name) instead of target — the executor waits (waitMs, default 5000) and resolves the ref; a miss aborts with PLAN_WAIT_TIMEOUT. On forms with repeated labels, keep a plan to one section and re-observe between sections: self-heal matches by role and label, so identical labels abort long plans even when every ref was valid at start. Inspect per-step results and partial effects; completion does not prove an application commit.',
+        'Execute ordered action steps in one call (the flat action shape from act; sequential, first hard failure aborts with per-step results; at most 100 steps per plan). Best paired with snapshot: address refs from its `fields` in one round trip. A step for a field that only appears after a prior step may declare waitForLabel (substring of the element name) instead of target — the executor waits (waitMs, default 5000) and resolves the ref; a miss aborts with PLAN_WAIT_TIMEOUT. In verified mode, remapping a stale ref additionally requires a role+label match and aborts loudly (AMBIGUOUS_REMAP). On forms with repeated labels, keep a plan to one section and re-observe between sections: self-heal matches by role and label, so identical labels abort long plans even when every ref was valid at start. Inspect per-step results and partial effects; completion does not prove an application commit.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -913,7 +913,7 @@ export function buildTools(
     {
       name: 'finding_check',
       requiredCapabilities: ['engagement.findings'],
-      outputSchema: {
+      outputSchema: advertisedOutputSchema({
         type: 'object',
         required: ['ok'],
         properties: {
@@ -924,7 +924,7 @@ export function buildTools(
           warnings: { type: 'array', items: { type: 'string' } },
           issues: { type: 'array', items: { type: 'object' } },
         },
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true },
       description:
         'Check a findings JSON array against an exported engagement ledger (offline; ' +
@@ -978,14 +978,14 @@ export function buildTools(
     {
       name: 'finding_sarif',
       requiredCapabilities: ['engagement.findings'],
-      outputSchema: {
+      outputSchema: advertisedOutputSchema({
         type: 'object',
         required: ['file', 'results'],
         properties: {
           file: { type: 'string' },
           results: { type: 'number' },
         },
-      },
+      }),
       annotations: { readOnlyHint: true, idempotentHint: true },
       description:
         'Export checked findings as a SARIF 2.1.0 draft for MANUAL submission (nothing is ' +
