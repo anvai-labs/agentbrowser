@@ -137,7 +137,7 @@ stateDiagram-v2
     in_doubt --> failed: operator reconcile, rejected (application writes only)
 ```
 
-| What | Application write | Browser `act` / `plan` / `autofill` |
+| What | Application write | Browser `act` / `plan` / `autofill` / `run` |
 | --- | --- | --- |
 | Opt in | `executionRequirement: "durable"` on execute | same field; CLI `--execution-requirement durable`; MCP `executionRequirement` |
 | Needs | open journal | open journal + controlled (delegated) session + operation ID |

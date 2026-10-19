@@ -18,7 +18,7 @@ A valid failing case returns its complete report with exit 1; invalid input retu
 no stdout and a value-free error. Output omits invocation requests but can still contain
 sensitive report diagnostics. `caller_observed` means consistency against supplied
 expectations, not authenticated remote evidence or proof of execution. See the
-[CLI guide](../../cli-agent-usage.md#evaluate-a-completed-case-offline-develop-candidate).
+[CLI guide](../../cli-agent-usage.md#evaluate-a-completed-case-offline).
 
 ## Failing-first and adversarial controls
 

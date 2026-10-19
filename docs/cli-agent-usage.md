@@ -425,7 +425,7 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
 | Uncertain delegated mutation | CLI `session operation`; delegated MCP `operation` |
 | Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
-| A record that survives a restart (journal configured) | `--execution-requirement durable` on `act`, `plan`, `autofill` or `application execute` (needs `--operation-id`); read it back with `journal operations <id>`. Never replayed or resumed |
+| A record that survives a restart (journal configured) | `--execution-requirement durable` on `act`, `plan`, `autofill`, `application execute` or `run` (`run` needs `--session` on a controlled session); all need `--operation-id`. Read back with `journal operations <id>`. Never replayed or resumed |
 
 ## Run a saved plan end to end (T10 M4)
 
@@ -488,7 +488,7 @@ Only the run's page closes; the session stays. If the plan fails before a verdic
 response was lost), the error output carries the session, page and operation id so the journal can
 be reconciled (`journal operations <id>`).
 
-## Attach the bytes you reviewed (develop slice)
+## Attach the bytes you reviewed
 
 The existing upload command accepts an optional digest; no MCP tool or separate
 file-transfer service is required:
@@ -586,7 +586,7 @@ For cross-version integration and common-helper reuse, use the on-demand
 [Claude foundation handoff](agent-handoffs/claude-foundation-reuse.md). It separates
 published capabilities, installed binaries and the T3 candidate.
 
-## Evaluate a completed case offline (develop candidate)
+## Evaluate a completed case offline
 
 ```sh
 agentbrowser describe test evaluate --schema
@@ -624,7 +624,7 @@ passing bundle is not regression evidence. Setup/finalizer failures in the conve
 runner must fail the whole run even if an earlier case passed. Portable deployment setup,
 conventional-runner qualification and JUnit/HTML adapters remain later T3 work.
 
-## Qualified evidence reviews (develop)
+## Qualified evidence reviews
 
 The existing `session approval <sessionId> <tokenId>` and `session approval-decide
 <sessionId> <tokenId> --decision approve|deny` commands also work for host-created

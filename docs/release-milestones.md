@@ -145,8 +145,8 @@ T3 began from that synchronized baseline. Its first bounded report foundation
 and all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35459717523)
 passed. T3 was incomplete at that checkpoint; its later completion is recorded above.
 The subsequent
-[navigation-reset qualification](spec/evidence/t3-navigation-reset.md) is tracked separately. Production evidence/G6, durable recovery and
-independent UI/API parity also remain open. The repeatable release sequence
+[navigation-reset qualification](spec/evidence/t3-navigation-reset.md) is tracked separately. Durable recovery shipped 2026-10-15
+(1.24.x). Production evidence/G6 and independent UI/API parity remain open. The repeatable release sequence
 below remains applicable; earlier checkpoint statuses are historical.
 
 ## Historical checkpoint (2026-09-08)

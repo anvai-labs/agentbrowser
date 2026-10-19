@@ -9,7 +9,7 @@ hide:
 loopback REST service, a TypeScript SDK, a compiled CLI, or an MCP stdio
 server — with safety enforced *in the service*, not in the prompt.
 
-> **New in 1.21–1.23 — engagements for authorized testing:** a scope checked on every
+> **New in 1.21–1.26 — engagements and automation:** saved plans run end to end (`run`, the `plan-run` CI action, durable runs), program scopes import, findings bind to the ledger, and a scope enforced before every request: a scope checked on every
 > request and redirect hop, lanes it cannot check refused, live scope status and a dry run,
 > and an opt-in hash-chained metadata ledger you export and verify offline.
 > [Engagements →](operations.md#engagements-authorized-testing)
