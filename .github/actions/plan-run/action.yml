@@ -5,7 +5,7 @@ description: >-
   the start URL, runs the plan and closes the session (unless keep-session is set).
 inputs:
   cli-version:
-    description: AgentBrowser release tag providing the CLI, e.g. v1.25.0.
+    description: AgentBrowser release tag providing the CLI, e.g. v1.26.0.
     required: true
   base-url:
     description: URL of the running AgentBrowser REST service.
