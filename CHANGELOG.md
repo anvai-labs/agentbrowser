@@ -17,7 +17,7 @@ from the CLI and CI, and durable runs execute inside a controlled session. Also 
 | --- | --- |
 | CLI | new \`run PLAN.json --url START --tenant T\`: creates a session, opens the start page, runs the saved plan and closes the session. Exit 0 only when every step completed. \`--scope-file\`, \`--keep-session\` |
 | CI | new \`.github/actions/plan-run\` composite action: pinned checksum-verified CLI, API key through a private 0600 file (never argv), JUnit and exit code from \`run\` |
-| Durable runs | \`run --session SES --execution-requirement durable --operation-id ID\` executes inside an existing controlled session (page opens and closes there; the session stays) and refuses to create an ephemeral session for a durable plan |
+| Durable runs | \`run --session SES --execution-requirement durable --operation-id ID\` executes inside an existing controlled session (page opens and closes there; the session stays) and refuses to create an ephemeral session for a durable plan. A durable plan that fails before a verdict prints its sessionId/pageId/operationId for reconciliation |
 | TypeScript consumers | \`PLAN_ERROR_CODES\` exported from protocol and re-exported by the SDK; \`ErrorCode\` re-exported by the SDK |
 | JUnit consumers | \`run --junit\` and the \`plan-run\` action write error **codes** only; error messages (which can echo page text) never enter the artifact. The oversized-input CLI error now reads "Input exceeds N bytes." (was "JSON input exceeds N bytes.") |
 | Sessions and scopes | session \`allowedHosts\`/\`blockedHosts\` bare domains now cover their subtree (#588, owner); T6 widget strategies qualified for async-loaded and recycled options |
