@@ -452,6 +452,42 @@ existing `--junit` path are checked before any session exists, and the session i
 path, including a start page that cannot be opened. An interrupted process (Ctrl-C, SIGTERM) does
 not reach that close: the session then ends at its idle or TTL expiry.
 
+### Automate it in CI (T10 M4)
+
+The repo ships a composite action that runs a saved plan against an already-running service with a
+pinned, checksum-verified release CLI:
+
+```yaml
+- uses: anvai-labs/agentbrowser/.github/actions/plan-run@v1.26.0
+  with:
+    cli-version: v1.26.0
+    base-url: http://127.0.0.1:5709   # your earlier step started the service
+    tenant: ci
+    plan: plan.json
+    start-url: https://app.test/login
+    api-key: ${{ secrets.AGENTBROWSER_API_KEY }}
+```
+
+It exits 0 only when every step completed and writes a JUnit report (`junit` input, default
+`agentbrowser-plan.xml`) whose testcases carry error codes only — page text never enters the
+artifact. The API key passes through a private 0600 file, never argv.
+
+### Durable runs (controlled sessions)
+
+`--execution-requirement durable` journals the whole plan as one browser operation. Durable
+classification needs a controlled session, so `run` refuses to create an ephemeral one for a
+durable plan — pass `--session` with a session you own:
+
+```bash
+agentbrowser run plan.json --url https://app.test/login --tenant t1 \
+  --session ses_controlled --execution-requirement durable \
+  --operation-id op-login-2026-10-19 --junit login.xml
+```
+
+Only the run's page closes; the session stays. If the plan fails before a verdict (e.g. the
+response was lost), the error output carries the session, page and operation id so the journal can
+be reconciled (`journal operations <id>`).
+
 ## Attach the bytes you reviewed (develop slice)
 
 The existing upload command accepts an optional digest; no MCP tool or separate
