@@ -1865,6 +1865,14 @@ export function buildCli(deps: CliDependencies): Cli {
           'write a JUnit report (verdicts and error codes only; mode 0600, created exclusively)'
         )
         .option('--keep-session', 'leave the session open (its ids are reported)')
+        .option(
+          '--session <sessionId>',
+          'run inside this existing session (e.g. a controlled session): the page is opened and closed there, the session stays'
+        )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal the plan as one browser operation (needs --session and --operation-id, and a durable journal on the server)'
+        )
         .action(
           action(
             async (
@@ -1876,6 +1884,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 scopeFile?: string;
                 junit?: string;
                 keepSession?: boolean;
+                session?: string;
+                executionRequirement?: string;
+                operationId?: string;
               }
             ) => {
               // Validate everything before any session exists.
@@ -1928,17 +1939,71 @@ export function buildCli(deps: CliDependencies): Cli {
                   throw new UsageError('--scope-file must contain valid engagement-scope JSON.');
                 }
               }
+              const execution = browserExecution(options.executionRequirement);
+              const usingExisting = options.session !== undefined;
+              // An explicit `ephemeral` in an existing session means "run there, journal nothing":
+              // no executionRequirement rides the body.
+              const effective =
+                usingExisting && execution.executionRequirement === 'ephemeral' ? {} : execution;
+              if (execution.executionRequirement === 'durable') {
+                if (!usingExisting || options.session === undefined)
+                  throw new UsageError(
+                    'Durable classification needs a controlled session: pass --session. `run` never creates an ephemeral session for a durable plan.'
+                  );
+                if (options.operationId === undefined && ctx.operationId === undefined)
+                  throw new UsageError(
+                    'A durable plan needs --operation-id (the write identity for journal reconciliation).'
+                  );
+              }
               const startedAt = Date.now();
-              const created = await ctx.client.sessions.create(request);
-              const sessionId = created.sessionId;
+              let sessionId: string;
+              if (options.session !== undefined) sessionId = options.session;
+              else {
+                const created = await ctx.client.sessions.create(request);
+                sessionId = created.sessionId;
+              }
               let pageId: string | undefined;
               try {
                 const page = await ctx.client.sessions.createPage(sessionId, { url: options.url });
                 pageId = page.pageId;
                 const parseResponse = createPlanReportParser(steps);
-                const report = parseResponse(
-                  await ctx.client.sessions.plan(sessionId, pageId, steps)
-                );
+                let report: ReturnType<ReturnType<typeof createPlanReportParser>>;
+                try {
+                  report = parseResponse(
+                    await (effective.executionRequirement === undefined
+                      ? ctx.client.sessions.plan(sessionId, pageId, steps)
+                      : ctx.client.sessions.plan(
+                          sessionId,
+                          pageId,
+                          steps,
+                          effective.executionRequirement === 'durable'
+                            ? {
+                                executionRequirement: 'durable',
+                                operationId: (options.operationId ?? ctx.operationId) as string,
+                              }
+                            : effective
+                        ))
+                  );
+                } catch (error) {
+                  if (usingExisting && effective.executionRequirement === 'durable') {
+                    // The durable contract: reconcile by operationId. The operator needs the
+                    // identity even when the response was lost.
+                    const code = (error as { code?: string }).code ?? 'UNKNOWN';
+                    deps.err(
+                      ctx.json
+                        ? JSON.stringify({
+                            reconcile: {
+                              sessionId,
+                              pageId,
+                              operationId: (options.operationId ?? ctx.operationId) as string,
+                            },
+                            error: { code },
+                          })
+                        : `durable plan failed before a verdict: reconcile sessionId ${sessionId} page ${pageId} operationId ${(options.operationId ?? ctx.operationId) as string} (${code})`
+                    );
+                  }
+                  throw error;
+                }
                 if (!report.ok) exitCode = 1;
                 ctx.emit(
                   {
@@ -1950,7 +2015,7 @@ export function buildCli(deps: CliDependencies): Cli {
                     results: report.results,
                     ...(report.error !== undefined ? { error: report.error } : {}),
                     durationMs: Date.now() - startedAt,
-                    ...(options.keepSession ? { sessionId, pageId } : {}),
+                    ...(usingExisting || options.keepSession ? { sessionId, pageId } : {}),
                   },
                   () => [
                     `${report.ok ? 'ok' : 'failed'}: ${report.completed}/${steps.length} steps completed (${planFile})`,
@@ -1970,7 +2035,11 @@ export function buildCli(deps: CliDependencies): Cli {
                   });
                 }
               } finally {
-                if (!options.keepSession)
+                if (usingExisting) {
+                  // The caller owns a session passed with --session: only this run's page closes.
+                  if (pageId !== undefined)
+                    await ctx.client.sessions.closePage(sessionId, pageId).catch(() => {});
+                } else if (!options.keepSession)
                   await ctx.client.sessions.close(sessionId).catch(() => {});
               }
             }
