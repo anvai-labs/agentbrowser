@@ -234,9 +234,9 @@ export function buildTools(
       file: await cacheLocalArtifact(bytes, artifact.contentType, { directory: artifactDirectory }),
     };
   };
-  return [
+  const tools: ToolDefinition[] = [
     {
-      name: 'create',
+      name: 'session_create',
       requiredCapabilities: ['session.manage'],
       description:
         'Create an ephemeral browser session (isolated by default); returns sessionId and an initial pageId. Refs are scoped to one session+page. A headed window opens on the SERVER host, not your machine; an isolated session inherits no daily-browser login. cdpAttach shares the operator-startup-configured profile (initial navigation URLs only), never an arbitrary endpoint. For long flows set ttlMs and idleTimeoutMs explicitly: expiry takes every ref, and unshared pages mean full re-entry. Page WebSockets close with code 1014 "blocked by egress policy" — an engine diagnostic, not a site bot wall; reload or poll for final state.',
@@ -762,7 +762,7 @@ export function buildTools(
     },
 
     {
-      name: 'close',
+      name: 'session_close',
       requiredCapabilities: ['session.manage'],
       description:
         'Close a browser session. Releases the browser context and invalidates all of its refs.',
@@ -1253,7 +1253,7 @@ export function buildTools(
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     {
-      name: 'session',
+      name: 'session_status',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
         "Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. Independently authenticated operators may receive bounded close facts for a recently ended session. On a delegated connection, " +
@@ -1333,6 +1333,25 @@ export function buildTools(
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
   ];
+  // 1.27.0 surface refresh: the old generic names ship one more minor as deprecated
+  // aliases (identical schema, handler and annotations) so clients can migrate before
+  // they are dropped in the next major.
+  const byName = new Map(tools.map((tool) => [tool.name, tool] as const));
+  const deprecatedAlias = (newName: string, oldName: string): ToolDefinition => {
+    const tool = byName.get(newName);
+    if (tool === undefined) throw new Error(`alias target ${newName} is missing`);
+    return {
+      ...tool,
+      name: oldName,
+      description: `Deprecated alias of ${newName}; use ${newName}. ${tool.description}`,
+    };
+  };
+  return [
+    ...tools,
+    deprecatedAlias('session_create', 'create'),
+    deprecatedAlias('session_close', 'close'),
+    deprecatedAlias('session_status', 'session'),
+  ];
 }
 
 /**
@@ -1353,7 +1372,15 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       // cookie_handoff is dropped when bound for the same reason as
       // cookies: a bound delegated session can never be a handoff target
       // (the handoff floor refuses delegated sessions).
-      (!deps.sessionId || !['create', 'close', 'cookies', 'cookie_handoff'].includes(tool.name))
+      (!deps.sessionId ||
+        ![
+          'create',
+          'session_create',
+          'close',
+          'session_close',
+          'cookies',
+          'cookie_handoff',
+        ].includes(tool.name))
   );
   for (const tool of tools) {
     if (deps.sessionId && Array.isArray(tool.inputSchema.required))
