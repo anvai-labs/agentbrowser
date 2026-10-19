@@ -904,6 +904,7 @@ export function buildTools(
           ...browserOptions(args)
         );
       },
+      annotations: { readOnlyHint: false, idempotentHint: false },
     },
 
     {
