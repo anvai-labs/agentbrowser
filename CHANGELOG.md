@@ -21,6 +21,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   page content and never enter the artifact) or skipped. Mode 0600, created exclusively.
 - The release smoke (`scope-consumer-smoke.mjs`) runs a scoped saved plan that submits a form,
   checks the JUnit, a failing plan's exit 1, and that no session is left open.
+- `run --session SES --execution-requirement durable --operation-id ID` executes the plan inside
+  an existing (e.g. controlled) session and journals it as one browser operation: the page is
+  opened and closed there, the session stays, and `run` refuses to create an ephemeral session
+  for a durable plan.
 
 ### Tests — async, recycled-option and partial-effect widget coverage (T6)
 

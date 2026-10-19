@@ -443,6 +443,8 @@ plan.json ─▶ agentbrowser run plan.json --url START --tenant T ─▶ create
 | `--scope-file` | scope the session, as `session create --scope-file` |
 | `--junit FILE` | one testcase per step: pass, failure (error **code** only, never page text) or skipped; mode 0600, created exclusively |
 | `--keep-session` | leave the session open and report its ids |
+| `--session SES` | run inside an existing session (e.g. a controlled one): the page is opened and closed there, the session stays |
+| `--execution-requirement durable` + `--operation-id` | journal the plan as one browser operation. Durable classification needs a controlled session: pass `--session`, and `run` refuses to create an ephemeral one for a durable plan |
 
 Exit 0 only when every step completed. The plan file (an empty plan is refused), `--url` and an
 existing `--junit` path are checked before any session exists, and the session is closed on every
