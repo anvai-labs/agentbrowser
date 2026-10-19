@@ -21,7 +21,7 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "playwright": "^1.64.0"
+    "playwright": "^1.64.1"
   },
   "devDependencies": {
     "@agentbrowser/policy": "workspace:*",
@@ -29,7 +29,7 @@
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^22.20.5",
     "typescript": "^5.7.2",
-    "vitest": "^5.0.4",
+    "vitest": "^5.0.5",
     "ws": "^8.22.0"
   }
 }
