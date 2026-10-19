@@ -211,6 +211,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-10-18 (v1.25.0: T10 M3 — program-scope restrictions, rate limit, program-scope import, findings bound to the engagement)
+**Last Updated**: 2026-10-18 (v1.26.0: T10 M4 — saved plan runs end to end, the plan-run CI action, durable runs, and T6 async/recycled-option coverage)
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.

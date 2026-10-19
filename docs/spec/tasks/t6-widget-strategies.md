@@ -44,7 +44,7 @@ AgentBrowser 1.8.19 extends the existing autofill strategy registry with explici
 `react-select` and `chip-multiselect` strategies. Both reuse the same scoped field
 resolution, action executor, receipt assembly and verification loop; they do not add a
 second bulk orchestrator. A bounded slice: mapping (#238), chip removal (#502) and cross-engine
-(#507) came later; rollback and async/recycled-option coverage remain open.
+(#507) came later; async/recycled/partial-effect coverage: `autofill-react-select-async-real.test.ts`.
 
 The [Q0 commitment repair](../evidence/t6-widget-commitment.md) shipped in 1.9.1 through PR #232.
 It restores four dormant tests, shares each strategy's commitment predicate between

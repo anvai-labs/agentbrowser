@@ -3,12 +3,13 @@
 ## Release history and plan (current)
 
 ```
-1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ✔ ─▶ 1.25 ─▶ 1.26
-journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2 ✔   M3     M4
+1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ─ 1.25 ✔ ─▶ 1.26
+journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2     M3 ✔   M4
 ```
 
 | Version | GitHub release | main | Headline | Record |
 | --- | --- | --- | --- | --- |
+| 1.25.0 | 2026-10-18 | `fa2cefe` | T10 M3: program-scope fields, rate limit, `scope import`, findings bound to the engagement (library) | [record](spec/evidence/release-1.25.0.md) |
 | 1.24.0 | 2026-10-17 | `400ba54` | T10 M2 complete: denial reporting everywhere; strict session requests (breaking: top-level policy fields); path rules bind their hosts | [record](spec/evidence/release-1.24.0.md) |
 | 1.23.0 | 2026-10-17 | `82b06ca` | T10 M2: engagement ledger, export and offline verify | [record](spec/evidence/release-1.23.0.md) |
 | 1.22.0 | 2026-10-17 | `4eb7885` | T10 M2: scope status, dry run, `SCOPE_*` sub-codes; compact capture output | owner-released (field handoff) |
@@ -27,7 +28,6 @@ journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2 
 
 | Planned | Milestone | Scope |
 | --- | --- | --- |
-| 1.25.0 | T10 M3 | program-scope fields (excludes, schemes, ports, rate limit, program metadata), scope importer, findings bound to the engagement |
 | 1.26.0 | T10 M4 | saved plan runs from the CLI and CI action |
 
 Every release: clean adversarial review and green CI on the exact head, version sync, promotion

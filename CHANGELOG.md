@@ -7,6 +7,52 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.26.0] — 2026-10-18
+
+Entries are newest first. T10 milestone M4: automation runs — a saved plan file runs end to end
+from the CLI and CI, and durable runs execute inside a controlled session. Also carries the owner's
+#588 (bare allow/block domains cover their subtree). **Upgrading from 1.25.x:**
+
+| Who | What changes |
+| --- | --- |
+| CLI | new \`run PLAN.json --url START --tenant T\`: creates a session, opens the start page, runs the saved plan and closes the session. Exit 0 only when every step completed. \`--scope-file\`, \`--keep-session\` |
+| CI | new \`.github/actions/plan-run\` composite action: pinned checksum-verified CLI, API key through a private 0600 file (never argv), JUnit and exit code from \`run\` |
+| Durable runs | \`run --session SES --execution-requirement durable --operation-id ID\` executes inside an existing controlled session (page opens and closes there; the session stays) and refuses to create an ephemeral session for a durable plan. A durable plan that fails before a verdict prints its sessionId/pageId/operationId for reconciliation |
+| TypeScript consumers | \`PLAN_ERROR_CODES\` exported from protocol and re-exported by the SDK; \`ErrorCode\` re-exported by the SDK |
+| JUnit consumers | \`run --junit\` and the \`plan-run\` action write error **codes** only; error messages (which can echo page text) never enter the artifact. The oversized-input CLI error now reads "Input exceeds N bytes." (was "JSON input exceeds N bytes.") |
+| Sessions and scopes | session \`allowedHosts\`/\`blockedHosts\` bare domains now cover their subtree (#588, owner); T6 widget strategies qualified for async-loaded and recycled options |
+
+### Added — run a saved plan end to end (T10 M4)
+
+- `.github/actions/plan-run`: a composite action that runs a saved plan against an
+  already-running service with a pinned, checksum-verified release CLI (reusing the
+  `test-evaluate` installer). The API key passes through a private 0600 file, never argv; exit
+  code and JUnit come from `run` itself.
+
+- `agentbrowser run PLAN.json --url START --tenant T [--scope-file S] [--junit FILE] [--keep-session]`
+  creates a session, opens the start page, runs the saved plan through the existing `plan`
+  endpoint and closes the session (on every path). Exit 0 only when every step completed.
+- `--junit` writes one testcase per step: passed, failed (error code only; error messages can echo
+  page content and never enter the artifact) or skipped. Mode 0600, created exclusively.
+- The release smoke (`scope-consumer-smoke.mjs`) runs a scoped saved plan that submits a form,
+  checks the JUnit, a failing plan's exit 1, and that no session is left open.
+- `run --session SES --execution-requirement durable --operation-id ID` executes the plan inside
+  an existing (e.g. controlled) session and journals it as one browser operation: the page is
+  opened and closed there, the session stays, and `run` refuses to create an ephemeral session
+  for a durable plan.
+
+### Tests — async, recycled-option and partial-effect widget coverage (T6)
+
+- `autofill-react-select-async-real.test.ts` (real react-select, Chromium): asynchronously loaded
+  options commit exactly ("Chicago", listed after "Chicago Heights") when the readiness budget
+  covers the load; options that never load fail safely (`uncertain`, nothing committed); options
+  keyed by index (React reuses their DOM nodes) commit the exact option; a later field's failure
+  leaves earlier fields committed and reported, with nothing undone or submitted. `bulk-autofill.md` documents the readiness budget for slow option sources.
+
+### Docs — the 1.25.0 release record
+
+- `docs/spec/evidence/release-1.25.0.md`; baselines move to 1.25.0.
+
 ## [1.25.0] — 2026-10-18
 
 Entries are newest first. T10 milestone M3: program scope and findings bound to the engagement.

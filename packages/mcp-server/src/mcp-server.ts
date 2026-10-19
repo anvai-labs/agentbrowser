@@ -314,8 +314,8 @@ export function buildTools(
             description:
               'T7 engagement scope for authorized security testing: the outermost restrict-only ' +
               'layer of the session policy chain, enforced per request and per redirect hop. ' +
-              'Fields: allowedHosts (required, exhaustive exact/".suffix" entries — suffix ' +
-              'covers subdomains only, list the apex separately), pathRules ' +
+              'Fields: allowedHosts (required, exhaustive entries — a bare bounded domain like ' +
+              'example.com covers itself and its subdomains; .example.com is subdomains-only), pathRules ' +
               '[{hostSuffix?, prefix}] (segment-boundary prefixes), allowedMethods, expiresAt ' +
               '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
               '[{header, value, allowedHosts}] (the marker is denied on unbound hosts), ledger ' +

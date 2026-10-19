@@ -45,6 +45,7 @@ import {
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_WAIT_TYPES,
   downloadFailureDetail,
+  ErrorCode,
   evaluateTestCaseRun,
   FormMappingSchema,
   FormValuesSchema,
@@ -62,6 +63,7 @@ import {
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PageStateSchema,
+  PLAN_ERROR_CODES,
   PlanActionsSchema,
   PlanReportSchema,
   parseActionNavigationObservation,
@@ -346,6 +348,88 @@ async function promptOperatorKey(deps: {
   output.write = realWrite;
   realWrite('\n');
   return line;
+}
+
+const KNOWN_ERROR_CODES = new Set<string>([...Object.values(ErrorCode), ...PLAN_ERROR_CODES]);
+
+/** XML-escape for JUnit attributes (the same rules as the CI action's writer). */
+const junitXml = (value: string): string =>
+  Array.from(value, (c) => {
+    const code = c.charCodeAt(0);
+    // XML 1.0 forbids C0 controls other than tab, newline and carriage return.
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) return '\uFFFD';
+    return (
+      (
+        { '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' } as Record<
+          string,
+          string
+        >
+      )[c] ?? c
+    );
+  }).join('');
+
+/**
+ * T10 M4: a JUnit report for one plan run: one testcase per step, verdicts and error codes
+ * only. Error messages can echo page content, so they never enter the artifact.
+ */
+export function planJunit(
+  planFile: string,
+  steps: Array<Record<string, unknown>>,
+  report: {
+    ok?: boolean;
+    results: Array<{ step: number; ok: boolean; error?: string; navigationObservation?: unknown }>;
+    error?: { code?: string };
+  }
+): string {
+  const suite = junitXml(planFile.split(/[\\/]/).pop() ?? planFile);
+  const byStep = new Map(report.results.map((r) => [r.step, r]));
+  const known = (value: string | undefined) =>
+    value !== undefined && KNOWN_ERROR_CODES.has(value) ? value : undefined;
+  // A plan can stop with no failed step: a completed step whose navigation was blocked
+  // (PLAN_NAVIGATION_BLOCKED). That step carries the plan's failure, so the JUnit never reads green.
+  const anyFailed = report.results.some((r) => !r.ok);
+  const stopper =
+    report.ok === false && !anyFailed
+      ? report.results.find((r) => r.navigationObservation !== undefined)?.step
+      : undefined;
+  let failures = 0;
+  let skipped = 0;
+  const cases = steps.map((step, index) => {
+    const name = junitXml(`step ${index + 1}: ${String(step.action ?? 'step')}`);
+    const open = `    <testcase classname="${suite}" name="${name}"`;
+    const result = byStep.get(index);
+    if (result === undefined) {
+      skipped += 1;
+      return `${open}>\n      <skipped/>\n    </testcase>`;
+    }
+    if (result.ok && result.step !== stopper) return `${open}/>`;
+    failures += 1;
+    // A known error code only: the step's own error prefix, else the plan's error code, else
+    // FAILED. Anything else (which could be page-derived text) never enters the artifact.
+    const code =
+      known(/^[A-Z][A-Z0-9_]*(?=:|$)/.exec(result.error ?? '')?.[0]) ??
+      known(report.error?.code) ??
+      'FAILED';
+    return `${open}>\n      <failure message="${junitXml(code)}"/>\n    </testcase>`;
+  });
+  let tests = steps.length;
+  if (report.ok === false && failures === 0) {
+    // No step to pin the failure on: a plan-level testcase carries it.
+    failures += 1;
+    tests += 1;
+    cases.push(
+      `    <testcase classname="${suite}" name="plan">\n      <failure message="${junitXml(known(report.error?.code) ?? 'FAILED')}"/>\n    </testcase>`
+    );
+  }
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites tests="${tests}" failures="${failures}" errors="0" skipped="${skipped}">`,
+    `  <testsuite name="${suite}" tests="${tests}" failures="${failures}" errors="0">`,
+    ...cases,
+    '  </testsuite>',
+    '</testsuites>',
+    '',
+  ].join('\n');
 }
 
 export function buildCli(deps: CliDependencies): Cli {
@@ -713,7 +797,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--max-download-bytes <n>', 'per-download byte cap when downloads are allowed')
         .option(
           '--allow-hosts <a,b>',
-          'restrict egress to these hosts; cannot override server private-IP, loopback or metadata blocks'
+          'restrict egress to these hosts (a bare domain like example.com covers its subdomains; .example.com is subdomains-only); cannot override server private-IP, loopback or metadata blocks'
         )
         .option(
           '--blocked-hosts <a,b>',
@@ -1762,6 +1846,225 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       advertiseWireSchema(plan, { input: PlanActionsSchema, output: PlanReportSchema });
+      // T10 M4: run a saved plan file end to end. Composes existing calls: create a session,
+      // open the start page, run the plan, close the session. No new plan language.
+      const runCommand = program
+        .command('run')
+        .description(
+          'run a saved plan file end to end: create a session, open --url, run the plan, close the session. Exit 0 only when every step completed.'
+        )
+        .argument('<planFile>', 'saved plan steps (JSON array, as for `plan`)')
+        .requiredOption('--url <url>', 'start page')
+        .requiredOption('--tenant <id>', 'tenant identifier')
+        .option(
+          '--scope-file <path>',
+          'engagement scope JSON for the session (as for `session create`)'
+        )
+        .option(
+          '--junit <file>',
+          'write a JUnit report (verdicts and error codes only; mode 0600, created exclusively)'
+        )
+        .option('--keep-session', 'leave the session open (its ids are reported)')
+        .option(
+          '--session <sessionId>',
+          'run inside this existing session (e.g. a controlled session): the page is opened and closed there, the session stays'
+        )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal the plan as one browser operation (needs --session and --operation-id, and a durable journal on the server)'
+        )
+        .action(
+          action(
+            async (
+              ctx,
+              planFile: string,
+              options: {
+                url: string;
+                tenant: string;
+                scopeFile?: string;
+                junit?: string;
+                keepSession?: boolean;
+                session?: string;
+                executionRequirement?: string;
+                operationId?: string;
+              }
+            ) => {
+              // Validate everything before any session exists.
+              const steps = parsePlanSteps(
+                await readCommandJson(runCommand, `@${planFile}`, 'plan steps')
+              );
+              if (steps.length === 0)
+                throw new UsageError('The plan file has no steps: nothing to run.');
+              let startUrl: URL;
+              try {
+                startUrl = new URL(options.url);
+              } catch {
+                throw new UsageError('--url must be an absolute http(s) URL.');
+              }
+              if (startUrl.protocol !== 'http:' && startUrl.protocol !== 'https:')
+                throw new UsageError('--url must be an absolute http(s) URL.');
+              if (options.junit !== undefined) {
+                // lstat on the target (a dangling symlink counts as existing); stat on the parent
+                // (a symlinked directory such as macOS /tmp is fine).
+                const { lstat, stat } = await import('node:fs/promises');
+                const exists = await lstat(options.junit).then(
+                  () => true,
+                  () => false
+                );
+                if (exists)
+                  throw new UsageError(
+                    `--junit ${options.junit} already exists; choose a new path (it is created exclusively).`
+                  );
+                const { dirname } = await import('node:path');
+                const parentIsDir = await stat(dirname(options.junit)).then(
+                  (stat) => stat.isDirectory(),
+                  () => false
+                );
+                if (!parentIsDir)
+                  throw new UsageError(`--junit ${options.junit}: its directory does not exist.`);
+              }
+              const request: SessionRequest = { tenantId: String(options.tenant) };
+              if (options.scopeFile !== undefined) {
+                const text = await createTextArgumentReader({ noFollow: true })(
+                  `@${String(options.scopeFile)}`,
+                  'scope input'
+                );
+                try {
+                  request.policy = {
+                    scope: JSON.parse(text) as NonNullable<
+                      NonNullable<SessionRequest['policy']>['scope']
+                    >,
+                  };
+                } catch {
+                  throw new UsageError('--scope-file must contain valid engagement-scope JSON.');
+                }
+              }
+              const execution = browserExecution(options.executionRequirement);
+              const usingExisting = options.session !== undefined;
+              // An explicit `ephemeral` in an existing session means "run there, journal nothing":
+              // no executionRequirement rides the body.
+              const effective =
+                usingExisting && execution.executionRequirement === 'ephemeral' ? {} : execution;
+              if (execution.executionRequirement === 'durable') {
+                if (!usingExisting || options.session === undefined)
+                  throw new UsageError(
+                    'Durable classification needs a controlled session: pass --session. `run` never creates an ephemeral session for a durable plan.'
+                  );
+                if (options.operationId === undefined && ctx.operationId === undefined)
+                  throw new UsageError(
+                    'A durable plan needs --operation-id (the write identity for journal reconciliation).'
+                  );
+              }
+              const startedAt = Date.now();
+              let sessionId: string;
+              if (options.session !== undefined) sessionId = options.session;
+              else {
+                const created = await ctx.client.sessions.create(request);
+                sessionId = created.sessionId;
+              }
+              let pageId: string | undefined;
+              try {
+                const page = await ctx.client.sessions.createPage(sessionId, { url: options.url });
+                pageId = page.pageId;
+                const parseResponse = createPlanReportParser(steps);
+                let report: ReturnType<ReturnType<typeof createPlanReportParser>>;
+                try {
+                  report = parseResponse(
+                    await (effective.executionRequirement === undefined
+                      ? ctx.client.sessions.plan(sessionId, pageId, steps)
+                      : ctx.client.sessions.plan(
+                          sessionId,
+                          pageId,
+                          steps,
+                          effective.executionRequirement === 'durable'
+                            ? {
+                                executionRequirement: 'durable',
+                                operationId: (options.operationId ?? ctx.operationId) as string,
+                              }
+                            : effective
+                        ))
+                  );
+                } catch (error) {
+                  if (usingExisting && effective.executionRequirement === 'durable') {
+                    // The durable contract: reconcile by operationId. The operator needs the
+                    // identity even when the response was lost.
+                    const code = (error as { code?: string }).code ?? 'UNKNOWN';
+                    deps.err(
+                      ctx.json
+                        ? JSON.stringify({
+                            reconcile: {
+                              sessionId,
+                              pageId,
+                              operationId: (options.operationId ?? ctx.operationId) as string,
+                            },
+                            error: { code },
+                          })
+                        : `durable plan failed before a verdict: reconcile sessionId ${sessionId} page ${pageId} operationId ${(options.operationId ?? ctx.operationId) as string} (${code})`
+                    );
+                  }
+                  throw error;
+                }
+                if (!report.ok) exitCode = 1;
+                ctx.emit(
+                  {
+                    ok: report.ok,
+                    planFile,
+                    url: options.url,
+                    steps: steps.length,
+                    completed: report.completed,
+                    results: report.results,
+                    ...(report.error !== undefined ? { error: report.error } : {}),
+                    durationMs: Date.now() - startedAt,
+                    ...(usingExisting || options.keepSession ? { sessionId, pageId } : {}),
+                  },
+                  () => [
+                    `${report.ok ? 'ok' : 'failed'}: ${report.completed}/${steps.length} steps completed (${planFile})`,
+                    ...report.results.map(
+                      (r) =>
+                        `  step ${r.step + 1}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
+                    ),
+                    ...(options.keepSession ? [`  session ${sessionId}, page ${pageId}`] : []),
+                  ]
+                );
+                // After the report: a write failure never hides the results.
+                if (options.junit !== undefined) {
+                  const { writeFile } = await import('node:fs/promises');
+                  await writeFile(options.junit, planJunit(planFile, steps, report), {
+                    flag: 'wx',
+                    mode: 0o600,
+                  });
+                }
+              } finally {
+                if (usingExisting) {
+                  // The caller owns a session passed with --session: only this run's page closes.
+                  if (pageId !== undefined)
+                    await ctx.client.sessions.closePage(sessionId, pageId).catch(() => {});
+                } else if (!options.keepSession)
+                  await ctx.client.sessions.close(sessionId).catch(() => {});
+              }
+            }
+          )
+        );
+      advertiseWireSchema(runCommand, {
+        input: PlanActionsSchema,
+        // The run report: the plan's own results plus run identity and timing.
+        output: {
+          type: 'object',
+          required: ['ok', 'planFile', 'url', 'steps', 'completed', 'results', 'durationMs'],
+          properties: {
+            ok: { type: 'boolean' },
+            planFile: { type: 'string' },
+            url: { type: 'string' },
+            steps: { type: 'integer', minimum: 0 },
+            completed: { type: 'integer', minimum: 0 },
+            results: (PlanReportSchema as { properties: { results: object } }).properties.results,
+            error: { type: 'object' },
+            durationMs: { type: 'integer', minimum: 0 },
+            sessionId: { type: 'string' },
+            pageId: { type: 'string' },
+          },
+        },
+      });
 
       const outcome = program
         .command('outcome')

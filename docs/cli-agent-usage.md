@@ -419,12 +419,38 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | --- | --- |
 | Current semantic targets | CLI `snapshot` / `observe`; corresponding MCP tools |
 | Explicit bounded ordered steps | CLI `plan`; MCP `plan` |
+| A saved plan end to end (session, start page, steps, JUnit, close) | CLI `run` |
 | One interaction | CLI `act <command>`; MCP `act` |
 | Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `autofill` |
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
 | Uncertain delegated mutation | CLI `session operation`; delegated MCP `operation` |
 | Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
 | A record that survives a restart (journal configured) | `--execution-requirement durable` on `act`, `plan`, `autofill` or `application execute` (needs `--operation-id`); read it back with `journal operations <id>`. Never replayed or resumed |
+
+## Run a saved plan end to end (T10 M4)
+
+`run` replays a saved plan file without hand-managing a session: it creates one, opens the start
+page, runs the steps, and closes the session.
+
+```
+plan.json ─▶ agentbrowser run plan.json --url START --tenant T ─▶ create ─▶ open START ─▶ plan ─▶ close ─▶ exit 0 | 1
+```
+
+| Option | Effect |
+| --- | --- |
+| `<planFile>` | the same JSON steps `plan` takes (`waitForLabel` targets survive page changes; refs do not) |
+| `--url`, `--tenant` | start page and tenant (required) |
+| `--scope-file` | scope the session, as `session create --scope-file` |
+| `--junit FILE` | one testcase per step: pass, failure (error **code** only, never page text) or skipped; mode 0600, created exclusively |
+| `--keep-session` | leave the session open and report its ids |
+| `--session SES` | run inside an existing session (e.g. a controlled one): the page is opened and closed there, the session stays. The session must belong to the caller's credentials and tenant; a mismatch fails server-side |
+| `--session` + `--execution-requirement ephemeral` | runs unjournalled in the existing session (legal; nothing is classified) |
+| `--execution-requirement durable` + `--operation-id` | journal the plan as one browser operation. Durable classification needs a controlled session: pass `--session`, and `run` refuses to create an ephemeral one for a durable plan. If the plan fails before a verdict (e.g. the response was lost), the error output carries the session, page and operation id so the journal can be reconciled |
+
+Exit 0 only when every step completed. The plan file (an empty plan is refused), `--url` and an
+existing `--junit` path are checked before any session exists, and the session is closed on every
+path, including a start page that cannot be opened. An interrupted process (Ctrl-C, SIGTERM) does
+not reach that close: the session then ends at its idle or TTL expiry.
 
 ## Attach the bytes you reviewed (develop slice)
 

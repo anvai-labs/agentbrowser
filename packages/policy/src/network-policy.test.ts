@@ -498,6 +498,109 @@ describe('SessionHostPolicy (per-session composite)', () => {
   });
 });
 
+describe('SessionHostPolicy bare-domain subtree semantics (smart default)', () => {
+  it('a bare registrable domain covers the apex and its subdomains', async () => {
+    const base = new NetworkPolicy({});
+    const chain = new SessionHostPolicy(base, { allowedHosts: ['anvaiops.com'] });
+
+    await expect(
+      chain.checkRequest({ hostname: 'anvaiops.com', url: 'https://anvaiops.com/' })
+    ).resolves.toBeUndefined();
+    await expect(
+      chain.checkRequest({ hostname: 'id.anvaiops.com', url: 'https://id.anvaiops.com/' })
+    ).resolves.toBeUndefined();
+    await expect(
+      chain.checkRequest({
+        hostname: 'static.assets.anvaiops.com',
+        url: 'https://static.assets.anvaiops.com/',
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('the subtree match is label-boundary, never a raw suffix', async () => {
+    const base = new NetworkPolicy({});
+    const chain = new SessionHostPolicy(base, { allowedHosts: ['example.com'] });
+
+    await expect(
+      chain.checkRequest({ hostname: 'badexample.com', url: 'https://badexample.com/' })
+    ).rejects.toThrow(/not in the session allow-list/);
+  });
+
+  it('a public suffix stays exact-only: no sibling-tenant widening', async () => {
+    const base = new NetworkPolicy({});
+    const chain = new SessionHostPolicy(base, { allowedHosts: ['github.io'] });
+
+    await expect(
+      chain.checkRequest({ hostname: 'github.io', url: 'https://github.io/' })
+    ).resolves.toBeUndefined();
+    // github.io is a public suffix — its "subdomains" are other peoples sites.
+    await expect(
+      chain.checkRequest({ hostname: 'someone.github.io', url: 'https://someone.github.io/' })
+    ).rejects.toThrow(/not in the session allow-list/);
+    // A registrable under it must be listed by its own name (and then covers
+    // its own subtree).
+    const scoped = new SessionHostPolicy(base, { allowedHosts: ['anvai-labs.github.io'] });
+    await expect(
+      scoped.checkRequest({
+        hostname: 'anvai-labs.github.io',
+        url: 'https://anvai-labs.github.io/',
+      })
+    ).resolves.toBeUndefined();
+    await expect(
+      scoped.checkRequest({
+        hostname: 'assets.anvai-labs.github.io',
+        url: 'https://assets.anvai-labs.github.io/',
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it('IP literals and unlisted internal names stay exact-only', async () => {
+    const base = new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false });
+    const chain = new SessionHostPolicy(base, {
+      allowedHosts: ['192.0.2.10', 'buildbox.internal'],
+    });
+
+    await expect(
+      chain.checkRequest({ hostname: '192.0.2.10', url: 'http://192.0.2.10/' })
+    ).resolves.toBeUndefined();
+    // No subtree for an IP; an unlisted TLD cannot be bounded, so it does not
+    // expand either — both keep today's exact-only behavior.
+    await expect(
+      chain.checkRequest({ hostname: 'buildbox.internal', url: 'http://buildbox.internal/' })
+    ).resolves.toBeUndefined();
+  });
+
+  it('a bare blocked domain denies its whole subtree (symmetric hardening)', async () => {
+    const base = new NetworkPolicy({});
+    const chain = new SessionHostPolicy(base, { blockedHosts: ['tracker.example.com'] });
+
+    await expect(
+      chain.checkRequest({ hostname: 'tracker.example.com', url: 'https://tracker.example.com/' })
+    ).rejects.toThrow(/blocked by the session/);
+    await expect(
+      chain.checkRequest({
+        hostname: 'cdn.tracker.example.com',
+        url: 'https://cdn.tracker.example.com/',
+      })
+    ).rejects.toThrow(/blocked by the session/);
+    await expect(
+      chain.checkRequest({ hostname: 'ok.example.com', url: 'https://ok.example.com/' })
+    ).resolves.toBeUndefined();
+  });
+
+  it('explicit dot entries still mean subdomains-only (apex excluded)', async () => {
+    const base = new NetworkPolicy({});
+    const chain = new SessionHostPolicy(base, { allowedHosts: ['.corp.example.com'] });
+
+    await expect(
+      chain.checkRequest({ hostname: 'vpn.corp.example.com', url: 'https://vpn.corp.example.com/' })
+    ).resolves.toBeUndefined();
+    await expect(
+      chain.checkRequest({ hostname: 'corp.example.com', url: 'https://corp.example.com/' })
+    ).rejects.toThrow(/not in the session allow-list/);
+  });
+});
+
 it('stamps genuine policy failures with the shared egress reason', async () => {
   await expect(
     new NetworkPolicy({ blockLoopback: true }).checkRequest({ hostname: '127.0.0.1' })
