@@ -3,11 +3,17 @@ import { NetworkPolicy, NetworkPolicyError } from './network-policy.js';
 import { CHAIN_SPENT_BOUND, EngagementScopePolicy } from './scope-policy.js';
 
 const permissiveBase = () => new NetworkPolicy({ blockLoopback: false });
+const req = (url: string, method = 'GET') => ({
+  hostname: new URL(url).hostname,
+  url,
+  method,
+});
+const denied = (scope: string) => ({ code: 'POLICY_DENIED', details: { scope } });
 
 describe('EngagementScopePolicy (T7 slice 2)', () => {
   it('allows in-scope hosts and denies everything else (exhaustive allowlist)', async () => {
     const scope = new EngagementScopePolicy(permissiveBase(), {
-      allowedHosts: ['api.testhost.example', '.cdn.testhost.example'],
+      allowedHosts: ['api.testhost.example', '.cdn.testhost.example', 'example.com'],
     });
     await scope.checkRequest({
       hostname: 'api.testhost.example',
@@ -27,6 +33,10 @@ describe('EngagementScopePolicy (T7 slice 2)', () => {
         url: 'https://apitesthost.example/',
       })
     ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    // A bare bounded registrable domain covers its subtree (aligned with
+    // the session host policy's #588 semantics; unregistrable test TLDs
+    // stay exact-only).
+    await scope.checkRequest({ hostname: 'www.example.com', url: 'https://www.example.com/' });
   });
 
   it('denies non-matching pathnames on in-scope hosts', async () => {
@@ -353,5 +363,60 @@ describe('EngagementScopePolicy (T7 slice 2)', () => {
     await expect(
       scope.checkRequest({ hostname: 'api.testhost.example', url: 'https://api.testhost.example/' })
     ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+});
+
+describe('scope/session host-matcher alignment (#588 consolidation)', () => {
+  it('trailing-dot session entries match dot-free hostnames like the shared matcher', async () => {
+    const { NetworkPolicy, SessionHostPolicy } = await import('./network-policy.js');
+    const base = new NetworkPolicy({ blockLoopback: false });
+    const session = new SessionHostPolicy(base, { allowedHosts: ['app.example.com.'] });
+    await session.checkRequest({ hostname: 'app.example.com', url: 'https://app.example.com/' });
+    const scope = new EngagementScopePolicy(base, { allowedHosts: ['app.example.com.'] });
+    await scope.checkRequest({
+      hostname: 'app.example.com',
+      url: 'https://app.example.com/',
+      method: 'GET',
+    });
+  });
+  it('a bare allowed host matches the subtree in BOTH matchers', async () => {
+    const { NetworkPolicy, SessionHostPolicy } = await import('./network-policy.js');
+    const { EngagementScopePolicy } = await import('./scope-policy.js');
+    // The REAL session host policy (set-based enforcement) — a bare base with
+    // no allowlist would allow every host and prove nothing.
+    const base = new NetworkPolicy({ blockLoopback: false });
+    const session = new SessionHostPolicy(base, { allowedHosts: ['app.example.com'] });
+    const scope = new EngagementScopePolicy(base, { allowedHosts: ['app.example.com'] });
+    // Both matchers: bare bounded domain covers the subtree.
+    await session.checkRequest({
+      hostname: 'www.app.example.com',
+      url: 'https://www.app.example.com/',
+    });
+    // Engagement scope: same semantics after the consolidation.
+    await scope.checkRequest({
+      hostname: 'www.app.example.com',
+      url: 'https://www.app.example.com/',
+      method: 'GET',
+    });
+    // The apex itself stays in scope.
+    await scope.checkRequest({
+      hostname: 'app.example.com',
+      url: 'https://app.example.com/',
+      method: 'GET',
+    });
+  });
+
+  it('excludeHosts: the excluded host and its subtree are denied; the parent chain is not', async () => {
+    const scope = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['app.example.com'],
+      excludeHosts: ['admin.app.example.com'],
+    });
+    await scope.checkRequest(req('https://app.example.com/')); // parent chain stays allowed
+    await expect(scope.checkRequest(req('https://admin.app.example.com/'))).rejects.toMatchObject(
+      denied('SCOPE_HOST_DENIED')
+    );
+    await expect(
+      scope.checkRequest(req('https://db.admin.app.example.com/'))
+    ).rejects.toMatchObject(denied('SCOPE_HOST_DENIED'));
   });
 });

@@ -104,6 +104,23 @@ export function covers(matcher: string, host: string): DomainVerdict {
 }
 
 /**
+ * Boolean host-pattern matcher shared by the session host policy and the
+ * engagement scope (T10 consolidation, post-#588): `.suffix` patterns match
+ * SUBDOMAINS ONLY (list the apex explicitly); a bare bounded domain covers
+ * its subtree; public suffixes, IPs and unlisted names match exactly only.
+ * Both the session host rules and the engagement scope must answer host
+ * questions with this one function so their semantics cannot drift.
+ */
+export function hostMatchesPattern(hostname: string, pattern: string): boolean {
+  const patternDotted = pattern.startsWith('.');
+  const p = pattern.toLowerCase().replace(/\.+$/, '');
+  const h = hostname.toLowerCase().replace(/\.+$/, '');
+  if (patternDotted) return h.endsWith(pattern.toLowerCase());
+  if (covers(p, h).ok) return true; // bare bounded domain: exact + subtree
+  return h === p; // IPs, public suffixes, unlisted names: exact only
+}
+
+/**
  * What cookie domain a handoff may bind for `host`: `host` itself, or a
  * registrable parent explicitly requested by the operator. `null` refuses.
  */
