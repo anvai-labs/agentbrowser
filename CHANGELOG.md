@@ -7,6 +7,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — the 1.27.1 release record
+
+- `docs/spec/evidence/release-1.27.1.md`; baselines move to 1.27.1.
+
 ## [1.27.1] — 2026-10-20
 
 Maintenance release: one shared host matcher for the whole product, closing a semantics drift
