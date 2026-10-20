@@ -37,11 +37,13 @@ develop ─#611 sync─▶ #612 promote ─▶ main a0d02ea ─▶ tag v1.27.1 �
 refused, `SCOPE_HOST_DENIED` on all four surfaces, the POST redirect not leaked and recorded, the
 engagement ledger exported/verified/edited-copy-refused, and the saved-plan run green.
 
-The released CLI also verified the two headline behaviors:
+The released CLI and server also verified the headline behaviors, re-run live for this record:
 
 | Check | Result |
 | --- | --- |
-| `scope import` on a text program scope | bare `corp.test` imports and now covers its subtree, per the consolidated matcher |
+| `scope import` on a text program scope | bare `corp.test` imports to `allowedHosts [corp.test]`, matching the import table |
+| Bare-domain subtree matching, released server | a session scoped to bare `app.example.com` let `cdn.app.example.com` through — the navigation reached `dns_unresolved`, not `SCOPE_HOST_DENIED`; the out-of-scope control `other.example.com` was denied. Under the pre-consolidation matcher the subdomain was denied too |
+| Exact-only fallback pinned | under a bare `corp.test` scope the subdomain is still denied on 1.27.1: `.test` is unregistrable, so both matchers stay exact-only by design |
 | `finding check` | present in the released binary (the MCP pair ships in audit/appsec/bounty modes) |
 
 ## What shipped

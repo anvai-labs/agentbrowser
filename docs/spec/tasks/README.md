@@ -1,8 +1,8 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table records the delivered state as of 2026-10-17, reconciled item by item against the
-packets' acceptance lists (published baseline 1.26.0, promoted to main via #594). "Complete"
+The table records the delivered state as of 2026-10-20, reconciled item by item against the
+packets' acceptance lists (published baseline 1.27.1, promoted to main via #612). "Complete"
 means the manifest dependency gate is satisfied; open follow-ons are named in the row.
 Reading this task list alone does not authorize implementation or publication;
 follow the current user-authorized scope.
@@ -27,15 +27,15 @@ declared files and budgets without contacting a service.
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses, C3c synthetic submission, E0a/E0b eligibility, N0 document read, first E0c listing-capture slice delivered; W1 #491, W2 #502, W3a #511, W3b #507 delivered; remaining: business/job identity and gates owned by the consuming workflow (E0c/E1 private policy, live workflow qualification) | T2 |
 | [T7](t7-audit-security.md) | **Complete** | ALL slices delivered (the appsec/bounty parity condition on T4 stays open): 2a scope enforcement (primitive + surface, 12 real-Chromium gates plus 14 policy unit tests), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates; audit suite 53 tests after the 2026-10-15 labelling and role-access work | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor gated on aiserver1's gateway, not TLS (owner reconciliation 2026-10-15). MCP cancellation (#485, bridge side; no CLI can script a provider-path cancel) and the Q1 re-qualification on both CLIs (#497) delivered; open: the inline-screenshot decision | T0; profile/full-run slices also require T1/T3 |
-| [T9](t9-release-hardening.md) | Recurring | 1.26.0 released 2026-10-19 (run 39194733802); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closed 2026-10-16 (tag ruleset + `npm` environment protection) | T0; each release also requires its changed tasks' acceptance |
-| [T10](t10-engagements.md) | Active | Approved 2026-10-16: engagements (scope without holes → status and metadata-only ledger → program scope and findings) and saved plan runs, released per milestone 1.21.0–1.26.0 (M2 across 1.22.0–1.24.0; M3 1.25.0; M4 1.26.0) | T7; T5 for automation runs |
+| [T9](t9-release-hardening.md) | Recurring | 1.27.1 released 2026-10-20 (run 39419989960); the tag-ancestry gate (#475) passed on it; least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closed 2026-10-16 (tag ruleset + `npm` environment protection) | T0; each release also requires its changed tasks' acceptance |
+| [T10](t10-engagements.md) | Active | Approved 2026-10-16: engagements (scope without holes → status and metadata-only ledger → program scope and findings) and saved plan runs, released per milestone 1.21.0–1.26.0 (M2 across 1.22.0–1.24.0; M3 1.25.0; M4 1.26.0; consolidation follow-ups through 1.27.1) | T7; T5 for automation runs |
 
-## Current continuation (2026-10-17)
+## Current continuation (2026-10-20)
 
-Published baseline **1.26.0** (2026-10-19: T10 M4, automation runs; 1.22.0 was
-owner-released); records in ../evidence/release-1.16.0.md through release-1.26.0.md. Every agent-actionable item of the
-2026-10-15 reconciliation is delivered; what remains is below. The next arc is
-[T10](t10-engagements.md): engagements and saved plan runs, released per milestone.
+Published baseline **1.27.1** (2026-10-20: the T10 engagement arc delivered — M1–M4 plus the
+consolidation follow-ups: host-matcher unification, MCP surface refresh, findings surface);
+records in ../evidence/release-1.16.0.md through release-1.27.1.md. What remains is owner-gated
+or tracked as follow-ons in the packet rows above.
 
 ## Earlier continuation (2026-10-07)
 

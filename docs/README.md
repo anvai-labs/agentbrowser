@@ -211,6 +211,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-10-19 (v1.27.0: findings complete across library, CLI and MCP; MCP surface refresh — session_create/session_close/session_status; annotations everywhere)
+**Last Updated**: 2026-10-20 (v1.27.1: host-matcher consolidation — one shared `hostMatchesPattern`; scope adopts bare-subtree matching; session trailing-dot normalization)
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.
