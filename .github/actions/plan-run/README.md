@@ -7,9 +7,9 @@ session closed. A JUnit report lands at `junit` (one testcase per step: pass, er
 skipped; page text never enters it).
 
 ```yaml
-- uses: anvai-labs/agentbrowser/.github/actions/plan-run@v1.27.0
+- uses: anvai-labs/agentbrowser/.github/actions/plan-run@v1.27.1
   with:
-    cli-version: v1.27.0
+    cli-version: v1.27.1
     base-url: http://127.0.0.1:5709
     tenant: ci
     plan: plan.json

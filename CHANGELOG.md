@@ -27,10 +27,11 @@ pinning the old exact-only semantics were updated with the change.
 
 - `scope-policy.ts` delegated to the shared matcher (`hostMatchesPattern` in
   `@agentbrowser/core`); `network-policy.ts` keeps its set-based fast path with the same
-  classification, now normalizing trailing dots. The scope/session alignment is pinned by a
-  cross-matcher test suite (16 hosts × patterns, zero mismatches).
+  classification, now normalizing trailing dots. The scope/session alignment is pinned by the
+  cross-matcher alignment tests (bare-subtree through the real `SessionHostPolicy` plus the
+  scope matcher, and trailing-dot entries).
 
-## [1.27.0] — 2026-10-19 — 2026-10-19
+## [1.27.0] — 2026-10-19
 
 Entries are newest first. T10 follow-through: the engagement findings surface completes (library,
 CLI, MCP), the MCP tool names become self-describing, and every tool declares its trust hints.
