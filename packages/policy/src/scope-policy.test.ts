@@ -367,13 +367,28 @@ describe('EngagementScopePolicy (T7 slice 2)', () => {
 });
 
 describe('scope/session host-matcher alignment (#588 consolidation)', () => {
-  it('a bare allowed host matches the subtree in BOTH matchers', async () => {
-    const { NetworkPolicy } = await import('./network-policy.js');
-    const { EngagementScopePolicy } = await import('./scope-policy.js');
+  it('trailing-dot session entries match dot-free hostnames like the shared matcher', async () => {
+    const { NetworkPolicy, SessionHostPolicy } = await import('./network-policy.js');
     const base = new NetworkPolicy({ blockLoopback: false });
+    const session = new SessionHostPolicy(base, { allowedHosts: ['app.example.com.'] });
+    await session.checkRequest({ hostname: 'app.example.com', url: 'https://app.example.com/' });
+    const scope = new EngagementScopePolicy(base, { allowedHosts: ['app.example.com.'] });
+    await scope.checkRequest({
+      hostname: 'app.example.com',
+      url: 'https://app.example.com/',
+      method: 'GET',
+    });
+  });
+  it('a bare allowed host matches the subtree in BOTH matchers', async () => {
+    const { NetworkPolicy, SessionHostPolicy } = await import('./network-policy.js');
+    const { EngagementScopePolicy } = await import('./scope-policy.js');
+    // The REAL session host policy (set-based enforcement) — a bare base with
+    // no allowlist would allow every host and prove nothing.
+    const base = new NetworkPolicy({ blockLoopback: false });
+    const session = new SessionHostPolicy(base, { allowedHosts: ['app.example.com'] });
     const scope = new EngagementScopePolicy(base, { allowedHosts: ['app.example.com'] });
-    // Session host policy: bare bounded domain covers the subtree.
-    await base.checkRequest({
+    // Both matchers: bare bounded domain covers the subtree.
+    await session.checkRequest({
       hostname: 'www.app.example.com',
       url: 'https://www.app.example.com/',
     });

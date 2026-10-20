@@ -654,14 +654,16 @@ class HostRules {
   /** Bare bounded domain → exact + subtree; dot entry → subtree only; anything
    * unbounded (IP, public suffix, unlisted name) → exact only. */
   private add(exact: Set<string>, suffixes: Set<string>, host: string): void {
-    const entry = host.toLowerCase();
-    if (entry.startsWith('.')) {
-      suffixes.add(entry);
-    } else if (subtreeExpandable(entry)) {
-      exact.add(entry);
-      suffixes.add(`.${entry}`);
+    // Trailing dots are normalized so the entry matches the same dot-free
+    // hostnames the shared matcher (hostMatchesPattern) accepts.
+    const normalized = host.toLowerCase().replace(/\.+$/, '');
+    if (normalized.startsWith('.')) {
+      suffixes.add(normalized);
+    } else if (subtreeExpandable(normalized)) {
+      exact.add(normalized);
+      suffixes.add(`.${normalized}`);
     } else {
-      exact.add(entry);
+      exact.add(normalized);
     }
   }
 
