@@ -7,7 +7,30 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-## [1.27.0] — 2026-10-19
+## [1.27.1] — 2026-10-20
+
+Maintenance release: one shared host matcher for the whole product, closing a semantics drift
+between the two host policies. **Upgrading from 1.27.0:**
+
+| Who | What changes |
+| --- | --- |
+| Engagement scopes | a **bare registrable domain in `allowedHosts` now covers its subtree** (`corp.test` admits `www.corp.test`), aligned with the session host policy's #588 semantics. Previously exact-only. `.suffix` patterns are unchanged (subdomains only), as are IPs and unlisted names (exact only) |
+| Session `allowedHosts`/`blockedHosts` | entries with a **trailing dot** (`app.example.com.`) are normalized to dot-free form before classification, so they match the same hostnames the shared matcher accepts (previously they never matched) |
+| Cross-scope guarantees | the session host policy and the engagement scope now answer host questions through one function (`hostMatchesPattern` in `@agentbrowser/core`) and cannot drift apart again |
+
+**Behavior disclosures:** the engagement-scope change is a **widening** (more hosts in scope for
+bare registrable entries); the session trailing-dot change is also a widening (previously such
+entries never matched anything). Both replace undocumented non-matching behavior; existing tests
+pinning the old exact-only semantics were updated with the change.
+
+### Fixed - host-matcher drift between session policy and engagement scope (T10)
+
+- `scope-policy.ts` delegated to the shared matcher (`hostMatchesPattern` in
+  `@agentbrowser/core`); `network-policy.ts` keeps its set-based fast path with the same
+  classification, now normalizing trailing dots. The scope/session alignment is pinned by a
+  cross-matcher test suite (16 hosts × patterns, zero mismatches).
+
+## [1.27.0] — 2026-10-19 — 2026-10-19
 
 Entries are newest first. T10 follow-through: the engagement findings surface completes (library,
 CLI, MCP), the MCP tool names become self-describing, and every tool declares its trust hints.

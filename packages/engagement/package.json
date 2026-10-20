@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engagement",
-  "version": "1.27.0",
+  "version": "1.27.1",
   "description": "T10: findings bound to an engagement ledger, checked offline and exported as a SARIF draft (no DOM or image dependencies)",
   "type": "module",
   "main": "dist/index.js",
