@@ -1,3 +1,4 @@
+import { hostMatchesPattern } from '@agentbrowser/core';
 import { NetworkPolicyError } from './network-policy.js';
 
 /**
@@ -220,16 +221,13 @@ export function scopeConfigurationIssues(scope: {
   return issues;
 }
 
-const hostMatches = (hostname: string, pattern: string): boolean => {
-  const host = hostname.toLowerCase();
-  if (pattern.startsWith('.')) {
-    // Aligned with SessionHostPolicy's suffix semantics: ".example.com"
-    // matches SUBDOMAINS ONLY — list the apex explicitly alongside it
-    // when both are in scope.
-    return host.endsWith(pattern);
-  }
-  return host === pattern;
-};
+// One host matcher for the whole product (T10 consolidation): delegates to
+// the core implementation so the session host policy and the engagement
+// scope cannot drift apart again. `.suffix` matches subdomains only; a bare
+// bounded domain covers its subtree (#588 semantics); unbounded patterns
+// match exactly only.
+const hostMatches = (hostname: string, pattern: string): boolean =>
+  hostMatchesPattern(hostname, pattern);
 
 /**
  * Every sub-code this policy raises. `scopeDenial` accepts only these, and a
