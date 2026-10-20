@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Performance - tldts loads lazily; the v7 bump lands under the T8 gate
+
+- `@agentbrowser/core` loads `tldts` on first host question instead of at module import
+  (`tldts-lazy.ts`; a shared sync accessor — every matcher function stays sync). tldts builds its
+  packed public-suffix trie at init (~7 MB in v7), which no idle surface should pay. Measured with
+  bun 1.4.0 on linux-x64, gate unchanged at 75 MB: MCP bridge idle **81.7 → 57.5 MB**, CLI one-shot
+  **73.4 → 57.6 MB**. `tldts` bumped 6.1.76 → 7.4.18 (Dependabot #604, unblocked; matcher
+  semantics pinned unchanged).
+
 ### Changed — export-surface hygiene (internal)
 
 - 26 exports with zero references beyond their own module lost the `export` keyword (the
