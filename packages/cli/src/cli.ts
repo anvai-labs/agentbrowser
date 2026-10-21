@@ -10,6 +10,7 @@ import { isAbsolute } from 'node:path';
 import {
   assertCookieRequestSize,
   importProgramScope,
+  loadTldts,
   type ProgramScopeFormat,
   verifyEngagementLedger,
 } from '@agentbrowser/core';
@@ -3081,6 +3082,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 `@${file}`,
                 'program scope'
               );
+              // Bundled-binary surface: load tldts before the matcher's sync accessor runs.
+              await loadTldts();
               let result: ReturnType<typeof importProgramScope>;
               try {
                 result = importProgramScope(input, options.from as ProgramScopeFormat, {
@@ -3155,6 +3158,8 @@ export function buildCli(deps: CliDependencies): Cli {
         } catch {
           throw new UsageError('--findings must contain a JSON array of findings.');
         }
+        // Bundled-binary surface: load tldts before the scope policy's sync matcher runs.
+        await loadTldts();
         return checkEngagementFindings(ledgerText, findings);
       };
       const issueLines = (issues: Array<{ findingId: string; issue: string }>) =>

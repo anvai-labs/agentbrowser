@@ -21,4 +21,5 @@ export * from './ring-buffer.js';
 export * from './secret-manager.js';
 export * from './session-control.js';
 export * from './session-coordinator.js';
+export * from './tldts-lazy.js';
 export * from './tracing.js';
