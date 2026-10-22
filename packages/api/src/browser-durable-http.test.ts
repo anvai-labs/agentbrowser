@@ -151,23 +151,7 @@ describe('executionRequirement on browser routes (B-dur-2b)', () => {
 
 describe('durable act end to end, with a real journal (B-dur-2b)', () => {
   it('journals the act and the lookup route shows it as a browser/act record', async () => {
-    const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const base = mkdtempSync(join(realpathSync(tmpdir()), 'bdur2b-http-'));
-    mkdirSync(join(base, 'store'), { mode: 0o700 });
-    mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-    writeFileSync(join(base, 'key'), `key-1:${'4c'.repeat(32)}\n`, { mode: 0o600 });
-    const env = {
-      AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-      AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-      AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
-      AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-      AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-    };
-    const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-    Object.assign(process.env, env);
+    const { restore } = await journaledEnv('bdur2b-http-', '4c');
     let close: (() => Promise<void>) | undefined;
     try {
       const { server, pagePath, headers } = await controlledPage();
@@ -196,11 +180,7 @@ describe('durable act end to end, with a real journal (B-dur-2b)', () => {
       });
     } finally {
       await close?.();
-      for (const [name, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-      }
-      rmSync(base, { recursive: true, force: true });
+      await restore();
     }
   }, 60_000);
 });
@@ -238,18 +218,17 @@ describe('durable terminal mapping over HTTP, with a real journal (B-dur-2b)', (
   }, 60_000);
 });
 
-/** A delegated `qa` session on a server whose engine the test holds, with a real journal. */
-async function journaledServer() {
-  const { createHash } = await import('node:crypto');
+/** A private journal layout + environment swap shared by the durable suites (a fresh
+ * tagged directory, key file, and the JOURNAL_* env). `restore` unsets the env and
+ * removes the directory — it belongs in the caller's finally. */
+async function journaledEnv(tag: string, keyHex: string) {
   const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const { FakeEngine } = await import('@agentbrowser/testkit');
-  const { buildServer } = await import('./server.js');
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'bdur2b-known-'));
+  const base = mkdtempSync(join(realpathSync(tmpdir()), tag));
   mkdirSync(join(base, 'store'), { mode: 0o700 });
   mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-  writeFileSync(join(base, 'key'), `key-1:${'6e'.repeat(32)}\n`, { mode: 0o600 });
+  writeFileSync(join(base, 'key'), `key-1:${keyHex.repeat(32)}\n`, { mode: 0o600 });
   const env = {
     AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
     AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
@@ -260,6 +239,22 @@ async function journaledServer() {
   };
   const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
   Object.assign(process.env, env);
+  const restore = async () => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(base, { recursive: true, force: true });
+  };
+  return { restore };
+}
+
+/** A delegated `qa` session on a server whose engine the test holds, with a real journal. */
+async function journaledServer() {
+  const { createHash } = await import('node:crypto');
+  const { FakeEngine } = await import('@agentbrowser/testkit');
+  const { buildServer } = await import('./server.js');
+  const { restore } = await journaledEnv('bdur2b-known-', '6e');
   const engine = new FakeEngine();
   const server = await buildServer({
     engine,
@@ -267,11 +262,7 @@ async function journaledServer() {
   });
   const close = async () => {
     await server.close();
-    for (const [name, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    rmSync(base, { recursive: true, force: true });
+    await restore();
   };
   const create = await server.inject({
     method: 'POST',

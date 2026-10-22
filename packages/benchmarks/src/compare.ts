@@ -184,8 +184,16 @@ async function openBenchmarkHarness(options: RealBenchmarkOptions): Promise<{
 }> {
   const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
   const port = options.fixturePort ?? ownedServer?.port;
+  const stopOwnedServer = async () => {
+    // Never let a failing stop mask the failure that triggered it.
+    try {
+      await ownedServer?.stop();
+    } catch {
+      // Intentionally swallowed: the original error (if any) propagates.
+    }
+  };
   if (port === undefined) {
-    await ownedServer?.stop();
+    await stopOwnedServer();
     throw new Error('no fixture port');
   }
   try {
@@ -201,12 +209,10 @@ async function openBenchmarkHarness(options: RealBenchmarkOptions): Promise<{
       port,
       base: `http://127.0.0.1:${port}`,
       service,
-      stopOwnedServer: async () => {
-        await ownedServer?.stop();
-      },
+      stopOwnedServer,
     };
   } catch (error) {
-    await ownedServer?.stop();
+    await stopOwnedServer();
     throw error;
   }
 }
@@ -286,8 +292,6 @@ export async function runRealBenchmarks(options: RealBenchmarkOptions): Promise<
       }
     }
 
-    await service.shutdown();
-
     return {
       engineName: options.label ?? options.engine.name,
       sessionCreate: evaluateTarget('sessionCreateWarm', sessionSamples),
@@ -301,6 +305,8 @@ export async function runRealBenchmarks(options: RealBenchmarkOptions): Promise<
       },
     };
   } finally {
+    // In the finally (not the try tail): a mid-run failure must still release the engine.
+    await service.shutdown();
     await stopOwnedServer();
   }
 }
@@ -361,8 +367,6 @@ export async function runCompactProjectionBenchmark(
       if (compact.elements.some((element) => element.role === 'checkbox')) compactFound = true;
     }
 
-    await service.shutdown();
-
     const fullBytes = Math.round(fullBytesTotal / iterations);
     const compactBytes = Math.round(compactBytesTotal / iterations);
     return {
@@ -376,6 +380,8 @@ export async function runCompactProjectionBenchmark(
       compactElements,
     };
   } finally {
+    // In the finally (not the try tail): a mid-run failure must still release the engine.
+    await service.shutdown();
     await stopOwnedServer();
   }
 }

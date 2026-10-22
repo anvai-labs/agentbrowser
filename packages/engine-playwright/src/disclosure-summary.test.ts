@@ -11,6 +11,7 @@
 import type { EnginePage } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
+import { backingPage } from './test-support/backing-page.js';
 
 const page = (html: string) => `data:text/html,${encodeURIComponent(html)}`;
 
@@ -31,11 +32,9 @@ const summaries = async (p: EnginePage) =>
 /** Toggle the page's #d details by script (state changed after observe), then click the
  * given ref; returns the outcome code the click settled as. */
 async function scriptToggleOutcome(p: EnginePage, ref: string) {
-  await (p as unknown as { backingPage(): import('playwright').Page })
-    .backingPage()
-    .evaluate(() => {
-      (document.getElementById('d') as HTMLDetailsElement).open = true;
-    });
+  await backingPage(p).evaluate(() => {
+    (document.getElementById('d') as HTMLDetailsElement).open = true;
+  });
   return p.act({ type: 'click', target: { ref } }).then(
     (result) => result.error?.code ?? 'ran',
     (error: { code?: string }) => error.code
@@ -197,11 +196,9 @@ describe('native disclosures (details/summary) in observe', () => {
       '<details id="d" open><summary>Live</summary><span id="n">0</span></details>',
       async (p) => {
         const [summary] = await summaries(p);
-        await (p as unknown as { backingPage(): import('playwright').Page })
-          .backingPage()
-          .evaluate(() => {
-            (document.getElementById('n') as HTMLElement).textContent = '1';
-          });
+        await backingPage(p).evaluate(() => {
+          (document.getElementById('n') as HTMLElement).textContent = '1';
+        });
         await p.act({ type: 'click', target: { ref: summary?.ref as string } });
         expect((await summaries(p))[0]?.expanded).toBe(false);
       }
@@ -266,7 +263,7 @@ describe('native disclosures (details/summary) in observe', () => {
         // The labelledby target lives outside the (closed) details, as on real pages.
         '<span id="la" aria-label="LabelOfA">textA</span>',
       async (p) => {
-        const page = (p as unknown as { backingPage(): import('playwright').Page }).backingPage();
+        const page = backingPage(p);
         const cdp = await page.context().newCDPSession(page);
         const { nodes } = await cdp.send('Accessibility.getFullAXTree');
         const chromium = nodes
@@ -333,7 +330,7 @@ describe('native disclosures (details/summary) in observe', () => {
 
   it('falls back to the page scan when the CDP calls fail (Obscura, or a DOM changed mid-scan)', async () => {
     await withPage('<details><summary>Fallback path</summary><p>x</p></details>', async (p) => {
-      const page = (p as unknown as { backingPage(): import('playwright').Page }).backingPage();
+      const page = backingPage(p);
       const context = page.context() as unknown as { newCDPSession: unknown };
       context.newCDPSession = async () => ({
         send: async () => {
@@ -377,7 +374,7 @@ describe('native disclosures (details/summary) in observe', () => {
   it('an unreadable disclosure state refuses fast instead of waiting out the action timeout', async () => {
     await withPage('<details><summary>Slow</summary><p>x</p></details>', async (p) => {
       const [summary] = await summaries(p);
-      const page = (p as unknown as { backingPage(): import('playwright').Page }).backingPage();
+      const page = backingPage(p);
       // Simulate an engine that never resolves the parent step (seen on Obscura): an untimed
       // attribute read hangs; a timed one fails at its deadline.
       const proto = Object.getPrototypeOf(page.locator('body')) as {

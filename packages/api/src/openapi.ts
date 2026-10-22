@@ -1814,7 +1814,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             "T5 J3b (accepted J-design, D1 amended). Every stored record of the operation ID in the configured namespace, projected to classification, application identity and the departed session's opaque identity; fingerprints, digests, actors, inputs and evidence content never cross the wire. Readable by a tenant API key or the operator key, scoped to the credential's tenant; delegated grants are refused; writes do not exist here (J3c). An absent result is scoped absence in this namespace, never proof of non-execution. Rate limited per tenant.",
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [operationIdParam],
+          parameters: [{ ...operationIdParam }],
           responses: {
             '200': {
               description: 'The bounded record list (at most 16).',
@@ -1916,7 +1916,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.',
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [operationIdParam],
+          parameters: [{ ...operationIdParam }],
           responses: journalRecoveryResponses({
             description: 'How many records were closed (of the first 16 that matched).',
             content: json({
@@ -1948,7 +1948,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Settles ONLY the in-doubt (dispatched, terminal-less) records; undispatched siblings are closed, terminal ones are final. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.',
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [operationIdParam],
+          parameters: [{ ...operationIdParam }],
           responses: journalRecoveryResponses({
             description: 'How many records were settled (of the first 16 that matched).',
             content: json({
@@ -1980,7 +1980,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             "T5 J3c part 2 (accepted design, D3). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). For each in-doubt (dispatched, terminal-less) record, asks the bound adapter's opt-in reconcile for that exact operation (tenant, application identity, session incarnation and operation ID; no fingerprint crosses). committed and rejected commit the matching terminal (completed, failed) with no evidence refs; unknown, or an adapter error, changes nothing and counts as unresolved. An adapter without reconcile refuses with 409 CONTROL_REQUIRED: settle instead. Never replays the effect. Rate limited per tenant.",
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [operationIdParam],
+          parameters: [{ ...operationIdParam }],
           responses: journalRecoveryResponses(
             {
               description: 'How many in-doubt records were resolved and how many stay unresolved.',

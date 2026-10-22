@@ -40,7 +40,7 @@ const docWith = (...cedarTexts: string[]) => ({
     cedar,
   })),
 });
-const policy = (...cedarTexts: string[]) =>
+const cedarPolicy = (...cedarTexts: string[]) =>
   new NetworkPolicy({
     blockLoopback: true,
     blockPrivateIPs: true,
@@ -169,7 +169,9 @@ describe('policyCheck: parity with policies conditioning on ask context (review 
     // Enforcement asks literals at the hostname phase; check must too.
     const cedar =
       '@rule("operator.l") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { context.phase == "hostname" };';
-    await expect(policy(cedar).checkRequest({ hostname: '127.0.0.1' })).resolves.toBeUndefined();
+    await expect(
+      cedarPolicy(cedar).checkRequest({ hostname: '127.0.0.1' })
+    ).resolves.toBeUndefined();
     expect(checkFor([cedar], '127.0.0.1')).toBe(true);
   });
 
@@ -180,12 +182,14 @@ describe('policyCheck: parity with policies conditioning on ask context (review 
       '@rule("operator.l") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { context.addressClasses == ["loopback", "private"] };',
       '@rule("operator.p") permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context.addressClasses == ["loopback", "private"] };',
     ];
-    await expect(policy(...both).checkRequest({ hostname: '0.0.0.0' })).resolves.toBeUndefined();
+    await expect(
+      cedarPolicy(...both).checkRequest({ hostname: '0.0.0.0' })
+    ).resolves.toBeUndefined();
     expect(checkFor(both, '0.0.0.0')).toBe(true);
     // A loopback-only condition never matches 0.0.0.0 on either surface.
     const narrow =
       '@rule("operator.l") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { context.addressClasses == ["loopback"] };';
-    await expect(policy(narrow).checkRequest({ hostname: '0.0.0.0' })).rejects.toMatchObject({
+    await expect(cedarPolicy(narrow).checkRequest({ hostname: '0.0.0.0' })).rejects.toMatchObject({
       code: 'POLICY_DENIED',
     });
     expect(checkFor([narrow], '0.0.0.0')).toBe(false);
@@ -220,7 +224,7 @@ describe('policyCheck: round-2 residues', () => {
     const cedar =
       '@rule("operator.p") permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context.target == "[::ffff:10.1.2.3]" };';
     await expect(
-      policy(cedar).checkRequest({ hostname: '[::ffff:10.1.2.3]' })
+      cedarPolicy(cedar).checkRequest({ hostname: '[::ffff:10.1.2.3]' })
     ).resolves.toBeUndefined();
     expect(checkFor([cedar], '[::ffff:10.1.2.3]')).toBe(true);
   });
