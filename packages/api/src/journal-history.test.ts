@@ -6,8 +6,7 @@
  * reopens on the same store adapter so its records stay readable (and recoverable) until
  * retainUntil. A wrong entry is reported per namespace, never fatal to the current namespace.
  */
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -24,6 +23,7 @@ import {
   serviceJournalHistoryTemplate,
   serviceJournalNamespace,
 } from './journal-config.js';
+import { journalRolloverTree } from './test-support/journal-fixture.js';
 
 const cleanup: string[] = [];
 afterEach(() => {
@@ -31,28 +31,20 @@ afterEach(() => {
 });
 
 function layout() {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'j3d-'));
-  cleanup.push(base);
-  mkdirSync(join(base, 'store'), { mode: 0o700 });
-  mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-  const keyA = join(base, 'key-a');
-  const keyB = join(base, 'key-b');
-  writeFileSync(keyA, `key-a:${'a1'.repeat(32)}\n`, { mode: 0o600 });
-  writeFileSync(keyB, `key-b:${'b2'.repeat(32)}\n`, { mode: 0o600 });
-  const historyFile = join(base, 'history.json');
-  const env = (namespace: string, keyFile: string, acceptUntil: string) => ({
-    AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-    AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-    AGENTBROWSER_JOURNAL_KEY_FILE: keyFile,
-    AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-    AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: acceptUntil,
-    AGENTBROWSER_JOURNAL_NAMESPACE: namespace,
-  });
+  const tree = journalRolloverTree('j3d-');
+  cleanup.push(tree.baseDir);
   const writeHistory = (namespaces: unknown[], mode = 0o600) => {
-    writeFileSync(historyFile, JSON.stringify({ schemaVersion: 1, namespaces }), { mode });
-    chmodSync(historyFile, mode);
+    writeFileSync(tree.historyFile, JSON.stringify({ schemaVersion: 1, namespaces }), { mode });
+    chmodSync(tree.historyFile, mode);
   };
-  return { base, keyA, keyB, historyFile, env, writeHistory };
+  return {
+    base: tree.baseDir,
+    keyA: tree.keyA,
+    keyB: tree.keyB,
+    historyFile: tree.historyFile,
+    env: tree.envFor,
+    writeHistory,
+  };
 }
 
 const intentOf = (operationId: string) => ({
