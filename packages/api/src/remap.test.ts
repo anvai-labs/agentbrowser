@@ -3,25 +3,9 @@
  * action reports the ref span it covered, and the default contract
  * (stale => refusal) is unchanged.
  */
-import { FakeEngine } from '@agentbrowser/testkit';
-import { describe, expect, it } from 'vitest';
-import { AgentBrowserService } from './service';
+import { setupObservedPage } from './test-support/service-setup.js';
 
-async function setup() {
-  const engine = new FakeEngine();
-  const service = new AgentBrowserService({ engine });
-  const session = await service.createSession({ tenantId: 't1' });
-  const pageId = (await service.createPage(session.sessionId)).pageId;
-  await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-  const observation = await service.observe(session.sessionId, pageId, { mode: 'interactive' });
-  const ref = observation.elements[0]?.ref;
-  if (!ref) throw new Error('no elements observed');
-  const engineSessionId = engine.getSessionIds()[0];
-  if (engineSessionId === undefined) throw new Error('no engine session');
-  const fakePage = engine.getFakePage(engineSessionId, pageId);
-  if (!fakePage) throw new Error('no fake page');
-  return { service, session, pageId, ref, fakePage };
-}
+const setup = () => setupObservedPage();
 
 describe('opt-in remap end to end', () => {
   it('heals a stale ref after a revision bump when remap is opted in', async () => {

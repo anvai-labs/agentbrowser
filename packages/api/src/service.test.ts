@@ -395,6 +395,30 @@ describe('AgentBrowserService', () => {
       }
     });
 
+    /** The harness the verified-mode remap tests share: a live page, one observed
+     * element (ref), and churn pinned to 3 so the next plan runs in verified mode. */
+    const remapHarness = async (
+      svc: AgentBrowserService = service,
+      elements: Array<{ role: string; name: string }> = [{ role: 'button', name: 'Submit' }]
+    ) => {
+      const session = await svc.createSession({ tenantId: 't1' });
+      const pageId = (await svc.createPage(session.sessionId)).pageId;
+      await svc.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements(elements);
+      const obs = (await svc.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churnKey = `${session.sessionId}:${pageId}`;
+      const churn = (svc as unknown as { churn: Map<string, number> }).churn;
+      churn.set(churnKey, 3);
+      return { session, pageId, fakePage, ref, churn, churnKey };
+    };
+
     it('decays churn on a successful remap-retry step, not just the primary path', async () => {
       // Without the fix, the stale->remap path bumps churn on every step
       // that goes stale but never decays it back down on a successful
@@ -403,21 +427,7 @@ describe('AgentBrowserService', () => {
       // has actually stabilized. Two remapped-and-successful steps using
       // the SAME (increasingly stale) ref should net back to the
       // pre-plan churn level, not accumulate.
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
-
-      const churnKey = `${session.sessionId}:${pageId}`;
-      const churn = (service as unknown as { churn: Map<string, number> }).churn;
-      churn.set(churnKey, 3);
+      const { session, pageId, ref, churn, churnKey } = await remapHarness();
 
       // Advance the revision so the ref is already stale before the plan
       // starts; the element still matches role+label so each remap succeeds.
@@ -475,23 +485,10 @@ describe('AgentBrowserService', () => {
     });
 
     it('self-heals under verified mode when the ordinal-matched element still matches role+label', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
-
-      // Force verified mode directly - this test is about the
+      // The harness forces verified mode directly - this test is about the
       // disambiguation logic itself, not the churn-accumulation mechanics
       // (covered separately above).
-      const churn = (service as unknown as { churn: Map<string, number> }).churn;
-      churn.set(`${session.sessionId}:${pageId}`, 3);
+      const { session, pageId, ref } = await remapHarness();
 
       // Advance the revision without touching lastObservation (mirrors a
       // real multi-step plan where an earlier step's action moves the page
@@ -507,20 +504,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('refuses to guess-remap under verified mode when a different element now occupies the ordinal', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
-
-      const churn = (service as unknown as { churn: Map<string, number> }).churn;
-      churn.set(`${session.sessionId}:${pageId}`, 3);
+      const { session, pageId, fakePage, ref } = await remapHarness();
 
       await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
 
@@ -539,20 +523,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('remaps later stale refs of a plan from their mint-time revision, not just the first (regression: self-heal re-observe used to invalidate the baseline)', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
-
-      const churn = (service as unknown as { churn: Map<string, number> }).churn;
-      churn.set(`${session.sessionId}:${pageId}`, 3);
+      const { session, pageId, ref } = await remapHarness();
 
       await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
 
@@ -576,20 +547,9 @@ describe('AgentBrowserService', () => {
         engine,
         secretManager: new SecretManager({ 'vault://p': 'hunter2' }),
       });
-      const session = await secreted.createSession({ tenantId: 't1' });
-      const pageId = (await secreted.createPage(session.sessionId)).pageId;
-      await secreted.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Submit hunter2' }]);
-      const obs = (await secreted.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
-
-      const churn = (secreted as unknown as { churn: Map<string, number> }).churn;
-      churn.set(`${session.sessionId}:${pageId}`, 3);
+      const { session, pageId, ref } = await remapHarness(secreted, [
+        { role: 'button', name: 'Submit hunter2' },
+      ]);
 
       await secreted.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
 
@@ -605,20 +565,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('reports PLAN_STEP_FAILED, not AMBIGUOUS_REMAP, when the element is gone in verified mode', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
-
-      const churn = (service as unknown as { churn: Map<string, number> }).churn;
-      churn.set(`${session.sessionId}:${pageId}`, 3);
+      const { session, pageId, fakePage, ref } = await remapHarness();
 
       // The element is removed outright: no candidate exists at any ordinal.
       fakePage?.setElements([]);

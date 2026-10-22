@@ -219,6 +219,40 @@ describe('route contract metadata', () => {
   });
 });
 
+/** The delegated-capability suites' shared setup: one delegated `audit` session and its
+ * grant token, minted through the operator's real review→delegate flow. Delegated sessions
+ * require an authenticated operator; in local no-keys mode they cannot be created at all. */
+const delegatedAuditSession = async () => {
+  const server = await buildServer({
+    apiKeys: new Map([
+      [
+        (await import('node:crypto')).createHash('sha256').update('operator').digest('hex'),
+        'owner',
+      ],
+    ]),
+  });
+  const operatorHeaders = { authorization: 'Bearer operator' };
+  const create = await server.inject({
+    method: 'POST',
+    url: '/v1/sessions',
+    headers: operatorHeaders,
+    payload: { controlMode: 'delegated' },
+  });
+  const sessionPath = `/v1/sessions/${create.json().sessionId}`;
+  const review = await server.inject({
+    method: 'POST',
+    url: `${sessionPath}/control/prepare-resume`,
+    headers: operatorHeaders,
+  });
+  const grant = await server.inject({
+    method: 'POST',
+    url: `${sessionPath}/control/delegate`,
+    headers: operatorHeaders,
+    payload: { epoch: review.json().epoch, mode: 'audit' },
+  });
+  return { server, sessionPath, token: grant.json().token as string };
+};
+
 describe('auto-generated HEAD duplicates follow GET capability', () => {
   // Fastify copies route config onto auto-generated HEAD duplicates, so a
   // delegated agent's HEAD is gated exactly like the GET it mirrors. (The
@@ -230,34 +264,7 @@ describe('auto-generated HEAD duplicates follow GET capability', () => {
   let token: string;
 
   beforeAll(async () => {
-    server = await buildServer({
-      apiKeys: new Map([
-        [
-          (await import('node:crypto')).createHash('sha256').update('operator').digest('hex'),
-          'owner',
-        ],
-      ]),
-    });
-    const operatorHeaders = { authorization: 'Bearer operator' };
-    const create = await server.inject({
-      method: 'POST',
-      url: '/v1/sessions',
-      headers: operatorHeaders,
-      payload: { controlMode: 'delegated' },
-    });
-    sessionPath = `/v1/sessions/${create.json().sessionId}`;
-    const review = await server.inject({
-      method: 'POST',
-      url: `${sessionPath}/control/prepare-resume`,
-      headers: operatorHeaders,
-    });
-    const grant = await server.inject({
-      method: 'POST',
-      url: `${sessionPath}/control/delegate`,
-      headers: operatorHeaders,
-      payload: { epoch: review.json().epoch, mode: 'audit' },
-    });
-    token = grant.json().token as string;
+    ({ server, sessionPath, token } = await delegatedAuditSession());
   });
 
   afterAll(async () => {
@@ -291,36 +298,7 @@ describe('delegated capability spot checks', () => {
   let token: string;
 
   beforeAll(async () => {
-    server = await buildServer({
-      // Delegated sessions require an authenticated operator; in local
-      // no-keys mode they cannot be created at all.
-      apiKeys: new Map([
-        [
-          (await import('node:crypto')).createHash('sha256').update('operator').digest('hex'),
-          'owner',
-        ],
-      ]),
-    });
-    const operatorHeaders = { authorization: 'Bearer operator' };
-    const create = await server.inject({
-      method: 'POST',
-      url: '/v1/sessions',
-      headers: operatorHeaders,
-      payload: { controlMode: 'delegated' },
-    });
-    sessionPath = `/v1/sessions/${create.json().sessionId}`;
-    const review = await server.inject({
-      method: 'POST',
-      url: `${sessionPath}/control/prepare-resume`,
-      headers: operatorHeaders,
-    });
-    const grant = await server.inject({
-      method: 'POST',
-      url: `${sessionPath}/control/delegate`,
-      headers: operatorHeaders,
-      payload: { epoch: review.json().epoch, mode: 'audit' },
-    });
-    token = grant.json().token as string;
+    ({ server, sessionPath, token } = await delegatedAuditSession());
   });
 
   afterAll(async () => {

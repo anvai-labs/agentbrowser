@@ -1,9 +1,7 @@
 import { createServer } from 'node:http';
-import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
-import { NetworkPolicy } from '@agentbrowser/policy';
 import { parseAutofillReport } from '@agentbrowser/protocol';
 import { expect, it } from 'vitest';
-import { buildServer } from './server.js';
+import { startLoopbackScopedApp } from './test-support/loopback-app.js';
 
 it.each(['GET', 'POST'])(
   'REST autofill stops a widget sequence after an observed blocked %s redirect',
@@ -38,20 +36,8 @@ it.each(['GET', 'POST'])(
           </body></html>`);
       }
     });
-    await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
-    const port = (fixture.address() as { port: number }).port;
-    const app = await buildServer({
-      engine: new PlaywrightChromiumEngine(),
-      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
-    });
-    const post = (url: string, payload: object) => app.inject({ method: 'POST', url, payload });
+    const { port, app, post, sessionPath } = await startLoopbackScopedApp(fixture);
     try {
-      const session = await post('/v1/sessions', {
-        tenantId: 'local',
-        policy: { scope: { allowedHosts: ['127.0.0.1'], pathRules: [{ prefix: '/allowed/' }] } },
-      });
-      expect(session.statusCode).toBe(201);
-      const sessionPath = `/v1/sessions/${session.json().sessionId}`;
       const created = await post(`${sessionPath}/pages`, {
         url: `http://127.0.0.1:${port}/allowed/start`,
       });

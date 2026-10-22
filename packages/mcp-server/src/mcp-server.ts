@@ -215,6 +215,46 @@ export const OPERATION_ID_TOOLS = Object.freeze([
   'page_create',
 ] as const);
 
+/** Shared by finding_check and finding_sarif: both read ledger + findings from the server host. */
+const FINDING_INPUT_PROPERTIES: Record<string, unknown> = {
+  ledger: {
+    type: 'string',
+    description: 'Path to the exported engagement ledger (engagement export --out).',
+  },
+  findings: {
+    type: 'string',
+    description: 'Path to the findings JSON array.',
+  },
+};
+
+/**
+ * The shared front half of finding_check and finding_sarif: validate the paths, read both
+ * server-host files, parse the findings JSON, and run the ledger check. The failure value is
+ * the ok:false + issues shape both tools advertise, so the two outputs cannot drift apart.
+ */
+async function readCheckedFindings(args: Record<string, unknown>) {
+  if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
+    throw new UsageError('ledger and findings paths are required.');
+  const { readFile } = await import('node:fs/promises');
+  const ledgerText = await readFile(args.ledger, 'utf8');
+  let findings: unknown;
+  try {
+    findings = JSON.parse(await readFile(args.findings, 'utf8'));
+  } catch {
+    throw new UsageError('--findings must contain a JSON array of findings.');
+  }
+  const result = checkEngagementFindings(ledgerText, findings);
+  if (!result.ok)
+    return {
+      ok: false as const,
+      issues: result.issues.map((issue) => ({
+        findingId: issue.findingId,
+        issue: issue.issue,
+      })),
+    };
+  return result;
+}
+
 export function buildTools(
   client: McpClient,
   boundSessionId?: string,
@@ -954,38 +994,12 @@ export function buildTools(
         'not match the finding URL. Nothing is submitted anywhere.',
       inputSchema: {
         type: 'object',
-        properties: {
-          ledger: {
-            type: 'string',
-            description: 'Path to the exported engagement ledger (engagement export --out).',
-          },
-          findings: {
-            type: 'string',
-            description: 'Path to the findings JSON array.',
-          },
-        },
+        properties: FINDING_INPUT_PROPERTIES,
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {
-        if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
-          throw new UsageError('ledger and findings paths are required.');
-        const { readFile } = await import('node:fs/promises');
-        const ledgerText = await readFile(args.ledger, 'utf8');
-        let findings: unknown;
-        try {
-          findings = JSON.parse(await readFile(args.findings, 'utf8'));
-        } catch {
-          throw new UsageError('--findings must contain a JSON array of findings.');
-        }
-        const result = checkEngagementFindings(ledgerText, findings);
-        if (!result.ok)
-          return {
-            ok: false,
-            issues: result.issues.map((issue) => ({
-              findingId: issue.findingId,
-              issue: issue.issue,
-            })),
-          };
+        const result = await readCheckedFindings(args);
+        if (!result.ok) return result;
         return {
           ok: true,
           engagementId: result.engagementId,
@@ -1035,14 +1049,7 @@ export function buildTools(
       inputSchema: {
         type: 'object',
         properties: {
-          ledger: {
-            type: 'string',
-            description: 'Path to the exported engagement ledger (engagement export --out).',
-          },
-          findings: {
-            type: 'string',
-            description: 'Path to the findings JSON array.',
-          },
+          ...FINDING_INPUT_PROPERTIES,
           out: {
             type: 'string',
             description: 'SARIF output path on the server host (created exclusively, mode 0600).',
@@ -1051,25 +1058,8 @@ export function buildTools(
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {
-        if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
-          throw new UsageError('ledger and findings paths are required.');
-        const { readFile } = await import('node:fs/promises');
-        const ledgerText = await readFile(args.ledger, 'utf8');
-        let findings: unknown;
-        try {
-          findings = JSON.parse(await readFile(args.findings, 'utf8'));
-        } catch {
-          throw new UsageError('--findings must contain a JSON array of findings.');
-        }
-        const result = checkEngagementFindings(ledgerText, findings);
-        if (!result.ok)
-          return {
-            ok: false,
-            issues: result.issues.map((issue) => ({
-              findingId: issue.findingId,
-              issue: issue.issue,
-            })),
-          };
+        const result = await readCheckedFindings(args);
+        if (!result.ok) return result;
         const sarif = buildEngagementSarif(result);
         const { writeFile } = await import('node:fs/promises');
         const out =

@@ -329,38 +329,42 @@ describe('AgentBrowser REST API', () => {
     });
   });
 
+  /** The describe blocks below share this REST bootstrap: one session, one page, navigated
+   * to the stub origin before each test. */
+  async function createNavigatedPage() {
+    const sessionResponse = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenantId: 'tenant_1',
+      }),
+    });
+
+    const { sessionId: id } = await sessionResponse.json();
+
+    const pageResponse = await fetch(`${baseUrl}/v1/sessions/${id}/pages`, {
+      method: 'POST',
+    });
+
+    const { pageId: pid } = await pageResponse.json();
+
+    // Navigate first
+    await fetch(`${baseUrl}/v1/sessions/${id}/pages/${pid}/navigate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: 'https://example.com',
+      }),
+    });
+    return { sessionId: id, pageId: pid };
+  }
+
   describe('observations', () => {
     let sessionId: string;
     let pageId: string;
 
     beforeEach(async () => {
-      // Create session and page
-      const sessionResponse = await fetch(`${baseUrl}/v1/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: 'tenant_1',
-        }),
-      });
-
-      const { sessionId: id } = await sessionResponse.json();
-      sessionId = id;
-
-      const pageResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
-        method: 'POST',
-      });
-
-      const { pageId: pid } = await pageResponse.json();
-      pageId = pid;
-
-      // Navigate first
-      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: 'https://example.com',
-        }),
-      });
+      ({ sessionId, pageId } = await createNavigatedPage());
     });
 
     it('should get semantic observation', async () => {
@@ -415,33 +419,7 @@ describe('AgentBrowser REST API', () => {
     let pageId: string;
 
     beforeEach(async () => {
-      // Create session and page
-      const sessionResponse = await fetch(`${baseUrl}/v1/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: 'tenant_1',
-        }),
-      });
-
-      const { sessionId: id } = await sessionResponse.json();
-      sessionId = id;
-
-      const pageResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
-        method: 'POST',
-      });
-
-      const { pageId: pid } = await pageResponse.json();
-      pageId = pid;
-
-      // Navigate first
-      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: 'https://example.com',
-        }),
-      });
+      ({ sessionId, pageId } = await createNavigatedPage());
     });
 
     it('should execute click action', async () => {

@@ -32,8 +32,8 @@ try {
   const {
     closeJournalSqliteNamespace,
     commitJournalSqliteTerminal,
-    findJournalSqliteRecordsByOperation,
-    lookupJournalSqliteRecord,
+    dispatchJournalSqliteRead,
+    journalSqliteStatementReader,
     markJournalSqliteDispatch,
     observeJournalSqliteNamespace,
     openJournalSqliteRecords,
@@ -47,26 +47,6 @@ try {
       reader = new DatabaseSync(`${options.directory}/journal.sqlite`, { readOnly: true });
     return reader;
   };
-  const get =
-    (connection: DatabaseSync) =>
-    (sql: string, ...parameters: unknown[]) => {
-      const prepared = connection.prepare(sql);
-      try {
-        return prepared.get(...(parameters as never[])) as Record<string, unknown> | undefined;
-      } finally {
-        prepared.close?.();
-      }
-    };
-  const all =
-    (connection: DatabaseSync) =>
-    (sql: string, ...parameters: unknown[]) => {
-      const prepared = connection.prepare(sql);
-      try {
-        return prepared.all(...(parameters as never[])) as Record<string, unknown>[];
-      } finally {
-        prepared.close?.();
-      }
-    };
   const envelope = (namespaceId: string, ownerFence: string, value: unknown) => ({
     namespaceId,
     ownerFence,
@@ -94,7 +74,7 @@ try {
           send({ test: 'advanced', clock });
         } else if (test.test === 'observe') {
           const snapshot = observeJournalSqliteNamespace(
-            { get: get(readConnection()), all: all(readConnection()) },
+            journalSqliteStatementReader(readConnection()),
             test.namespaceId as string
           );
           send({ test: 'observed', snapshot });
@@ -233,25 +213,13 @@ try {
         closeJournalSqliteNamespace(tx, namespaceId, ownerFence);
         return { kind: 'closed' };
       });
-    } else if (read && kind === 'findByOperation') {
-      const connection = readConnection();
-      outcome = findJournalSqliteRecordsByOperation(
-        {
-          get: get(connection),
-          all: (sql: string, ...parameters: unknown[]) =>
-            connection.prepare(sql).all(...(parameters as never[])) as Record<string, unknown>[],
-        },
-        namespaceId,
-        ownerFence,
-        value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
-        clock
-      );
     } else if (read) {
-      outcome = lookupJournalSqliteRecord(
-        { get: get(readConnection()) },
+      outcome = dispatchJournalSqliteRead(
+        readConnection(),
+        kind,
         namespaceId,
         ownerFence,
-        value as Parameters<typeof lookupJournalSqliteRecord>[3],
+        value,
         clock
       );
     } else {
