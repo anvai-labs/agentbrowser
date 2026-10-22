@@ -10,14 +10,12 @@
  * | never-loading options | a loader that never resolves | `uncertain`, nothing committed or submitted |
  * | partial effects | a later field's option never loads | earlier fields stay committed and are reported; nothing is undone or submitted |
  */
-import { createHash } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
-import { NetworkPolicy } from '@agentbrowser/policy';
-import { build } from 'esbuild';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildServer } from './server.js';
+import {
+  bundleFixtureServer,
+  type FixtureApp,
+  openRealBrowserApp,
+} from './test-support/real-browser-app.js';
 
 const APP = `
 import { cloneElement, createElement as e, useEffect, useState } from 'react';
@@ -65,84 +63,23 @@ function App() {
 createRoot(document.getElementById('root')).render(e(App));
 `;
 
-let fixture: Server;
-let bundle = '';
-let state: { city: string | null; pick: string | null; slow?: string | null } = {
-  city: null,
-  pick: null,
-};
-let submissions = 0;
+let app: FixtureApp<{ city: string | null; pick: string | null; slow?: string | null }>;
 
 beforeAll(async () => {
-  const result = await build({
-    stdin: { contents: APP, resolveDir: import.meta.dirname, loader: 'js' },
-    bundle: true,
-    write: false,
-    format: 'iife',
-    minify: true,
-    define: { 'process.env.NODE_ENV': '"production"' },
-    logLevel: 'silent',
+  app = await bundleFixtureServer({
+    appSource: APP,
+    initialState: { city: null, pick: null },
   });
-  bundle = result.outputFiles[0]?.text ?? '';
-  fixture = createServer((request, response) => {
-    if (request.url === '/bundle.js') {
-      response.setHeader('content-type', 'text/javascript');
-      response.end(bundle);
-      return;
-    }
-    if (request.url === '/state' || request.url === '/submitted') {
-      let body = '';
-      request.on('data', (chunk) => {
-        body += chunk;
-      });
-      request.on('end', () => {
-        if (request.url === '/state') state = JSON.parse(body);
-        else submissions += 1;
-        response.end('ok');
-      });
-      return;
-    }
-    response.setHeader('content-type', 'text/html');
-    response.end('<!doctype html><div id="root"></div><script src="/bundle.js"></script>');
-  });
-  await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
 }, 60_000);
 
-afterAll(async () => {
-  fixture.closeAllConnections();
-  await new Promise<void>((resolve) => fixture.close(() => resolve()));
-});
+afterAll(() => app.dispose());
 
 beforeEach(() => {
-  state = { city: null, pick: null, slow: null };
-  submissions = 0;
+  app.reset({ city: null, pick: null, slow: null });
 });
 
-const owner = { authorization: 'Bearer owner' };
-
 async function openApp() {
-  const server = await buildServer({
-    engine: new PlaywrightChromiumEngine(),
-    networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
-    apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'tenant']]),
-  });
-  const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
-  const created = await server.inject({
-    method: 'POST',
-    url: '/v1/sessions',
-    headers: owner,
-    payload: {},
-  });
-  const path = `/v1/sessions/${created.json().sessionId}`;
-  const page = await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner });
-  const pagePath = `${path}/pages/${page.json().pageId}`;
-  const nav = await server.inject({
-    method: 'POST',
-    url: `${pagePath}/navigate`,
-    headers: owner,
-    payload: { url, waitUntil: 'networkidle' },
-  });
-  expect(nav.statusCode).toBe(200);
+  const { server, owner, url, pagePath } = await openRealBrowserApp('chromium', app.fixture);
   const autofill = (
     operationId: string,
     fields: unknown[],
@@ -175,8 +112,8 @@ describe('T6 async, recycled and partial-effect coverage (real react-select, Chr
       );
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().receipts[0].status).toBe('verified');
-      await expect.poll(() => state.city, { timeout: 5_000 }).toBe('Chicago');
-      expect(submissions).toBe(0);
+      await expect.poll(() => app.state.city, { timeout: 5_000 }).toBe('Chicago');
+      expect(app.submissions).toBe(0);
     } finally {
       await server.close();
     }
@@ -194,8 +131,8 @@ describe('T6 async, recycled and partial-effect coverage (real react-select, Chr
       ]);
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json().receipts[0].status).toBe('verified');
-      await expect.poll(() => state.pick, { timeout: 5_000 }).toBe('Option 37');
-      expect(submissions).toBe(0);
+      await expect.poll(() => app.state.pick, { timeout: 5_000 }).toBe('Option 37');
+      expect(app.submissions).toBe(0);
     } finally {
       await server.close();
     }
@@ -225,8 +162,8 @@ describe('T6 async, recycled and partial-effect coverage (real react-select, Chr
       });
       // The earlier field's effect stands (reported verified), with no guessed compensation.
       await new Promise((settle) => setTimeout(settle, 600));
-      expect(state).toEqual({ city: null, pick: 'Option 12', slow: null });
-      expect(submissions).toBe(0);
+      expect(app.state).toEqual({ city: null, pick: 'Option 12', slow: null });
+      expect(app.submissions).toBe(0);
     } finally {
       await server.close();
     }
@@ -252,8 +189,8 @@ describe('T6 async, recycled and partial-effect coverage (real react-select, Chr
         error: { code: 'TARGET_NOT_FOUND' },
       });
       await new Promise((settle) => setTimeout(settle, 500));
-      expect(state.slow ?? null).toBeNull();
-      expect(submissions).toBe(0);
+      expect(app.state.slow ?? null).toBeNull();
+      expect(app.submissions).toBe(0);
     } finally {
       await server.close();
     }

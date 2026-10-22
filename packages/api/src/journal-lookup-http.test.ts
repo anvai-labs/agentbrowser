@@ -15,7 +15,7 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
 import { buildServer } from './server.js';
-import { AgentBrowserService } from './service.js';
+import { buildEnvServer } from './test-support/env-server.js';
 
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -142,29 +142,11 @@ async function buildRestServer(
   env: Record<string, string | undefined>,
   options: { apiKeys?: boolean } = {}
 ) {
-  const names = Object.keys(env);
-  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-  cleanup.push(() => {
-    for (const name of names) {
-      if (saved[name] === undefined) delete process.env[name];
-      else process.env[name] = saved[name];
-    }
-  });
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  cleanup.push(() => warn.mockRestore());
-  const server = await buildServer({
-    engine: new FakeEngine(),
-    ...(options.apiKeys === false
-      ? {}
-      : {
-          apiKeys: new Map([[createHash('sha256').update(apiKey).digest('hex'), 'owner']]),
-        }),
-  });
-  cleanup.push(() => server.close());
+  const { server } = await buildEnvServer(
+    cleanup,
+    env,
+    options.apiKeys === false ? {} : { apiKey }
+  );
   return server;
 }
 

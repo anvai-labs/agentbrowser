@@ -3,18 +3,16 @@
  * found by lookup (tagged with their namespace) and recoverable by the operator — the write
  * commits in the namespace that owns the record. A refused history entry is UNREAD, never absent.
  */
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   journalConfigFromEnvironment,
   openServiceJournal,
   serviceJournalHistoryTemplate,
 } from './journal-config.js';
-import { buildServer } from './server.js';
+import { buildEnvServer } from './test-support/env-server.js';
 
 const API_KEY = 'api-key-j3d-http';
 const OPERATOR_KEY = 'operator-key-j3d-http-0001';
@@ -52,26 +50,10 @@ async function server(
   env: Record<string, string | undefined>,
   applicationAdapters?: import('@agentbrowser/control').ApplicationAdapter[]
 ) {
-  const names = Object.keys(env);
-  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-  cleanup.push(() => {
-    for (const name of names) {
-      if (saved[name] === undefined) delete process.env[name];
-      else process.env[name] = saved[name];
-    }
+  const { server: built, warn } = await buildEnvServer(cleanup, env, {
+    apiKey: API_KEY,
+    applicationAdapters,
   });
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  cleanup.push(() => warn.mockRestore());
-  const built = await buildServer({
-    engine: new FakeEngine(),
-    apiKeys: new Map([[createHash('sha256').update(API_KEY).digest('hex'), 'owner']]),
-    ...(applicationAdapters ? { applicationAdapters } : {}),
-  });
-  cleanup.push(() => built.close());
   return { built, warn };
 }
 

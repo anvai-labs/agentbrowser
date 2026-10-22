@@ -19,9 +19,8 @@ import {
 import {
   closeJournalSqliteNamespace,
   commitJournalSqliteTerminal,
+  dispatchJournalSqliteRead,
   ensureJournalSqliteRecordSchema,
-  findJournalSqliteRecordsByOperation,
-  lookupJournalSqliteRecord,
   markJournalSqliteDispatch,
   openJournalSqliteRecords,
   reserveJournalSqliteIntent,
@@ -61,15 +60,6 @@ try {
       reader = new DatabaseSync(`${options.directory}/journal.sqlite`, { readOnly: true });
     return reader;
   };
-  const get =
-    (connection: DatabaseSync) =>
-    (sql: string, ...parameters: unknown[]) => {
-      // Statement cleanup follows the owner's idiom: database.close() finalizes owned
-      // statements; none escape this helper.
-      return connection.prepare(sql).get(...(parameters as never[])) as
-        | Record<string, unknown>
-        | undefined;
-    };
   const envelope = (namespaceId: string, ownerFence: string, value: unknown) => ({
     namespaceId,
     ownerFence,
@@ -111,25 +101,13 @@ try {
         closeJournalSqliteNamespace(tx, namespaceId, ownerFence);
         return { kind: 'closed' };
       });
-    } else if (read && kind === 'findByOperation') {
-      const connection = readConnection();
-      outcome = findJournalSqliteRecordsByOperation(
-        {
-          get: get(connection),
-          all: (sql: string, ...parameters: unknown[]) =>
-            connection.prepare(sql).all(...(parameters as never[])) as Record<string, unknown>[],
-        },
-        namespaceId,
-        ownerFence,
-        value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
-        clock.now()
-      );
     } else if (read) {
-      outcome = lookupJournalSqliteRecord(
-        { get: get(readConnection()) },
+      outcome = dispatchJournalSqliteRead(
+        readConnection(),
+        kind,
         namespaceId,
         ownerFence,
-        value as Parameters<typeof lookupJournalSqliteRecord>[3],
+        value,
         clock.now()
       );
     } else {
