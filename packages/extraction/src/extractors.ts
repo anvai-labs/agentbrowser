@@ -8,16 +8,7 @@
 
 import type { ExtractionResult, RawPageState } from '@agentbrowser/engine';
 import { parseHTML } from 'linkedom';
-
-/** FNV-1a: short, deterministic, dependency-free content hash. */
-function hash(content: string): string {
-  let digest = 0x811c9dc5;
-  for (let i = 0; i < content.length; i++) {
-    digest ^= content.charCodeAt(i);
-    digest = Math.imul(digest, 0x01000193) >>> 0;
-  }
-  return digest.toString(16).padStart(8, '0');
-}
+import { fnv1aHash } from './hash.js';
 
 /** The revision an observation was taken at, when the engine reports it. */
 function revisionOf(raw: RawPageState): number {
@@ -33,7 +24,7 @@ function evidenceFor(raw: RawPageState, span?: string): NonNullable<ExtractionRe
       ...(span !== undefined ? { text: span.slice(0, 200) } : {}),
       // Evidence attests to the source content: the same page state always
       // hashes identically, and any content change moves the hash.
-      hash: hash(raw.content),
+      hash: fnv1aHash(raw.content),
     },
   ];
 }

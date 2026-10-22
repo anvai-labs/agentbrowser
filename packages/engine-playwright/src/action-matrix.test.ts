@@ -3,10 +3,7 @@ import type { EnginePage } from '@agentbrowser/engine';
 import type { Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
-
-function backingPage(page: EnginePage): Page {
-  return (page as unknown as { backingPage(): Page }).backingPage();
-}
+import { backingPage } from './test-support/backing-page.js';
 
 /** Fresh observation per action: any mutation invalidates the previous refs. */
 async function refOf(page: EnginePage, role: string, name: string): Promise<string> {

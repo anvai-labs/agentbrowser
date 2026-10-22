@@ -2,10 +2,7 @@ import type { EngineError, EnginePage } from '@agentbrowser/engine';
 import type { Page } from 'playwright';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
-
-function backingPage(page: EnginePage): Page {
-  return (page as unknown as { backingPage(): Page }).backingPage();
-}
+import { backingPage } from './test-support/backing-page.js';
 
 /**
  * Failure edges around target resolution: a remap heal whose retry target

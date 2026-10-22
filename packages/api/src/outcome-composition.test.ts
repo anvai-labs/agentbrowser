@@ -6,49 +6,12 @@
  * authorize callback refuses).
  */
 
-import {
-  type ApplicationReceiptAuthorizationRequest,
-  defineVerifier,
-  TrustedVerifierRegistry,
-} from '@agentbrowser/control';
+import type { ApplicationReceiptAuthorizationRequest } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { applicationReceiptOutcomeOptions } from './outcome-composition.js';
 import { AgentBrowserService } from './service.js';
-
-const verifierRegistry = (): TrustedVerifierRegistry =>
-  new TrustedVerifierRegistry([
-    defineVerifier({
-      descriptor: {
-        id: 'receipt.equals',
-        version: '1',
-        inputSchemaId: 'number',
-        evidenceSchemaId: 'number',
-        requiredCapability: 'receipt.equals',
-        evidenceSource: 'fixture.receipt',
-        requiredLayer: 'G4',
-        budget: {
-          maxReads: 1,
-          timeoutMs: 500,
-          pollIntervalMs: 1,
-          cleanupTimeoutMs: 25,
-          maxEvidenceRefs: 1,
-        },
-        redaction: 'reference_only',
-        unsupported: [],
-        cleanup: 'not_needed',
-      },
-      parseInput: (input) => {
-        if (typeof input !== 'number') throw new Error();
-        return input;
-      },
-      parseEvidence: (input) => {
-        if (typeof input !== 'number') throw new Error();
-        return input;
-      },
-      predicate: (a, b) => a === b,
-    }),
-  ]);
+import { receiptEqualsRegistry } from './test-support/receipt-verifier.js';
 
 const authorize = vi.fn((_request: ApplicationReceiptAuthorizationRequest) => undefined);
 const adapters = [
@@ -62,7 +25,7 @@ const adapters = [
 
 describe('applicationReceiptOutcomeOptions', () => {
   it('returns copied adapters, the given verifier registry, and a synchronous provider', () => {
-    const registry = verifierRegistry();
+    const registry = receiptEqualsRegistry();
     const describeSpy = vi.spyOn(registry, 'describe');
     const composed = applicationReceiptOutcomeOptions({
       adapters,
@@ -88,7 +51,7 @@ describe('applicationReceiptOutcomeOptions', () => {
     ]) {
       const composed = applicationReceiptOutcomeOptions({
         adapters,
-        verifierRegistry: verifierRegistry(),
+        verifierRegistry: receiptEqualsRegistry(),
         verifier: { id: 'receipt.equals', version: '1' },
         authorize,
         ...(evidenceRefs !== undefined ? { evidenceRefs } : {}),
@@ -115,7 +78,7 @@ describe('applicationReceiptOutcomeOptions', () => {
   it('blocks an outcome run when the deployment authorize callback refuses', async () => {
     const composed = applicationReceiptOutcomeOptions({
       adapters,
-      verifierRegistry: verifierRegistry(),
+      verifierRegistry: receiptEqualsRegistry(),
       verifier: { id: 'receipt.equals', version: '1' },
       authorize,
     });
@@ -153,7 +116,7 @@ describe('applicationReceiptOutcomeOptions', () => {
   it('rejects an outcome run naming a verifier outside the composed registry', async () => {
     const composed = applicationReceiptOutcomeOptions({
       adapters,
-      verifierRegistry: verifierRegistry(),
+      verifierRegistry: receiptEqualsRegistry(),
       verifier: { id: 'receipt.equals', version: '1' },
       authorize,
     });

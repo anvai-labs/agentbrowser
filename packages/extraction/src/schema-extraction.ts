@@ -12,6 +12,7 @@
 
 import type { SecretManager } from '@agentbrowser/core';
 import type { ExtractionResult, RawPageState } from '@agentbrowser/engine';
+import { fnv1aHash } from './hash.js';
 
 /** Adapter contract for model-based extraction (spec 12.2). */
 export interface ModelExtractProvider {
@@ -49,16 +50,6 @@ function propertiesOf(schema: Record<string, unknown>): SchemaProperty[] {
   const properties = (schema.properties ?? {}) as Record<string, unknown>;
   const required = new Set((schema.required as string[] | undefined) ?? []);
   return Object.keys(properties).map((name) => ({ name, required: required.has(name) }));
-}
-
-/** FNV-1a (same as the deterministic extractors - auditable evidence). */
-function hash(content: string): string {
-  let digest = 0x811c9dc5;
-  for (let i = 0; i < content.length; i++) {
-    digest ^= content.charCodeAt(i);
-    digest = Math.imul(digest, 0x01000193) >>> 0;
-  }
-  return digest.toString(16).padStart(8, '0');
 }
 
 /** Strip markup for text matching. */
@@ -206,7 +197,7 @@ export class SchemaExtractor {
             typeof (raw.metadata as { revision?: unknown } | undefined)?.revision === 'number'
               ? (raw.metadata as { revision: number }).revision
               : 0,
-          hash: hash(raw.content),
+          hash: fnv1aHash(raw.content),
         },
       ],
       ...(warnings.length > 0 ? { warnings } : {}),

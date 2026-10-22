@@ -227,6 +227,27 @@ const FINDING_INPUT_PROPERTIES: Record<string, unknown> = {
   },
 };
 
+/** The ok:false + issues branch both finding tools advertise — the output-schema twin of
+ * readCheckedFindings' failure value, so schema and handler cannot drift apart. */
+const FINDING_FAILURE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  required: ['ok', 'issues'],
+  properties: {
+    ok: { const: false },
+    issues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['findingId', 'issue'],
+        properties: {
+          findingId: { type: 'string' },
+          issue: { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
 /**
  * The shared front half of finding_check and finding_sarif: validate the paths, read both
  * server-host files, parse the findings JSON, and run the ledger check. The failure value is
@@ -965,24 +986,7 @@ export function buildTools(
               warnings: { type: 'array', items: { type: 'string' } },
             },
           },
-          {
-            type: 'object',
-            required: ['ok', 'issues'],
-            properties: {
-              ok: { const: false },
-              issues: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  required: ['findingId', 'issue'],
-                  properties: {
-                    findingId: { type: 'string' },
-                    issue: { type: 'string' },
-                  },
-                },
-              },
-            },
-          },
+          { ...FINDING_FAILURE_SCHEMA },
         ],
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
@@ -1023,24 +1027,7 @@ export function buildTools(
               results: { type: 'number' },
             },
           },
-          {
-            type: 'object',
-            required: ['ok', 'issues'],
-            properties: {
-              ok: { const: false },
-              issues: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  required: ['findingId', 'issue'],
-                  properties: {
-                    findingId: { type: 'string' },
-                    issue: { type: 'string' },
-                  },
-                },
-              },
-            },
-          },
+          { ...FINDING_FAILURE_SCHEMA },
         ],
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
