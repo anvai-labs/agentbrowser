@@ -3,8 +3,6 @@
  * are journaled and advertised only while the journal is open; ephemeral writes stay unjournaled;
  * the store's own rows are the oracle, read independently of the service.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { FakeEngine } from '@agentbrowser/testkit';

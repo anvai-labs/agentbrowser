@@ -1,9 +1,7 @@
-import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { setImmediate as settlePublication } from 'node:timers/promises';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
-import { buildServer } from './server.js';
 import { keyedServer } from './test-support/keyed-server.js';
 
 it('keeps an aborted HTTP mutation draining until the actual browser promise settles', async () => {

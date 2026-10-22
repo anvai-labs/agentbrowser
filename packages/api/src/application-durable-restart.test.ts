@@ -9,8 +9,7 @@
  *    That is the advertised weaker outcome: the application adapter itself owns idempotency;
  *    the journal never claims it.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { FakeEngine } from '@agentbrowser/testkit';

@@ -2,24 +2,28 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** One private journal tree: a temp base with store/ and anchor/ (0700) and one key
- * file (0600). The shared root of both fixture shapes below — register `dispose()` in
- * the suite's cleanup. */
-function tree(tag: string, keyHex: string) {
+/** The base every journal fixture grows from: a temp base with store/ and anchor/
+ * (0700). Register `dispose()` in the suite's cleanup. */
+function baseTree(tag: string) {
   const baseDir = mkdtempSync(join(realpathSync(tmpdir()), tag));
   const storeDir = join(baseDir, 'store');
   const anchorDir = join(baseDir, 'anchor');
   mkdirSync(storeDir, { mode: 0o700 });
   mkdirSync(anchorDir, { mode: 0o700 });
-  const keyFile = join(baseDir, 'key');
-  writeFileSync(keyFile, `key-1:${keyHex.repeat(32)}\n`, { mode: 0o600 });
   return {
     baseDir,
     storeDir,
     anchorDir,
-    keyFile,
     dispose: () => rmSync(baseDir, { recursive: true, force: true }),
   };
+}
+
+/** One private journal tree: the base plus one key file (0600). */
+function tree(tag: string, keyHex: string) {
+  const t = baseTree(tag);
+  const keyFile = join(t.baseDir, 'key');
+  writeFileSync(keyFile, `key-1:${keyHex.repeat(32)}\n`, { mode: 0o600 });
+  return { ...t, keyFile };
 }
 
 /**
@@ -48,28 +52,26 @@ export function journalTree(tag: string, keyHex: string, options: { initialize?:
  * namespace, key file and accept horizon.
  */
 export function journalRolloverTree(tag: string) {
-  const baseDir = mkdtempSync(join(realpathSync(tmpdir()), tag));
-  mkdirSync(join(baseDir, 'store'), { mode: 0o700 });
-  mkdirSync(join(baseDir, 'anchor'), { mode: 0o700 });
-  const keyA = join(baseDir, 'key-a');
-  const keyB = join(baseDir, 'key-b');
+  const t = baseTree(tag);
+  const keyA = join(t.baseDir, 'key-a');
+  const keyB = join(t.baseDir, 'key-b');
   writeFileSync(keyA, `key-a:${'a1'.repeat(32)}\n`, { mode: 0o600 });
   writeFileSync(keyB, `key-b:${'b2'.repeat(32)}\n`, { mode: 0o600 });
-  const historyFile = join(baseDir, 'history.json');
+  const historyFile = join(t.baseDir, 'history.json');
   return {
-    baseDir,
+    baseDir: t.baseDir,
     keyA,
     keyB,
     historyFile,
     envFor: (namespace: string, keyFile: string, acceptUntil: string) =>
       ({
-        AGENTBROWSER_JOURNAL_DIR: join(baseDir, 'store'),
-        AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(baseDir, 'anchor'),
+        AGENTBROWSER_JOURNAL_DIR: t.storeDir,
+        AGENTBROWSER_JOURNAL_ANCHOR_DIR: t.anchorDir,
         AGENTBROWSER_JOURNAL_KEY_FILE: keyFile,
         AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
         AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: acceptUntil,
         AGENTBROWSER_JOURNAL_NAMESPACE: namespace,
       }) as Record<string, string>,
-    dispose: () => rmSync(baseDir, { recursive: true, force: true }),
+    dispose: t.dispose,
   };
 }
