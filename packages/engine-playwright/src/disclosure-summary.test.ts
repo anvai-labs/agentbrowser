@@ -28,6 +28,20 @@ async function withPage<T>(html: string, run: (p: EnginePage) => Promise<T>): Pr
 const summaries = async (p: EnginePage) =>
   (await p.observe({})).elements.filter((el) => el.role === 'html-summary');
 
+/** Toggle the page's #d details by script (state changed after observe), then click the
+ * given ref; returns the outcome code the click settled as. */
+async function scriptToggleOutcome(p: EnginePage, ref: string) {
+  await (p as unknown as { backingPage(): import('playwright').Page })
+    .backingPage()
+    .evaluate(() => {
+      (document.getElementById('d') as HTMLDetailsElement).open = true;
+    });
+  return p.act({ type: 'click', target: { ref } }).then(
+    (result) => result.error?.code ?? 'ran',
+    (error: { code?: string }) => error.code
+  );
+}
+
 describe('native disclosures (details/summary) in observe', () => {
   it('reproduces the handoff fixture: the summary is a named control with expanded state', async () => {
     await withPage(
@@ -174,16 +188,7 @@ describe('native disclosures (details/summary) in observe', () => {
   it('a script toggle is refused even when the details holds only text', async () => {
     await withPage('<details id="d"><summary>T</summary>Just text</details>', async (p) => {
       const [summary] = await summaries(p);
-      await (p as unknown as { backingPage(): import('playwright').Page })
-        .backingPage()
-        .evaluate(() => {
-          (document.getElementById('d') as HTMLDetailsElement).open = true;
-        });
-      const outcome = await p.act({ type: 'click', target: { ref: summary?.ref as string } }).then(
-        (result) => result.error?.code ?? 'ran',
-        (error: { code?: string }) => error.code
-      );
-      expect(outcome).toBe('STALE_TARGET');
+      expect(await scriptToggleOutcome(p, summary?.ref as string)).toBe('STALE_TARGET');
     });
   }, 60_000);
 
@@ -218,16 +223,7 @@ describe('native disclosures (details/summary) in observe', () => {
   it('a summary toggled by page script since observe is refused as changed state', async () => {
     await withPage('<details id="d"><summary>Scripted</summary><p>x</p></details>', async (p) => {
       const [summary] = await summaries(p);
-      await (p as unknown as { backingPage(): import('playwright').Page })
-        .backingPage()
-        .evaluate(() => {
-          (document.getElementById('d') as HTMLDetailsElement).open = true;
-        });
-      const outcome = await p.act({ type: 'click', target: { ref: summary?.ref as string } }).then(
-        (result) => result.error?.code ?? 'ran',
-        (error: { code?: string }) => error.code
-      );
-      expect(outcome).toBe('STALE_TARGET');
+      expect(await scriptToggleOutcome(p, summary?.ref as string)).toBe('STALE_TARGET');
     });
   }, 60_000);
 

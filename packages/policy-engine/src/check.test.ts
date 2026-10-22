@@ -27,6 +27,37 @@ const single = (answer: ReturnType<typeof policyCheck>) => {
   return answer[0]!;
 };
 
+/** The ask-context and round-2 describes share this harness: each cedar text is its own
+ * policy (the @rule id must match its ruleId), and checkFor returns whether the single
+ * resulting decision allows the target. */
+const docWith = (...cedarTexts: string[]) => ({
+  version: 'agentbrowser-policy/v1' as const,
+  unknownRisk: 'allow' as const,
+  approvalRules: [],
+  policies: cedarTexts.map((cedar, i) => ({
+    key: `operator.x#${i + 1}`,
+    ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
+    cedar,
+  })),
+});
+const policy = (...cedarTexts: string[]) =>
+  new NetworkPolicy({
+    blockLoopback: true,
+    blockPrivateIPs: true,
+    blockMetadata: true,
+    exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
+  });
+const checkFor = (cedarTexts: string[], target: string) => {
+  const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
+    action: 'request',
+    target,
+  });
+  expect(answer).toHaveLength(1);
+  const first = answer[0];
+  expect(first?.answer.kind).toBe('decision');
+  return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
+};
+
 describe('policyCheck: IP literals agree with enforcement', () => {
   const cases: Array<[string, string[], boolean]> = [
     ['10.1.2.3', ['10.0.0.0/8'], false],
@@ -134,35 +165,6 @@ describe('policyCheck: acts and capabilities', () => {
 });
 
 describe('policyCheck: parity with policies conditioning on ask context (review 3)', () => {
-  /** Each cedar text is its own policy; the @rule id must match its ruleId. */
-  const docWith = (...cedarTexts: string[]) => ({
-    version: 'agentbrowser-policy/v1' as const,
-    unknownRisk: 'allow' as const,
-    approvalRules: [],
-    policies: cedarTexts.map((cedar, i) => ({
-      key: `operator.x#${i + 1}`,
-      ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
-      cedar,
-    })),
-  });
-  const policy = (...cedarTexts: string[]) =>
-    new NetworkPolicy({
-      blockLoopback: true,
-      blockPrivateIPs: true,
-      blockMetadata: true,
-      exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
-    });
-  const checkFor = (cedarTexts: string[], target: string) => {
-    const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
-      action: 'request',
-      target,
-    });
-    expect(answer).toHaveLength(1);
-    const first = answer[0];
-    expect(first?.answer.kind).toBe('decision');
-    return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
-  };
-
   it('a phase-conditioned loopback permit matches enforcement on 127.0.0.1', async () => {
     // Enforcement asks literals at the hostname phase; check must too.
     const cedar =
@@ -214,33 +216,6 @@ describe('policyCheck: invalid literals and prefixes (review 4)', () => {
 });
 
 describe('policyCheck: round-2 residues', () => {
-  const docWith = (...cedarTexts: string[]) => ({
-    version: 'agentbrowser-policy/v1' as const,
-    unknownRisk: 'allow' as const,
-    approvalRules: [],
-    policies: cedarTexts.map((cedar, i) => ({
-      key: `operator.x#${i + 1}`,
-      ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
-      cedar,
-    })),
-  });
-  const policy = (...cedarTexts: string[]) =>
-    new NetworkPolicy({
-      blockLoopback: true,
-      blockPrivateIPs: true,
-      blockMetadata: true,
-      exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
-    });
-  const checkFor = (cedarTexts: string[], target: string) => {
-    const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
-      action: 'request',
-      target,
-    });
-    const first = answer[0];
-    expect(first?.answer.kind).toBe('decision');
-    return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
-  };
-
   it('a target-equality policy sees the raw bracketed form (review A)', async () => {
     const cedar =
       '@rule("operator.p") permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context.target == "[::ffff:10.1.2.3]" };';

@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
+import { assertLabel, writeJsonManifest } from './store-shared.js';
 
 /** T7 slice 1: visual audit adapter. Wraps pixelmatch (the specialist
  * comparison library) and pngjs; the adapter itself is engine-agnostic —
@@ -46,20 +47,10 @@ export interface VisualDiffResult {
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function assertPng(png: Buffer): void {
   if (png.length < 8 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) {
     throw new VisualAuditError('INVALID_PNG', 'visual audit input must be a PNG buffer');
-  }
-}
-
-function assertLabel(label: string): void {
-  if (!LABEL_PATTERN.test(label)) {
-    throw new VisualAuditError(
-      'INVALID_LABEL',
-      `label must match ${LABEL_PATTERN.source} (no path separators): ${JSON.stringify(label)}`
-    );
   }
 }
 
@@ -170,10 +161,7 @@ export class BaselineStore {
   }
 
   private writeManifest(manifest: StoreManifest): void {
-    mkdirSync(this.directory, { recursive: true });
-    const temp = `${this.manifestPath}.pending`;
-    writeFileSync(temp, JSON.stringify(manifest, null, 2));
-    renameSync(temp, this.manifestPath);
+    writeJsonManifest(this.directory, this.manifestPath, manifest);
   }
 
   /** Latest baseline for the label, or undefined. */

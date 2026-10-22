@@ -2,10 +2,7 @@ import type { EnginePage } from '@agentbrowser/engine';
 import type { Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
-
-function backingPage(page: EnginePage): Page {
-  return (page as unknown as { backingPage(): Page }).backingPage();
-}
+import { backingPage } from './test-support/backing-page.js';
 
 async function observeButton(page: EnginePage): Promise<string> {
   const ref = (await page.observe({})).elements.find((e) => e.role === 'button')?.ref;

@@ -5,19 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ENGAGEMENT_GENESIS, engagementChainHash } from '@agentbrowser/core';
 import { describe, expect, it } from 'vitest';
-import { buildCli, type CliClient } from './cli.js';
-
-async function run(argv: string[]) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const cli = buildCli({
-    createClient: () => ({}) as unknown as CliClient,
-    out: (line: string) => out.push(line),
-    err: (line: string) => err.push(line),
-  });
-  const code = await cli.run(argv);
-  return { code, out: out.join('\n'), err: err.join('\n') };
-}
+import { runCli } from './test-support/cli-run.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'findings-'));
 const write = (name: string, text: string) => {
@@ -80,11 +68,11 @@ const finding = {
 describe('finding commands (T10 M3)', () => {
   it('check accepts bound findings and refuses an out-of-scope one with exit 1', async () => {
     const good = write('good.json', JSON.stringify([finding]));
-    const ok = await run(['finding', 'check', '--ledger', ledger, '--findings', good]);
+    const ok = await runCli(['finding', 'check', '--ledger', ledger, '--findings', good]);
     expect(ok.code).toBe(0);
     expect(ok.out).toContain('1 finding(s) bound to eng_bbbbbbbbbbbbbbbbbbbbbbbb');
     const bad = write('bad.json', JSON.stringify([{ ...finding, url: 'https://evil.test/x' }]));
-    const refused = await run(['finding', 'check', '--ledger', ledger, '--findings', bad]);
+    const refused = await runCli(['finding', 'check', '--ledger', ledger, '--findings', bad]);
     expect(refused.code).toBe(1);
     expect(refused.out).toMatch(
       /FINDINGS REFUSED[\s\S]*F-1: the URL is outside the engagement scope/
@@ -94,7 +82,7 @@ describe('finding commands (T10 M3)', () => {
   it('sarif writes a manual-submission draft (0600, exclusive) and refuses unbound findings', async () => {
     const good = write('good2.json', JSON.stringify([finding]));
     const out = join(dir, 'report.sarif');
-    const written = await run([
+    const written = await runCli([
       'finding',
       'sarif',
       '--ledger',
@@ -110,11 +98,12 @@ describe('finding commands (T10 M3)', () => {
     expect(sarif.runs[0].properties).toMatchObject({ draft: true, submission: 'manual' });
     expect(sarif.runs[0].results[0].properties.ledgerRefs).toEqual([1]);
     expect(
-      (await run(['finding', 'sarif', '--ledger', ledger, '--findings', good, '--out', out])).code
+      (await runCli(['finding', 'sarif', '--ledger', ledger, '--findings', good, '--out', out]))
+        .code
     ).not.toBe(0);
     const unbound = write('unbound.json', JSON.stringify([{ ...finding, ledgerRefs: [] }]));
     const none = join(dir, 'none.sarif');
-    const refused = await run([
+    const refused = await runCli([
       'finding',
       'sarif',
       '--ledger',
@@ -131,12 +120,12 @@ describe('finding commands (T10 M3)', () => {
   it('refuses a tampered ledger and a findings file that is not JSON', async () => {
     const tampered = write('tampered.jsonl', ledgerText().replace('/api/x', '/api/y'));
     const good = write('good3.json', JSON.stringify([finding]));
-    const broken = await run(['finding', 'check', '--ledger', tampered, '--findings', good]);
+    const broken = await runCli(['finding', 'check', '--ledger', tampered, '--findings', good]);
     expect(broken.code).toBe(1);
     expect(broken.out).toMatch(/chain is broken/);
     const notJson = write('x.json', '{oops');
     expect(
-      (await run(['finding', 'check', '--ledger', ledger, '--findings', notJson])).code
+      (await runCli(['finding', 'check', '--ledger', ledger, '--findings', notJson])).code
     ).not.toBe(0);
   });
 });

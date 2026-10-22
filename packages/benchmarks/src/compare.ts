@@ -171,6 +171,46 @@ export interface RealBenchmarkOptions {
   startServer?: boolean;
 }
 
+/** Each benchmark's shared opening: the fixture origin (an owned server when no port is
+ * given) and a service whose policy admits the loopback fixtures only — private ranges
+ * and metadata stay blocked. `stopOwnedServer` belongs in the caller's finally; whether
+ * the service itself is shut down stays each benchmark's own decision (only the
+ * observation-overhead run needs it before exit). */
+async function openBenchmarkHarness(options: RealBenchmarkOptions): Promise<{
+  port: number;
+  base: string;
+  service: AgentBrowserService;
+  stopOwnedServer: () => Promise<void>;
+}> {
+  const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
+  const port = options.fixturePort ?? ownedServer?.port;
+  if (port === undefined) {
+    await ownedServer?.stop();
+    throw new Error('no fixture port');
+  }
+  try {
+    const service = new AgentBrowserService({
+      engine: options.engine,
+      networkPolicy: new NetworkPolicy({
+        blockLoopback: false,
+        blockPrivateIPs: true,
+        blockMetadata: true,
+      }),
+    });
+    return {
+      port,
+      base: `http://127.0.0.1:${port}`,
+      service,
+      stopOwnedServer: async () => {
+        await ownedServer?.stop();
+      },
+    };
+  } catch (error) {
+    await ownedServer?.stop();
+    throw error;
+  }
+}
+
 /**
  * Run the comparative flow against one engine on the fixture pages:
  * the latency trio plus a ref-driven observe -> fill -> verify loop, which
@@ -178,25 +218,9 @@ export interface RealBenchmarkOptions {
  */
 export async function runRealBenchmarks(options: RealBenchmarkOptions): Promise<EngineBenchmark> {
   const iterations = options.iterations ?? 20;
-  const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
-  const port = options.fixturePort ?? ownedServer?.port;
-  if (port === undefined) {
-    throw new Error('no fixture port');
-  }
-  const base = `http://127.0.0.1:${port}`;
+  const { base, service, stopOwnedServer } = await openBenchmarkHarness(options);
 
   try {
-    const service = new AgentBrowserService({
-      engine: options.engine,
-      // Fixtures live on loopback by construction; the benchmark allows the
-      // loopback origin only, private ranges and metadata stay blocked.
-      networkPolicy: new NetworkPolicy({
-        blockLoopback: false,
-        blockPrivateIPs: true,
-        blockMetadata: true,
-      }),
-    });
-
     // Warm session creation.
     const sessionSamples = await sample(async () => {
       const session = await service.createSession({ tenantId: 'bench' });
@@ -277,7 +301,7 @@ export async function runRealBenchmarks(options: RealBenchmarkOptions): Promise<
       },
     };
   } finally {
-    await ownedServer?.stop();
+    await stopOwnedServer();
   }
 }
 
@@ -305,22 +329,9 @@ export interface CompactProjectionBenchmark {
 export async function runCompactProjectionBenchmark(
   options: RealBenchmarkOptions
 ): Promise<CompactProjectionBenchmark> {
-  const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
-  const port = options.fixturePort ?? ownedServer?.port;
-  if (port === undefined) {
-    throw new Error('no fixture port');
-  }
-  const base = `http://127.0.0.1:${port}`;
+  const { base, service, stopOwnedServer } = await openBenchmarkHarness(options);
 
   try {
-    const service = new AgentBrowserService({
-      engine: options.engine,
-      networkPolicy: new NetworkPolicy({
-        blockLoopback: false,
-        blockPrivateIPs: true,
-        blockMetadata: true,
-      }),
-    });
     const sessionId = (await service.createSession({ tenantId: 'bench' })).sessionId;
     const pageId = (await service.createPage(sessionId)).pageId;
     await service.navigate(sessionId, pageId, { url: `${base}/ovh` });
@@ -365,7 +376,7 @@ export async function runCompactProjectionBenchmark(
       compactElements,
     };
   } finally {
-    await ownedServer?.stop();
+    await stopOwnedServer();
   }
 }
 
@@ -416,18 +427,8 @@ export interface ObservationOverheadResult {
 export async function runObservationOverheadBenchmark(
   options: RealBenchmarkOptions
 ): Promise<ObservationOverheadResult> {
-  const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
-  const port = options.fixturePort ?? ownedServer?.port;
-  if (port === undefined) throw new Error('no fixture port');
   const iterations = options.iterations ?? 10;
-  const service = new AgentBrowserService({
-    engine: options.engine,
-    networkPolicy: new NetworkPolicy({
-      blockLoopback: false,
-      blockPrivateIPs: true,
-      blockMetadata: true,
-    }),
-  });
+  const { port, service, stopOwnedServer } = await openBenchmarkHarness(options);
   try {
     const sessionId = (await service.createSession({ tenantId: 'bench' })).sessionId;
     const pageId = (await service.createPage(sessionId)).pageId;
@@ -465,6 +466,6 @@ export async function runObservationOverheadBenchmark(
     };
   } finally {
     await service.shutdown();
-    await ownedServer?.stop();
+    await stopOwnedServer();
   }
 }

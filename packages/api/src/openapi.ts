@@ -123,6 +123,54 @@ const controlResponses = (schema: string) => ({
   '404': NOT_FOUND,
   '409': errorResponse('Session busy or review revoked. Do not blindly repeat a write.'),
 });
+
+const operationIdParam = {
+  name: 'operationId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
+};
+
+/**
+ * T5 J3c/J3d: the operator-only journal recovery writes (close/settle/reconcile) share
+ * one refusal tail — they differ only in their 200 shape and, for reconcile, the 404/409
+ * wording. Key order follows the committed openapi.json (byte-compared by test).
+ */
+const journalRecoveryResponses = (
+  ok: Record<string, unknown>,
+  notFound = 'No record of this operation in the searched namespace.',
+  conflict = 'No eligible record, or a record changed mid-write.'
+) => ({
+  '200': ok,
+  '400': errorResponse('Invalid operation ID.'),
+  '401': errorResponse('No valid bearer credential named a tenant.'),
+  '403': errorResponse('Journal recovery writes require the operator key.'),
+  '404': errorResponse(notFound),
+  '409': errorResponse(conflict),
+  '429': errorResponse('Journal recovery rate limit exceeded.'),
+  '503': errorResponse('No open durable journal, or the journal refused the write.'),
+});
+
+/** The cookie array every seeding surface accepts — exactly the compatible form
+ * GET /v1/sessions/{id}/cookies exports (name/value/domain/path required). */
+const cookieArraySchema = (description?: string) => ({
+  type: 'array',
+  ...(description === undefined ? {} : { description }),
+  items: {
+    type: 'object',
+    required: ['name', 'value', 'domain', 'path'],
+    properties: {
+      name: { type: 'string' },
+      value: { type: 'string' },
+      domain: { type: 'string' },
+      path: { type: 'string' },
+      expires: { type: 'number' },
+      httpOnly: { type: 'boolean' },
+      secure: { type: 'boolean' },
+      sameSite: { type: 'string', enum: ['Strict', 'Lax', 'None'] },
+    },
+  },
+});
 const approvalPaths = {
   '/v1/sessions/{sessionId}/approvals/{tokenId}': {
     get: {
@@ -614,25 +662,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   description:
                     'Absent defaults to true (headless-first, ADR-003). false = headed: a visible window for human-in-the-loop flows; the session gets a dedicated browser.',
                 },
-                cookies: {
-                  type: 'array',
-                  description:
-                    "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Each cookie requires name, value, domain and path — a {url, ...} cookie fails validation; convert it to domain + path ('/') instead. The compatible form is exactly what GET /v1/sessions/{id}/cookies exports. An empty array is a silent no-op; __Host- cookies are rewritten to the host-only + Secure form.",
-                  items: {
-                    type: 'object',
-                    required: ['name', 'value', 'domain', 'path'],
-                    properties: {
-                      name: { type: 'string' },
-                      value: { type: 'string' },
-                      domain: { type: 'string' },
-                      path: { type: 'string' },
-                      expires: { type: 'number' },
-                      httpOnly: { type: 'boolean' },
-                      secure: { type: 'boolean' },
-                      sameSite: { type: 'string', enum: ['Strict', 'Lax', 'None'] },
-                    },
-                  },
-                },
+                cookies: cookieArraySchema(
+                  "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Each cookie requires name, value, domain and path — a {url, ...} cookie fails validation; convert it to domain + path ('/') instead. The compatible form is exactly what GET /v1/sessions/{id}/cookies exports. An empty array is a silent no-op; __Host- cookies are rewritten to the host-only + Secure form."
+                ),
                 viewport: ref('Viewport'),
                 locale: { type: 'string' },
                 timezoneId: { type: 'string' },
@@ -1143,23 +1175,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 type: 'object',
                 required: ['cookies'],
                 properties: {
-                  cookies: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      required: ['name', 'value', 'domain', 'path'],
-                      properties: {
-                        name: { type: 'string' },
-                        value: { type: 'string' },
-                        domain: { type: 'string' },
-                        path: { type: 'string' },
-                        expires: { type: 'number' },
-                        httpOnly: { type: 'boolean' },
-                        secure: { type: 'boolean' },
-                        sameSite: { type: 'string', enum: ['Strict', 'Lax', 'None'] },
-                      },
-                    },
-                  },
+                  cookies: cookieArraySchema(),
                 },
               }),
             },
@@ -1798,14 +1814,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             "T5 J3b (accepted J-design, D1 amended). Every stored record of the operation ID in the configured namespace, projected to classification, application identity and the departed session's opaque identity; fingerprints, digests, actors, inputs and evidence content never cross the wire. Readable by a tenant API key or the operator key, scoped to the credential's tenant; delegated grants are refused; writes do not exist here (J3c). An absent result is scoped absence in this namespace, never proof of non-execution. Rate limited per tenant.",
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: 'operationId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
-            },
-          ],
+          parameters: [operationIdParam],
           responses: {
             '200': {
               description: 'The bounded record list (at most 16).',
@@ -1907,43 +1916,27 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.',
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: 'operationId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
-            },
-          ],
-          responses: {
-            '200': {
-              description: 'How many records were closed (of the first 16 that matched).',
-              content: json({
-                type: 'object',
-                required: ['closed', 'truncated'],
-                properties: {
-                  unreadNamespaces: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description:
-                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
-                  },
-                  closed: { type: 'integer', minimum: 0 },
-                  truncated: {
-                    type: 'boolean',
-                    description: 'More than 16 records matched; act again for the rest.',
-                  },
+          parameters: [operationIdParam],
+          responses: journalRecoveryResponses({
+            description: 'How many records were closed (of the first 16 that matched).',
+            content: json({
+              type: 'object',
+              required: ['closed', 'truncated'],
+              properties: {
+                unreadNamespaces: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
                 },
-              }),
-            },
-            '400': errorResponse('Invalid operation ID.'),
-            '401': errorResponse('No valid bearer credential named a tenant.'),
-            '403': errorResponse('Journal recovery writes require the operator key.'),
-            '404': errorResponse('No record of this operation in the searched namespace.'),
-            '409': errorResponse('No eligible record, or a record changed mid-write.'),
-            '429': errorResponse('Journal recovery rate limit exceeded.'),
-            '503': errorResponse('No open durable journal, or the journal refused the write.'),
-          },
+                closed: { type: 'integer', minimum: 0 },
+                truncated: {
+                  type: 'boolean',
+                  description: 'More than 16 records matched; act again for the rest.',
+                },
+              },
+            }),
+          }),
         },
       },
 
@@ -1955,43 +1948,27 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Settles ONLY the in-doubt (dispatched, terminal-less) records; undispatched siblings are closed, terminal ones are final. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.',
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: 'operationId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
-            },
-          ],
-          responses: {
-            '200': {
-              description: 'How many records were settled (of the first 16 that matched).',
-              content: json({
-                type: 'object',
-                required: ['settled', 'truncated'],
-                properties: {
-                  unreadNamespaces: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description:
-                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
-                  },
-                  settled: { type: 'integer', minimum: 0 },
-                  truncated: {
-                    type: 'boolean',
-                    description: 'More than 16 records matched; act again for the rest.',
-                  },
+          parameters: [operationIdParam],
+          responses: journalRecoveryResponses({
+            description: 'How many records were settled (of the first 16 that matched).',
+            content: json({
+              type: 'object',
+              required: ['settled', 'truncated'],
+              properties: {
+                unreadNamespaces: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description:
+                    'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
                 },
-              }),
-            },
-            '400': errorResponse('Invalid operation ID.'),
-            '401': errorResponse('No valid bearer credential named a tenant.'),
-            '403': errorResponse('Journal recovery writes require the operator key.'),
-            '404': errorResponse('No record of this operation in the searched namespace.'),
-            '409': errorResponse('No eligible record, or a record changed mid-write.'),
-            '429': errorResponse('Journal recovery rate limit exceeded.'),
-            '503': errorResponse('No open durable journal, or the journal refused the write.'),
-          },
+                settled: { type: 'integer', minimum: 0 },
+                truncated: {
+                  type: 'boolean',
+                  description: 'More than 16 records matched; act again for the rest.',
+                },
+              },
+            }),
+          }),
         },
       },
 
@@ -2003,16 +1980,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             "T5 J3c part 2 (accepted design, D3). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). For each in-doubt (dispatched, terminal-less) record, asks the bound adapter's opt-in reconcile for that exact operation (tenant, application identity, session incarnation and operation ID; no fingerprint crosses). committed and rejected commit the matching terminal (completed, failed) with no evidence refs; unknown, or an adapter error, changes nothing and counts as unresolved. An adapter without reconcile refuses with 409 CONTROL_REQUIRED: settle instead. Never replays the effect. Rate limited per tenant.",
           tags: ['journal'],
           security: [{ bearerAuth: [] }],
-          parameters: [
+          parameters: [operationIdParam],
+          responses: journalRecoveryResponses(
             {
-              name: 'operationId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,128}$' },
-            },
-          ],
-          responses: {
-            '200': {
               description: 'How many in-doubt records were resolved and how many stay unresolved.',
               content: json({
                 type: 'object',
@@ -2037,18 +2007,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 },
               }),
             },
-            '400': errorResponse('Invalid operation ID.'),
-            '401': errorResponse('No valid bearer credential named a tenant.'),
-            '403': errorResponse('Journal recovery writes require the operator key.'),
-            '404': errorResponse(
-              'No actionable record of this operation in the searched namespace.'
-            ),
-            '409': errorResponse(
-              'No in-doubt record, a record changed mid-write, or the adapter cannot reconcile (CONTROL_REQUIRED).'
-            ),
-            '429': errorResponse('Journal recovery rate limit exceeded.'),
-            '503': errorResponse('No open durable journal, or the journal refused the write.'),
-          },
+            'No actionable record of this operation in the searched namespace.',
+            'No in-doubt record, a record changed mid-write, or the adapter cannot reconcile (CONTROL_REQUIRED).'
+          ),
         },
       },
 

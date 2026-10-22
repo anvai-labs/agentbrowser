@@ -1979,24 +1979,34 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control', publication: 'guarded' }
       );
 
+      /** Both approval routes share this prologue: an operator-or-human actor, ownership,
+       * and (TD-BROWSER-16 phase 1) the human-only gate on non-act kinds — an API-key
+       * operator, which an agent may hold, is refused for them. Returns the non-act kind
+       * when the caller must take the separate path, undefined for the act path. */
+      const requireApprovalAccess = async (
+        request: RequestData,
+        sessionId: string,
+        tokenId: string
+      ) => {
+        if (
+          request.principal?.actor !== 'operator' &&
+          request.principal?.actor !== 'human-operator'
+        )
+          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+        requireOwnership(sessionId, tenantOf(request));
+        const nonAct = await service.getApprovalKind(sessionId, tokenId);
+        if (nonAct !== undefined && request.principal?.actor !== 'human-operator')
+          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+        return nonAct;
+      };
+
       on(
         'GET',
         '/sessions/:sessionId/approvals/:tokenId',
         async (request) => {
           const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-          if (
-            request.principal?.actor !== 'operator' &&
-            request.principal?.actor !== 'human-operator'
-          )
-            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
-          // TD-BROWSER-16 phase 1: the non-act kinds take the separate path
-          // and are decided by a human operator only — an API-key operator
-          // (which an agent may hold) is refused for them.
-          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          const nonAct = await requireApprovalAccess(request, sessionId, tokenId);
           if (nonAct !== undefined) {
-            if (request.principal?.actor !== 'human-operator')
-              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
             return responseDraft(await service.viewNonActApproval(sessionId, tokenId), 200);
           }
           const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
@@ -2009,16 +2019,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/approvals/:tokenId',
         async (request) => {
           const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-          if (
-            request.principal?.actor !== 'operator' &&
-            request.principal?.actor !== 'human-operator'
-          )
-            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
-          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          const nonAct = await requireApprovalAccess(request, sessionId, tokenId);
           if (nonAct !== undefined) {
-            if (request.principal?.actor !== 'human-operator')
-              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
             const nonActChecked = validateOperatorApprovalDecision(request.body);
             if (!nonActChecked.ok)
               throw new ServiceError(
