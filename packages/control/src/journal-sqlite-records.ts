@@ -58,25 +58,40 @@ export interface JournalSqliteStatementConnection {
   prepare(sql: string): {
     get(...parameters: never[]): unknown;
     all(...parameters: never[]): unknown[];
+    close?(): void;
   };
 }
 
 /**
- * Read-side statement adapters over a live connection (J2b.2). Statement cleanup follows the
- * owner's idiom: database.close() finalizes owned statements; none escape this helper.
+ * Read-side statement adapters over a live connection (J2b.2). Statements are closed
+ * eagerly (the test-support mirror's original guarantee): a cached read connection can
+ * outlive any one dispatch, so relying only on database.close() would accumulate
+ * statements until teardown.
  */
 export function journalSqliteStatementReader(
   connection: JournalSqliteStatementConnection
 ): JournalSqliteReader & {
   all(sql: string, ...parameters: unknown[]): Record<string, unknown>[];
 } {
+  type Prepared = ReturnType<JournalSqliteStatementConnection['prepare']>;
+  const withStatement = <T>(sql: string, use: (prepared: Prepared) => T): T => {
+    const prepared = connection.prepare(sql);
+    try {
+      return use(prepared);
+    } finally {
+      prepared.close?.();
+    }
+  };
   return {
     get: (sql: string, ...parameters: unknown[]) =>
-      connection.prepare(sql).get(...(parameters as never[])) as
+      withStatement(sql, (prepared) => prepared.get(...(parameters as never[]))) as
         | Record<string, unknown>
         | undefined,
     all: (sql: string, ...parameters: unknown[]) =>
-      connection.prepare(sql).all(...(parameters as never[])) as Record<string, unknown>[],
+      withStatement(sql, (prepared) => prepared.all(...(parameters as never[]))) as Record<
+        string,
+        unknown
+      >[],
   };
 }
 

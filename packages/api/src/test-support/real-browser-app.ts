@@ -101,29 +101,36 @@ export const openRealBrowserApp = async (
     networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
     apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'tenant']]),
   });
-  const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
-  const created = await server.inject({
-    method: 'POST',
-    url: '/v1/sessions',
-    headers: owner,
-    payload: {},
-  });
-  expect([200, 201], created.body).toContain(created.statusCode);
-  expect(created.json().engine.name).toBe(`playwright-${browser}`);
-  const sessionId = created.json().sessionId as string;
-  const pageResponse = await server.inject({
-    method: 'POST',
-    url: `/v1/sessions/${sessionId}/pages`,
-    headers: owner,
-  });
-  expect([200, 201], pageResponse.body).toContain(pageResponse.statusCode);
-  const pagePath = `/v1/sessions/${sessionId}/pages/${pageResponse.json().pageId as string}`;
-  const nav = await server.inject({
-    method: 'POST',
-    url: `${pagePath}/navigate`,
-    headers: owner,
-    payload: { url, waitUntil: 'networkidle' },
-  });
-  expect(nav.statusCode).toBe(200);
-  return { server, owner, url, pagePath };
+  try {
+    const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
+    const created = await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: owner,
+      payload: {},
+    });
+    expect([200, 201], created.body).toContain(created.statusCode);
+    expect(created.json().engine.name).toBe(`playwright-${browser}`);
+    const sessionId = created.json().sessionId as string;
+    const pageResponse = await server.inject({
+      method: 'POST',
+      url: `/v1/sessions/${sessionId}/pages`,
+      headers: owner,
+    });
+    expect([200, 201], pageResponse.body).toContain(pageResponse.statusCode);
+    const pagePath = `/v1/sessions/${sessionId}/pages/${pageResponse.json().pageId as string}`;
+    const nav = await server.inject({
+      method: 'POST',
+      url: `${pagePath}/navigate`,
+      headers: owner,
+      payload: { url, waitUntil: 'networkidle' },
+    });
+    expect(nav.statusCode).toBe(200);
+    return { server, owner, url, pagePath };
+  } catch (error) {
+    // A bootstrap assertion must not leak the engine: the callers' finally only
+    // wraps work that begins after this helper resolves.
+    await server.close();
+    throw error;
+  }
 };

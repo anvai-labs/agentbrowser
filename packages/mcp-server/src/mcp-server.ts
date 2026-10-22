@@ -994,7 +994,9 @@ export function buildTools(
         'not match the finding URL. Nothing is submitted anywhere.',
       inputSchema: {
         type: 'object',
-        properties: FINDING_INPUT_PROPERTIES,
+        // A copy, like finding_sarif's: the shared object must never be exposed by
+        // reference, or an in-place schema augmentation on one tool would leak to both.
+        properties: { ...FINDING_INPUT_PROPERTIES },
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {

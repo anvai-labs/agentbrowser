@@ -9,6 +9,7 @@
  * as the former regex table produced.
  */
 
+import { createHash } from 'node:crypto';
 import type { AgentCapability } from '@agentbrowser/protocol';
 import { agentModeAllows, SELF_ADMITTING_ROUTE_SEGMENTS } from '@agentbrowser/protocol';
 import type { FastifyInstance } from 'fastify';
@@ -224,12 +225,7 @@ describe('route contract metadata', () => {
  * require an authenticated operator; in local no-keys mode they cannot be created at all. */
 const delegatedAuditSession = async () => {
   const server = await buildServer({
-    apiKeys: new Map([
-      [
-        (await import('node:crypto')).createHash('sha256').update('operator').digest('hex'),
-        'owner',
-      ],
-    ]),
+    apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), 'owner']]),
   });
   const operatorHeaders = { authorization: 'Bearer operator' };
   const create = await server.inject({

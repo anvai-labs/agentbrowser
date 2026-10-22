@@ -5,11 +5,9 @@
  */
 import { setupObservedPage } from './test-support/service-setup.js';
 
-const setup = () => setupObservedPage();
-
 describe('opt-in remap end to end', () => {
   it('heals a stale ref after a revision bump when remap is opted in', async () => {
-    const { service, session, pageId, ref } = await setup();
+    const { service, session, pageId, ref } = await setupObservedPage();
     // Navigation invalidates every pre-observed ref; the same-named control
     // is still there at the new revision. The re-observe satisfies the
     // observe-before-act contract while the action still pins the OLD ref.
@@ -27,7 +25,7 @@ describe('opt-in remap end to end', () => {
   });
 
   it('refuses a live semantic mismatch (fingerprint drift) even when remap is opted in', async () => {
-    const { service, session, pageId, ref, fakePage } = await setup();
+    const { service, session, pageId, ref, fakePage } = await setupObservedPage();
     // Same revision, but the control's live fingerprint no longer matches
     // what was observed: the refusal carries contradicting semantic
     // evidence, so remapping it would overwrite evidence the executor
@@ -45,7 +43,7 @@ describe('opt-in remap end to end', () => {
   });
 
   it('still refuses by default when remap is absent', async () => {
-    const { service, session, pageId, ref } = await setup();
+    const { service, session, pageId, ref } = await setupObservedPage();
     await service.navigate(session.sessionId, pageId, { url: 'https://example.com/next' });
     await service.observe(session.sessionId, pageId, { mode: 'interactive' });
 
@@ -57,7 +55,7 @@ describe('opt-in remap end to end', () => {
   });
 
   it('refuses with a candidate count when the semantic match is ambiguous', async () => {
-    const { service, session, pageId, ref, fakePage } = await setup();
+    const { service, session, pageId, ref, fakePage } = await setupObservedPage();
     // A revision bump makes the old ref a binding-staleness refusal (the
     // healable shape); two same-named controls then make the remap
     // ambiguous, so it must refuse to guess.

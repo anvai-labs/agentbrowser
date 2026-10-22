@@ -9,11 +9,9 @@ import { setupObservedPage } from './test-support/service-setup.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-const setup = (engine: FakeEngine) => setupObservedPage(engine);
-
 describe('act ACTION_TIMEOUT diagnostics', () => {
   it('attaches a screenshot artifact when an action times out', async () => {
-    const { service, session, pageId, ref, fakePage } = await setup(new FakeEngine());
+    const { service, session, pageId, ref, fakePage } = await setupObservedPage(new FakeEngine());
     vi.spyOn(fakePage, 'act').mockRejectedValue(new Error('click timed out'));
 
     const error = await service
@@ -32,7 +30,7 @@ describe('act ACTION_TIMEOUT diagnostics', () => {
   });
 
   it('leaves the error untouched when the diagnostic screenshot fails', async () => {
-    const { service, session, pageId, ref, fakePage } = await setup(new FakeEngine());
+    const { service, session, pageId, ref, fakePage } = await setupObservedPage(new FakeEngine());
     vi.spyOn(fakePage, 'act').mockRejectedValue(new Error('click timed out'));
     vi.spyOn(fakePage, 'screenshot').mockRejectedValue(new Error('capture unavailable'));
 
