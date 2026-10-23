@@ -10,21 +10,8 @@
  */
 import type { EnginePage } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
 import { backingPage } from './test-support/backing-page.js';
-
-const page = (html: string) => `data:text/html,${encodeURIComponent(html)}`;
-
-async function withPage<T>(html: string, run: (p: EnginePage) => Promise<T>): Promise<T> {
-  const engine = new PlaywrightChromiumEngine();
-  try {
-    const p = await (await engine.createSession({ headless: true })).newPage();
-    await p.navigate({ url: page(html) });
-    return await run(p);
-  } finally {
-    await engine.close();
-  }
-}
+import { withPage } from './test-support/engine-page.js';
 
 const summaries = async (p: EnginePage) =>
   (await p.observe({})).elements.filter((el) => el.role === 'html-summary');
