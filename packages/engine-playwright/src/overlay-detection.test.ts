@@ -1,7 +1,9 @@
-import type { EnginePage } from '@agentbrowser/engine';
+import type { EnginePage, EngineSession } from '@agentbrowser/engine';
 import type { Locator, Page } from 'playwright';
 import { describe, expect, it, vi } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import { sharedEngine } from './test-support/shared-engine.js';
+
+const engine = sharedEngine();
 
 /**
  * Playwright exports Locator/ElementHandle shapes as types only, so spies
@@ -25,9 +27,10 @@ describe('observe overlay detection', () => {
     '<button style="position:fixed;top:80px;left:20px">Two</button>';
 
   it('is silent when not requested', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({ url: fixture });
       const evaluate = vi.spyOn(locatorPrototype(page), 'evaluate');
       const state = await page.observe({});
@@ -35,26 +38,28 @@ describe('observe overlay detection', () => {
       expect(evaluate).not.toHaveBeenCalled();
     } finally {
       vi.restoreAllMocks();
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('aggregates the occluding element over examined targets', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({ url: fixture });
       const state = await page.observe({ include: ['overlays'] });
       expect(state.overlays).toEqual([{ tag: 'div', covers: 2 }]);
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('caps examination at 30 visible elements', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       const buttons = Array.from(
         { length: 40 },
         (_, i) =>
@@ -66,33 +71,35 @@ describe('observe overlay detection', () => {
       const state = await page.observe({ include: ['overlays'] });
       expect(state.overlays).toEqual([{ tag: 'div', covers: 30 }]);
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('skips elements whose probe throws', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({ url: fixture });
       vi.spyOn(locatorPrototype(page), 'evaluate').mockRejectedValueOnce(new Error('probe failed'));
       const state = await page.observe({ include: ['overlays'] });
       expect(state.overlays).toEqual([{ tag: 'div', covers: 1 }]);
     } finally {
       vi.restoreAllMocks();
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('reports no overlays when the page is clean', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({ url: 'data:text/html,<button>Free</button>' });
       const state = await page.observe({ include: ['overlays'] });
       expect(state.overlays).toEqual([]);
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 });
