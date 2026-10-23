@@ -1,4 +1,5 @@
-import { buildCli, type CliClient } from '../cli.js';
+import type { CliClient } from '../cli.js';
+import { buildCapturedCli } from './captured-cli.js';
 
 /**
  * The offline-command suites' shared harness (finding/scope-import): run the CLI
@@ -7,13 +8,7 @@ import { buildCli, type CliClient } from '../cli.js';
  * their own harnesses.
  */
 export async function runCli(argv: string[]) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const cli = buildCli({
-    createClient: () => ({}) as unknown as CliClient,
-    out: (line: string) => out.push(line),
-    err: (line: string) => err.push(line),
-  });
+  const { cli, out, err } = buildCapturedCli(() => ({}) as unknown as CliClient);
   const code = await cli.run(argv);
   return { code, out: out.join('\n'), err: err.join('\n') };
 }

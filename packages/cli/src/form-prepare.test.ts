@@ -6,10 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createJsonArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js';
 import { offlineCliHarness } from './test-support/offline-cli.js';
 
-function harness(stdin?: Readable) {
-  return offlineCliHarness(stdin);
-}
-
 afterEach(() => vi.unstubAllGlobals());
 
 const mapping = {
@@ -42,7 +38,7 @@ const expected = {
 
 describe('offline form preparation', () => {
   it('advertises both logical arguments and the canonical autofill output schema', async () => {
-    const { cli, out, createClient } = harness();
+    const { cli, out, createClient } = offlineCliHarness();
     expect(await cli.run(['describe', 'form', 'prepare', '--schema'])).toBe(0);
     const descriptor = JSON.parse(out.join('\n')).command;
     expect(descriptor.path).toEqual(['form', 'prepare']);
@@ -70,7 +66,7 @@ describe('offline form preparation', () => {
   });
 
   it('documents private payload output and bounded input syntax offline', async () => {
-    const { cli, out, createClient } = harness();
+    const { cli, out, createClient } = offlineCliHarness();
     expect(await cli.run(['form', 'prepare', '--help'])).toBe(0);
     const help = out.join('\n');
     expect(help).toContain('private values');
@@ -80,7 +76,7 @@ describe('offline form preparation', () => {
   });
 
   it.each([false, true])('materializes inline input offline with JSON mode %s', async (json) => {
-    const { cli, out, err, createClient } = harness();
+    const { cli, out, err, createClient } = offlineCliHarness();
     const fetch = vi.fn(() => {
       throw new Error('Unexpected network call');
     });
@@ -123,7 +119,7 @@ describe('offline form preparation', () => {
       const valuesFile = join(dir, 'values.json');
       await writeFile(mappingFile, JSON.stringify(mapping), { mode: 0o600 });
       await writeFile(valuesFile, JSON.stringify(values), { mode: 0o600 });
-      const { cli, out, err, createClient } = harness();
+      const { cli, out, err, createClient } = offlineCliHarness();
       expect(await cli.run(['form', 'prepare', `@${mappingFile}`, `@${valuesFile}`])).toBe(0);
       expect(JSON.parse(out.join('\n'))).toEqual(expected);
       expect(err).toEqual([]);
@@ -134,7 +130,7 @@ describe('offline form preparation', () => {
   });
 
   it.each(['mapping', 'values'])('accepts one piped %s input', async (input) => {
-    const { cli, out, createClient } = harness(
+    const { cli, out, createClient } = offlineCliHarness(
       Readable.from([JSON.stringify(input === 'mapping' ? mapping : values)])
     );
     expect(
@@ -155,7 +151,7 @@ describe('offline form preparation', () => {
     '{"company":"PRIVATE-COMPANY","extra":"PRIVATE-EXTRA"}',
     '{PRIVATE-JSON',
   ])('refuses missing, malformed or extra values without private diagnostics', async (raw) => {
-    const { cli, out, err, createClient } = harness();
+    const { cli, out, err, createClient } = offlineCliHarness();
     expect(await cli.run(['form', 'prepare', JSON.stringify(mapping), raw])).toBe(1);
     expect(out).toEqual([]);
     expect(err.join('\n')).not.toContain('PRIVATE');
@@ -164,7 +160,7 @@ describe('offline form preparation', () => {
   });
 
   it('enforces the existing byte bound before parsing', async () => {
-    const { cli, out, err, createClient } = harness();
+    const { cli, out, err, createClient } = offlineCliHarness();
     expect(
       await cli.run(['form', 'prepare', JSON.stringify(mapping), ' '.repeat(1024 * 1024 + 1)])
     ).toBe(1);
@@ -188,7 +184,7 @@ describe('offline form preparation', () => {
       const available = MAX_JSON_INPUT_BYTES - 1 - Buffer.byteLength(JSON.stringify(emptyPayload));
       const chars = Math.floor(available / (6 * 50)) + (oversized ? 1 : 0);
       const privateValues = { company: '\u0000'.repeat(chars) };
-      const { cli, out, err, createClient } = harness();
+      const { cli, out, err, createClient } = offlineCliHarness();
       expect(
         await cli.run([
           'form',
@@ -223,7 +219,7 @@ describe('offline form preparation', () => {
         throw new Error('Should not read stdin');
       },
     });
-    const { cli, out, err, createClient } = harness(stdin);
+    const { cli, out, err, createClient } = offlineCliHarness(stdin);
     expect(await cli.run(['form', 'prepare', '-', '-'])).toBe(1);
     expect(err.join('\n')).toContain('Stdin can be used only once');
     expect(out).toEqual([]);
@@ -235,7 +231,7 @@ describe('offline form preparation', () => {
   it.each(['{PRIVATE-MALFORMED', 'null', '[]', '{}'])(
     'refuses invalid mapping without output, private input echo, or service construction',
     async (mapping) => {
-      const { cli, out, err, createClient } = harness();
+      const { cli, out, err, createClient } = offlineCliHarness();
       expect(await cli.run(['form', 'prepare', mapping, '{"secret":"PRIVATE-VALUE"}'])).toBe(1);
       expect(out).toEqual([]);
       expect(err.join('\n')).not.toContain('PRIVATE');
@@ -276,7 +272,7 @@ describe('staged mappings (T6 W3a)', () => {
   });
 
   it('materializes the chosen stage', async () => {
-    const { cli, out } = harness();
+    const { cli, out } = offlineCliHarness();
     expect(await cli.run(['form', 'prepare', stagedMapping, unionValues, 'profile'])).toBe(0);
     const prepared = JSON.parse(out.join('\n'));
     expect(prepared.scope).toEqual({ url: 'https://example.test/signup/2' });
@@ -284,16 +280,16 @@ describe('staged mappings (T6 W3a)', () => {
   });
 
   it('refuses a staged mapping without a stage, and an unknown stage', async () => {
-    const missing = harness();
+    const missing = offlineCliHarness();
     expect(await missing.cli.run(['form', 'prepare', stagedMapping, unionValues])).toBe(1);
     expect(missing.err.join('\n')).toMatch(/stage id/);
-    const unknown = harness();
+    const unknown = offlineCliHarness();
     expect(await unknown.cli.run(['form', 'prepare', stagedMapping, unionValues, 'nope'])).toBe(1);
     expect(unknown.err.join('\n')).toMatch(/Unknown form mapping stage/);
   });
 
   it('lists stages offline without values, and honors --json with the advertised shape', async () => {
-    const { cli, out } = harness();
+    const { cli, out } = offlineCliHarness();
     expect(await cli.run(['form', 'stages', stagedMapping])).toBe(0);
     expect(out.join('\n')).toBe(
       [
@@ -301,7 +297,7 @@ describe('staged mappings (T6 W3a)', () => {
         'profile  https://example.test/signup/2  2 field(s)',
       ].join('\n')
     );
-    const json = harness();
+    const json = offlineCliHarness();
     expect(await json.cli.run(['--json', 'form', 'stages', stagedMapping])).toBe(0);
     expect(JSON.parse(json.out.join('\n'))).toEqual({
       stages: [

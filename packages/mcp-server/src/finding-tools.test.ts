@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { ENGAGEMENT_GENESIS, engagementChainHash } from '@agentbrowser/core';
 import Ajv from 'ajv';
 import { describe, expect, it } from 'vitest';
-import { buildMcpServer } from './mcp-server.js';
+import { buildMcpServer, type McpClient, type McpDependencies } from './mcp-server.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'finding-tools-'));
 const write = (name: string, text: string) => {
