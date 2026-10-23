@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildCli, type CliClient } from './cli.js';
+import { buildCapturedCli } from './test-support/captured-cli.js';
 
 /** TD-BROWSER-16 phase 1: operator keys reach the CLI from the file or a
  * prompt — an environment variable is never consulted. */
@@ -19,12 +20,10 @@ const run = async (
   argv: string[],
   overrides: { env?: Record<string, string | undefined> } = {}
 ) => {
-  const out: string[] = [];
-  const err: string[] = [];
   const fetchCalls: Array<{ url: string; authorization?: string }> = [];
   const originalArgv = process.argv;
   const previous: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(overrides.env ?? {})) previous[key] = process.env[key];
+  for (const [key, _value] of Object.entries(overrides.env ?? {})) previous[key] = process.env[key];
   for (const [key, value] of Object.entries(overrides.env ?? {})) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -38,11 +37,7 @@ const run = async (
     return new Response(JSON.stringify({ ok: true }), { status: 200 });
   }) as unknown as typeof fetch;
   try {
-    const cli = buildCli({
-      createClient: () => ({}) as unknown as CliClient,
-      out: (line) => out.push(line),
-      err: (line) => err.push(line),
-    });
+    const { cli, out, err } = buildCapturedCli(() => ({}) as unknown as CliClient);
     await cli.run(argv);
     return { out, err, fetchCalls };
   } finally {
@@ -121,7 +116,7 @@ describe('operator commands (TD-BROWSER-16 phase 7)', () => {
     await writeFile(path, 'op-key-one-aaaaaaaa:acme\n');
     const bodies: string[] = [];
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       if (init?.body !== undefined) bodies.push(String(init.body));
       return new Response(JSON.stringify({ kind: 'cookie.handoff', status: 'approved' }), {
         status: 200,

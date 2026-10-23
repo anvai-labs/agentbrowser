@@ -1,19 +1,10 @@
 import type { AGENT_MODE_IDS } from '@agentbrowser/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { buildMcpServer, type McpClient } from './mcp-server.js';
+import { rpcHarness } from './test-support/rpc-harness.js';
 
 function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[number] } = {}) {
   const events = vi.fn();
-  const sessions = { events };
-  const server = buildMcpServer({
-    createClient: () => ({ sessions }) as unknown as McpClient,
-    ...options,
-  });
-  const exchange = async (method: string, params: unknown = {}) => {
-    const response = await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }));
-    if (!response) throw new Error('Missing MCP response');
-    return JSON.parse(response);
-  };
+  const { exchange } = rpcHarness({ sessions: { events } }, options);
   const call = async (args: Record<string, unknown>) => {
     const response = await exchange('tools/call', {
       name: 'events_replay',

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildCli } from './cli.js';
+import { offlineCliHarness } from './test-support/offline-cli.js';
 
 const bundle = () => {
   const environment = {
@@ -66,26 +66,11 @@ const bundle = () => {
   };
 };
 
-function harness(stdin?: Readable) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const createClient = vi.fn(() => {
-    throw new Error('Offline evaluation constructed a client');
-  });
-  const cli = buildCli({
-    ...(stdin ? { stdin } : {}),
-    out: (line) => out.push(line),
-    err: (line) => err.push(line),
-    createClient,
-  });
-  return { cli, out, err, createClient };
-}
-
 afterEach(() => vi.unstubAllGlobals());
 
 describe('offline test evaluation', () => {
   it('advertises the canonical wire contract and is covered by the JSON-input audit', async () => {
-    const { cli, out, createClient } = harness();
+    const { cli, out, createClient } = offlineCliHarness();
     expect(await cli.run(['describe', 'test', 'evaluate', '--schema'])).toBe(0);
     const discovery = JSON.parse(out.join('\n'));
     expect(discovery.command.path).toEqual(['test', 'evaluate']);
@@ -104,7 +89,7 @@ describe('offline test evaluation', () => {
   });
 
   it('evaluates inline input without client, credentials or network and omits private requests', async () => {
-    const { cli, out, err, createClient } = harness();
+    const { cli, out, err, createClient } = offlineCliHarness();
     const env = process.env;
     let credentialReads = 0;
     process.env = new Proxy(env, {
@@ -154,7 +139,7 @@ describe('offline test evaluation', () => {
       const path = join(directory, 'input.json');
       await writeFile(path, JSON.stringify(bundle()));
       for (const source of ['-', `@${path}`]) {
-        const { cli, out, err } = harness(Readable.from([JSON.stringify(bundle())]));
+        const { cli, out, err } = offlineCliHarness(Readable.from([JSON.stringify(bundle())]));
         expect(await cli.run(['--json', 'test', 'evaluate', source])).toBe(0);
         expect(JSON.parse(out.join('\n')).verdict).toBe('passed');
         expect(err).toEqual([]);
@@ -167,7 +152,7 @@ describe('offline test evaluation', () => {
   it('returns a complete failed report with nonzero status and no error output', async () => {
     const input = bundle();
     input.report.cleanup = 'failed';
-    const { cli, out, err } = harness();
+    const { cli, out, err } = offlineCliHarness();
     expect(await cli.run(['--json', 'test', 'evaluate', JSON.stringify(input)])).toBe(1);
     const result = JSON.parse(out.join('\n'));
     expect(result.verdict).toBe('failed');
@@ -176,7 +161,7 @@ describe('offline test evaluation', () => {
   });
 
   it('prints only the case ID and verdict in human mode', async () => {
-    const { cli, out, err } = harness();
+    const { cli, out, err } = offlineCliHarness();
     expect(await cli.run(['test', 'evaluate', JSON.stringify(bundle())])).toBe(0);
     expect(out).toEqual(['counter: passed']);
     expect(err).toEqual([]);
@@ -192,7 +177,7 @@ describe('offline test evaluation', () => {
       JSON.stringify({ ...bundle(), private: 'PRIVATE-EXTRA' }),
       JSON.stringify({ ...bundle(), private: `PRIVATE-${'x'.repeat(1024 * 1024)}` }),
     ]) {
-      const { cli, out, err } = harness();
+      const { cli, out, err } = offlineCliHarness();
       expect(await cli.run(['--json', 'test', 'evaluate', source])).toBe(1);
       expect(out).toEqual([]);
       expect(err.join('\n')).toContain('Invalid test case evaluation');
