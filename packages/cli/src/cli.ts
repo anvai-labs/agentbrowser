@@ -116,6 +116,32 @@ interface WaitFlagOptions {
 
 const WAIT_UNTIL_VALUES = new Set<string>(DELIVERED_WAIT_TYPES);
 
+/** The operator-plane commands' shared HTTP call: fetch with a bounded timeout; a
+ * non-OK response becomes the uniform UsageError — `<what> failed (status code):
+ * message` — carrying the body's error envelope when present. */
+async function fetchOrUsageError(
+  what: string,
+  url: string,
+  timeoutMs: number,
+  init: RequestInit = {}
+) {
+  // Compose, never silently replace: a caller-supplied abort (shutdown, Ctrl-C) must
+  // still cancel alongside the helper's timeout.
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
+  const res = await fetch(url, { ...init, signal });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: { code?: string; message?: string };
+    };
+    throw new UsageError(
+      `${what} failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+    );
+  }
+  return res;
+}
+
 function captureInteger(value: string, flag: string): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
     throw new UsageError(`${flag} must be an integer`);
@@ -2660,19 +2686,12 @@ export function buildCli(deps: CliDependencies): Cli {
                 throw new UsageError(
                   'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
                 );
-              const res = await fetch(`${ctx.baseUrl}/v1/operator/login/${verb}`, {
-                method: 'POST',
-                headers: { authorization: `Bearer ${operatorKey}` },
-                signal: AbortSignal.timeout(60_000),
-              });
-              if (!res.ok) {
-                const body = (await res.json().catch(() => ({}))) as {
-                  error?: { code?: string; message?: string };
-                };
-                throw new UsageError(
-                  `operator login-browser ${verb} failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
-                );
-              }
+              const res = await fetchOrUsageError(
+                `operator login-browser ${verb}`,
+                `${ctx.baseUrl}/v1/operator/login/${verb}`,
+                60_000,
+                { method: 'POST', headers: { authorization: `Bearer ${operatorKey}` } }
+              );
               const body = (await res.json()) as unknown;
               ctx.emit(body, () => [`login browser: ${JSON.stringify(body)}`]);
             })
@@ -2736,8 +2755,10 @@ export function buildCli(deps: CliDependencies): Cli {
                 maxActions: Math.round(actionsValue),
               };
             }
-            const res = await fetch(
+            const res = await fetchOrUsageError(
+              'operator approve',
               `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              30_000,
               {
                 method: 'POST',
                 headers: {
@@ -2748,17 +2769,8 @@ export function buildCli(deps: CliDependencies): Cli {
                   decision: 'approve',
                   ...(lease !== undefined ? { lease } : {}),
                 }),
-                signal: AbortSignal.timeout(30_000),
               }
             );
-            if (!res.ok) {
-              const body = (await res.json().catch(() => ({}))) as {
-                error?: { code?: string; message?: string };
-              };
-              throw new UsageError(
-                `operator approve failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
-              );
-            }
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [`decided: ${JSON.stringify(body)}`]);
           })
@@ -2781,23 +2793,14 @@ export function buildCli(deps: CliDependencies): Cli {
               throw new UsageError(
                 'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
               );
-            const res = await fetch(
-              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
-              {
-                headers: { authorization: `Bearer ${operatorKey}` },
-                signal: AbortSignal.timeout(30_000),
-              }
-            );
             // A non-OK response is an error to STDERR with exit 1, like
             // every other command (review finding 4).
-            if (!res.ok) {
-              const body = (await res.json().catch(() => ({}))) as {
-                error?: { code?: string; message?: string };
-              };
-              throw new UsageError(
-                `approvals view failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
-              );
-            }
+            const res = await fetchOrUsageError(
+              'approvals view',
+              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              30_000,
+              { headers: { authorization: `Bearer ${operatorKey}` } }
+            );
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
           })
