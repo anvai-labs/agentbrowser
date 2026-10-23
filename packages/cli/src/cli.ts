@@ -125,7 +125,12 @@ async function fetchOrUsageError(
   timeoutMs: number,
   init: RequestInit = {}
 ) {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  // Compose, never silently replace: a caller-supplied abort (shutdown, Ctrl-C) must
+  // still cancel alongside the helper's timeout.
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
+  const res = await fetch(url, { ...init, signal });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as {
       error?: { code?: string; message?: string };

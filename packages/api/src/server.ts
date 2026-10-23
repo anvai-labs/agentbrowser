@@ -1036,11 +1036,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       /** The operator-only REST routes' shared admission: an operator principal that
        * owns the session — FLOOR_OPERATOR_REQUIRED otherwise. Returns the principal
        * for routes that forward it to the service. */
-      const requireOperatorOwnership = (
-        request: FastifyRequest | RequestData,
-        sessionId: string
-      ) => {
-        const principal = principals.get(request as FastifyRequest);
+      /** FastifyRequest only on purpose: the principals WeakMap is keyed by the raw
+       * request; a RequestData (the on() plane) would never resolve — those routes
+       * read request.principal directly instead. */
+      const requireOperatorOwnership = (request: FastifyRequest, sessionId: string) => {
+        const principal = principals.get(request);
         if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
         requireOwnership(sessionId, tenantOf(request));
         return principal;
