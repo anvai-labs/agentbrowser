@@ -6,7 +6,7 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { VisualAuditError } from '@agentbrowser/engagement';
 
 /** Strict filename component: no path separators, bounded length. */
-export const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export function assertLabel(label: string): void {
   if (!LABEL_PATTERN.test(label)) {

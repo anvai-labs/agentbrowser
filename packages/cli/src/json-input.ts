@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 import { UsageError } from '@agentbrowser/sdk-typescript';
 
 export const MAX_JSON_INPUT_BYTES = 1024 * 1024;
-export const JSON_INPUT_TIMEOUT_MS = 30_000;
+const JSON_INPUT_TIMEOUT_MS = 30_000;
 export type JsonInputStream = Readable & { isTTY?: boolean };
 
 /** One reader per invocation: preserve @file/inline/- syntax and single stdin ownership. */

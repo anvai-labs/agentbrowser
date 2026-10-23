@@ -29,7 +29,7 @@ import { percentile } from './harness.js';
 
 export const SUBRESOURCES = 300;
 /** The reference page load the policy share is measured against (ms). */
-export const REFERENCE_PAGE_LOAD_MS = 1000;
+const REFERENCE_PAGE_LOAD_MS = 1000;
 /**
  * The gate: the maximum share of load time spent in policy evaluation, for
  * the modes production runs — memoized (always) and shadow (opt-in). The

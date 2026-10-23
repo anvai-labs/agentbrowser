@@ -190,7 +190,7 @@ export const hostnameArb: fc.Arbitrary<string> = fc.oneof(
 );
 
 /** First, last and one-past-either-end of a CIDR, so prefix off-by-ones are hit. */
-export function cidrBoundaries(cidr: string): string[] {
+function cidrBoundaries(cidr: string): string[] {
   const [base = '', bits = '0'] = cidr.split('/');
   const prefix = Number(bits);
   if (base.includes(':')) {
@@ -223,7 +223,7 @@ function fromV6(value: bigint): string {
   return words.join(':');
 }
 
-export const actInputArb = fc.record({
+const actInputArb = fc.record({
   action: fc.constantFrom(...ACTIONS),
   url: fc.constantFrom('about:blank', ...HOSTS.map((h) => `https://${h}/`)),
   element: optional(
@@ -348,9 +348,7 @@ const EGRESS_TABLE_ADDRESSES = [
   '0.0.0.0',
 ];
 
-export async function assertEgressTable(
-  subjectFor: (config: LegacyConfig) => Authorizer
-): Promise<void> {
+async function assertEgressTable(subjectFor: (config: LegacyConfig) => Authorizer): Promise<void> {
   for (const allowLoopback of [false, true]) {
     for (const allowedPrivateCIDRs of EGRESS_TABLE_CIDRS) {
       const config: LegacyConfig = {
@@ -377,7 +375,7 @@ export async function assertEgressTable(
  * come from classify(), so a correct subject that looks rules up in its
  * configuration passes. Ids are a mix of explicit and `rule-<index>`.
  */
-export function assertApprovalTable(subjectFor: (config: LegacyConfig) => Authorizer): void {
+function assertApprovalTable(subjectFor: (config: LegacyConfig) => Authorizer): void {
   const combos: Array<{ effect: (typeof EFFECTS)[number]; decision?: (typeof MODES)[number] }> = [];
   for (const effect of EFFECTS) {
     for (const decision of [undefined, ...MODES]) {

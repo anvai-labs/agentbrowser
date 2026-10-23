@@ -399,7 +399,7 @@ const junitXml = (value: string): string =>
  * T10 M4: a JUnit report for one plan run: one testcase per step, verdicts and error codes
  * only. Error messages can echo page content, so they never enter the artifact.
  */
-export function planJunit(
+function planJunit(
   planFile: string,
   steps: Array<Record<string, unknown>>,
   report: {

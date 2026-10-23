@@ -192,7 +192,7 @@ function operationOptions(args: Record<string, unknown>): [] | [MutationOptions]
  * T5 B-dur: act, plan and autofill take `executionRequirement`. Omitted means unchanged (the SDK
  * call is exactly the one before this field existed); any other value is refused before a call.
  */
-export const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill'] as const);
+const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill'] as const);
 function browserOptions(
   args: Record<string, unknown>
 ): [] | [MutationOptions & { executionRequirement?: 'ephemeral' | 'durable' }] {
@@ -1892,7 +1892,7 @@ const TOOL_ERROR_ENVELOPE = {
  * MCP tool contract) and keeps the result schema's $id; the nested copy drops it so no
  * validator sees the same $id twice.
  */
-export function advertisedOutputSchema(schema: Record<string, unknown>): Record<string, unknown> {
+function advertisedOutputSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const { $id, ...result } = schema;
   return {
     ...($id !== undefined ? { $id } : {}),
@@ -1902,7 +1902,7 @@ export function advertisedOutputSchema(schema: Record<string, unknown>): Record<
 }
 
 /** The largest index <= limit that does not split a UTF-8 sequence in `bytes`. */
-export function utf8Boundary(bytes: Uint8Array, limit: number): number {
+function utf8Boundary(bytes: Uint8Array, limit: number): number {
   if (limit >= bytes.length) return bytes.length;
   let cut = limit;
   // Step back over continuation bytes (10xxxxxx) to the lead byte of the torn character.

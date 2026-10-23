@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthorizationRequest, Authorizer } from './authorizer.js';
 import { CedarAuthorizer } from './cedar-authorizer.js';
-import { policyDocumentFromLegacyConfig } from './cedar-generator.js';
 import { MemoizedAuthorizer } from './memoized-authorizer.js';
 import { ShadowAuthorizer } from './shadow-authorizer.js';
 import { TenantBindingAuthorizer } from './tenant-binding.js';
@@ -89,7 +88,7 @@ describe('MemoizedAuthorizer', () => {
     expect(memo.size).toBe(2);
   });
   it('evicts the least recently used past the bound and refreshes on use', () => {
-    const inner = fake((r) => ({ allowed: true, ruleMatched: 'x' }));
+    const inner = fake((_r) => ({ allowed: true, ruleMatched: 'x' }));
     const memo = new MemoizedAuthorizer(inner, 2);
     const a = req('downloads');
     const b = { action: 'act' as const, context: { effect: 'read' as const } };
