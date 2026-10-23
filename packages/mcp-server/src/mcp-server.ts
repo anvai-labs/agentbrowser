@@ -227,6 +227,18 @@ const FINDING_INPUT_PROPERTIES: Record<string, unknown> = {
   },
 };
 
+/** One path rule, shared by the scope schema's pathRules and excludePaths arrays:
+ * a segment-boundary prefix, optionally narrowed to one host subtree. */
+const PATH_RULE_ITEM: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
+    prefix: { type: 'string', minLength: 1, pattern: '^/' },
+  },
+  required: ['prefix'],
+  additionalProperties: false,
+};
+
 /** The ok:false + issues branch both finding tools advertise — the output-schema twin of
  * readCheckedFindings' failure value, so schema and handler cannot drift apart. */
 const FINDING_FAILURE_SCHEMA: Record<string, unknown> = {
@@ -397,15 +409,7 @@ export function buildTools(
               },
               pathRules: {
                 type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
-                  },
-                  required: ['prefix'],
-                  additionalProperties: false,
-                },
+                items: { ...PATH_RULE_ITEM },
                 minItems: 1,
               },
               allowedMethods: {
@@ -440,15 +444,7 @@ export function buildTools(
               },
               excludePaths: {
                 type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
-                  },
-                  required: ['prefix'],
-                  additionalProperties: false,
-                },
+                items: { ...PATH_RULE_ITEM },
                 minItems: 1,
               },
               allowedSchemes: {

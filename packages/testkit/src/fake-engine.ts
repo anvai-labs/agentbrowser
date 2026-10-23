@@ -302,23 +302,7 @@ class FakePage implements EnginePage {
 
   /** Test hook: place elements (e.g. file inputs) on the page with explicit refs. */
   seedElements(elements: Array<Partial<FakeElement> & { ref: string; role: string }>): void {
-    const added: FakeElement[] = elements.map((el) => ({
-      ref: el.ref,
-      role: el.role,
-      name: el.name ?? '',
-      value: el.value ?? '',
-      required: el.required ?? false,
-      visible: el.visible ?? true,
-      enabled: el.enabled ?? true,
-      focused: el.focused ?? false,
-      ...(el.risk !== undefined ? { risk: el.risk } : {}),
-      ...(el.checked !== undefined ? { checked: el.checked } : {}),
-      ...(el.depth !== undefined ? { depth: el.depth } : {}),
-      ...(el.block !== undefined ? { block: el.block } : {}),
-      ...(el.context !== undefined ? { context: el.context } : {}),
-      ...(el.minted !== undefined ? { minted: el.minted } : {}),
-      attributes: el.attributes ?? {},
-    }));
+    const added: FakeElement[] = elements.map((el) => normalizeElement(el, el.ref));
     this.elements = [...this.elements, ...added];
     this.syncElementIndex();
   }
@@ -634,18 +618,9 @@ class FakePage implements EnginePage {
           this.pendingReveals.splice(revealIndex, 1);
           setTimeout(() => {
             const baseIndex = this.elements.length;
-            const added: FakeElement[] = reveal.elements.map((el, i) => ({
-              ref: el.ref ?? `e${this.revision}_${baseIndex + i + 1}`,
-              role: el.role ?? 'unknown',
-              name: el.name ?? '',
-              value: el.value ?? '',
-              required: el.required ?? false,
-              visible: el.visible ?? true,
-              enabled: el.enabled ?? true,
-              focused: el.focused ?? false,
-              ...(el.risk !== undefined ? { risk: el.risk } : {}),
-              attributes: el.attributes ?? {},
-            }));
+            const added: FakeElement[] = reveal.elements.map((el, i) =>
+              normalizeElement(el, `e${this.revision}_${baseIndex + i + 1}`)
+            );
             this.elements = [...this.elements, ...added];
             this.syncElementIndex();
           }, reveal.delayMs);
@@ -994,23 +969,9 @@ class FakePage implements EnginePage {
    * including risk classification).
    */
   setElements(elements: Array<Partial<FakeElement>>): void {
-    this.elements = elements.map((el, index) => ({
-      ref: el.ref ?? `e${this.revision}_${index + 1}`,
-      role: el.role ?? 'unknown',
-      name: el.name ?? '',
-      value: el.value ?? '',
-      required: el.required ?? false,
-      visible: el.visible ?? true,
-      enabled: el.enabled ?? true,
-      focused: el.focused ?? false,
-      ...(el.risk !== undefined ? { risk: el.risk } : {}),
-      ...(el.depth !== undefined ? { depth: el.depth } : {}),
-      ...(el.block !== undefined ? { block: el.block } : {}),
-      ...(el.context !== undefined ? { context: el.context } : {}),
-      ...(el.minted !== undefined ? { minted: el.minted } : {}),
-      ...(el.expanded !== undefined ? { expanded: el.expanded } : {}),
-      attributes: el.attributes ?? {},
-    }));
+    this.elements = elements.map((el, index) =>
+      normalizeElement(el, `e${this.revision}_${index + 1}`)
+    );
     // Keep the ref index in sync: resolve() and act() read the Map.
     this.syncElementIndex();
   }
@@ -1061,4 +1022,29 @@ interface FakeElement {
   /** Enrichment-minted marker (protocol). */
   minted?: boolean;
   attributes: Record<string, string>;
+}
+
+/** Normalize a partial element spec into a full FakeElement: contract fields default,
+ * present-optionals spread through (absent stays absent). The one definition for
+ * seedElements, setElements and the click-reveal path, so the three intake paths carry
+ * identical optional-field semantics (previously each dropped a different subset). */
+function normalizeElement(el: Partial<FakeElement>, fallbackRef: string): FakeElement {
+  return {
+    ref: el.ref ?? fallbackRef,
+    role: el.role ?? 'unknown',
+    name: el.name ?? '',
+    value: el.value ?? '',
+    required: el.required ?? false,
+    visible: el.visible ?? true,
+    enabled: el.enabled ?? true,
+    focused: el.focused ?? false,
+    ...(el.risk !== undefined ? { risk: el.risk } : {}),
+    ...(el.checked !== undefined ? { checked: el.checked } : {}),
+    ...(el.depth !== undefined ? { depth: el.depth } : {}),
+    ...(el.block !== undefined ? { block: el.block } : {}),
+    ...(el.context !== undefined ? { context: el.context } : {}),
+    ...(el.minted !== undefined ? { minted: el.minted } : {}),
+    ...(el.expanded !== undefined ? { expanded: el.expanded } : {}),
+    attributes: el.attributes ?? {},
+  };
 }

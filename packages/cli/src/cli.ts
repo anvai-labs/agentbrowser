@@ -442,6 +442,27 @@ export function buildCli(deps: CliDependencies): Cli {
   return {
     async run(argv: string[]): Promise<number> {
       let exitCode = 0;
+      /**
+       * The command families' uniform failure report: a typed detail extracted from the
+       * error becomes the nonzero-exit human line or the --json envelope (pretty for the
+       * navigation family, compact for the download family — the two formats shipped
+       * independently and are pinned by tests). Caller rethrows when its extractor
+       * returns undefined (not-this-family failures must not be swallowed).
+       */
+      const emitTypedFailure = (
+        ctx: CommandContext,
+        detail: { code: string; message: string },
+        pretty: boolean
+      ) => {
+        exitCode = 1;
+        deps.err(
+          ctx.json
+            ? pretty
+              ? JSON.stringify({ error: detail }, null, 2)
+              : JSON.stringify({ error: detail })
+            : `${detail.code}: ${detail.message}`
+        );
+      };
 
       const readJsonArgument = createJsonArgumentReader(deps.stdin ? { stdin: deps.stdin } : {});
 
@@ -1369,12 +1390,7 @@ export function buildCli(deps: CliDependencies): Cli {
             } catch (error) {
               const detail = navigationFailureDetail(error);
               if (detail === undefined) throw error;
-              exitCode = 1;
-              deps.err(
-                ctx.json
-                  ? JSON.stringify({ error: detail }, null, 2)
-                  : `${detail.code}: ${detail.message}`
-              );
+              emitTypedFailure(ctx, detail, true);
             }
           })
         );
@@ -1541,12 +1557,7 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 const detail = navigationFailureDetail(error);
                 if (detail === undefined) throw error;
-                exitCode = 1;
-                deps.err(
-                  ctx.json
-                    ? JSON.stringify({ error: detail }, null, 2)
-                    : `${detail.code}: ${detail.message}`
-                );
+                emitTypedFailure(ctx, detail, true);
               }
             }
           )
@@ -3462,11 +3473,7 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 const usage = downloadUsageError(error);
                 if (usage) throw usage;
-                const detail = downloadFailureDetail(error);
-                exitCode = 1;
-                deps.err(
-                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
-                );
+                emitTypedFailure(ctx, downloadFailureDetail(error), false);
               }
             }
           )
@@ -3502,11 +3509,7 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 const usage = downloadUsageError(error);
                 if (usage) throw usage;
-                const detail = downloadFailureDetail(error);
-                exitCode = 1;
-                deps.err(
-                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
-                );
+                emitTypedFailure(ctx, downloadFailureDetail(error), false);
               }
             }
           )

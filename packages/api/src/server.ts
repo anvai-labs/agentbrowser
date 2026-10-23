@@ -1034,6 +1034,27 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         retryable = false
       ) => reply.code(status).send({ error: { code, message, retryable } });
 
+      /** The journal plane's shared admission: an authenticated principal, plus (for the
+       * lookup routes) a rate-limit slot. Sends the typed refusal and returns undefined
+       * when the route must not proceed. `limiter` is required on purpose: a new route
+       * that forgets it must not silently bypass the journal limiter. */
+      const requireJournalPrincipal = (
+        request: FastifyRequest,
+        reply: FastifyReply,
+        limiter: boolean
+      ) => {
+        const principal = principals.get(request);
+        if (!principal) {
+          journalRefusal(reply, 'UNAUTHORIZED', 'A valid bearer credential is required', 401);
+          return undefined;
+        }
+        if (limiter && !journalLimiter.take(principal.tenant)) {
+          journalRefusal(reply, 'RATE_LIMITED', 'Journal lookup rate limit exceeded', 429, true);
+          return undefined;
+        }
+        return principal;
+      };
+
       // T10 M2: export one of the caller's engagement ledgers as NDJSON (the
       // file, verbatim, so it verifies offline). Same credential rule as the
       // journal: a tenant API key or the operator key; keyless deployments have
@@ -1042,15 +1063,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/engagements/:engagementId',
         { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
-          const principal = principals.get(request);
-          if (!principal)
-            return reply.code(401).send({
-              error: {
-                code: 'UNAUTHORIZED',
-                message: 'A valid bearer credential is required',
-                retryable: false,
-              },
-            });
+          // Same credential rule as the journal plane (the comment above): the shared
+          // admission sends this route's 401 too — no third hand-rolled copy.
+          const principal = requireJournalPrincipal(request, reply, false);
+          if (!principal) return;
           if (principal.tenant === undefined)
             return reply.code(403).send({
               error: {
@@ -1072,22 +1088,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/journal',
         { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
-          const principal = principals.get(request);
-          if (!principal)
-            return journalRefusal(
-              reply,
-              'UNAUTHORIZED',
-              'A valid bearer credential is required',
-              401
-            );
-          if (!journalLimiter.take(principal.tenant))
-            return journalRefusal(
-              reply,
-              'RATE_LIMITED',
-              'Journal lookup rate limit exceeded',
-              429,
-              true
-            );
+          const principal = requireJournalPrincipal(request, reply, true);
+          if (!principal) return;
           const acceptUntil = journalConfig
             ? new Date(journalConfig.acceptUntil).toISOString()
             : undefined;
@@ -1140,22 +1142,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/journal/operations/:operationId',
         { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
-          const principal = principals.get(request);
-          if (!principal)
-            return journalRefusal(
-              reply,
-              'UNAUTHORIZED',
-              'A valid bearer credential is required',
-              401
-            );
-          if (!journalLimiter.take(principal.tenant))
-            return journalRefusal(
-              reply,
-              'RATE_LIMITED',
-              'Journal lookup rate limit exceeded',
-              429,
-              true
-            );
+          const principal = requireJournalPrincipal(request, reply, true);
+          if (!principal) return;
           const { operationId } = request.params as { operationId: string };
           if (!CONTROL_OPERATION_ID.test(operationId))
             return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
@@ -1285,14 +1273,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         maxTenants: 4096,
       });
       const recoveryWrite = (request: FastifyRequest, reply: FastifyReply) => {
-        const principal = principals.get(request);
-        if (!principal)
-          return journalRefusal(
-            reply,
-            'UNAUTHORIZED',
-            'A valid bearer credential is required',
-            401
-          );
+        const principal = requireJournalPrincipal(request, reply, false);
+        // Truthy = refusal sent (the caller checks `if (recoveryWrite(...)) return reply`);
+        // the reply object is the same truthy value journalRefusal returns.
+        if (!principal) return reply;
         // D1 as amended: writes are the ADR-025 operator principal only. A tenant API key
         // authenticates as actor 'operator' and the /v1 hook admits it on any route; the
         // service refuses it — the accepted design's named implementation hazard.
