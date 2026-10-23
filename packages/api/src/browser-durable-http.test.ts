@@ -11,6 +11,7 @@ import {
   buildApplicationServer,
   operatorHeaders,
 } from './test-support/application-counter-http.js';
+import { journalTree } from './test-support/journal-fixture.js';
 
 async function controlledPage() {
   const { server } = await buildApplicationServer();
@@ -222,29 +223,15 @@ describe('durable terminal mapping over HTTP, with a real journal (B-dur-2b)', (
  * tagged directory, key file, and the JOURNAL_* env). `restore` unsets the env and
  * removes the directory — it belongs in the caller's finally. */
 async function journaledEnv(tag: string, keyHex: string) {
-  const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const base = mkdtempSync(join(realpathSync(tmpdir()), tag));
-  mkdirSync(join(base, 'store'), { mode: 0o700 });
-  mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-  writeFileSync(join(base, 'key'), `key-1:${keyHex.repeat(32)}\n`, { mode: 0o600 });
-  const env = {
-    AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-    AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-    AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
-    AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-    AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-    AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-  };
-  const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-  Object.assign(process.env, env);
+  const tree = journalTree(tag, keyHex);
+  const saved = Object.fromEntries(Object.keys(tree.env).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, tree.env);
   const restore = async () => {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
-    rmSync(base, { recursive: true, force: true });
+    tree.dispose();
   };
   return { restore };
 }

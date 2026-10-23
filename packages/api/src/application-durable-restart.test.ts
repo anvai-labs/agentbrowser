@@ -9,14 +9,14 @@
  *    That is the advertised weaker outcome: the application adapter itself owns idempotency;
  *    the journal never claims it.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
 import { AgentBrowserService } from './service.js';
+import { journalTree } from './test-support/journal-fixture.js';
 
 const operator = { actor: 'operator' as const, tenant: 'owner' };
 const cleanup: string[] = [];
@@ -25,21 +25,9 @@ afterEach(() => {
 });
 
 function journalEnvironment() {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'restart-a2-'));
-  cleanup.push(base);
-  mkdirSync(join(base, 'store'), { mode: 0o700 });
-  mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-  writeFileSync(join(base, 'key'), `key-1:${'5a'.repeat(32)}\n`, { mode: 0o600 });
-  return {
-    store: join(base, 'store'),
-    env: {
-      AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-      AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-      AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
-      AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-    } as Record<string, string | undefined>,
-  };
+  const tree = journalTree('restart-a2-', '5a', { initialize: false });
+  cleanup.push(tree.baseDir);
+  return { store: tree.storeDir, env: tree.env };
 }
 
 /** One service instance on the (reopened) store; the effect is a per-instance in-memory counter. */ async function serviceProcess(

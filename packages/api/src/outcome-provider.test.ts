@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { setImmediate as settlePublication } from 'node:timers/promises';
 import {
   type ApplicationReceiptAuthorizationRequest,
@@ -13,6 +12,7 @@ import {
   type ServiceEvidenceSourceBuilder,
   type ServiceOutcomeEvidenceContext,
 } from './service.js';
+import { keyedServer } from './test-support/keyed-server.js';
 import { receiptEqualsRegistry } from './test-support/receipt-verifier.js';
 
 const registry = () => new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>();
@@ -265,9 +265,7 @@ describe('application-scoped permission through delegated HTTP outcomes', () => 
         return { generation, currentGeneration: () => generation };
       });
       const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
-      const server = await buildServer({
-        engine: new FakeEngine(),
-        apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+      const server = await keyedServer(tenant, {
         applicationAdapters: [
           {
             id: 'fixture-app',
