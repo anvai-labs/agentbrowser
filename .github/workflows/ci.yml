@@ -162,6 +162,11 @@ jobs:
       - name: Build workspace dependencies
         run: pnpm -r build
 
+      # The generated MCP catalog must stay fresh against the BUILT tool surface; this
+      # runner needs dist/ (the Lint job's test:release runs source-only scripts).
+      - name: MCP catalog freshness (built surface)
+        run: node --test scripts/mcp-catalog-docs.test.mjs
+
       # Share one host-library provisioning step; Firefox itself comes from Mozilla below.
       # T6 W3b: the api suite's widget qualification drives all three Playwright families, so
       # their binaries are installed here, not only Chromium's.
