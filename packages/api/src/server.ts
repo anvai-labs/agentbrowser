@@ -40,7 +40,6 @@ import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { LoginBrowserError } from '@agentbrowser/engine-playwright';
-import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
@@ -74,7 +73,7 @@ import {
 } from './http-publication.js';
 import { LoginBrowserService } from './login-browser-service.js';
 import { buildOpenApiDocument } from './openapi.js';
-import { operatorKeysFromEnvironment, operatorKeysFromFile } from './operator-keys.js';
+import { operatorKeysFromEnvironment } from './operator-keys.js';
 import { TokenBucketLimiter } from './policy-query-limiter.js';
 import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
@@ -856,7 +855,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return Object.fromEntries(keys.map((k) => [k, raw[k]])) as Record<K, string>;
   };
 
-  fastify.get('/health/live', async (request, reply) => {
+  fastify.get('/health/live', async (_request, _reply) => {
     return { status: 'live', timestamp: new Date().toISOString() };
   });
 
@@ -918,7 +917,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
   });
 
-  fastify.get('/health', async (request, reply) => {
+  fastify.get('/health', async (_request, _reply) => {
     return {
       status: 'healthy',
       version: PRODUCT_VERSION,
@@ -1033,6 +1032,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         status: number,
         retryable = false
       ) => reply.code(status).send({ error: { code, message, retryable } });
+
+      /** The operator-only REST routes' shared admission: an operator principal that
+       * owns the session — FLOOR_OPERATOR_REQUIRED otherwise. Returns the principal
+       * for routes that forward it to the service. */
+      const requireOperatorOwnership = (
+        request: FastifyRequest | RequestData,
+        sessionId: string
+      ) => {
+        const principal = principals.get(request as FastifyRequest);
+        if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+        requireOwnership(sessionId, tenantOf(request));
+        return principal;
+      };
 
       /** The journal plane's shared admission: an authenticated principal, plus (for the
        * lookup routes) a rate-limit slot. Sends the typed refusal and returns undefined
@@ -1890,9 +1902,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           `/sessions/:sessionId/control/${action}`,
           async (request, reply) => {
             const { sessionId } = params(request, 'sessionId');
-            const principal = principals.get(request);
-            if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-            requireOwnership(sessionId, tenantOf(request));
+            const principal = requireOperatorOwnership(request, sessionId);
             const control = service.authority.get(sessionId);
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
             if (action === 'takeover') return reply.send(service.authority.takeover(sessionId));
@@ -2087,9 +2097,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          const principal = principals.get(request);
-          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
+          const principal = requireOperatorOwnership(request, sessionId);
           requireBody(request.body);
           return reply.send(service.applicationBind(sessionId, principal, request.body));
         },
@@ -2100,9 +2108,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          const principal = principals.get(request);
-          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
+          const principal = requireOperatorOwnership(request, sessionId);
           return reply.send(service.applicationUnbind(sessionId, principal));
         },
         {}
@@ -2125,9 +2131,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/application/reviews',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          const principal = principals.get(request);
-          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
+          const principal = requireOperatorOwnership(request, sessionId);
           if (request.headers['x-agentbrowser-operation-id'] !== undefined)
             throw new ServiceError(
               'INVALID_REQUEST',

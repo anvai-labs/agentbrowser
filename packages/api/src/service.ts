@@ -2564,6 +2564,24 @@ export class AgentBrowserService {
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
+    /** Record one step's failure and build the loop's shared stop-the-plan report
+     * (every refusal path below returns this, some wrapped by markOutcomeUnknown). */
+    const failStepReport = (
+      index: number,
+      code: string,
+      message: string,
+      mode: 'stable' | 'verified' = this.churnMode(churnKey)
+    ) => {
+      results.push({ step: index, ok: false, error: message });
+      return {
+        ok: false as const,
+        completed: index,
+        results,
+        mode,
+        newRevision: finalRevision(),
+        error: { code, message },
+      };
+    };
     const recordEffect = (index: number, effect: ServiceActResult) => {
       this.decayChurn(churnKey);
       const navigationObservation = parseActionNavigationObservation(effect.navigationObservation);
@@ -2612,30 +2630,14 @@ export class AgentBrowserService {
             step.target !== undefined ? step : { ...step, target: { ref: resolvedRef } };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          results.push({ step: index, ok: false, error: message });
-          return {
-            ok: false,
-            completed: index,
-            results,
-            mode: this.churnMode(churnKey),
-            newRevision: finalRevision(),
-            error: { code: 'PLAN_WAIT_TIMEOUT', message },
-          };
+          return failStepReport(index, 'PLAN_WAIT_TIMEOUT', message);
         }
       }
       if (step.steps !== undefined) {
         // F3: batch envelopes are the /act surface's own shortcut - nesting
         // one inside a plan (or a batch) would double-apply orchestration.
         const message = "'steps' cannot be nested inside a plan step.";
-        results.push({ step: index, ok: false, error: message });
-        return {
-          ok: false,
-          completed: index,
-          results,
-          mode: this.churnMode(churnKey),
-          newRevision: finalRevision(),
-          error: { code: 'PLAN_STEP_FAILED', message },
-        };
+        return failStepReport(index, 'PLAN_STEP_FAILED', message);
       }
       try {
         const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
@@ -2736,43 +2738,19 @@ export class AgentBrowserService {
             } catch (retryError) {
               const retryMessage =
                 retryError instanceof Error ? retryError.message : String(retryError);
-              results.push({ step: index, ok: false, error: retryMessage });
               return markOutcomeUnknown(
-                {
-                  ok: false,
-                  completed: index,
-                  results,
-                  mode: this.churnMode(churnKey),
-                  newRevision: finalRevision(),
-                  error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
-                },
+                failStepReport(index, 'PLAN_STEP_FAILED', retryMessage),
                 outcomeUnknownFailure(retryError)
               );
             }
           }
           if (ambiguous) {
             const ambiguousMessage = `AMBIGUOUS_REMAP: ${candidates.length} candidate(s) at ordinal ${ordinal} but none matched the pre-failure role/label; refusing to guess under high churn.`;
-            results.push({ step: index, ok: false, error: ambiguousMessage });
-            return {
-              ok: false,
-              completed: index,
-              results,
-              mode,
-              newRevision: finalRevision(),
-              error: { code: 'AMBIGUOUS_REMAP', message: ambiguousMessage },
-            };
+            return failStepReport(index, 'AMBIGUOUS_REMAP', ambiguousMessage, mode);
           }
         }
-        results.push({ step: index, ok: false, error: message });
         return markOutcomeUnknown(
-          {
-            ok: false,
-            completed: index,
-            results,
-            mode: this.churnMode(churnKey),
-            newRevision: finalRevision(),
-            error: { code: 'PLAN_STEP_FAILED', message },
-          },
+          failStepReport(index, 'PLAN_STEP_FAILED', message),
           outcomeUnknownFailure(error)
         );
       }
