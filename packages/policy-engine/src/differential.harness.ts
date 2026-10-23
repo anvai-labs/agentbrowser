@@ -59,7 +59,7 @@ export const EFFECTS = [
   'destructive',
 ] as const;
 export const MODES = ['allow', 'required', 'deny'] as const;
-export const CAPABILITIES: CapabilityAction[] = [
+const CAPABILITIES: CapabilityAction[] = [
   'cdp.attach',
   'downloads',
   'serviceWorkers',
@@ -109,7 +109,7 @@ const rulesArb: fc.Arbitrary<ActionRiskRule[]> = fc
       )
   );
 
-export const configArb: fc.Arbitrary<LegacyConfig> = fc.record({
+const configArb: fc.Arbitrary<LegacyConfig> = fc.record({
   allowLoopback: fc.boolean(),
   allowedPrivateCIDRs: fc.uniqueArray(fc.constantFrom(...CIDRS), { maxLength: 3 }),
   unknownRisk: fc.constantFrom('allow' as const, 'required' as const),
@@ -164,7 +164,7 @@ const layeredNat64 = fc
   });
 
 /** IPv4, IPv6 and the embedded forms #444 decodes. */
-export const addressArb: fc.Arbitrary<string> = fc.oneof(
+const addressArb: fc.Arbitrary<string> = fc.oneof(
   v4,
   special4,
   special4.map((a) => `::ffff:${a}`),
@@ -184,7 +184,7 @@ export const addressArb: fc.Arbitrary<string> = fc.oneof(
     'fd00:ec2::254'
   )
 );
-export const hostnameArb: fc.Arbitrary<string> = fc.oneof(
+const hostnameArb: fc.Arbitrary<string> = fc.oneof(
   fc.constantFrom('localhost', 'localhost.localdomain', 'example.com'),
   addressArb.map((a) => (a.includes(':') ? `[${a}]` : a))
 );

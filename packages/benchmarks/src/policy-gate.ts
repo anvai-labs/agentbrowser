@@ -42,7 +42,7 @@ const REFERENCE_PAGE_LOAD_MS = 1000;
  * decision cost), not to police small constant factors.
  */
 export const POLICY_SHARE_GATE_PERCENT = 25;
-export const GATED_MODES: readonly PolicyGateResult['mode'][] = ['memoized', 'shadow'];
+const GATED_MODES: readonly PolicyGateResult['mode'][] = ['memoized', 'shadow'];
 
 export interface PolicyGateResult {
   mode: 'uncached' | 'memoized' | 'shadow';

@@ -207,7 +207,7 @@ function browserOptions(
 // Delegated-mutation tools: these carry the operation-id contract (choose an
 // ID before dispatch; reconcile after a lost response). Single declaration -
 // the schema injection and the runtime requirement read it together.
-export const OPERATION_ID_TOOLS = Object.freeze([
+const OPERATION_ID_TOOLS = Object.freeze([
   'act',
   'plan',
   'autofill',

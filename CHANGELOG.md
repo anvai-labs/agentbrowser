@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — export-surface hygiene (internal)
+
+- 26 exports with zero references beyond their own module lost the `export` keyword (the
+  symbols remain, module-private). Notable previously-importable names removed from the
+  `@anvailabs/agentbrowser-mcp` barrel surface: `utf8Boundary`, `advertisedOutputSchema`,
+  `BROWSER_DURABLE_TOOLS`, `OPERATION_ID_TOOLS`. Also `FINDING_SEVERITIES` from the
+  `@agentbrowser/engagement` barrel. No in-repo consumers existed; programmatic
+  importers of these internals should pin their current version.
+- `api`'s `LOGIN_BROWSER_ROUTES` (dead since its introduction) deleted.
+
 ### Docs — the 1.27.1 release record
 
 - `docs/spec/evidence/release-1.27.1.md`; baselines move to 1.27.1.
