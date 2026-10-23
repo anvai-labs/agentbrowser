@@ -129,6 +129,11 @@ jobs:
       - name: Check release version consistency
         run: pnpm release:check && pnpm test:release
 
+      # Hygiene program Phase 3.1 ratchets (2026-10-23): shrink-only guards over the
+      # layering and duplication baselines measured in Phase 1.
+      - name: Hygiene ratchets (layering, duplication)
+        run: node scripts/layering-ratchet.mjs && node scripts/duplication-ratchet.mjs
+
       - name: Test executable acceptance failures and cleanup
         run: node --test scripts/release-smoke.test.mjs
 
