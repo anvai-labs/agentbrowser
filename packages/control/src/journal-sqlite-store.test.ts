@@ -18,17 +18,16 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { storeCleanup } from './store-cleanup.test-support.js';
 
-const children: { child: ChildProcess; exited: Promise<unknown> }[] = [];
-const directories: string[] = [];
+const storeCleanupRegistry = storeCleanup();
 function paths() {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'journal-owner-'));
-  directories.push(base);
-  const directory = join(base, 'store');
-  const anchorDirectory = join(base, 'anchor');
-  mkdirSync(directory, { mode: 0o700 });
-  mkdirSync(anchorDirectory, { mode: 0o700 });
-  return { directory, anchorDirectory, restoreGeneration: 'generation-1' };
+  const p = storeCleanupRegistry.freshPaths('journal-owner-');
+  return {
+    directory: p.directory,
+    anchorDirectory: p.anchorDirectory,
+    restoreGeneration: 'generation-1',
+  };
 }
 function start(options: object, fault = '') {
   const child = fork(
@@ -42,7 +41,7 @@ function start(options: object, fault = '') {
   );
   const exited = once(child, 'exit');
   void exited.catch(() => {});
-  children.push({ child, exited });
+  storeCleanupRegistry.registerChild(child, exited);
   const messages: unknown[] = [];
   let pending: ((value: unknown) => void) | undefined;
   let stderr = '';
@@ -85,16 +84,7 @@ function start(options: object, fault = '') {
     },
   };
 }
-afterEach(async () => {
-  await Promise.all(
-    children.splice(0).map(async ({ child, exited }) => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-      await exited;
-    })
-  );
-  for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
-});
+afterEach(() => storeCleanupRegistry.dispose());
 async function initialize(options: ReturnType<typeof paths>) {
   const owner = start({ ...options, initialize: true });
   expect(await owner.next()).toMatchObject({ phase: 'opened', witness: { commitSeq: 0 } });

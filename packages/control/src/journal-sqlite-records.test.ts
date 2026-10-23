@@ -32,6 +32,7 @@ import {
 import type { JournalSqliteTransaction } from './journal-sqlite-store.js';
 import type { RawJournalNamespace } from './journal-types.js';
 import { openOperationJournal } from './operation-journal.js';
+import { storeCleanup } from './store-cleanup.test-support.js';
 
 // node:sqlite is not resolvable through vite's transform pipeline; the store owner's
 // own tests stay child-only for the same reason. The direct fixture below needs a
@@ -124,33 +125,9 @@ class ChildLink {
   }
 }
 
-const children: { child: ChildProcess; exited: Promise<unknown> }[] = [];
-const directories: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    children.splice(0).map(async ({ child, exited }) => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-      await exited;
-    })
-  );
-  for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
-});
-
-interface FixturePaths {
-  readonly base: string;
-  readonly directory: string;
-  readonly anchorDirectory: string;
-}
-function freshPaths(prefix: string): FixturePaths {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), prefix));
-  directories.push(base);
-  const directory = join(base, 'store');
-  const anchorDirectory = join(base, 'anchor');
-  mkdirSync(directory, { mode: 0o700 });
-  mkdirSync(anchorDirectory, { mode: 0o700 });
-  return { base, directory, anchorDirectory };
-}
+const cleanup = storeCleanup();
+const { freshPaths, registerChild } = cleanup;
+afterEach(() => cleanup.dispose());
 
 function spawnChild(options: Record<string, unknown>): ChildLink {
   const child = fork(
@@ -166,7 +143,7 @@ function spawnChild(options: Record<string, unknown>): ChildLink {
   );
   const exited = once(child, 'exit');
   void exited.catch(() => {});
-  children.push({ child, exited });
+  registerChild(child, exited);
   return new ChildLink(child);
 }
 
@@ -319,9 +296,8 @@ const namespaceConfiguration = (namespaceId: string): RawJournalNamespace => ({
  */
 function createDirectSqliteJournalFixture(startTime = 1_000): JournalConformanceFixture {
   let clock = startTime;
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'journal-direct-'));
-  directories.push(base);
-  mkdirSync(join(base, 'store'), { mode: 0o700 });
+  // freshPaths also creates an unused anchor dir — harmless, removed with the tree.
+  const { base } = freshPaths('journal-direct-');
   const connection = new DatabaseSync(join(base, 'store', 'journal.sqlite'));
   connection.exec('PRAGMA foreign_keys=ON');
   // The conformance tier pins record semantics, not durability: synchronous=OFF keeps
