@@ -3,22 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildCli } from './cli.js';
 import { createJsonArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js';
+import { offlineCliHarness } from './test-support/offline-cli.js';
 
 function harness(stdin?: Readable) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const createClient = vi.fn(() => {
-    throw new Error('Offline command constructed a client');
-  });
-  const cli = buildCli({
-    ...(stdin ? { stdin } : {}),
-    out: (line) => out.push(line),
-    err: (line) => err.push(line),
-    createClient,
-  });
-  return { cli, out, err, createClient };
+  return offlineCliHarness(stdin);
 }
 
 afterEach(() => vi.unstubAllGlobals());

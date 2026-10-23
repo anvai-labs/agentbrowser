@@ -1873,7 +1873,7 @@ describe('AgentBrowser CLI', () => {
     });
 
     it('health errors cleanly when the client lacks health methods', async () => {
-      (deps.createClient as ReturnType<typeof vi.fn>).mockImplementation((cfg: unknown) => {
+      (deps.createClient as ReturnType<typeof vi.fn>).mockImplementation((_cfg: unknown) => {
         const real = (vi.mocked(deps.createClient).mock.results[0]?.value ?? { sessions }) as {
           sessions: unknown;
         };

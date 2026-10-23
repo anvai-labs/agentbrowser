@@ -24,7 +24,7 @@ const run = async (
   const fetchCalls: Array<{ url: string; authorization?: string }> = [];
   const originalArgv = process.argv;
   const previous: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(overrides.env ?? {})) previous[key] = process.env[key];
+  for (const [key, _value] of Object.entries(overrides.env ?? {})) previous[key] = process.env[key];
   for (const [key, value] of Object.entries(overrides.env ?? {})) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -121,7 +121,7 @@ describe('operator commands (TD-BROWSER-16 phase 7)', () => {
     await writeFile(path, 'op-key-one-aaaaaaaa:acme\n');
     const bodies: string[] = [];
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       if (init?.body !== undefined) bodies.push(String(init.body));
       return new Response(JSON.stringify({ kind: 'cookie.handoff', status: 'approved' }), {
         status: 200,
