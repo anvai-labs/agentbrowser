@@ -73,7 +73,7 @@ const OVH_PAGE = `<!DOCTYPE html><html><body>
  * password inputs with values set and 40 buttons. The passwords also make every run a redaction
  * check: no value may appear in an observation.
  */
-export const OBSERVE_120_SECRET = 'bench-secret-';
+const OBSERVE_120_SECRET = 'bench-secret-';
 const OBSERVE_120_PAGE = `<!DOCTYPE html><html><body><main><h1>Observation overhead</h1><form>
   ${Array.from(
     { length: 40 },

@@ -99,7 +99,7 @@ const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
  * a full table refuses new body-bearing requests (fail closed) and never
  * evicts a live chain, whose redirect would then go unchecked.
  */
-export const MAX_TRACKED_CHAINS = 4096;
+const MAX_TRACKED_CHAINS = 4096;
 
 const keyOf = (method: string, url: string): string => `${method.toUpperCase()} ${url}`;
 

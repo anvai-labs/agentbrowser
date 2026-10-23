@@ -40,7 +40,7 @@ export interface EngagementLedgerOptions {
   openFile?: (path: string) => Promise<Pick<FileHandle, 'write' | 'sync' | 'close'>>;
 }
 
-export function newEngagementId(): string {
+function newEngagementId(): string {
   return `eng_${randomBytes(12).toString('hex')}`;
 }
 

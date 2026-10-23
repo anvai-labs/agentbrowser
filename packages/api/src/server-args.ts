@@ -62,7 +62,7 @@ export function parseServerArgs(argv: readonly string[]): ServerArgs {
 }
 
 /** The structured logger's levels (packages/core/src/logger.ts), lowest first. */
-export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 export type ServerLogLevel = (typeof LOG_LEVELS)[number];
 
 /**

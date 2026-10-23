@@ -260,11 +260,6 @@ export class CedarAuthorizer implements Authorizer {
   }
 }
 
-const ENTITIES = [
-  { uid: { type: 'AgentBrowser::Session', id: 'default' }, attrs: {}, parents: [] },
-  { uid: { type: 'AgentBrowser::Host', id: 'default' }, attrs: {}, parents: [] },
-];
-
 function contextFor(request: AuthorizationRequest): cedar.Context {
   switch (request.action) {
     case 'cookie.handoff':
