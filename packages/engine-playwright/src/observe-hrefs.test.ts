@@ -1,12 +1,9 @@
-import type { EnginePage } from '@agentbrowser/engine';
+import type { EnginePage, EngineSession } from '@agentbrowser/engine';
 import type { ElementHandle, Page } from 'playwright';
-import { afterAll, describe, expect, it, vi } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import { describe, expect, it, vi } from 'vitest';
+import { sharedEngine } from './test-support/shared-engine.js';
 
-const engine = new PlaywrightChromiumEngine();
-afterAll(async () => {
-  await engine.close();
-});
+const engine = sharedEngine();
 
 /**
  * Playwright exports Locator/ElementHandle shapes as types only, so spies
@@ -29,8 +26,9 @@ async function handlePrototype(page: EnginePage): Promise<ElementHandle> {
  */
 describe('observe link hrefs', () => {
   it('captures hrefs on links and nothing on non-links', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: 'data:text/html,<a href="https://example.com/docs">Docs</a><button>OK</button>',
@@ -42,13 +40,14 @@ describe('observe link hrefs', () => {
       expect(link?.hrefTruncated).toBeUndefined();
       expect(button?.href).toBeUndefined();
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('caps hrefs at 2048 characters and flags the truncation', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       const long = `https://example.com/${'a'.repeat(3000)}`;
       await page.navigate({ url: `data:text/html,<a href="${long}">Long</a>` });
@@ -57,13 +56,14 @@ describe('observe link hrefs', () => {
       expect(link?.href?.length).toBe(2048);
       expect(link?.hrefTruncated).toBe(true);
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('tolerates a failing href capture without dropping the element', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: 'data:text/html,<a href="https://example.com/a">A</a><a href="https://example.com/b">B</a>',
@@ -78,13 +78,14 @@ describe('observe link hrefs', () => {
       expect(links[1]?.href).toBe('https://example.com/b');
     } finally {
       vi.restoreAllMocks();
-      await session.close();
+      await session?.close();
     }
   });
 
   it('does not perturb revision machinery across repeated observes', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: 'data:text/html,<a href="https://example.com/">Home</a>' });
       const first = await page.observe({});
@@ -92,7 +93,7 @@ describe('observe link hrefs', () => {
       expect(second.revision).toBe(first.revision);
       expect(second.elements[0]?.href).toBe('https://example.com/');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 });

@@ -281,4 +281,24 @@ describe('browser resource ownership', () => {
     await expect(session.close()).rejects.toBe(failure);
     expect(host.close).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['pooled', 'remote'] as const)(
+    'relaunches after the shared %s browser dies (crash isolation)',
+    async (lane) => {
+      // A mid-life crash fails only in-flight sessions; the NEXT acquire must get a
+      // fresh browser, not the dead allocation forever (shared-engine test files).
+      const first = browser();
+      const second = browser();
+      launcher(lane).mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+      const owner = engine(lane);
+      const sessionA = await owner.createSession(options(lane));
+      expect(launcher(lane)).toHaveBeenCalledTimes(1);
+      first.isConnected.mockReturnValue(false);
+      const sessionB = await owner.createSession(options(lane));
+      expect(launcher(lane)).toHaveBeenCalledTimes(2);
+      expect(second.newContext).toHaveBeenCalledTimes(1);
+      await Promise.allSettled([sessionA.close(), sessionB.close()]);
+      await owner.close();
+    }
+  );
 });

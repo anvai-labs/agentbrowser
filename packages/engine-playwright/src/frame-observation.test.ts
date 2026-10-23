@@ -1,11 +1,9 @@
 import { createServer } from 'node:http';
-import { afterAll, describe, expect, it } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import type { EngineSession } from '@agentbrowser/engine';
+import { describe, expect, it } from 'vitest';
+import { sharedEngine } from './test-support/shared-engine.js';
 
-const engine = new PlaywrightChromiumEngine();
-afterAll(async () => {
-  await engine.close();
-});
+const engine = sharedEngine();
 
 // T6 slice 1: child-frame observation and ref binding. Truth guard first —
 // these gates pin the OVH Manager handoff's gap (embedded-application iframe
@@ -128,8 +126,9 @@ async function waitForElement(
 describe('child-frame observation and ref binding (T6)', () => {
   it('observes and acts through a same-origin iframe', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: servers.main });
 
@@ -143,25 +142,20 @@ describe('child-frame observation and ref binding (T6)', () => {
       expect(after.elements.find((element) => element.name === 'DONE-A')).toBeDefined();
       expect(after.elements.find((element) => element.name === 'Frame A Action')).toBeUndefined();
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);
 
   it('observes and acts through a cross-origin iframe', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
-      const page = await session.newPage();
-      const frameHtml = frameB.replace('/frame-b', `${servers.crossOrigin}frame-cross`);
-      void frameHtml;
-      // Point the second iframe at the cross-origin server.
-      await page.navigate({ url: `${servers.main}` });
-      // The main page references /frame-b on the MAIN origin; navigate the
-      // dedicated cross-origin case through a page whose iframe points at
-      // the second server.
+      session = await engine.createSession({ headless: true });
+      // The dedicated cross-origin case runs on a holder page whose iframe
+      // points at the second server (the main page's /frame-b iframe stays
+      // same-origin and is covered by the earlier tests).
       const crossPage = await session.newPage();
-      const crossMain = await servers.main;
       const crossServerPage = `
 <iframe src="${servers.crossOrigin}" name="cross" title="Cross"></iframe>`;
       const holder = createServer((request, response) => {
@@ -176,24 +170,22 @@ describe('child-frame observation and ref binding (T6)', () => {
         await crossPage.act({ type: 'click', target: { ref: button.ref } });
         const after = await crossPage.observe({ mode: 'interactive' });
         expect(after.elements.find((element) => element.name === 'DONE-B')).toBeDefined();
-        void crossMain;
-        void frameHtml;
       } finally {
         holder.closeAllConnections();
         await new Promise<void>((done) => holder.close(() => done()));
         await crossPage.close().catch(() => {});
       }
-      void page;
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);
 
   it('binds duplicate labels per frame without retargeting', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: servers.main });
 
@@ -214,15 +206,16 @@ describe('child-frame observation and ref binding (T6)', () => {
       expect(after.elements.find((element) => element.name === 'DONE-SUB-B')).toBeDefined();
       expect(after.elements.find((element) => element.name === 'DONE-SUB-A')).toBeDefined();
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);
 
   it('reports depth-exceeded frames in coverage without faking completeness', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: servers.main });
       await waitForElement(page, 'Deep 3 Action');
@@ -242,15 +235,16 @@ describe('child-frame observation and ref binding (T6)', () => {
       // Frame nodes themselves are never bindable refs.
       expect(observation.elements.find((element) => element.role === 'iframe')).toBeUndefined();
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);
 
   it('binds role-less in-frame controls through the formControls scan', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: servers.main });
       await waitForElement(page, 'Frame A Action');
@@ -284,7 +278,7 @@ describe('child-frame observation and ref binding (T6)', () => {
       });
       expect(after.elements.find((element) => element.name === 'DIV-DONE')).toBeDefined();
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);
@@ -306,19 +300,20 @@ describe('child-frame observation and ref binding (T6)', () => {
       response.end(frameHtml);
     });
     await new Promise<void>((resolve) => deniedServer.listen(0, '127.0.0.1', resolve));
-    const address = deniedServer.address();
-    if (address === null || typeof address === 'string') throw new Error('no address');
-    const session = await engine.createSession({
-      headless: true,
-      requestPolicy: {
-        async checkRequest({ url }) {
-          const path = new URL(url).pathname;
-          checked.push(path);
-          if (path === '/forbidden') throw new Error('POLICY_DENIED: forbidden fixture');
-        },
-      },
-    });
+    let session: EngineSession | undefined;
     try {
+      const address = deniedServer.address();
+      if (address === null || typeof address === 'string') throw new Error('no address');
+      session = await engine.createSession({
+        headless: true,
+        requestPolicy: {
+          async checkRequest({ url }) {
+            const path = new URL(url).pathname;
+            checked.push(path);
+            if (path === '/forbidden') throw new Error('POLICY_DENIED: forbidden fixture');
+          },
+        },
+      });
       const page = await session.newPage();
       await page.navigate({ url: `http://127.0.0.1:${address.port}/` });
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -328,7 +323,7 @@ describe('child-frame observation and ref binding (T6)', () => {
       expect(checked).toContain('/forbidden');
       expect(forbiddenHits).toEqual([]);
     } finally {
-      await session.close();
+      await session?.close();
       deniedServer.closeAllConnections();
       await new Promise<void>((done) => deniedServer.close(() => done()));
     }
@@ -336,8 +331,9 @@ describe('child-frame observation and ref binding (T6)', () => {
 
   it('names frames still loading in the coverage block (held-open response)', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: `${servers.main.replace(/\/$/, '')}/held-loader` });
       await waitForElement(page, 'Held Loader Action');
@@ -358,15 +354,16 @@ describe('child-frame observation and ref binding (T6)', () => {
         observation.elements.find((element) => element.name === 'Held Loader Action')
       ).toBeDefined();
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);
 
   it('observes srcdoc and nested (depth 2) frame content', async () => {
     const servers = await startServers();
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: servers.main });
 
@@ -376,7 +373,7 @@ describe('child-frame observation and ref binding (T6)', () => {
       const after = await page.observe({ mode: 'interactive' });
       expect(after.elements.find((element) => element.name === 'DONE-NESTED')).toBeDefined();
     } finally {
-      await session.close();
+      await session?.close();
       await servers.close();
     }
   }, 60_000);

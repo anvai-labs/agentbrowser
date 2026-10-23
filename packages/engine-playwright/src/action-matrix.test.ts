@@ -1,14 +1,11 @@
 import http from 'node:http';
-import type { EnginePage } from '@agentbrowser/engine';
+import type { EnginePage, EngineSession } from '@agentbrowser/engine';
 import type { Page } from 'playwright';
-import { afterAll, describe, expect, it } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import { describe, expect, it } from 'vitest';
 import { backingPage } from './test-support/backing-page.js';
+import { sharedEngine } from './test-support/shared-engine.js';
 
-const engine = new PlaywrightChromiumEngine();
-afterAll(async () => {
-  await engine.close();
-});
+const engine = sharedEngine();
 
 /** Fresh observation per action: any mutation invalidates the previous refs. */
 async function refOf(page: EnginePage, role: string, name: string): Promise<string> {
@@ -31,8 +28,9 @@ const FORM_PAGE =
  */
 describe('delivered action matrix gaps (real Chromium)', () => {
   it('selects options, toggles checkbox state, and clears a field through observed refs', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: FORM_PAGE });
       const native = backingPage(page);
@@ -67,7 +65,7 @@ describe('delivered action matrix gaps (real Chromium)', () => {
       const cleared = (await page.observe({})).elements.find((el) => el.name === 'Bio');
       expect(cleared?.value === '' || cleared?.value === undefined).toBe(true);
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
@@ -79,8 +77,9 @@ describe('delivered action matrix gaps (real Chromium)', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: `${origin}/one` });
       await page.navigate({ url: `${origin}/two` });
@@ -99,7 +98,7 @@ describe('delivered action matrix gaps (real Chromium)', () => {
       expect(unknown.newRevision).toBe(before);
       expect(unknown.newRevision).toBe(unknown.oldRevision);
     } finally {
-      await session.close();
+      await session?.close();
       await new Promise<void>((done) => {
         server.closeAllConnections();
         server.close(() => done());
@@ -108,8 +107,9 @@ describe('delivered action matrix gaps (real Chromium)', () => {
   });
 
   it('extracts body text, reads the title until the page closes, and closes twice cleanly', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: 'data:text/html,<title>Matrix</title><p>extraction marker 4021</p>',
@@ -131,7 +131,7 @@ describe('delivered action matrix gaps (real Chromium)', () => {
       await expect(session.close()).resolves.toBeUndefined();
       await expect(session.close()).resolves.toBeUndefined();
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
@@ -144,13 +144,14 @@ describe('delivered action matrix gaps (real Chromium)', () => {
       ).toEqual([390, 844]);
       await page.close();
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('refuses an upload with no paths as a caller mistake before touching the page', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({ url: FORM_PAGE });
 
@@ -158,9 +159,9 @@ describe('delivered action matrix gaps (real Chromium)', () => {
         code: 'INVALID_REQUEST',
       });
       await page.close();
-      await session.close();
+      await session?.close();
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 });

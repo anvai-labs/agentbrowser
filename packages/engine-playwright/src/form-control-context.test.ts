@@ -1,10 +1,7 @@
-import { afterAll, describe, expect, it } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import { describe, expect, it } from 'vitest';
+import { sharedEngine } from './test-support/shared-engine.js';
 
-const engine = new PlaywrightChromiumEngine();
-afterAll(async () => {
-  await engine.close();
-});
+const engine = sharedEngine();
 
 /**
  * G1 (docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md): custom menu
@@ -14,8 +11,9 @@ afterAll(async () => {
  */
 describe('formControls row context (G1)', () => {
   it('mints context from the enclosing row label and section heading', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -39,13 +37,14 @@ describe('formControls row context (G1)', () => {
       expect(controls[0]?.context).toContain('Repository permissions');
       expect(controls[2]?.context).toContain('Organization permissions');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('omits context for controls with no enclosing row label', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: 'data:text/html,<body><main><ul><li><button aria-haspopup="true">Access: No access</button></li><li><button aria-haspopup="true">Access: No access</button></li></ul></main></body>',
@@ -55,13 +54,14 @@ describe('formControls row context (G1)', () => {
       expect(control).toBeDefined();
       expect(control?.context).toBeUndefined();
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('excludes the control own subtree from row-label candidates (review F2)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -78,13 +78,14 @@ describe('formControls row context (G1)', () => {
       // The generic inner <strong> never becomes the context.
       expect(contexts).not.toContain('Access: No access');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('finds the heading of an enclosing preceding <section> (review F3)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -100,13 +101,14 @@ describe('formControls row context (G1)', () => {
       expect(contexts).toContain('Email — Notifications');
       expect(contexts).not.toContain('Email — Account');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('derives dt row labels for controls inside dd, and honors aria-labelledby (review F4)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -122,13 +124,14 @@ describe('formControls row context (G1)', () => {
       expect(contexts).toContain('Pull requests');
       expect(contexts).toContain('Issues');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('skips aria-labelledby sources that repeat the generic name (round-2/F1)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -146,13 +149,14 @@ describe('formControls row context (G1)', () => {
       expect(contexts).toContain('Pull requests');
       expect(contexts).not.toContain('Access: No access');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('a headingless section inherits no heading from a preceding sibling section (round-2/F2)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -170,13 +174,14 @@ describe('formControls row context (G1)', () => {
       expect(contexts).toContain('Email');
       expect(contexts).not.toContain('Email — Repository permissions');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('multi-dd groups never borrow another row label from the dl (round-2/F5)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -193,13 +198,14 @@ describe('formControls row context (G1)', () => {
       // label — never "Note" from Alpha's row.
       expect(contexts).not.toContain('Note');
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 
   it('normalizes whitespace in labels and skips unique-named controls (review F5/F6)', async () => {
-    const session = await engine.createSession({ headless: true });
+    let session: EngineSession | undefined;
     try {
+      session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -221,7 +227,7 @@ describe('formControls row context (G1)', () => {
       const unique = controls.find((e) => e.name === 'A uniquely named menu');
       expect(unique?.context).toBeUndefined();
     } finally {
-      await session.close();
+      await session?.close();
     }
   });
 });
