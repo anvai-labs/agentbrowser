@@ -1,15 +1,11 @@
-import { type ChildProcess, fork } from 'node:child_process';
+import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import {
   chmodSync,
   copyFileSync,
   existsSync,
   linkSync,
-  mkdirSync,
-  mkdtempSync,
   readFileSync,
-  realpathSync,
-  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -20,9 +16,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { storeCleanup } from './store-cleanup.test-support.js';
 
-const storeCleanupRegistry = storeCleanup();
+const registry = storeCleanup();
 function paths() {
-  const p = storeCleanupRegistry.freshPaths('journal-owner-');
+  const p = registry.freshPaths('journal-owner-');
   return {
     directory: p.directory,
     anchorDirectory: p.anchorDirectory,
@@ -41,7 +37,7 @@ function start(options: object, fault = '') {
   );
   const exited = once(child, 'exit');
   void exited.catch(() => {});
-  storeCleanupRegistry.registerChild(child, exited);
+  registry.registerChild(child, exited);
   const messages: unknown[] = [];
   let pending: ((value: unknown) => void) | undefined;
   let stderr = '';
@@ -84,7 +80,7 @@ function start(options: object, fault = '') {
     },
   };
 }
-afterEach(() => storeCleanupRegistry.dispose());
+afterEach(() => registry.dispose());
 async function initialize(options: ReturnType<typeof paths>) {
   const owner = start({ ...options, initialize: true });
   expect(await owner.next()).toMatchObject({ phase: 'opened', witness: { commitSeq: 0 } });

@@ -8,7 +8,7 @@
 //    schema freeze.
 import { type ChildProcess, fork } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +32,7 @@ import {
 import type { JournalSqliteTransaction } from './journal-sqlite-store.js';
 import type { RawJournalNamespace } from './journal-types.js';
 import { openOperationJournal } from './operation-journal.js';
-import { storeCleanup } from './store-cleanup.test-support.js';
+import { type FixturePaths, storeCleanup } from './store-cleanup.test-support.js';
 
 // node:sqlite is not resolvable through vite's transform pipeline; the store owner's
 // own tests stay child-only for the same reason. The direct fixture below needs a
@@ -125,9 +125,8 @@ class ChildLink {
   }
 }
 
-const cleanup = storeCleanup();
-const { freshPaths, registerChild } = cleanup;
-afterEach(() => cleanup.dispose());
+const registry = storeCleanup();
+afterEach(() => registry.dispose());
 
 function spawnChild(options: Record<string, unknown>): ChildLink {
   const child = fork(
@@ -143,7 +142,7 @@ function spawnChild(options: Record<string, unknown>): ChildLink {
   );
   const exited = once(child, 'exit');
   void exited.catch(() => {});
-  registerChild(child, exited);
+  registry.registerChild(child, exited);
   return new ChildLink(child);
 }
 
@@ -296,8 +295,7 @@ const namespaceConfiguration = (namespaceId: string): RawJournalNamespace => ({
  */
 function createDirectSqliteJournalFixture(startTime = 1_000): JournalConformanceFixture {
   let clock = startTime;
-  // freshPaths also creates an unused anchor dir — harmless, removed with the tree.
-  const { base } = freshPaths('journal-direct-');
+  const { base } = registry.freshPaths('journal-direct-', { anchor: false });
   const connection = new DatabaseSync(join(base, 'store', 'journal.sqlite'));
   connection.exec('PRAGMA foreign_keys=ON');
   // The conformance tier pins record semantics, not durability: synchronous=OFF keeps
@@ -564,7 +562,7 @@ describe('concrete SQLite record storage (J2b.2 step 1)', () => {
   });
 
   it('answers findByOperation through the real child process: order, truncation, tenant scope (J3a)', async () => {
-    const paths = freshPaths('journal-find-child-');
+    const paths = registry.freshPaths('journal-find-child-');
     const fixture = await startFixture(paths, true);
     const opened = await openOperationJournal(
       fixture.adapter,
@@ -617,7 +615,7 @@ describe('concrete SQLite record storage (J2b.2 step 1)', () => {
   });
 
   it('persists acknowledged records across a child restart and reopens with a fresh fence', async () => {
-    const paths = freshPaths('journal-restart-');
+    const paths = registry.freshPaths('journal-restart-');
     const first = await startFixture(paths, true);
     const opened = await openOperationJournal(
       first.adapter,
@@ -668,7 +666,7 @@ describe('concrete SQLite record storage (J2b.2 step 1)', () => {
   });
 
   it('keeps the raw fingerprint key and private digests out of the durable bytes', async () => {
-    const paths = freshPaths('journal-sentinel-');
+    const paths = registry.freshPaths('journal-sentinel-');
     const fixture = await startFixture(paths, true);
     const opened = await openOperationJournal(
       fixture.adapter,
@@ -697,7 +695,7 @@ describe('concrete SQLite record storage (J2b.2 step 1)', () => {
   });
 
   it('freezes the v1 record schema shape in the durable file', async () => {
-    const paths = freshPaths('journal-schema-');
+    const paths = registry.freshPaths('journal-schema-');
     const fixture = await startFixture(paths, true);
     const opened = await openOperationJournal(
       fixture.adapter,
