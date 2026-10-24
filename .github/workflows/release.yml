@@ -355,7 +355,7 @@ jobs:
         # bundle-visible by construction; this fails the release before anything
         # reaches the registry if that ever stops being true.
         working-directory: packages/mcp-server
-        run: node --test ../../scripts/binary-host-question.test.mjs --test-name-pattern="npm MCP bundle"
+        run: node --test --test-name-pattern="npm MCP bundle" ../../scripts/binary-host-question.test.mjs
       - name: Publish with npm (OIDC) — skip if this version is already on the registry
         # The bootstrap publish (bridging the Trusted-Publisher chicken-and-egg)
         # puts the first version up from a local token; a re-run or subsequent
