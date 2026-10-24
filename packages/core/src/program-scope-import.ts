@@ -4,7 +4,7 @@ import {
   type ScopePathRule,
   validateEngagementScope,
 } from '@agentbrowser/protocol';
-import { getPublicSuffix } from 'tldts';
+import { tldts } from './tldts-lazy.js';
 
 /**
  * T10 M3: convert a published program scope into an EngagementScope. Pure and
@@ -164,7 +164,10 @@ function classify(raw: string): Classified {
     const base = host.slice(2);
     if (!host.startsWith('*.') || base.includes('*'))
       return { ok: false, reason: 'an ambiguous wildcard is not expressible' };
-    if (!base.includes('.') || getPublicSuffix(base, { allowPrivateDomains: true }) === base)
+    if (
+      !base.includes('.') ||
+      tldts().getPublicSuffix(base, { allowPrivateDomains: true }) === base
+    )
       return { ok: false, reason: 'a wildcard over a public suffix is not expressible' };
     pattern = `.${base}`;
   }

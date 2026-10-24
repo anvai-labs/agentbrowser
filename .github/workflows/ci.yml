@@ -393,6 +393,11 @@ jobs:
       - name: Compile the CLI for packaged workflow acceptance
         run: node packages/cli/scripts/compile.mjs
 
+      # The lazy tldts load must stay bundler-visible: a compiled artifact that
+      # cannot answer a host question must fail here, not in the field.
+      - name: Bundled-surface host-question smoke (lazy tldts)
+        run: node --test scripts/binary-host-question.test.mjs
+
       - name: Qualify the test-evaluate CI entrypoint against the compiled CLI
         env:
           AGENTBROWSER_EVALUATE_REAL_CLI: packages/cli/dist-bin/agentbrowser

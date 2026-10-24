@@ -12,6 +12,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadTldts } from '@agentbrowser/core';
 import { artifactReference, cacheLocalArtifact } from '@agentbrowser/core/local-artifacts';
 import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
 import type { AgentCapability, AgentMode, ArtifactRef } from '@agentbrowser/protocol';
@@ -1000,6 +1001,8 @@ export function buildTools(
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {
+        // Bundled-binary surface: load tldts before the scope policy's sync matcher runs.
+        await loadTldts();
         const result = await readCheckedFindings(args);
         if (!result.ok) return result;
         return {
@@ -1043,6 +1046,8 @@ export function buildTools(
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {
+        // Bundled-binary surface: load tldts before the scope policy's sync matcher runs.
+        await loadTldts();
         const result = await readCheckedFindings(args);
         if (!result.ok) return result;
         const sarif = buildEngagementSarif(result);

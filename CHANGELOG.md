@@ -7,6 +7,24 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Performance - tldts initializes on first use; the v7 bump lands under the T8 gate
+
+- `@agentbrowser/core` loads `tldts` on first host question instead of at module import
+  (`tldts-lazy.ts`). tldts builds its packed public-suffix trie at init (~7-9 MB in v7), which no
+  idle surface should pay. The loader is a bundler-visible dynamic `import()` — bun --compile and
+  esbuild both embed tldts (binaries and the npm bundle stay self-contained) while deferring the
+  trie build; node_modules surfaces keep a synchronous `createRequire` fallback, so the api
+  service and policy packages need no call-site wiring. Bundled surfaces await `loadTldts()` at
+  their five host-question entry points (CLI `scope import`, `finding check|sarif`; MCP
+  `finding_check`/`finding_sarif`); the sync accessor refuses loudly if a bundled surface ever
+  skips it. Every matcher function stays sync; semantics pinned unchanged.
+- Measured with bun 1.4.0 on linux-x64, gates unchanged at 75 MB: MCP bridge idle
+  **81.7 → 59.8 MB**, CLI one-shot **73.4 → 58.3 MB** (tldts embedded but uninitialized at idle).
+- New guard: `scripts/binary-host-question.test.mjs` runs a host question against the COMPILED CLI
+  and asserts the npm bundle embeds tldts — the initialize/`--version` smokes cannot catch a
+  bundler-invisible load form (CI compile+smoke job and the release npm job both run it).
+- `tldts` bumped 6.1.76 → 7.4.18 (Dependabot #604, unblocked).
+
 ### Changed — export-surface hygiene (internal)
 
 - 26 exports with zero references beyond their own module lost the `export` keyword (the

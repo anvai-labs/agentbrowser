@@ -3,8 +3,10 @@
  * Compile the CLI into a single self-contained executable.
  *
  * Same shape as packages/mcp-server/scripts/compile.mjs (TD-BROWSER-5
- * pipeline): `bun build --compile` over the CLI entrypoint. The CLI's only
- * dependencies are commander and the fetch-only SDK, both bundle-clean.
+ * pipeline): `bun build --compile` over the CLI entrypoint. The binary embeds
+ * @agentbrowser/core, @agentbrowser/engagement and tldts (lazily initialized —
+ * see packages/core/src/tldts-lazy.ts); the bundle-surface behavior is pinned
+ * by scripts/binary-host-question.test.mjs, not by assumption.
  *
  * Usage:
  *   node scripts/compile.mjs [--target=bun-<platform>-<arch>] [--outfile=<path>]

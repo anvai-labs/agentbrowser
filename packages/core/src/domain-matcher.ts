@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import { parse } from 'tldts';
+import { tldts } from './tldts-lazy.js';
 
 /**
  * TD-BROWSER-16 phase 3 (ADR-025 §3): the cookie-domain relation — which
@@ -46,7 +46,7 @@ function isRegistrable(domain: string): boolean {
   // Registrable = tldts resolves a domain and it IS the entry, on the ICANN
   // or the private section (the private section makes github.io a suffix and
   // x.github.io registrable).
-  const parsed = parse(domain, PARSE_OPTIONS);
+  const parsed = tldts().parse(domain, PARSE_OPTIONS);
   return parsed.domain === domain && Boolean(parsed.isIcann || parsed.isPrivate);
 }
 
@@ -71,7 +71,7 @@ export function usableHost(host: string): DomainVerdict {
   // co.uk, com, localhost) parses with domain === null; an unknown TLD
   // parses as its own domain but with neither ICANN nor private — the
   // keys-only rule refuses it.
-  const parsed = parse(bare, PARSE_OPTIONS);
+  const parsed = tldts().parse(bare, PARSE_OPTIONS);
   if (parsed.domain === null)
     return { ok: false, reason: 'not a registrable domain (public suffix or unlisted TLD)' };
   if (!parsed.isIcann && !parsed.isPrivate)
