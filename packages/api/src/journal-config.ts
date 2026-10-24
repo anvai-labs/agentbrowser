@@ -185,7 +185,7 @@ const DEFAULT_MAX_RECORDS = 10_000;
  * namespace is stable across restarts, so it counts operator rotations, not starts. A full
  * namespace or store refuses durable work (or startup) instead of evicting accepted records.
  */
-export const SERVICE_JOURNAL_BOUNDS = Object.freeze({
+const SERVICE_JOURNAL_BOUNDS = Object.freeze({
   maxRecordBytes: 16_384,
   maxNamespaces: 64,
   maxInFlight: 8,
@@ -193,7 +193,7 @@ export const SERVICE_JOURNAL_BOUNDS = Object.freeze({
 });
 /** Journaled records are retained this long beyond the accept horizon. */
 export const SERVICE_JOURNAL_RETAIN_MS = 30 * DAY_MS;
-export const SERVICE_JOURNAL_FINALIZATION_MS = 60_000;
+const SERVICE_JOURNAL_FINALIZATION_MS = 60_000;
 
 /** The namespace descriptor, derived only from configuration so every start reopens it. */
 export function serviceJournalNamespace(config: ServiceJournalConfig): JournalNamespace {

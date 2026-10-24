@@ -546,6 +546,39 @@ describe('FakeEngine', () => {
       expect(observation.elements[0].name).toBe('Pay now');
       expect(observation.elements[0].risk).toBe('transaction');
     });
+
+    // Pins the normalizeElement unification (pass-3 dedup): all three intake paths —
+    // setElements, seedElements and revealAfterClick — must carry the SAME optional
+    // fields. Before it, each path silently dropped a different subset (checked,
+    // expanded, depth, ...), so a fixture's field worked on one path and vanished on
+    // another with nothing failing.
+    it('carries identical optional-element fields through every intake path', async () => {
+      const engine2 = new FakeEngine();
+      const session = await engine2.createSession({});
+      const page = await session.newPage();
+      const fakePage = engine2.getFakePage(session.id, page.id)!;
+
+      fakePage.setElements([{ role: 'checkbox', name: 'Agree', checked: true, expanded: true }]);
+      fakePage.seedElements([{ ref: 'e1_2', role: 'html-summary', name: 'S', expanded: true }]);
+      // Reveal on click of the summary; the revealed row carries context + minted.
+      fakePage.revealAfterClick(
+        'S',
+        [{ role: 'row', name: 'R', context: 'Rows', minted: true }],
+        0
+      );
+
+      const first = await page.observe({ mode: 'interactive' });
+      const summary = first.elements.find((el) => el.name === 'S');
+      expect(summary?.ref).toEqual(expect.any(String));
+      await page.act({ type: 'click', target: { ref: summary?.ref as string } });
+      await new Promise((wake) => setTimeout(wake, 20));
+
+      const observed = await page.observe({ mode: 'interactive' });
+      const byName = new Map(observed.elements.map((el) => [el.name, el]));
+      expect(byName.get('Agree')).toMatchObject({ checked: true, expanded: true });
+      expect(byName.get('S')).toMatchObject({ expanded: true });
+      expect(byName.get('R')).toMatchObject({ context: 'Rows', minted: true });
+    });
   });
 
   describe('engine cleanup', () => {

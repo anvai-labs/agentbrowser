@@ -22,7 +22,7 @@ import {
  * The SARIF export is a draft for manual submission: nothing here sends a finding anywhere.
  */
 
-export const FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational'] as const;
+const FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
 
 export interface EngagementFinding {

@@ -1,17 +1,13 @@
-import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { setImmediate as settlePublication } from 'node:timers/promises';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
-import { buildServer } from './server.js';
+import { keyedServer } from './test-support/keyed-server.js';
 
 it('keeps an aborted HTTP mutation draining until the actual browser promise settles', async () => {
   const engine = new FakeEngine();
   const headers = { authorization: 'Bearer operator' };
-  const server = await buildServer({
-    engine,
-    apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), 'owner']]),
-  });
+  const server = await keyedServer('owner', { engine });
   const release = Promise.withResolvers<void>();
   try {
     await server.listen({ host: '127.0.0.1', port: 0 });

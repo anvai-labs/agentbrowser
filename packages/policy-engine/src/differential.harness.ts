@@ -59,7 +59,7 @@ export const EFFECTS = [
   'destructive',
 ] as const;
 export const MODES = ['allow', 'required', 'deny'] as const;
-export const CAPABILITIES: CapabilityAction[] = [
+const CAPABILITIES: CapabilityAction[] = [
   'cdp.attach',
   'downloads',
   'serviceWorkers',
@@ -109,7 +109,7 @@ const rulesArb: fc.Arbitrary<ActionRiskRule[]> = fc
       )
   );
 
-export const configArb: fc.Arbitrary<LegacyConfig> = fc.record({
+const configArb: fc.Arbitrary<LegacyConfig> = fc.record({
   allowLoopback: fc.boolean(),
   allowedPrivateCIDRs: fc.uniqueArray(fc.constantFrom(...CIDRS), { maxLength: 3 }),
   unknownRisk: fc.constantFrom('allow' as const, 'required' as const),
@@ -164,7 +164,7 @@ const layeredNat64 = fc
   });
 
 /** IPv4, IPv6 and the embedded forms #444 decodes. */
-export const addressArb: fc.Arbitrary<string> = fc.oneof(
+const addressArb: fc.Arbitrary<string> = fc.oneof(
   v4,
   special4,
   special4.map((a) => `::ffff:${a}`),
@@ -184,13 +184,13 @@ export const addressArb: fc.Arbitrary<string> = fc.oneof(
     'fd00:ec2::254'
   )
 );
-export const hostnameArb: fc.Arbitrary<string> = fc.oneof(
+const hostnameArb: fc.Arbitrary<string> = fc.oneof(
   fc.constantFrom('localhost', 'localhost.localdomain', 'example.com'),
   addressArb.map((a) => (a.includes(':') ? `[${a}]` : a))
 );
 
 /** First, last and one-past-either-end of a CIDR, so prefix off-by-ones are hit. */
-export function cidrBoundaries(cidr: string): string[] {
+function cidrBoundaries(cidr: string): string[] {
   const [base = '', bits = '0'] = cidr.split('/');
   const prefix = Number(bits);
   if (base.includes(':')) {
@@ -223,7 +223,7 @@ function fromV6(value: bigint): string {
   return words.join(':');
 }
 
-export const actInputArb = fc.record({
+const actInputArb = fc.record({
   action: fc.constantFrom(...ACTIONS),
   url: fc.constantFrom('about:blank', ...HOSTS.map((h) => `https://${h}/`)),
   element: optional(
@@ -348,9 +348,7 @@ const EGRESS_TABLE_ADDRESSES = [
   '0.0.0.0',
 ];
 
-export async function assertEgressTable(
-  subjectFor: (config: LegacyConfig) => Authorizer
-): Promise<void> {
+async function assertEgressTable(subjectFor: (config: LegacyConfig) => Authorizer): Promise<void> {
   for (const allowLoopback of [false, true]) {
     for (const allowedPrivateCIDRs of EGRESS_TABLE_CIDRS) {
       const config: LegacyConfig = {
@@ -377,7 +375,7 @@ export async function assertEgressTable(
  * come from classify(), so a correct subject that looks rules up in its
  * configuration passes. Ids are a mix of explicit and `rule-<index>`.
  */
-export function assertApprovalTable(subjectFor: (config: LegacyConfig) => Authorizer): void {
+function assertApprovalTable(subjectFor: (config: LegacyConfig) => Authorizer): void {
   const combos: Array<{ effect: (typeof EFFECTS)[number]; decision?: (typeof MODES)[number] }> = [];
   for (const effect of EFFECTS) {
     for (const decision of [undefined, ...MODES]) {

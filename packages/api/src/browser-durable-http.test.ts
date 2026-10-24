@@ -11,6 +11,7 @@ import {
   buildApplicationServer,
   operatorHeaders,
 } from './test-support/application-counter-http.js';
+import { journalTree } from './test-support/journal-fixture.js';
 
 async function controlledPage() {
   const { server } = await buildApplicationServer();
@@ -151,23 +152,7 @@ describe('executionRequirement on browser routes (B-dur-2b)', () => {
 
 describe('durable act end to end, with a real journal (B-dur-2b)', () => {
   it('journals the act and the lookup route shows it as a browser/act record', async () => {
-    const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const base = mkdtempSync(join(realpathSync(tmpdir()), 'bdur2b-http-'));
-    mkdirSync(join(base, 'store'), { mode: 0o700 });
-    mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-    writeFileSync(join(base, 'key'), `key-1:${'4c'.repeat(32)}\n`, { mode: 0o600 });
-    const env = {
-      AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-      AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-      AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
-      AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-      AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-    };
-    const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-    Object.assign(process.env, env);
+    const { restore } = await journaledEnv('bdur2b-http-', '4c');
     let close: (() => Promise<void>) | undefined;
     try {
       const { server, pagePath, headers } = await controlledPage();
@@ -196,87 +181,27 @@ describe('durable act end to end, with a real journal (B-dur-2b)', () => {
       });
     } finally {
       await close?.();
-      for (const [name, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-      }
-      rmSync(base, { recursive: true, force: true });
+      await restore();
     }
   }, 60_000);
 });
 
 describe('durable terminal mapping over HTTP, with a real journal (B-dur-2b)', () => {
   it('a plan step that lost its result is settled unknown; a known step refusal is failed_before_dispatch; both keep the report', async () => {
-    const { createHash } = await import('node:crypto');
-    const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const { FakeEngine } = await import('@agentbrowser/testkit');
-    const { buildServer } = await import('./server.js');
-    const base = mkdtempSync(join(realpathSync(tmpdir()), 'bdur2b-map-'));
-    mkdirSync(join(base, 'store'), { mode: 0o700 });
-    mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-    writeFileSync(join(base, 'key'), `key-1:${'5d'.repeat(32)}\n`, { mode: 0o600 });
-    const env = {
-      AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-      AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-      AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
-      AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-      AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-    };
-    const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-    Object.assign(process.env, env);
-    const engine = new FakeEngine();
-    const server = await buildServer({
-      engine,
-      apiKeys: new Map([[createHash('sha256').update('owner').digest('hex'), 'owner']]),
-    });
+    const t = await journaledServer();
     try {
-      const create = await server.inject({
-        method: 'POST',
-        url: '/v1/sessions',
-        headers: operatorHeaders,
-        payload: { controlMode: 'delegated' },
-      });
-      const path = `/v1/sessions/${create.json().sessionId}`;
-      const review = await server.inject({
-        method: 'POST',
-        url: `${path}/control/prepare-resume`,
-        headers: operatorHeaders,
-      });
-      const grant = await server.inject({
-        method: 'POST',
-        url: `${path}/control/delegate`,
-        headers: operatorHeaders,
-        payload: { epoch: review.json().epoch, mode: 'qa' },
-      });
-      const token = grant.json().token as string;
-      expect(token, grant.body).toBeTypeOf('string');
-      const headers = (id: string) => ({
-        ...agentHeaders(token),
-        'x-agentbrowser-operation-id': id,
-      });
-      const page = await server.inject({
-        method: 'POST',
-        url: `${path}/pages`,
-        headers: headers('page'),
-      });
-      const pageId = page.json().pageId as string;
-      const raw = engine.getFakePage(engine.getSessionIds()[0] ?? '', pageId);
-      if (!raw) throw new Error('expected an engine page');
-      const act = raw.act.bind(raw);
+      const act = t.raw.act.bind(t.raw);
       let calls = 0;
-      raw.act = async (action) => {
+      t.raw.act = async (action) => {
         calls += 1;
         if (calls === 2) throw new Error('engine transport closed');
         return act(action);
       };
       const plan = (id: string, actions: unknown[]) =>
-        server.inject({
+        t.server.inject({
           method: 'POST',
-          url: `${path}/pages/${pageId}/plan`,
-          headers: headers(id),
+          url: `${t.pagePath}/plan`,
+          headers: t.headers(id),
           payload: { actions, executionRequirement: 'durable' },
         });
       const scroll = { action: 'scroll', direction: 'down' };
@@ -286,49 +211,37 @@ describe('durable terminal mapping over HTTP, with a real journal (B-dur-2b)', (
       const known = await plan('plan-known', [{ action: 'click', target: { ref: 'e999_7' } }]);
       expect(known.statusCode, known.body).toBe(200);
       expect(known.json()).toMatchObject({ ok: false, completed: 0 });
-      const classification = async (id: string) =>
-        (
-          await server.inject({
-            method: 'GET',
-            url: `/v1/journal/operations/${id}`,
-            headers: operatorHeaders,
-          })
-        ).json().records?.[0]?.classification;
-      expect(await classification('plan-lost')).toBe('settled_unknown');
-      expect(await classification('plan-known')).toBe('failed_before_dispatch');
+      expect(await t.classification('plan-lost')).toBe('settled_unknown');
+      expect(await t.classification('plan-known')).toBe('failed_before_dispatch');
     } finally {
-      await server.close();
-      for (const [name, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-      }
-      rmSync(base, { recursive: true, force: true });
+      await t.close();
     }
   }, 60_000);
 });
 
+/** A private journal layout + environment swap shared by the durable suites (a fresh
+ * tagged directory, key file, and the JOURNAL_* env). `restore` unsets the env and
+ * removes the directory — it belongs in the caller's finally. */
+async function journaledEnv(tag: string, keyHex: string) {
+  const tree = journalTree(tag, keyHex);
+  const saved = Object.fromEntries(Object.keys(tree.env).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, tree.env);
+  const restore = async () => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    tree.dispose();
+  };
+  return { restore };
+}
+
 /** A delegated `qa` session on a server whose engine the test holds, with a real journal. */
 async function journaledServer() {
   const { createHash } = await import('node:crypto');
-  const { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
   const { FakeEngine } = await import('@agentbrowser/testkit');
   const { buildServer } = await import('./server.js');
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'bdur2b-known-'));
-  mkdirSync(join(base, 'store'), { mode: 0o700 });
-  mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-  writeFileSync(join(base, 'key'), `key-1:${'6e'.repeat(32)}\n`, { mode: 0o600 });
-  const env = {
-    AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-    AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-    AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
-    AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-    AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-    AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-  };
-  const saved = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]));
-  Object.assign(process.env, env);
+  const { restore } = await journaledEnv('bdur2b-known-', '6e');
   const engine = new FakeEngine();
   const server = await buildServer({
     engine,
@@ -336,11 +249,7 @@ async function journaledServer() {
   });
   const close = async () => {
     await server.close();
-    for (const [name, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    rmSync(base, { recursive: true, force: true });
+    await restore();
   };
   const create = await server.inject({
     method: 'POST',

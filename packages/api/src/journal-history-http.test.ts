@@ -3,18 +3,16 @@
  * found by lookup (tagged with their namespace) and recoverable by the operator — the write
  * commits in the namespace that owns the record. A refused history entry is UNREAD, never absent.
  */
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   journalConfigFromEnvironment,
   openServiceJournal,
   serviceJournalHistoryTemplate,
 } from './journal-config.js';
-import { buildServer } from './server.js';
+import { buildEnvServer } from './test-support/env-server.js';
+import { journalRolloverTree } from './test-support/journal-fixture.js';
 
 const API_KEY = 'api-key-j3d-http';
 const OPERATOR_KEY = 'operator-key-j3d-http-0001';
@@ -26,52 +24,27 @@ afterEach(async () => {
 });
 
 function layout() {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'j3d-http-'));
-  cleanup.push(() => rmSync(base, { recursive: true, force: true }));
-  mkdirSync(join(base, 'store'), { mode: 0o700 });
-  mkdirSync(join(base, 'anchor'), { mode: 0o700 });
-  const keyA = join(base, 'key-a');
-  const keyB = join(base, 'key-b');
-  writeFileSync(keyA, `key-a:${'a1'.repeat(32)}\n`, { mode: 0o600 });
-  writeFileSync(keyB, `key-b:${'b2'.repeat(32)}\n`, { mode: 0o600 });
-  const operatorKeys = join(base, 'operator.keys');
+  const tree = journalRolloverTree('j3d-http-');
+  cleanup.push(tree.dispose);
+  const operatorKeys = join(tree.baseDir, 'operator.keys');
   writeFileSync(operatorKeys, `${OPERATOR_KEY}:owner\n`, { mode: 0o600 });
-  const historyFile = join(base, 'history.json');
-  const env = (namespace: string, keyFile: string, acceptUntil: string) => ({
-    AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
-    AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
-    AGENTBROWSER_JOURNAL_KEY_FILE: keyFile,
-    AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-    AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: acceptUntil,
-    AGENTBROWSER_JOURNAL_NAMESPACE: namespace,
-  });
-  return { keyA, keyB, operatorKeys, historyFile, env };
+  return {
+    keyA: tree.keyA,
+    keyB: tree.keyB,
+    operatorKeys,
+    historyFile: tree.historyFile,
+    env: tree.envFor,
+  };
 }
 
 async function server(
   env: Record<string, string | undefined>,
   applicationAdapters?: import('@agentbrowser/control').ApplicationAdapter[]
 ) {
-  const names = Object.keys(env);
-  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-  cleanup.push(() => {
-    for (const name of names) {
-      if (saved[name] === undefined) delete process.env[name];
-      else process.env[name] = saved[name];
-    }
+  const { server: built, warn } = await buildEnvServer(cleanup, env, {
+    apiKey: API_KEY,
+    applicationAdapters,
   });
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  cleanup.push(() => warn.mockRestore());
-  const built = await buildServer({
-    engine: new FakeEngine(),
-    apiKeys: new Map([[createHash('sha256').update(API_KEY).digest('hex'), 'owner']]),
-    ...(applicationAdapters ? { applicationAdapters } : {}),
-  });
-  cleanup.push(() => built.close());
   return { built, warn };
 }
 

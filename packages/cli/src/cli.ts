@@ -10,6 +10,7 @@ import { isAbsolute } from 'node:path';
 import {
   assertCookieRequestSize,
   importProgramScope,
+  loadTldts,
   type ProgramScopeFormat,
   verifyEngagementLedger,
 } from '@agentbrowser/core';
@@ -115,6 +116,32 @@ interface WaitFlagOptions {
 }
 
 const WAIT_UNTIL_VALUES = new Set<string>(DELIVERED_WAIT_TYPES);
+
+/** The operator-plane commands' shared HTTP call: fetch with a bounded timeout; a
+ * non-OK response becomes the uniform UsageError — `<what> failed (status code):
+ * message` — carrying the body's error envelope when present. */
+async function fetchOrUsageError(
+  what: string,
+  url: string,
+  timeoutMs: number,
+  init: RequestInit = {}
+) {
+  // Compose, never silently replace: a caller-supplied abort (shutdown, Ctrl-C) must
+  // still cancel alongside the helper's timeout.
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
+  const res = await fetch(url, { ...init, signal });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: { code?: string; message?: string };
+    };
+    throw new UsageError(
+      `${what} failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+    );
+  }
+  return res;
+}
 
 function captureInteger(value: string, flag: string): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
@@ -373,7 +400,7 @@ const junitXml = (value: string): string =>
  * T10 M4: a JUnit report for one plan run: one testcase per step, verdicts and error codes
  * only. Error messages can echo page content, so they never enter the artifact.
  */
-export function planJunit(
+function planJunit(
   planFile: string,
   steps: Array<Record<string, unknown>>,
   report: {
@@ -442,6 +469,27 @@ export function buildCli(deps: CliDependencies): Cli {
   return {
     async run(argv: string[]): Promise<number> {
       let exitCode = 0;
+      /**
+       * The command families' uniform failure report: a typed detail extracted from the
+       * error becomes the nonzero-exit human line or the --json envelope (pretty for the
+       * navigation family, compact for the download family — the two formats shipped
+       * independently and are pinned by tests). Caller rethrows when its extractor
+       * returns undefined (not-this-family failures must not be swallowed).
+       */
+      const emitTypedFailure = (
+        ctx: CommandContext,
+        detail: { code: string; message: string },
+        pretty: boolean
+      ) => {
+        exitCode = 1;
+        deps.err(
+          ctx.json
+            ? pretty
+              ? JSON.stringify({ error: detail }, null, 2)
+              : JSON.stringify({ error: detail })
+            : `${detail.code}: ${detail.message}`
+        );
+      };
 
       const readJsonArgument = createJsonArgumentReader(deps.stdin ? { stdin: deps.stdin } : {});
 
@@ -1369,12 +1417,7 @@ export function buildCli(deps: CliDependencies): Cli {
             } catch (error) {
               const detail = navigationFailureDetail(error);
               if (detail === undefined) throw error;
-              exitCode = 1;
-              deps.err(
-                ctx.json
-                  ? JSON.stringify({ error: detail }, null, 2)
-                  : `${detail.code}: ${detail.message}`
-              );
+              emitTypedFailure(ctx, detail, true);
             }
           })
         );
@@ -1541,12 +1584,7 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 const detail = navigationFailureDetail(error);
                 if (detail === undefined) throw error;
-                exitCode = 1;
-                deps.err(
-                  ctx.json
-                    ? JSON.stringify({ error: detail }, null, 2)
-                    : `${detail.code}: ${detail.message}`
-                );
+                emitTypedFailure(ctx, detail, true);
               }
             }
           )
@@ -2649,19 +2687,12 @@ export function buildCli(deps: CliDependencies): Cli {
                 throw new UsageError(
                   'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
                 );
-              const res = await fetch(`${ctx.baseUrl}/v1/operator/login/${verb}`, {
-                method: 'POST',
-                headers: { authorization: `Bearer ${operatorKey}` },
-                signal: AbortSignal.timeout(60_000),
-              });
-              if (!res.ok) {
-                const body = (await res.json().catch(() => ({}))) as {
-                  error?: { code?: string; message?: string };
-                };
-                throw new UsageError(
-                  `operator login-browser ${verb} failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
-                );
-              }
+              const res = await fetchOrUsageError(
+                `operator login-browser ${verb}`,
+                `${ctx.baseUrl}/v1/operator/login/${verb}`,
+                60_000,
+                { method: 'POST', headers: { authorization: `Bearer ${operatorKey}` } }
+              );
               const body = (await res.json()) as unknown;
               ctx.emit(body, () => [`login browser: ${JSON.stringify(body)}`]);
             })
@@ -2725,8 +2756,10 @@ export function buildCli(deps: CliDependencies): Cli {
                 maxActions: Math.round(actionsValue),
               };
             }
-            const res = await fetch(
+            const res = await fetchOrUsageError(
+              'operator approve',
               `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              30_000,
               {
                 method: 'POST',
                 headers: {
@@ -2737,17 +2770,8 @@ export function buildCli(deps: CliDependencies): Cli {
                   decision: 'approve',
                   ...(lease !== undefined ? { lease } : {}),
                 }),
-                signal: AbortSignal.timeout(30_000),
               }
             );
-            if (!res.ok) {
-              const body = (await res.json().catch(() => ({}))) as {
-                error?: { code?: string; message?: string };
-              };
-              throw new UsageError(
-                `operator approve failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
-              );
-            }
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [`decided: ${JSON.stringify(body)}`]);
           })
@@ -2770,23 +2794,14 @@ export function buildCli(deps: CliDependencies): Cli {
               throw new UsageError(
                 'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
               );
-            const res = await fetch(
-              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
-              {
-                headers: { authorization: `Bearer ${operatorKey}` },
-                signal: AbortSignal.timeout(30_000),
-              }
-            );
             // A non-OK response is an error to STDERR with exit 1, like
             // every other command (review finding 4).
-            if (!res.ok) {
-              const body = (await res.json().catch(() => ({}))) as {
-                error?: { code?: string; message?: string };
-              };
-              throw new UsageError(
-                `approvals view failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
-              );
-            }
+            const res = await fetchOrUsageError(
+              'approvals view',
+              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              30_000,
+              { headers: { authorization: `Bearer ${operatorKey}` } }
+            );
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
           })
@@ -3067,6 +3082,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 `@${file}`,
                 'program scope'
               );
+              // Bundled-binary surface: load tldts before the matcher's sync accessor runs.
+              await loadTldts();
               let result: ReturnType<typeof importProgramScope>;
               try {
                 result = importProgramScope(input, options.from as ProgramScopeFormat, {
@@ -3141,6 +3158,8 @@ export function buildCli(deps: CliDependencies): Cli {
         } catch {
           throw new UsageError('--findings must contain a JSON array of findings.');
         }
+        // Bundled-binary surface: load tldts before the scope policy's sync matcher runs.
+        await loadTldts();
         return checkEngagementFindings(ledgerText, findings);
       };
       const issueLines = (issues: Array<{ findingId: string; issue: string }>) =>
@@ -3462,11 +3481,7 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 const usage = downloadUsageError(error);
                 if (usage) throw usage;
-                const detail = downloadFailureDetail(error);
-                exitCode = 1;
-                deps.err(
-                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
-                );
+                emitTypedFailure(ctx, downloadFailureDetail(error), false);
               }
             }
           )
@@ -3502,11 +3517,7 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 const usage = downloadUsageError(error);
                 if (usage) throw usage;
-                const detail = downloadFailureDetail(error);
-                exitCode = 1;
-                deps.err(
-                  ctx.json ? JSON.stringify({ error: detail }) : `${detail.code}: ${detail.message}`
-                );
+                emitTypedFailure(ctx, downloadFailureDetail(error), false);
               }
             }
           )

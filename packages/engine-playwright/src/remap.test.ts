@@ -1,11 +1,7 @@
 import type { EnginePage } from '@agentbrowser/engine';
-import type { Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
-
-function backingPage(page: EnginePage): Page {
-  return (page as unknown as { backingPage(): Page }).backingPage();
-}
+import { backingPage } from './test-support/backing-page.js';
+import { withPage } from './test-support/engine-page.js';
 
 async function observeButton(page: EnginePage): Promise<string> {
   const ref = (await page.observe({})).elements.find((e) => e.role === 'button')?.ref;
@@ -13,7 +9,7 @@ async function observeButton(page: EnginePage): Promise<string> {
   return ref;
 }
 
-const SIMPLE_BUTTON = 'data:text/html,<button onclick="document.title=\'clicked\'">Save</button>';
+const SIMPLE_BUTTON = '<button onclick="document.title=\'clicked\'">Save</button>';
 
 /**
  * F2: remap is OPT-IN healing for replaced controls. resolve() fails before
@@ -22,10 +18,7 @@ const SIMPLE_BUTTON = 'data:text/html,<button onclick="document.title=\'clicked\
  */
 describe('opt-in remap', () => {
   it('remaps a replaced control and reports the span when opted in', async () => {
-    const engine = new PlaywrightChromiumEngine();
-    try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
-      await page.navigate({ url: SIMPLE_BUTTON });
+    await withPage(SIMPLE_BUTTON, async (page) => {
       const ref = await observeButton(page);
       await backingPage(page).evaluate(() => {
         const el = document.querySelector('button');
@@ -37,16 +30,11 @@ describe('opt-in remap', () => {
       expect(effect.remap).toEqual({ from: ref, to: expect.any(String) });
       expect(effect.remap?.to).not.toBe(ref);
       expect(await backingPage(page).title()).toBe('clicked');
-    } finally {
-      await engine.close();
-    }
+    });
   });
 
   it('still refuses a replaced control by default', async () => {
-    const engine = new PlaywrightChromiumEngine();
-    try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
-      await page.navigate({ url: SIMPLE_BUTTON });
+    await withPage(SIMPLE_BUTTON, async (page) => {
       const ref = await observeButton(page);
       await backingPage(page).evaluate(() => {
         const el = document.querySelector('button');
@@ -57,16 +45,11 @@ describe('opt-in remap', () => {
 
       expect(error).toMatchObject({ code: 'STALE_TARGET' });
       expect(await backingPage(page).title()).toBe('');
-    } finally {
-      await engine.close();
-    }
+    });
   });
 
   it('refuses with candidates 0 when the control is gone', async () => {
-    const engine = new PlaywrightChromiumEngine();
-    try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
-      await page.navigate({ url: SIMPLE_BUTTON });
+    await withPage(SIMPLE_BUTTON, async (page) => {
       const ref = await observeButton(page);
       await backingPage(page).evaluate(() => document.querySelector('button')?.remove());
 
@@ -78,16 +61,11 @@ describe('opt-in remap', () => {
         code: 'STALE_TARGET',
         details: { ref, candidates: 0 },
       });
-    } finally {
-      await engine.close();
-    }
+    });
   });
 
   it('refuses a renamed replacement rather than guessing', async () => {
-    const engine = new PlaywrightChromiumEngine();
-    try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
-      await page.navigate({ url: SIMPLE_BUTTON });
+    await withPage(SIMPLE_BUTTON, async (page) => {
       const ref = await observeButton(page);
       await backingPage(page).evaluate(() => {
         const el = document.querySelector('button');
@@ -103,16 +81,11 @@ describe('opt-in remap', () => {
 
       expect(error).toMatchObject({ code: 'STALE_TARGET', details: { candidates: 0 } });
       expect(await backingPage(page).title()).toBe('');
-    } finally {
-      await engine.close();
-    }
+    });
   });
 
   it('refuses ambiguous candidates rather than guessing', async () => {
-    const engine = new PlaywrightChromiumEngine();
-    try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
-      await page.navigate({ url: SIMPLE_BUTTON });
+    await withPage(SIMPLE_BUTTON, async (page) => {
       const ref = await observeButton(page);
       await backingPage(page).evaluate(() => {
         const el = document.querySelector('button');
@@ -128,24 +101,18 @@ describe('opt-in remap', () => {
 
       expect(error).toMatchObject({ code: 'STALE_TARGET', details: { candidates: 2 } });
       expect(await backingPage(page).title()).toBe('');
-    } finally {
-      await engine.close();
-    }
+    });
   });
 
   it('leaves non-targeted actions alone even with remap set', async () => {
-    const engine = new PlaywrightChromiumEngine();
-    try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+    await withPage('', async (page) => {
       const effect = await page.act({
         type: 'navigate',
-        url: SIMPLE_BUTTON,
+        url: `data:text/html,${encodeURIComponent(SIMPLE_BUTTON)}`,
         remap: true,
       });
       expect(effect.remap).toBeUndefined();
       expect((await page.getUrl()).startsWith('data:text/html')).toBe(true);
-    } finally {
-      await engine.close();
-    }
+    });
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/core",
-  "version": "1.27.1",
+  "version": "1.27.2",
   "private": true,
   "description": "Core session management, action execution, and observation normalization",
   "main": "./dist/index.js",
@@ -19,7 +19,7 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "tldts": "6.1.76"
+    "tldts": "7.4.18"
   },
   "devDependencies": {
     "vitest": "^5.0.5"

@@ -3,8 +3,6 @@
  * are journaled and advertised only while the journal is open; ephemeral writes stay unjournaled;
  * the store's own rows are the oracle, read independently of the service.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { FakeEngine } from '@agentbrowser/testkit';
@@ -16,6 +14,7 @@ import {
 } from './journal-config.js';
 import { buildServer } from './server.js';
 import { AgentBrowserService } from './service.js';
+import { journalTree } from './test-support/journal-fixture.js';
 
 const operator = { actor: 'operator', tenant: 'owner' } as const;
 const cleanup: Array<() => Promise<void> | void> = [];
@@ -24,25 +23,9 @@ afterEach(async () => {
 });
 
 function journalEnvironment() {
-  const base = mkdtempSync(join(realpathSync(tmpdir()), 'svc-durable-'));
-  cleanup.push(() => rmSync(base, { recursive: true, force: true }));
-  const directory = join(base, 'store');
-  const anchorDirectory = join(base, 'anchor');
-  mkdirSync(directory, { mode: 0o700 });
-  mkdirSync(anchorDirectory, { mode: 0o700 });
-  const keyFile = join(base, 'journal.key');
-  writeFileSync(keyFile, `key-1:${'cd'.repeat(32)}\n`, { mode: 0o600 });
-  return {
-    directory,
-    env: {
-      AGENTBROWSER_JOURNAL_DIR: directory,
-      AGENTBROWSER_JOURNAL_ANCHOR_DIR: anchorDirectory,
-      AGENTBROWSER_JOURNAL_KEY_FILE: keyFile,
-      AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
-      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
-      AGENTBROWSER_JOURNAL_INITIALIZE: '1',
-    },
-  };
+  const tree = journalTree('svc-durable-', 'cd');
+  cleanup.push(tree.dispose);
+  return { directory: tree.storeDir, env: tree.env };
 }
 
 /** Independent oracle: the store's committed records, read-only. */

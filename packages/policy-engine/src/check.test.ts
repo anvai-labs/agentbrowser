@@ -27,6 +27,37 @@ const single = (answer: ReturnType<typeof policyCheck>) => {
   return answer[0]!;
 };
 
+/** The ask-context and round-2 describes share this harness: each cedar text is its own
+ * policy (the @rule id must match its ruleId), and checkFor returns whether the single
+ * resulting decision allows the target. */
+const docWith = (...cedarTexts: string[]) => ({
+  version: 'agentbrowser-policy/v1' as const,
+  unknownRisk: 'allow' as const,
+  approvalRules: [],
+  policies: cedarTexts.map((cedar, i) => ({
+    key: `operator.x#${i + 1}`,
+    ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
+    cedar,
+  })),
+});
+const cedarPolicy = (...cedarTexts: string[]) =>
+  new NetworkPolicy({
+    blockLoopback: true,
+    blockPrivateIPs: true,
+    blockMetadata: true,
+    exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
+  });
+const checkFor = (cedarTexts: string[], target: string) => {
+  const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
+    action: 'request',
+    target,
+  });
+  expect(answer).toHaveLength(1);
+  const first = answer[0];
+  expect(first?.answer.kind).toBe('decision');
+  return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
+};
+
 describe('policyCheck: IP literals agree with enforcement', () => {
   const cases: Array<[string, string[], boolean]> = [
     ['10.1.2.3', ['10.0.0.0/8'], false],
@@ -134,40 +165,13 @@ describe('policyCheck: acts and capabilities', () => {
 });
 
 describe('policyCheck: parity with policies conditioning on ask context (review 3)', () => {
-  /** Each cedar text is its own policy; the @rule id must match its ruleId. */
-  const docWith = (...cedarTexts: string[]) => ({
-    version: 'agentbrowser-policy/v1' as const,
-    unknownRisk: 'allow' as const,
-    approvalRules: [],
-    policies: cedarTexts.map((cedar, i) => ({
-      key: `operator.x#${i + 1}`,
-      ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
-      cedar,
-    })),
-  });
-  const policy = (...cedarTexts: string[]) =>
-    new NetworkPolicy({
-      blockLoopback: true,
-      blockPrivateIPs: true,
-      blockMetadata: true,
-      exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
-    });
-  const checkFor = (cedarTexts: string[], target: string) => {
-    const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
-      action: 'request',
-      target,
-    });
-    expect(answer).toHaveLength(1);
-    const first = answer[0];
-    expect(first?.answer.kind).toBe('decision');
-    return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
-  };
-
   it('a phase-conditioned loopback permit matches enforcement on 127.0.0.1', async () => {
     // Enforcement asks literals at the hostname phase; check must too.
     const cedar =
       '@rule("operator.l") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { context.phase == "hostname" };';
-    await expect(policy(cedar).checkRequest({ hostname: '127.0.0.1' })).resolves.toBeUndefined();
+    await expect(
+      cedarPolicy(cedar).checkRequest({ hostname: '127.0.0.1' })
+    ).resolves.toBeUndefined();
     expect(checkFor([cedar], '127.0.0.1')).toBe(true);
   });
 
@@ -178,12 +182,14 @@ describe('policyCheck: parity with policies conditioning on ask context (review 
       '@rule("operator.l") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { context.addressClasses == ["loopback", "private"] };',
       '@rule("operator.p") permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context.addressClasses == ["loopback", "private"] };',
     ];
-    await expect(policy(...both).checkRequest({ hostname: '0.0.0.0' })).resolves.toBeUndefined();
+    await expect(
+      cedarPolicy(...both).checkRequest({ hostname: '0.0.0.0' })
+    ).resolves.toBeUndefined();
     expect(checkFor(both, '0.0.0.0')).toBe(true);
     // A loopback-only condition never matches 0.0.0.0 on either surface.
     const narrow =
       '@rule("operator.l") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { context.addressClasses == ["loopback"] };';
-    await expect(policy(narrow).checkRequest({ hostname: '0.0.0.0' })).rejects.toMatchObject({
+    await expect(cedarPolicy(narrow).checkRequest({ hostname: '0.0.0.0' })).rejects.toMatchObject({
       code: 'POLICY_DENIED',
     });
     expect(checkFor([narrow], '0.0.0.0')).toBe(false);
@@ -214,38 +220,11 @@ describe('policyCheck: invalid literals and prefixes (review 4)', () => {
 });
 
 describe('policyCheck: round-2 residues', () => {
-  const docWith = (...cedarTexts: string[]) => ({
-    version: 'agentbrowser-policy/v1' as const,
-    unknownRisk: 'allow' as const,
-    approvalRules: [],
-    policies: cedarTexts.map((cedar, i) => ({
-      key: `operator.x#${i + 1}`,
-      ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
-      cedar,
-    })),
-  });
-  const policy = (...cedarTexts: string[]) =>
-    new NetworkPolicy({
-      blockLoopback: true,
-      blockPrivateIPs: true,
-      blockMetadata: true,
-      exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
-    });
-  const checkFor = (cedarTexts: string[], target: string) => {
-    const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
-      action: 'request',
-      target,
-    });
-    const first = answer[0];
-    expect(first?.answer.kind).toBe('decision');
-    return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
-  };
-
   it('a target-equality policy sees the raw bracketed form (review A)', async () => {
     const cedar =
       '@rule("operator.p") permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context.target == "[::ffff:10.1.2.3]" };';
     await expect(
-      policy(cedar).checkRequest({ hostname: '[::ffff:10.1.2.3]' })
+      cedarPolicy(cedar).checkRequest({ hostname: '[::ffff:10.1.2.3]' })
     ).resolves.toBeUndefined();
     expect(checkFor([cedar], '[::ffff:10.1.2.3]')).toBe(true);
   });

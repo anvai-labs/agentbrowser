@@ -9,13 +9,6 @@ import { LoginBrowser } from '@agentbrowser/engine-playwright';
  * surface; only the operator routes touch it.
  */
 
-export const LOGIN_BROWSER_ROUTES = Object.freeze([
-  'login.open',
-  'login.close',
-  'login.reset',
-  'login.read',
-] as const);
-
 /**
  * The OS private per-user state root: XDG_STATE_HOME (or its default under
  * ~/.local/state) on POSIX, LOCALAPPDATA on Windows — outside synced and

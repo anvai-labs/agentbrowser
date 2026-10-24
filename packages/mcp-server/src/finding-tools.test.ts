@@ -1,13 +1,13 @@
 // T10 M3: `finding_check` and `finding_sarif` — offline findings tools, visible only in the
 // audit/appsec/bounty modes. The ledger fixture is built with the real chain functions.
-import { createHash } from 'node:crypto';
+
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ENGAGEMENT_GENESIS, engagementChainHash } from '@agentbrowser/core';
 import Ajv from 'ajv';
-import { describe, expect, it, vi } from 'vitest';
-import { buildMcpServer } from './mcp-server.js';
+import { describe, expect, it } from 'vitest';
+import { buildMcpServer, type McpClient, type McpDependencies } from './mcp-server.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'finding-tools-'));
 const write = (name: string, text: string) => {

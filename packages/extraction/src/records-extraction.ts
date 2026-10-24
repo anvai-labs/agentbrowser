@@ -12,6 +12,7 @@
 
 import type { ExtractionResult, RawPageState } from '@agentbrowser/engine';
 import { parseHTML } from 'linkedom';
+import { fnv1aHash } from './hash.js';
 
 export interface RecordsRequest {
   /** CSS selector matching each repeating record container. */
@@ -41,16 +42,6 @@ export class RecordsSelectorError extends Error {
   }
 }
 
-/** FNV-1a, identical to the other deterministic extractors' evidence hash. */
-function hash(content: string): string {
-  let digest = 0x811c9dc5;
-  for (let i = 0; i < content.length; i++) {
-    digest ^= content.charCodeAt(i);
-    digest = Math.imul(digest, 0x01000193) >>> 0;
-  }
-  return digest.toString(16).padStart(8, '0');
-}
-
 function revisionOf(raw: RawPageState): number {
   const revision = (raw.metadata as { revision?: unknown } | undefined)?.revision;
   return typeof revision === 'number' ? revision : 0;
@@ -67,7 +58,7 @@ export function extractRecords(raw: RawPageState, request: RecordsRequest): Extr
       ? Math.min(request.limit, MAX_LIMIT)
       : MAX_LIMIT;
   const { document } = parseHTML(raw.content);
-  const shared = { url: raw.url, revision: revisionOf(raw), hash: hash(raw.content) };
+  const shared = { url: raw.url, revision: revisionOf(raw), hash: fnv1aHash(raw.content) };
 
   const records: Array<Record<string, string>> = [];
   let containers: Iterable<{ querySelector(selector: string): { textContent: string } | null }>;

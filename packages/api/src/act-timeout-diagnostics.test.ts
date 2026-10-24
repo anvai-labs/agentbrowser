@@ -5,28 +5,13 @@
  */
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentBrowserService } from './service';
+import { setupObservedPage } from './test-support/service-setup.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-async function setup(engine: FakeEngine) {
-  const service = new AgentBrowserService({ engine });
-  const session = await service.createSession({ tenantId: 't1' });
-  const pageId = (await service.createPage(session.sessionId)).pageId;
-  await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-  const observation = await service.observe(session.sessionId, pageId, { mode: 'interactive' });
-  const ref = observation.elements[0]?.ref;
-  if (!ref) throw new Error('no elements observed');
-  const engineSessionId = engine.getSessionIds()[0];
-  if (engineSessionId === undefined) throw new Error('no engine session');
-  const fakePage = engine.getFakePage(engineSessionId, pageId);
-  if (!fakePage) throw new Error('no fake page');
-  return { service, session, pageId, ref, fakePage };
-}
-
 describe('act ACTION_TIMEOUT diagnostics', () => {
   it('attaches a screenshot artifact when an action times out', async () => {
-    const { service, session, pageId, ref, fakePage } = await setup(new FakeEngine());
+    const { service, session, pageId, ref, fakePage } = await setupObservedPage(new FakeEngine());
     vi.spyOn(fakePage, 'act').mockRejectedValue(new Error('click timed out'));
 
     const error = await service
@@ -45,7 +30,7 @@ describe('act ACTION_TIMEOUT diagnostics', () => {
   });
 
   it('leaves the error untouched when the diagnostic screenshot fails', async () => {
-    const { service, session, pageId, ref, fakePage } = await setup(new FakeEngine());
+    const { service, session, pageId, ref, fakePage } = await setupObservedPage(new FakeEngine());
     vi.spyOn(fakePage, 'act').mockRejectedValue(new Error('click timed out'));
     vi.spyOn(fakePage, 'screenshot').mockRejectedValue(new Error('capture unavailable'));
 

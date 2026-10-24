@@ -29,7 +29,7 @@ export function responseDraft(
 }
 
 /** Authority owns the deadline; the transport owns only disconnect and byte delivery. */
-export const HTTP_PUBLICATION_TIMEOUT_MS = 10_000;
+const HTTP_PUBLICATION_TIMEOUT_MS = 10_000;
 
 export function createHttpPublication() {
   const guards = new WeakMap<FastifyRequest, () => void>();

@@ -12,6 +12,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadTldts } from '@agentbrowser/core';
 import { artifactReference, cacheLocalArtifact } from '@agentbrowser/core/local-artifacts';
 import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
 import type { AgentCapability, AgentMode, ArtifactRef } from '@agentbrowser/protocol';
@@ -192,7 +193,7 @@ function operationOptions(args: Record<string, unknown>): [] | [MutationOptions]
  * T5 B-dur: act, plan and autofill take `executionRequirement`. Omitted means unchanged (the SDK
  * call is exactly the one before this field existed); any other value is refused before a call.
  */
-export const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill'] as const);
+const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill'] as const);
 function browserOptions(
   args: Record<string, unknown>
 ): [] | [MutationOptions & { executionRequirement?: 'ephemeral' | 'durable' }] {
@@ -207,13 +208,86 @@ function browserOptions(
 // Delegated-mutation tools: these carry the operation-id contract (choose an
 // ID before dispatch; reconcile after a lost response). Single declaration -
 // the schema injection and the runtime requirement read it together.
-export const OPERATION_ID_TOOLS = Object.freeze([
+const OPERATION_ID_TOOLS = Object.freeze([
   'act',
   'plan',
   'autofill',
   'navigate',
   'page_create',
 ] as const);
+
+/** Shared by finding_check and finding_sarif: both read ledger + findings from the server host. */
+const FINDING_INPUT_PROPERTIES: Record<string, unknown> = {
+  ledger: {
+    type: 'string',
+    description: 'Path to the exported engagement ledger (engagement export --out).',
+  },
+  findings: {
+    type: 'string',
+    description: 'Path to the findings JSON array.',
+  },
+};
+
+/** One path rule, shared by the scope schema's pathRules and excludePaths arrays:
+ * a segment-boundary prefix, optionally narrowed to one host subtree. */
+const PATH_RULE_ITEM: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
+    prefix: { type: 'string', minLength: 1, pattern: '^/' },
+  },
+  required: ['prefix'],
+  additionalProperties: false,
+};
+
+/** The ok:false + issues branch both finding tools advertise — the output-schema twin of
+ * readCheckedFindings' failure value, so schema and handler cannot drift apart. */
+const FINDING_FAILURE_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  required: ['ok', 'issues'],
+  properties: {
+    ok: { const: false },
+    issues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['findingId', 'issue'],
+        properties: {
+          findingId: { type: 'string' },
+          issue: { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
+/**
+ * The shared front half of finding_check and finding_sarif: validate the paths, read both
+ * server-host files, parse the findings JSON, and run the ledger check. The failure value is
+ * the ok:false + issues shape both tools advertise, so the two outputs cannot drift apart.
+ */
+async function readCheckedFindings(args: Record<string, unknown>) {
+  if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
+    throw new UsageError('ledger and findings paths are required.');
+  const { readFile } = await import('node:fs/promises');
+  const ledgerText = await readFile(args.ledger, 'utf8');
+  let findings: unknown;
+  try {
+    findings = JSON.parse(await readFile(args.findings, 'utf8'));
+  } catch {
+    throw new UsageError('--findings must contain a JSON array of findings.');
+  }
+  const result = checkEngagementFindings(ledgerText, findings);
+  if (!result.ok)
+    return {
+      ok: false as const,
+      issues: result.issues.map((issue) => ({
+        findingId: issue.findingId,
+        issue: issue.issue,
+      })),
+    };
+  return result;
+}
 
 export function buildTools(
   client: McpClient,
@@ -336,15 +410,7 @@ export function buildTools(
               },
               pathRules: {
                 type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
-                  },
-                  required: ['prefix'],
-                  additionalProperties: false,
-                },
+                items: { ...PATH_RULE_ITEM },
                 minItems: 1,
               },
               allowedMethods: {
@@ -379,15 +445,7 @@ export function buildTools(
               },
               excludePaths: {
                 type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-                    prefix: { type: 'string', minLength: 1, pattern: '^/' },
-                  },
-                  required: ['prefix'],
-                  additionalProperties: false,
-                },
+                items: { ...PATH_RULE_ITEM },
                 minItems: 1,
               },
               allowedSchemes: {
@@ -925,24 +983,7 @@ export function buildTools(
               warnings: { type: 'array', items: { type: 'string' } },
             },
           },
-          {
-            type: 'object',
-            required: ['ok', 'issues'],
-            properties: {
-              ok: { const: false },
-              issues: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  required: ['findingId', 'issue'],
-                  properties: {
-                    findingId: { type: 'string' },
-                    issue: { type: 'string' },
-                  },
-                },
-              },
-            },
-          },
+          { ...FINDING_FAILURE_SCHEMA },
         ],
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
@@ -954,38 +995,16 @@ export function buildTools(
         'not match the finding URL. Nothing is submitted anywhere.',
       inputSchema: {
         type: 'object',
-        properties: {
-          ledger: {
-            type: 'string',
-            description: 'Path to the exported engagement ledger (engagement export --out).',
-          },
-          findings: {
-            type: 'string',
-            description: 'Path to the findings JSON array.',
-          },
-        },
+        // A copy, like finding_sarif's: the shared object must never be exposed by
+        // reference, or an in-place schema augmentation on one tool would leak to both.
+        properties: { ...FINDING_INPUT_PROPERTIES },
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {
-        if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
-          throw new UsageError('ledger and findings paths are required.');
-        const { readFile } = await import('node:fs/promises');
-        const ledgerText = await readFile(args.ledger, 'utf8');
-        let findings: unknown;
-        try {
-          findings = JSON.parse(await readFile(args.findings, 'utf8'));
-        } catch {
-          throw new UsageError('--findings must contain a JSON array of findings.');
-        }
-        const result = checkEngagementFindings(ledgerText, findings);
-        if (!result.ok)
-          return {
-            ok: false,
-            issues: result.issues.map((issue) => ({
-              findingId: issue.findingId,
-              issue: issue.issue,
-            })),
-          };
+        // Bundled-binary surface: load tldts before the scope policy's sync matcher runs.
+        await loadTldts();
+        const result = await readCheckedFindings(args);
+        if (!result.ok) return result;
         return {
           ok: true,
           engagementId: result.engagementId,
@@ -1007,24 +1026,7 @@ export function buildTools(
               results: { type: 'number' },
             },
           },
-          {
-            type: 'object',
-            required: ['ok', 'issues'],
-            properties: {
-              ok: { const: false },
-              issues: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  required: ['findingId', 'issue'],
-                  properties: {
-                    findingId: { type: 'string' },
-                    issue: { type: 'string' },
-                  },
-                },
-              },
-            },
-          },
+          { ...FINDING_FAILURE_SCHEMA },
         ],
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
@@ -1035,14 +1037,7 @@ export function buildTools(
       inputSchema: {
         type: 'object',
         properties: {
-          ledger: {
-            type: 'string',
-            description: 'Path to the exported engagement ledger (engagement export --out).',
-          },
-          findings: {
-            type: 'string',
-            description: 'Path to the findings JSON array.',
-          },
+          ...FINDING_INPUT_PROPERTIES,
           out: {
             type: 'string',
             description: 'SARIF output path on the server host (created exclusively, mode 0600).',
@@ -1051,25 +1046,10 @@ export function buildTools(
         required: ['ledger', 'findings'],
       },
       handler: async (args) => {
-        if (typeof args.ledger !== 'string' || typeof args.findings !== 'string')
-          throw new UsageError('ledger and findings paths are required.');
-        const { readFile } = await import('node:fs/promises');
-        const ledgerText = await readFile(args.ledger, 'utf8');
-        let findings: unknown;
-        try {
-          findings = JSON.parse(await readFile(args.findings, 'utf8'));
-        } catch {
-          throw new UsageError('--findings must contain a JSON array of findings.');
-        }
-        const result = checkEngagementFindings(ledgerText, findings);
-        if (!result.ok)
-          return {
-            ok: false,
-            issues: result.issues.map((issue) => ({
-              findingId: issue.findingId,
-              issue: issue.issue,
-            })),
-          };
+        // Bundled-binary surface: load tldts before the scope policy's sync matcher runs.
+        await loadTldts();
+        const result = await readCheckedFindings(args);
+        if (!result.ok) return result;
         const sarif = buildEngagementSarif(result);
         const { writeFile } = await import('node:fs/promises');
         const out =
@@ -1917,7 +1897,7 @@ const TOOL_ERROR_ENVELOPE = {
  * MCP tool contract) and keeps the result schema's $id; the nested copy drops it so no
  * validator sees the same $id twice.
  */
-export function advertisedOutputSchema(schema: Record<string, unknown>): Record<string, unknown> {
+function advertisedOutputSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const { $id, ...result } = schema;
   return {
     ...($id !== undefined ? { $id } : {}),
@@ -1927,7 +1907,7 @@ export function advertisedOutputSchema(schema: Record<string, unknown>): Record<
 }
 
 /** The largest index <= limit that does not split a UTF-8 sequence in `bytes`. */
-export function utf8Boundary(bytes: Uint8Array, limit: number): number {
+function utf8Boundary(bytes: Uint8Array, limit: number): number {
   if (limit >= bytes.length) return bytes.length;
   let cut = limit;
   // Step back over continuation bytes (10xxxxxx) to the lead byte of the torn character.

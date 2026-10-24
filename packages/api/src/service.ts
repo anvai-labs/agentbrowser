@@ -49,7 +49,6 @@ import {
   defineApplicationReceiptEvidenceSource,
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
-  type JournalRecord,
   NATIVE_FORM_REVIEW_TYPE,
   type OperationJournal,
   type OperationPublication,
@@ -2565,6 +2564,24 @@ export class AgentBrowserService {
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
+    /** Record one step's failure and build the loop's shared stop-the-plan report
+     * (every refusal path below returns this, some wrapped by markOutcomeUnknown). */
+    const failStepReport = (
+      index: number,
+      code: string,
+      message: string,
+      mode: 'stable' | 'verified' = this.churnMode(churnKey)
+    ) => {
+      results.push({ step: index, ok: false, error: message });
+      return {
+        ok: false as const,
+        completed: index,
+        results,
+        mode,
+        newRevision: finalRevision(),
+        error: { code, message },
+      };
+    };
     const recordEffect = (index: number, effect: ServiceActResult) => {
       this.decayChurn(churnKey);
       const navigationObservation = parseActionNavigationObservation(effect.navigationObservation);
@@ -2613,30 +2630,14 @@ export class AgentBrowserService {
             step.target !== undefined ? step : { ...step, target: { ref: resolvedRef } };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          results.push({ step: index, ok: false, error: message });
-          return {
-            ok: false,
-            completed: index,
-            results,
-            mode: this.churnMode(churnKey),
-            newRevision: finalRevision(),
-            error: { code: 'PLAN_WAIT_TIMEOUT', message },
-          };
+          return failStepReport(index, 'PLAN_WAIT_TIMEOUT', message);
         }
       }
       if (step.steps !== undefined) {
         // F3: batch envelopes are the /act surface's own shortcut - nesting
         // one inside a plan (or a batch) would double-apply orchestration.
         const message = "'steps' cannot be nested inside a plan step.";
-        results.push({ step: index, ok: false, error: message });
-        return {
-          ok: false,
-          completed: index,
-          results,
-          mode: this.churnMode(churnKey),
-          newRevision: finalRevision(),
-          error: { code: 'PLAN_STEP_FAILED', message },
-        };
+        return failStepReport(index, 'PLAN_STEP_FAILED', message);
       }
       try {
         const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
@@ -2737,43 +2738,19 @@ export class AgentBrowserService {
             } catch (retryError) {
               const retryMessage =
                 retryError instanceof Error ? retryError.message : String(retryError);
-              results.push({ step: index, ok: false, error: retryMessage });
               return markOutcomeUnknown(
-                {
-                  ok: false,
-                  completed: index,
-                  results,
-                  mode: this.churnMode(churnKey),
-                  newRevision: finalRevision(),
-                  error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
-                },
+                failStepReport(index, 'PLAN_STEP_FAILED', retryMessage),
                 outcomeUnknownFailure(retryError)
               );
             }
           }
           if (ambiguous) {
             const ambiguousMessage = `AMBIGUOUS_REMAP: ${candidates.length} candidate(s) at ordinal ${ordinal} but none matched the pre-failure role/label; refusing to guess under high churn.`;
-            results.push({ step: index, ok: false, error: ambiguousMessage });
-            return {
-              ok: false,
-              completed: index,
-              results,
-              mode,
-              newRevision: finalRevision(),
-              error: { code: 'AMBIGUOUS_REMAP', message: ambiguousMessage },
-            };
+            return failStepReport(index, 'AMBIGUOUS_REMAP', ambiguousMessage, mode);
           }
         }
-        results.push({ step: index, ok: false, error: message });
         return markOutcomeUnknown(
-          {
-            ok: false,
-            completed: index,
-            results,
-            mode: this.churnMode(churnKey),
-            newRevision: finalRevision(),
-            error: { code: 'PLAN_STEP_FAILED', message },
-          },
+          failStepReport(index, 'PLAN_STEP_FAILED', message),
           outcomeUnknownFailure(error)
         );
       }
@@ -3207,15 +3184,14 @@ export class AgentBrowserService {
     return { closed, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
   }
 
-  /**
-   * T5 J3c (D3, operator fallback): settle every in-doubt (dispatched, rev-2) record of one
-   * operation ID as terminal `outcome_unknown`. Operator-only. IRREVERSIBLE: a settled record
-   * can never be reconciled; try reconcile first. Claims nothing about the effect.
-   */
-  async journalSettleOperation(
+  /** The recovery writes' shared opening (T5 J3c): the operation's in-doubt records
+   * (dispatched, revision 2, not yet terminal), refusing when there is nothing to
+   * recover. `action` names the verb in the refusal message. */
+  private async inDoubtRecords(
     operationId: string,
-    principal: { actor: string; tenant: string }
-  ): Promise<{ settled: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    principal: { actor: string; tenant: string },
+    action: string
+  ) {
     const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
       operationId,
       principal
@@ -3226,8 +3202,25 @@ export class AgentBrowserService {
     if (eligible.length === 0)
       throw new ServiceError(
         'OPERATION_CONFLICT',
-        'No in-doubt record to settle; undispatched work is closed, terminal work is final'
+        `No in-doubt record to ${action}; undispatched work is closed, terminal work is final`
       );
+    return { records: eligible, truncated, ...(unreadNamespaces ? { unreadNamespaces } : {}) };
+  }
+
+  /**
+   * T5 J3c (D3, operator fallback): settle every in-doubt (dispatched, rev-2) record of one
+   * operation ID as terminal `outcome_unknown`. Operator-only. IRREVERSIBLE: a settled record
+   * can never be reconciled; try reconcile first. Claims nothing about the effect.
+   */
+  async journalSettleOperation(
+    operationId: string,
+    principal: { actor: string; tenant: string }
+  ): Promise<{ settled: number; truncated: boolean; unreadNamespaces?: string[] }> {
+    const {
+      records: eligible,
+      truncated,
+      unreadNamespaces,
+    } = await this.inDoubtRecords(operationId, principal, 'settle');
     let settled = 0;
     for (const record of eligible) {
       const commit = await this.recordJournals.get(record)?.commitTerminal({
@@ -3262,18 +3255,11 @@ export class AgentBrowserService {
     truncated: boolean;
     unreadNamespaces?: string[];
   }> {
-    const { records, truncated, unreadNamespaces } = await this.recoveryTargets(
-      operationId,
-      principal
-    );
-    const eligible = records.filter(
-      (record) => record.revision === 2 && record.dispatched && record.terminal === undefined
-    );
-    if (eligible.length === 0)
-      throw new ServiceError(
-        'OPERATION_CONFLICT',
-        'No in-doubt record to reconcile; undispatched work is closed, terminal work is final'
-      );
+    const {
+      records: eligible,
+      truncated,
+      unreadNamespaces,
+    } = await this.inDoubtRecords(operationId, principal, 'reconcile');
     // Resolve every adapter BEFORE any write, so a missing reconcile refuses without a partial
     // result.
     const plans = eligible.map((record) => {

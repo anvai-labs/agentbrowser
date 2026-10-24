@@ -16,6 +16,7 @@ import {
   type ServiceError,
   type ServiceOutcomeEvidenceContext,
 } from './service';
+import { keyedServer } from './test-support/keyed-server.js';
 
 const verifier = defineVerifier({
   descriptor: {
@@ -281,9 +282,7 @@ describe('verified outcome REST projection', () => {
       const cleanup = vi.fn();
       let server: Awaited<ReturnType<typeof buildServer>> | undefined;
       try {
-        server = await buildServer({
-          engine: new FakeEngine(),
-          apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+        server = await keyedServer(tenant, {
           applicationAdapters: [
             {
               id: 'fixture-app',
@@ -467,9 +466,7 @@ describe('verified outcome REST projection', () => {
     let server: Awaited<ReturnType<typeof buildServer>> | undefined;
     let released = false;
     try {
-      server = await buildServer({
-        engine: new FakeEngine(),
-        apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+      server = await keyedServer(tenant, {
         applicationAdapters: [
           {
             id: 'fixture-app',
@@ -662,11 +659,7 @@ describe('verified outcome REST projection', () => {
         if (mode === 'revoked-in-cleanup') generation++;
       });
       const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
-      const server = await buildServer({
-        engine: new FakeEngine(),
-        apiKeys: new Map([
-          [createHash('sha256').update('operator').digest('hex'), 'fixture-tenant'],
-        ]),
+      const server = await keyedServer('fixture-tenant', {
         verifierRegistry: verifierRegistry(),
         evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
           defineEvidenceSource({

@@ -129,6 +129,11 @@ jobs:
       - name: Check release version consistency
         run: pnpm release:check && pnpm test:release
 
+      # Hygiene program Phase 3.1 ratchets (2026-10-23): shrink-only guards over the
+      # layering and duplication baselines measured in Phase 1.
+      - name: Hygiene ratchets (layering, duplication)
+        run: node scripts/layering-ratchet.mjs && node scripts/duplication-ratchet.mjs && node scripts/exports-ratchet.mjs
+
       - name: Test executable acceptance failures and cleanup
         run: node --test scripts/release-smoke.test.mjs
 
@@ -161,6 +166,11 @@ jobs:
 
       - name: Build workspace dependencies
         run: pnpm -r build
+
+      # The generated MCP catalog must stay fresh against the BUILT tool surface; this
+      # runner needs dist/ (the Lint job's test:release runs source-only scripts).
+      - name: MCP catalog freshness (built surface)
+        run: node --test scripts/mcp-catalog-docs.test.mjs
 
       # Share one host-library provisioning step; Firefox itself comes from Mozilla below.
       # T6 W3b: the api suite's widget qualification drives all three Playwright families, so
@@ -382,6 +392,11 @@ jobs:
 
       - name: Compile the CLI for packaged workflow acceptance
         run: node packages/cli/scripts/compile.mjs
+
+      # The lazy tldts load must stay bundler-visible: a compiled artifact that
+      # cannot answer a host question must fail here, not in the field.
+      - name: Bundled-surface host-question smoke (lazy tldts)
+        run: node --test scripts/binary-host-question.test.mjs
 
       - name: Qualify the test-evaluate CI entrypoint against the compiled CLI
         env:

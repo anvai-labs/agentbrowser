@@ -52,6 +52,79 @@ export interface JournalSqliteReader {
   get(sql: string, ...parameters: unknown[]): Record<string, unknown> | undefined;
 }
 
+/** A live SQLite connection, viewed structurally: this module owns record semantics, not the
+ * node:sqlite dependency. */
+export interface JournalSqliteStatementConnection {
+  prepare(sql: string): {
+    get(...parameters: never[]): unknown;
+    all(...parameters: never[]): unknown[];
+    close?(): void;
+  };
+}
+
+/**
+ * Read-side statement adapters over a live connection (J2b.2). Statements are closed
+ * eagerly (the test-support mirror's original guarantee): a cached read connection can
+ * outlive any one dispatch, so relying only on database.close() would accumulate
+ * statements until teardown.
+ */
+export function journalSqliteStatementReader(
+  connection: JournalSqliteStatementConnection
+): JournalSqliteReader & {
+  all(sql: string, ...parameters: unknown[]): Record<string, unknown>[];
+} {
+  type Prepared = ReturnType<JournalSqliteStatementConnection['prepare']>;
+  const withStatement = <T>(sql: string, use: (prepared: Prepared) => T): T => {
+    const prepared = connection.prepare(sql);
+    try {
+      return use(prepared);
+    } finally {
+      prepared.close?.();
+    }
+  };
+  return {
+    get: (sql: string, ...parameters: unknown[]) =>
+      withStatement(sql, (prepared) => prepared.get(...(parameters as never[]))) as
+        | Record<string, unknown>
+        | undefined,
+    all: (sql: string, ...parameters: unknown[]) =>
+      withStatement(sql, (prepared) => prepared.all(...(parameters as never[]))) as Record<
+        string,
+        unknown
+      >[],
+  };
+}
+
+/**
+ * The read-only dispatch the production child and the records test-support mirror share, so
+ * their read paths cannot diverge: findByOperation for operation scans, lookup otherwise.
+ */
+export function dispatchJournalSqliteRead(
+  connection: JournalSqliteStatementConnection,
+  kind: string,
+  namespaceId: string,
+  ownerFence: string,
+  value: unknown,
+  now: number
+): unknown {
+  const reader = journalSqliteStatementReader(connection);
+  if (kind === 'findByOperation')
+    return findJournalSqliteRecordsByOperation(
+      reader,
+      namespaceId,
+      ownerFence,
+      value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
+      now
+    );
+  return lookupJournalSqliteRecord(
+    reader,
+    namespaceId,
+    ownerFence,
+    value as Parameters<typeof lookupJournalSqliteRecord>[3],
+    now
+  );
+}
+
 export type JournalSqliteOpenOutcome =
   | { readonly kind: 'opened'; readonly ownerFence: string }
   | {

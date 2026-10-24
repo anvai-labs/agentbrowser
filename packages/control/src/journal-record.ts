@@ -141,7 +141,7 @@ export function parseJournalNamespace(input: unknown): JournalNamespace {
   return deeplyFreezeSnapshot(v) as unknown as JournalNamespace;
 }
 /** J3a: the most records one historical lookup returns. */
-export const MAX_JOURNAL_FIND_LIMIT = 16;
+const MAX_JOURNAL_FIND_LIMIT = 16;
 export function parseJournalOperationQuery(input: unknown): JournalOperationQuery {
   const v = journalObject(
     journalData(input),

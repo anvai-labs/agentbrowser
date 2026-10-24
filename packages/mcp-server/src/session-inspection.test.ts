@@ -1,6 +1,6 @@
 import { AGENT_MODE_IDS } from '@agentbrowser/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { buildMcpServer, type McpClient } from './mcp-server.js';
+import { rpcHarness } from './test-support/rpc-harness.js';
 
 function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[number] } = {}) {
   const session = {
@@ -19,15 +19,7 @@ function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[n
     listPages: vi.fn().mockResolvedValue(pages),
     control: vi.fn().mockResolvedValue(control),
   };
-  const server = buildMcpServer({
-    createClient: () => ({ sessions }) as unknown as McpClient,
-    ...options,
-  });
-  const exchange = async (method: string, params: unknown = {}) => {
-    const response = await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }));
-    if (!response) throw new Error('Missing MCP response');
-    return JSON.parse(response);
-  };
+  const { exchange } = rpcHarness({ sessions }, options);
   const call = (args: Record<string, unknown>) =>
     exchange('tools/call', { name: 'session', arguments: args });
   return { sessions, session, pages, control, exchange, call };

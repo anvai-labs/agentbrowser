@@ -1,11 +1,8 @@
-import { createHash } from 'node:crypto';
 import { setImmediate as settlePublication } from 'node:timers/promises';
 import {
   type ApplicationReceiptAuthorizationRequest,
   type ApplicationScope,
-  defineVerifier,
   TrustedEvidenceSourceRegistry,
-  TrustedVerifierRegistry,
 } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';
@@ -15,6 +12,8 @@ import {
   type ServiceEvidenceSourceBuilder,
   type ServiceOutcomeEvidenceContext,
 } from './service.js';
+import { keyedServer } from './test-support/keyed-server.js';
+import { receiptEqualsRegistry } from './test-support/receipt-verifier.js';
 
 const registry = () => new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>();
 
@@ -266,9 +265,7 @@ describe('application-scoped permission through delegated HTTP outcomes', () => 
         return { generation, currentGeneration: () => generation };
       });
       const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
-      const server = await buildServer({
-        engine: new FakeEngine(),
-        apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+      const server = await keyedServer(tenant, {
         applicationAdapters: [
           {
             id: 'fixture-app',
@@ -293,38 +290,7 @@ describe('application-scoped permission through delegated HTTP outcomes', () => 
             receipt,
           },
         ],
-        verifierRegistry: new TrustedVerifierRegistry([
-          defineVerifier({
-            descriptor: {
-              id: 'receipt.equals',
-              version: '1',
-              inputSchemaId: 'number',
-              evidenceSchemaId: 'number',
-              requiredCapability: 'receipt.equals',
-              evidenceSource: 'fixture.receipt',
-              requiredLayer: 'G4',
-              budget: {
-                maxReads: 1,
-                timeoutMs: 500,
-                pollIntervalMs: 1,
-                cleanupTimeoutMs: 25,
-                maxEvidenceRefs: 1,
-              },
-              redaction: 'reference_only',
-              unsupported: [],
-              cleanup: 'not_needed',
-            },
-            parseInput: (input) => {
-              if (typeof input !== 'number') throw new Error();
-              return input;
-            },
-            parseEvidence: (input) => {
-              if (typeof input !== 'number') throw new Error();
-              return input;
-            },
-            predicate: (a, b) => a === b,
-          }),
-        ]),
+        verifierRegistry: receiptEqualsRegistry(),
         evidenceSourceRegistryProvider: (sources) =>
           new TrustedEvidenceSourceRegistry([
             sources.applicationReceipt({

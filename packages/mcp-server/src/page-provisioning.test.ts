@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { buildMcpServer, type McpClient, type McpDependencies } from './mcp-server.js';
+import { rpcHarness } from './test-support/rpc-harness.js';
 
 function fixture(options: Partial<McpDependencies> = {}) {
   const sessions = {
@@ -8,15 +9,7 @@ function fixture(options: Partial<McpDependencies> = {}) {
       .mockResolvedValue({ pageId: 'server-minted', sessionId: 's', status: 'ready' }),
     listPages: vi.fn().mockResolvedValue([{ pageId: 'server-minted' }]),
   };
-  const server = buildMcpServer({
-    createClient: () => ({ sessions }) as unknown as McpClient,
-    ...options,
-  });
-  const exchange = async (method: string, params: unknown = {}) => {
-    const result = await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }));
-    if (!result) throw new Error('Missing MCP response');
-    return JSON.parse(result);
-  };
+  const { exchange } = rpcHarness({ sessions }, options);
   const call = (name: string, args: Record<string, unknown>) =>
     exchange('tools/call', { name, arguments: args });
   return { sessions, exchange, call };

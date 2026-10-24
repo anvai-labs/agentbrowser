@@ -1001,6 +1001,21 @@ function canonicalFingerprint(element: StoredElement): string {
     .join('_');
 }
 
+/**
+ * Post-upload read of an input's file names (both upload paths): a structural cast,
+ * because this package compiles without the DOM lib. Returns null when the element is
+ * not a file input; shared so the targeted and un-targeted paths cannot diverge.
+ */
+function readFileInputNames(el: unknown): string[] | null {
+  const input = el as unknown as {
+    type?: unknown;
+    files?: ArrayLike<{ name: unknown }> | null;
+  };
+  return String(input.type) === 'file' && input.files
+    ? Array.from(input.files, (f) => String(f.name))
+    : null;
+}
+
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
   /** T10 M2: every request outcome, before page attribution (the engagement ledger). */
@@ -1242,6 +1257,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
   private sharedBrowser: Promise<BrowserAllocation> | undefined;
+  /** The resolved allocation of `sharedBrowser`, for liveness checks at acquire time. */
+  private sharedAllocation: BrowserAllocation | undefined;
   private readonly pendingSessions = new Set<Promise<EngineSession>>();
   private closed = false;
   private closeTask: Promise<void> | undefined;
@@ -1349,9 +1366,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     if (this.closed) throw new EngineError('INTERNAL', 'Browser engine is closed', false);
   }
 
-  /** One engine-owned launch/connection, including while initialization is pending. */
+  /** One engine-owned launch/connection, including while initialization is pending.
+   * A crash of the shared browser must fail only in-flight sessions: the liveness
+   * check below makes the NEXT acquire relaunch instead of handing out the dead
+   * Browser forever (launch failures already clear the slot via the catch). */
   private acquireSharedBrowser(): Promise<BrowserAllocation> {
-    if (this.sharedBrowser) return this.sharedBrowser;
+    if (this.sharedBrowser) {
+      // In-flight (no allocation yet) or resolved-and-alive: one launch, shared.
+      // A resolved allocation whose browser has died falls through to a relaunch.
+      if (this.sharedAllocation === undefined || this.sharedAllocation.browser.isConnected())
+        return this.sharedBrowser;
+      this.sharedAllocation = undefined;
+      this.sharedBrowser = undefined;
+    }
     const pending =
       this.cdpEndpoint !== undefined
         ? chromium.connectOverCDP(this.cdpEndpoint).then((browser) => {
@@ -1371,8 +1398,20 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         : this.launchBrowser(true, false);
     this.sharedBrowser = pending;
     void pending.catch(() => {
-      if (this.sharedBrowser === pending) this.sharedBrowser = undefined;
+      if (this.sharedBrowser === pending) {
+        this.sharedBrowser = undefined;
+        this.sharedAllocation = undefined;
+      }
     });
+    void pending.then(
+      (allocation) => {
+        // Only while current: a relaunch after a crash supersedes the dead allocation.
+        if (this.sharedBrowser === pending) this.sharedAllocation = allocation;
+      },
+      // Rejection is handled by the catch above; this two-arg form leaves no
+      // unhandled derived promise.
+      () => {}
+    );
     return pending;
   }
 
@@ -2255,6 +2294,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     await this.activeAttachedSession?.close().catch(() => {});
     const pending = this.sharedBrowser;
     this.sharedBrowser = undefined;
+    this.sharedAllocation = undefined;
     const allocation = await pending?.catch(() => undefined);
     await allocation?.browser.close();
   }
@@ -5150,17 +5190,7 @@ class PlaywrightPage implements EnginePage {
           await this.resolve(action.target as EngineTarget);
           const handle = this.locatorFor((action.target as EngineTarget).ref);
           await handle.setInputFiles(upload);
-          inputFiles = await handle
-            .evaluate((el) => {
-              const input = el as unknown as {
-                type?: unknown;
-                files?: ArrayLike<{ name: unknown }> | null;
-              };
-              return String(input.type) === 'file' && input.files
-                ? Array.from(input.files, (f) => String(f.name))
-                : null;
-            })
-            .catch(() => null);
+          inputFiles = await handle.evaluate(readFileInputNames).catch(() => null);
           this.bumpRevision();
         } else {
           // Un-targeted mode: the single-file-input page is the common case;
@@ -5185,17 +5215,7 @@ class PlaywrightPage implements EnginePage {
             );
           }
           await locator.setInputFiles(upload);
-          inputFiles = await locator
-            .evaluate((el) => {
-              const input = el as unknown as {
-                type?: unknown;
-                files?: ArrayLike<{ name: unknown }> | null;
-              };
-              return String(input.type) === 'file' && input.files
-                ? Array.from(input.files, (f) => String(f.name))
-                : null;
-            })
-            .catch(() => null);
+          inputFiles = await locator.evaluate(readFileInputNames).catch(() => null);
           this.bumpRevision();
         }
         return {

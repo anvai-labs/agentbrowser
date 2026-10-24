@@ -350,6 +350,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Build (package + its workspace dependencies)
         run: pnpm install --frozen-lockfile && pnpm --filter @anvailabs/agentbrowser-mcp... build
+      - name: Host-question guard — the published bundle must embed tldts
+        # BEFORE publish (npm versions are immutable): the lazy tldts load stays
+        # bundle-visible by construction; this fails the release before anything
+        # reaches the registry if that ever stops being true.
+        working-directory: packages/mcp-server
+        run: node --test ../../scripts/binary-host-question.test.mjs --test-name-pattern="npm MCP bundle"
       - name: Publish with npm (OIDC) — skip if this version is already on the registry
         # The bootstrap publish (bridging the Trusted-Publisher chicken-and-egg)
         # puts the first version up from a local token; a re-run or subsequent

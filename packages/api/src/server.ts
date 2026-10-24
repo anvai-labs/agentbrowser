@@ -40,7 +40,6 @@ import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { LoginBrowserError } from '@agentbrowser/engine-playwright';
-import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
@@ -74,7 +73,7 @@ import {
 } from './http-publication.js';
 import { LoginBrowserService } from './login-browser-service.js';
 import { buildOpenApiDocument } from './openapi.js';
-import { operatorKeysFromEnvironment, operatorKeysFromFile } from './operator-keys.js';
+import { operatorKeysFromEnvironment } from './operator-keys.js';
 import { TokenBucketLimiter } from './policy-query-limiter.js';
 import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
@@ -856,7 +855,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return Object.fromEntries(keys.map((k) => [k, raw[k]])) as Record<K, string>;
   };
 
-  fastify.get('/health/live', async (request, reply) => {
+  fastify.get('/health/live', async (_request, _reply) => {
     return { status: 'live', timestamp: new Date().toISOString() };
   });
 
@@ -918,7 +917,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
   });
 
-  fastify.get('/health', async (request, reply) => {
+  fastify.get('/health', async (_request, _reply) => {
     return {
       status: 'healthy',
       version: PRODUCT_VERSION,
@@ -1034,6 +1033,40 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         retryable = false
       ) => reply.code(status).send({ error: { code, message, retryable } });
 
+      /** The operator-only REST routes' shared admission: an operator principal that
+       * owns the session — FLOOR_OPERATOR_REQUIRED otherwise. Returns the principal
+       * for routes that forward it to the service. */
+      /** FastifyRequest only on purpose: the principals WeakMap is keyed by the raw
+       * request; a RequestData (the on() plane) would never resolve — those routes
+       * read request.principal directly instead. */
+      const requireOperatorOwnership = (request: FastifyRequest, sessionId: string) => {
+        const principal = principals.get(request);
+        if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+        requireOwnership(sessionId, tenantOf(request));
+        return principal;
+      };
+
+      /** The journal plane's shared admission: an authenticated principal, plus (for the
+       * lookup routes) a rate-limit slot. Sends the typed refusal and returns undefined
+       * when the route must not proceed. `limiter` is required on purpose: a new route
+       * that forgets it must not silently bypass the journal limiter. */
+      const requireJournalPrincipal = (
+        request: FastifyRequest,
+        reply: FastifyReply,
+        limiter: boolean
+      ) => {
+        const principal = principals.get(request);
+        if (!principal) {
+          journalRefusal(reply, 'UNAUTHORIZED', 'A valid bearer credential is required', 401);
+          return undefined;
+        }
+        if (limiter && !journalLimiter.take(principal.tenant)) {
+          journalRefusal(reply, 'RATE_LIMITED', 'Journal lookup rate limit exceeded', 429, true);
+          return undefined;
+        }
+        return principal;
+      };
+
       // T10 M2: export one of the caller's engagement ledgers as NDJSON (the
       // file, verbatim, so it verifies offline). Same credential rule as the
       // journal: a tenant API key or the operator key; keyless deployments have
@@ -1042,15 +1075,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/engagements/:engagementId',
         { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
-          const principal = principals.get(request);
-          if (!principal)
-            return reply.code(401).send({
-              error: {
-                code: 'UNAUTHORIZED',
-                message: 'A valid bearer credential is required',
-                retryable: false,
-              },
-            });
+          // Same credential rule as the journal plane (the comment above): the shared
+          // admission sends this route's 401 too — no third hand-rolled copy.
+          const principal = requireJournalPrincipal(request, reply, false);
+          if (!principal) return;
           if (principal.tenant === undefined)
             return reply.code(403).send({
               error: {
@@ -1072,22 +1100,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/journal',
         { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
-          const principal = principals.get(request);
-          if (!principal)
-            return journalRefusal(
-              reply,
-              'UNAUTHORIZED',
-              'A valid bearer credential is required',
-              401
-            );
-          if (!journalLimiter.take(principal.tenant))
-            return journalRefusal(
-              reply,
-              'RATE_LIMITED',
-              'Journal lookup rate limit exceeded',
-              429,
-              true
-            );
+          const principal = requireJournalPrincipal(request, reply, true);
+          if (!principal) return;
           const acceptUntil = journalConfig
             ? new Date(journalConfig.acceptUntil).toISOString()
             : undefined;
@@ -1140,22 +1154,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/journal/operations/:operationId',
         { config: { operatorRoute: true, publication: 'lifecycle' } },
         async (request, reply) => {
-          const principal = principals.get(request);
-          if (!principal)
-            return journalRefusal(
-              reply,
-              'UNAUTHORIZED',
-              'A valid bearer credential is required',
-              401
-            );
-          if (!journalLimiter.take(principal.tenant))
-            return journalRefusal(
-              reply,
-              'RATE_LIMITED',
-              'Journal lookup rate limit exceeded',
-              429,
-              true
-            );
+          const principal = requireJournalPrincipal(request, reply, true);
+          if (!principal) return;
           const { operationId } = request.params as { operationId: string };
           if (!CONTROL_OPERATION_ID.test(operationId))
             return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
@@ -1285,14 +1285,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         maxTenants: 4096,
       });
       const recoveryWrite = (request: FastifyRequest, reply: FastifyReply) => {
-        const principal = principals.get(request);
-        if (!principal)
-          return journalRefusal(
-            reply,
-            'UNAUTHORIZED',
-            'A valid bearer credential is required',
-            401
-          );
+        const principal = requireJournalPrincipal(request, reply, false);
+        // Truthy = refusal sent (the caller checks `if (recoveryWrite(...)) return reply`);
+        // the reply object is the same truthy value journalRefusal returns.
+        if (!principal) return reply;
         // D1 as amended: writes are the ADR-025 operator principal only. A tenant API key
         // authenticates as actor 'operator' and the /v1 hook admits it on any route; the
         // service refuses it — the accepted design's named implementation hazard.
@@ -1906,9 +1902,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           `/sessions/:sessionId/control/${action}`,
           async (request, reply) => {
             const { sessionId } = params(request, 'sessionId');
-            const principal = principals.get(request);
-            if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-            requireOwnership(sessionId, tenantOf(request));
+            const principal = requireOperatorOwnership(request, sessionId);
             const control = service.authority.get(sessionId);
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
             if (action === 'takeover') return reply.send(service.authority.takeover(sessionId));
@@ -1979,24 +1973,34 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control', publication: 'guarded' }
       );
 
+      /** Both approval routes share this prologue: an operator-or-human actor, ownership,
+       * and (TD-BROWSER-16 phase 1) the human-only gate on non-act kinds — an API-key
+       * operator, which an agent may hold, is refused for them. Returns the non-act kind
+       * when the caller must take the separate path, undefined for the act path. */
+      const requireApprovalAccess = async (
+        request: RequestData,
+        sessionId: string,
+        tokenId: string
+      ) => {
+        if (
+          request.principal?.actor !== 'operator' &&
+          request.principal?.actor !== 'human-operator'
+        )
+          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+        requireOwnership(sessionId, tenantOf(request));
+        const nonAct = await service.getApprovalKind(sessionId, tokenId);
+        if (nonAct !== undefined && request.principal?.actor !== 'human-operator')
+          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+        return nonAct;
+      };
+
       on(
         'GET',
         '/sessions/:sessionId/approvals/:tokenId',
         async (request) => {
           const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-          if (
-            request.principal?.actor !== 'operator' &&
-            request.principal?.actor !== 'human-operator'
-          )
-            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
-          // TD-BROWSER-16 phase 1: the non-act kinds take the separate path
-          // and are decided by a human operator only — an API-key operator
-          // (which an agent may hold) is refused for them.
-          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          const nonAct = await requireApprovalAccess(request, sessionId, tokenId);
           if (nonAct !== undefined) {
-            if (request.principal?.actor !== 'human-operator')
-              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
             return responseDraft(await service.viewNonActApproval(sessionId, tokenId), 200);
           }
           const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
@@ -2009,16 +2013,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/approvals/:tokenId',
         async (request) => {
           const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-          if (
-            request.principal?.actor !== 'operator' &&
-            request.principal?.actor !== 'human-operator'
-          )
-            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
-          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          const nonAct = await requireApprovalAccess(request, sessionId, tokenId);
           if (nonAct !== undefined) {
-            if (request.principal?.actor !== 'human-operator')
-              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
             const nonActChecked = validateOperatorApprovalDecision(request.body);
             if (!nonActChecked.ok)
               throw new ServiceError(
@@ -2101,9 +2097,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          const principal = principals.get(request);
-          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
+          const principal = requireOperatorOwnership(request, sessionId);
           requireBody(request.body);
           return reply.send(service.applicationBind(sessionId, principal, request.body));
         },
@@ -2114,9 +2108,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          const principal = principals.get(request);
-          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
+          const principal = requireOperatorOwnership(request, sessionId);
           return reply.send(service.applicationUnbind(sessionId, principal));
         },
         {}
@@ -2139,9 +2131,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         '/sessions/:sessionId/application/reviews',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          const principal = principals.get(request);
-          if (principal?.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-          requireOwnership(sessionId, tenantOf(request));
+          const principal = requireOperatorOwnership(request, sessionId);
           if (request.headers['x-agentbrowser-operation-id'] !== undefined)
             throw new ServiceError(
               'INVALID_REQUEST',

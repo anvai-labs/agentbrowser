@@ -7,21 +7,10 @@
  * probe-verified 2026-08-29 (v0.2.1) with every assertion passing.
  */
 
-import { existsSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ObscuraEngine } from './engine';
 import { createObscuraEngine } from './engine';
-
-function resolveBinary(): string | undefined {
-  const override = process.env.OBSCURA_BIN;
-  if (override !== undefined && override !== '' && existsSync(override)) {
-    return override;
-  }
-  const version = process.env.OBSCURA_VERSION ?? 'v0.2.1';
-  const binName = process.platform === 'win32' ? 'obscura.exe' : 'obscura';
-  const cached = new URL(`../../../.cache/obscura/${version}/${binName}`, import.meta.url).pathname;
-  return existsSync(cached) ? cached : undefined;
-}
+import { resolveBinary } from './test-support/binary.js';
 
 const binary = resolveBinary();
 const suite = binary !== undefined ? describe : describe.skip;

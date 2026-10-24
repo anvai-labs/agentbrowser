@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VisualAuditError } from '@agentbrowser/engagement';
+import { assertLabel, writeJsonManifest } from './store-shared.js';
 
 /** Shared versioned baseline storage for the finding-based audit adapters
  * (accessibility, scanner-regression). The same discipline as the visual
@@ -24,17 +25,6 @@ interface FindingManifest {
       versions: FindingStoreEntry[];
     }
   >;
-}
-
-const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-
-function assertLabel(label: string): void {
-  if (!LABEL_PATTERN.test(label)) {
-    throw new VisualAuditError(
-      'INVALID_LABEL',
-      `label must match ${LABEL_PATTERN.source} (no path separators): ${JSON.stringify(label)}`
-    );
-  }
 }
 
 export class FindingBaselineStore<TDocument = unknown> {
@@ -72,10 +62,7 @@ export class FindingBaselineStore<TDocument = unknown> {
   }
 
   private writeManifest(manifest: FindingManifest): void {
-    mkdirSync(this.directory, { recursive: true });
-    const temp = `${this.manifestPath}.pending`;
-    writeFileSync(temp, JSON.stringify(manifest, null, 2));
-    renameSync(temp, this.manifestPath);
+    writeJsonManifest(this.directory, this.manifestPath, manifest);
   }
 
   /** Latest baseline document for the label, or undefined. */

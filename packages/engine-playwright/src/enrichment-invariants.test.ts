@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import { sharedEngine } from './test-support/shared-engine.js';
+
+const engine = sharedEngine();
 
 /**
  * Enrichment invariants (adversarial review rounds 6-12): these are the
@@ -18,9 +20,10 @@ describe('enrichment invariants (real Chromium)', () => {
   )}`;
 
   it('INJECT-1: toggling include formControls never bumps the revision on a static page', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({ url: pageWithControls });
 
       const plain1 = await page.observe({});
@@ -39,14 +42,15 @@ describe('enrichment invariants (real Chromium)', () => {
       ).toBeGreaterThanOrEqual(2);
       expect(plain2.elements.filter((e) => e.role === 'control')).toHaveLength(0);
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('INJECT-2: repeated same-include observations are revision-stable', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({ url: pageWithControls });
       const first = await page.observe({ include: ['formControls'] });
       const second = await page.observe({ include: ['formControls'] });
@@ -54,14 +58,15 @@ describe('enrichment invariants (real Chromium)', () => {
       // Refs identical: same elements, same ordinals, same revision.
       expect(second.elements.map((e) => e.ref)).toEqual(first.elements.map((e) => e.ref));
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('INJECT-3: enrichment appearing under a CONSTANT include set bumps the revision (lazy mount)', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       // One control initially; a second mounts lazily after first observe.
       await page.navigate({
         url: `data:text/html,${encodeURIComponent(
@@ -95,14 +100,15 @@ describe('enrichment invariants (real Chromium)', () => {
       // revision MUST bump (round-8/F2's lazy-mount scenario).
       expect(second.revision).toBeGreaterThan(first.revision);
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 
   it('INJECT-4: fileInputs toggles never bump the revision on a static page', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    let session: EngineSession | undefined;
     try {
-      const page = await (await engine.createSession({ headless: true })).newPage();
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
       await page.navigate({
         url: 'data:text/html,<body><main><input type="file" id="f1"><button>Go</button></main></body>',
       });
@@ -115,7 +121,7 @@ describe('enrichment invariants (real Chromium)', () => {
         withFiles.elements.filter((e) => e.role === 'fileinput').length
       ).toBeGreaterThanOrEqual(1);
     } finally {
-      await engine.close();
+      await session?.close();
     }
   });
 });

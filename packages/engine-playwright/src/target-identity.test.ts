@@ -1,32 +1,11 @@
-import type { EnginePage } from '@agentbrowser/engine';
-import { errors, type Locator, type Page } from 'playwright';
+import { errors } from 'playwright';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
+import { backingPage, interceptSnapshots } from './test-support/backing-page.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-function backingPage(page: EnginePage): Page {
-  return (page as unknown as { backingPage(): Page }).backingPage();
-}
-
-function interceptSnapshots(
-  page: EnginePage,
-  capture: (kind: 'body' | 'element', options: { timeout?: number }) => string | undefined
-) {
-  const body = backingPage(page).locator('body');
-  const prototype = Object.getPrototypeOf(body) as Locator;
-  const original = prototype.ariaSnapshot;
-  return vi.spyOn(prototype, 'ariaSnapshot').mockImplementation(async function (
-    this: Locator,
-    options = {}
-  ) {
-    const captured = capture(this.toString() === body.toString() ? 'body' : 'element', options);
-    if (typeof captured === 'string') return captured;
-    return original.call(this, options);
-  });
-}
-
-function degradeElements(page: EnginePage) {
+function degradeElements(page: Parameters<typeof interceptSnapshots>[0]) {
   return interceptSnapshots(page, (kind) => {
     if (kind === 'element') throw new errors.TimeoutError('Injected element timeout');
   });
