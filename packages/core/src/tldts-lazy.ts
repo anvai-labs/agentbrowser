@@ -28,12 +28,19 @@ export type Tldts = typeof import('tldts');
 let mod: Tldts | undefined;
 let loading: Promise<void> | undefined;
 
-/** Load tldts once (bundler-visible; initialization happens here, not at import). */
+/** Load tldts once (bundler-visible; initialization happens here, not at import).
+ * A failed load is not cached: the next call retries a fresh import. */
 export async function loadTldts(): Promise<void> {
   if (mod === undefined) {
-    loading ??= import('tldts').then((m) => {
-      mod = m as Tldts;
-    });
+    loading ??= import('tldts').then(
+      (m) => {
+        mod = m as Tldts;
+      },
+      () => {
+        // Do not cache a transient load failure — the next call retries.
+        loading = undefined;
+      }
+    );
     await loading;
   }
 }
