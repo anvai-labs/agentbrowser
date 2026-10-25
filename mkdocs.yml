@@ -309,6 +309,7 @@ nav:
     - 'Release 1.25.0': spec/evidence/release-1.25.0.md
     - 'Release 1.26.0': spec/evidence/release-1.26.0.md
     - 'Release 1.27.1': spec/evidence/release-1.27.1.md
+    - 'Release 1.27.3': spec/evidence/release-1.27.3.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md
