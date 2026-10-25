@@ -200,9 +200,14 @@ describe('egress all-hop redirect enforcement', () => {
     dispose: vi.fn(async () => {}),
   });
 
-  function chainRoute(urls: string[], byUrl: Map<string, ReturnType<typeof makeResponse>>) {
+  function chainRoute(
+    urls: string[],
+    byUrl: Map<string, ReturnType<typeof makeResponse>>,
+    options?: { navigation?: boolean }
+  ) {
     const fetched: string[] = [];
     const fulfill = vi.fn(async () => {});
+    const navigation = options?.navigation ?? true;
     const route = {
       request: () => ({
         url: () => urls[0],
@@ -210,6 +215,7 @@ describe('egress all-hop redirect enforcement', () => {
         headers: () => ({}),
         resourceType: () => 'document',
         frame: () => ({ page: () => undefined }),
+        isNavigationRequest: () => navigation,
       }),
       fetch: vi.fn(async (options?: { url?: string }) => {
         const target = options?.url ?? urls[0];
@@ -263,13 +269,43 @@ describe('egress all-hop redirect enforcement', () => {
     const { route, fetched, fulfill } = chainRoute(['https://example.test/a'], byUrl);
     await routeHandler(route);
     expect(fetched).toEqual(['https://example.test/a', 'https://example.test/b']);
-    // The original request is fulfilled with a redirect to the verified
-    // terminal URL; the document lands at the right address, and the
-    // browser's own fetch of it is not served from our (now disposed)
-    // verification copy.
+    // The original request is fulfilled with a stub that replaces the
+    // document with the verified terminal URL. A synthetic 302 is not used:
+    // redirect-followers of fulfilled responses stall inside Playwright's
+    // request interception (never reach the network or any route handler),
+    // so the renderer-initiated replace is the terminal delivery that still
+    // lands the document at the right address through the choke.
+    const delivered = fulfill.mock.calls[0]?.[0] as {
+      status?: number;
+      contentType?: string;
+      body?: string;
+    };
+    expect(delivered.status).toBe(200);
+    expect(delivered.contentType).toBe('text/html');
+    expect(String(delivered.body)).toContain('location.replace("https://example.test/b")');
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+    expect(byUrl.get('https://example.test/a')?.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('serves the verified terminal bytes to non-navigation requests', async () => {
+    const routeHandler = await installHandler({
+      checkRequest: async () => {},
+      checkBodySize: async () => {},
+    } as never);
+    const terminal = makeResponse(200, undefined, '{"ok":true}');
+    const byUrl = new Map([
+      ['https://example.test/a', makeResponse(302, '/b')],
+      ['https://example.test/b', terminal],
+    ]);
+    const { route, fulfill } = chainRoute(['https://example.test/a'], byUrl, {
+      navigation: false,
+    });
+    await routeHandler(route);
+    // The caller receives exactly the verified terminal response — no
+    // synthetic redirect, no second fetch, no terminal TOCTOU.
     expect(fulfill.mock.calls[0]?.[0]).toMatchObject({
-      status: 302,
-      headers: { location: 'https://example.test/b' },
+      response: terminal,
+      body: Buffer.from('{"ok":true}'),
     });
     expect(terminal.dispose).toHaveBeenCalledOnce();
     expect(byUrl.get('https://example.test/a')?.dispose).toHaveBeenCalledOnce();

@@ -4200,7 +4200,10 @@ export class AgentBrowserService {
           { sessionId, errorDetail }
         );
       }
-      throw error;
+      // Same mapping hop `act` gets via traced(): without it a driver-side
+      // timeout (e.g. a stalled first metadata read on a mid-navigation page)
+      // surfaces as HTTP 500 INTERNAL instead of the typed timeout code.
+      throw this.mapError(error, 'observe');
     }
 
     if (

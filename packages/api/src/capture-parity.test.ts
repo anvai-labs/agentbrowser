@@ -79,6 +79,53 @@ describe('capture requests through every consumption surface', () => {
     }
   });
 
+  it('maps an engine observe throw to a typed timeout, not INTERNAL 500', async () => {
+    // A driver-side timeout escaping the engine (e.g. the first metadata read
+    // on a mid-navigation page) must surface as 504 ACTION_TIMEOUT like act,
+    // not fall through the API's INTERNAL fallback.
+    const engine = new FakeEngine();
+    const createSession = engine.createSession.bind(engine);
+    vi.spyOn(engine, 'createSession').mockImplementation(async (options) => {
+      const session = await createSession(options);
+      const newPage = session.newPage.bind(session);
+      const patched = session as unknown as {
+        newPage: (...args: unknown[]) => Promise<unknown>;
+      };
+      patched.newPage = async (...args: unknown[]) => {
+        const page = (await newPage(...(args as []))) as {
+          observe: () => Promise<unknown>;
+        };
+        vi.spyOn(page, 'observe').mockRejectedValue(
+          new Error('page.title: Timeout 30000ms exceeded.')
+        );
+        return page;
+      };
+      return session;
+    });
+    const server = await buildServer({ engine, apiKeys: new Map() });
+    try {
+      const sessionId = (
+        await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          payload: { tenantId: 'parity' },
+        })
+      ).json().sessionId;
+      const pageId = (
+        await server.inject({ method: 'POST', url: `/v1/sessions/${sessionId}/pages` })
+      ).json().pageId;
+      const response = await server.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/pages/${pageId}/observe`,
+        payload: {},
+      });
+      expect(response.statusCode).toBe(504);
+      expect(response.json().error.code).toBe('ACTION_TIMEOUT');
+    } finally {
+      await server.close();
+    }
+  });
+
   it.each(['api', 'sdk', 'cli', 'mcp'] as const)(
     '%s honors both pre-capture waits and rejects invalid requests',
     async (surface) => {

@@ -1,12 +1,34 @@
 import { isIP } from 'node:net';
 import { assertCookieRequestSize, cookieKey, MAX_COOKIE_COUNT } from '@agentbrowser/core';
 import {
+  AgentBrowserError,
   type SessionRequest,
   UsageError,
   validateSessionRequest,
 } from '@agentbrowser/sdk-typescript';
 import { createTextArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js';
 import { PrivateFileError, writePrivateFile } from './private-file.js';
+
+/** Errors from the structured API envelope that carry no credential data. The
+ * SDK only builds AgentBrowserError from `{error:{code,message}}` envelopes, so
+ * surfacing these verbatim during a cookie-seeded create (wrong key, tenant
+ * mismatch, invalid request shape) is credential-safe and saves the operator
+ * from a redacted dead end. Anything else keeps the blanket redaction:
+ * unstructured throws could embed reflected cookie payload. */
+const SAFE_SEED_ERROR_CODES = new Set([
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'INVALID_REQUEST',
+  'NOT_FOUND',
+]);
+
+export function isCredentialSafeSeedError(error: unknown): boolean {
+  return (
+    error instanceof AgentBrowserError &&
+    typeof error.code === 'string' &&
+    SAFE_SEED_ERROR_CODES.has(error.code)
+  );
+}
 
 type Cookie = NonNullable<SessionRequest['cookies']>[number];
 const keys = new Set([
@@ -75,11 +97,14 @@ function validateCookies(
       )
     )
       fail(i + 1, 'invalid path or value encoding');
-    if (
-      c.expires !== undefined &&
-      (!Number.isFinite(c.expires) || (c.expires !== -1 && c.expires <= now))
-    )
+    if (c.expires !== undefined && !Number.isFinite(c.expires))
       fail(i + 1, 'expiry must be a future Unix timestamp or -1');
+    // An expired cookie can never authenticate anything; omit it with a count
+    // instead of aborting the whole import (the same UX as partitioned rows).
+    if (c.expires !== undefined && c.expires !== -1 && c.expires <= now) {
+      omitted.add(i);
+      continue;
+    }
     if (c.sameSite === 'None' && c.secure !== true) fail(i + 1, 'SameSite None requires Secure');
     if (c.name.startsWith('__Secure-') && c.secure !== true)
       fail(i + 1, 'Secure prefix requires Secure');
@@ -176,7 +201,14 @@ export function parseCookieText(
           expires: expiry(expires, row, 'netscape'),
         });
       } else {
-        if (columns.length !== 12) fail(row, 'DevTools format requires exactly 12 columns');
+        // A DevTools Application-panel table copy can carry a trailing-tab
+        // artifact column; tolerate it when empty or a literal 0. Anything
+        // else is a real 13th column and stays a hard error.
+        if (
+          columns.length !== 12 &&
+          !(columns.length === 13 && (columns[12] === '' || columns[12] === '0'))
+        )
+          fail(row, 'DevTools format requires exactly 12 columns');
         const [
           name,
           cookieValue,

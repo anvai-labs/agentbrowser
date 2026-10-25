@@ -640,7 +640,14 @@ export class SessionsClient {
   }
 
   async create(request: SessionRequest): Promise<SessionResponse> {
-    return this.http.requestJson('/v1/sessions', { method: 'POST', body: request });
+    // Browser launch (plus cookie-seed verification on seeded creates) can
+    // outlive a generic 30s client timeout; the headroom lets the server's
+    // typed error win the race instead of an opaque client-side abort.
+    return this.http.requestJson('/v1/sessions', {
+      method: 'POST',
+      body: request,
+      timeoutMs: 120000,
+    });
   }
 
   async get(sessionId: string): Promise<SessionResponse> {
@@ -879,6 +886,10 @@ export class SessionsClient {
       ...options,
       method: 'POST',
       body: request,
+      // The engine's goto ceiling is Playwright's default 30s; give the
+      // server 30s of margin so its typed NAVIGATION_TIMEOUT (with reason)
+      // reaches the caller instead of a client-side request timeout.
+      timeoutMs: 60000,
     });
   }
 

@@ -36,4 +36,22 @@ describe('bounded observation reads', () => {
       vi.useRealTimers();
     }
   });
+
+  it('normalizes a driver timeout rejection to the typed read-timeout contract', async () => {
+    // A raw "Timeout …ms exceeded" that wins the race still surfaces as
+    // ACTION_TIMEOUT {reason: read_timeout}; anything else rethrows as-is.
+    await expect(
+      new ObservationReads(5000).read('metadata', async () => {
+        throw new Error('page.title: Timeout 30000ms exceeded.');
+      })
+    ).rejects.toMatchObject({
+      code: 'ACTION_TIMEOUT',
+      details: { operation: 'observe', stage: 'metadata', reason: 'read_timeout' },
+    });
+    await expect(
+      new ObservationReads(5000).read('metadata', async () => {
+        throw new Error('net::ERR_CONNECTION_REFUSED');
+      })
+    ).rejects.toThrow('net::ERR_CONNECTION_REFUSED');
+  });
 });

@@ -2,6 +2,7 @@ import * as fsPromises from 'node:fs/promises';
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { AgentBrowserError } from '@agentbrowser/sdk-typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli, type CliClient } from './cli.js';
 
@@ -100,7 +101,6 @@ describe('cookie-file credential handoff', () => {
   });
   it.each([
     ['not PRIVATE-COOKIE JSON', []],
-    [JSON.stringify([{ ...cookie, expires: 0 }]), []],
     [JSON.stringify([{ ...cookie, partitionKey: 'PRIVATE-COOKIE' }]), []],
     [JSON.stringify([{ ...cookie, unknownSecurity: true }]), []],
     [JSON.stringify([cookie, cookie]), []],
@@ -159,6 +159,46 @@ describe('cookie-file credential handoff', () => {
     expect(h.err.join()).toContain('1');
     expect(h.err.join()).not.toContain(cookie.value);
   });
+  it('skips expired cookies with counts instead of aborting the import', async () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const past = Math.floor(Date.now() / 1000) - 3600;
+    const h = await importFile(
+      JSON.stringify([
+        { ...cookie, name: 'live', expires: future },
+        { ...cookie, name: 'stale', expires: past },
+        { ...cookie, name: 'gone', expires: 0 },
+      ])
+    );
+    expect(h.code).toBe(0);
+    expect(h.create.mock.calls[0]?.[0].cookies).toEqual([
+      { ...cookie, name: 'live', expires: future },
+    ]);
+    expect(h.err.join()).toContain('2');
+    expect(h.err.join()).not.toContain(cookie.value);
+  });
+  it('tolerates a DevTools trailing-tab artifact column', async () => {
+    const row = [
+      'sid',
+      'PRIVATE-COOKIE',
+      'example.com',
+      '/',
+      'Session',
+      '20',
+      '',
+      '✓',
+      'Lax',
+      '',
+      '',
+      'Medium',
+    ].join('\t');
+    for (const artifact of ['', '0']) {
+      const h = await importFile(`${row}\t${artifact}`, '--cookies-format', 'chrome-devtools-tsv');
+      expect(h.code).toBe(0);
+      expect(h.create.mock.calls[0]?.[0].cookies).toEqual([
+        { ...cookie, expires: -1, httpOnly: false, secure: true, sameSite: 'Lax' },
+      ]);
+    }
+  });
   it('rejects mutually exclusive sources and orphan parser policy flags', async () => {
     for (const flags of [
       ['--cookies-format', 'json'],
@@ -205,7 +245,7 @@ describe('cookie-file credential handoff', () => {
   });
   it('does not use partition omission to conceal malformed cookies', async () => {
     const h = await importFile(
-      JSON.stringify([{ ...cookie, expires: 0, partitionKey: 'https://example.com' }]),
+      JSON.stringify([{ ...cookie, path: 'relative', partitionKey: 'https://example.com' }]),
       '--cookies-skip-unsupported'
     );
     expect(h.code).toBe(1);
@@ -314,6 +354,29 @@ describe('cookie-file credential handoff', () => {
     ).toBe(1);
     expect(await h.run('session', 'cookies', 'ses_1', '--output', join(dir, 'export'))).toBe(1);
     expect([...h.out, ...h.err].join()).not.toContain(cookie.value);
+  });
+  it('surfaces credential-safe coded errors verbatim during cookie-seeded creates', async () => {
+    for (const [code, message] of [
+      ['UNAUTHORIZED', 'A valid bearer credential is required'],
+      ['FORBIDDEN', 'API key belongs to tenant default.'],
+    ] as const) {
+      const h = harness();
+      h.create.mockRejectedValue(new AgentBrowserError(code, message, false));
+      expect(
+        await h.run(
+          'session',
+          'create',
+          '--tenant',
+          't',
+          '--cookies-file',
+          await source(JSON.stringify([cookie]))
+        )
+      ).toBe(1);
+      expect(h.err.join()).toContain(code);
+      expect(h.err.join()).toContain(message);
+      expect(h.err.join()).not.toContain(cookie.value);
+      expect(h.err.join()).not.toContain('no credential details are displayed');
+    }
   });
   it('preserves symlink output targets and their existing contents', async () => {
     const file = await source('keep');
