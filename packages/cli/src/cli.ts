@@ -88,7 +88,7 @@ import {
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
 import { readApiKeyFile } from './api-key-file.js';
-import { readCookieFile, writeCookieFile } from './cookie-file.js';
+import { isCredentialSafeSeedError, readCookieFile, writeCookieFile } from './cookie-file.js';
 import {
   createJsonArgumentReader,
   createTextArgumentReader,
@@ -927,7 +927,9 @@ export function buildCli(deps: CliDependencies): Cli {
               );
               request.cookies = imported.cookies;
               if (imported.skipped)
-                deps.err(`Omitted ${imported.skipped} unsupported partitioned cookie(s).`);
+                deps.err(
+                  `Omitted ${imported.skipped} cookie(s) (unsupported partitioned or already expired).`
+                );
             }
             if (options.cookies !== undefined) {
               try {
@@ -983,7 +985,7 @@ export function buildCli(deps: CliDependencies): Cli {
 
             if (options.cookiesFile !== undefined) assertCookieRequestSize(request);
             const created = await ctx.client.sessions.create(request).catch((error) => {
-              if (options.cookiesFile !== undefined)
+              if (options.cookiesFile !== undefined && !isCredentialSafeSeedError(error))
                 throw new UsageError(
                   'Cookie-seeded session creation failed; no credential details are displayed.'
                 );
@@ -1050,7 +1052,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, sessionId: string, options: { output?: string }) => {
             const cookies = await ctx.client.sessions.cookies(sessionId).catch((error) => {
-              if (options.output !== undefined)
+              if (options.output !== undefined && !isCredentialSafeSeedError(error))
                 throw new UsageError('Cookie export failed; no credential details are displayed.');
               throw error;
             });

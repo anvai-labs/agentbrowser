@@ -140,6 +140,97 @@ writes the document for **today's environment configuration** — loopback, CIDR
 approval policy — parsed exactly as the service parses it. Operators migrate by generating, not
 hand-writing. Invalid configuration fails with the same startup messages.
 
+> **The export does not carry `limits`.** `AGENTBROWSER_MAX_RESPONSE_BYTES` (and the embedder
+> budget options) map to the document's `limits` object, which `policy export` does not emit —
+> add them by hand after generating, or the file's defaults (including the 10 MB response cap)
+> apply.
+
+### Worked example: retiring the deprecated env vars (Homebrew deployment)
+
+The scenario this exists for: a brew upgrade regenerates the launchd plist, silently dropping
+every custom `AGENTBROWSER_*` override except the ones the formula itself sets. A policy file
+under `/opt/homebrew/etc` survives upgrades untouched; only the one
+`AGENTBROWSER_POLICY_FILE` pointer needs to survive in the plist.
+
+Say today's deprecated configuration is:
+
+```sh
+AGENTBROWSER_ALLOW_LOOPBACK=1                       # loopback block disabled server-wide
+AGENTBROWSER_ALLOWED_CIDRS=192.168.1.0/24,10.8.0.0/16  # private-range exceptions
+AGENTBROWSER_MAX_RESPONSE_BYTES=33554432               # 32 MB response cap
+```
+
+**1. Generate and complete the document** (run with the old env still set, so the export sees
+it):
+
+```sh
+mkdir -p "$(brew --prefix)/etc/agentbrowser"
+AGENTBROWSER_ALLOW_LOOPBACK=1 \
+AGENTBROWSER_ALLOWED_CIDRS=192.168.1.0/24,10.8.0.0/16 \
+AGENTBROWSER_MAX_RESPONSE_BYTES=33554432 \
+  agentbrowser-server policy export \
+  > "$(brew --prefix)/etc/agentbrowser/policy.json"
+```
+
+Then edit the file: add the `limits` object the export omits, and — strongly recommended —
+replace the export's blanket `env.allow-loopback` permit with a scoped rule so loopback reaches
+only the hosts that actually need it (the floor's `forbid` stays in effect for everything else):
+
+```json
+{
+  "version": "agentbrowser-policy/v1",
+  "baseline": "agentbrowser:baseline/v1",
+  "unknownRisk": "allow",
+  "approvalRules": [],
+  "limits": { "maxResponseBytes": 33554432 },
+  "policies": [
+    {
+      "key": "operator.loopback-local-dev#1",
+      "ruleId": "operator.loopback-local-dev",
+      "cedar": "@rule(\"operator.loopback-local-dev\") permit(principal, action == AgentBrowser::Action::\"request.loopback\", resource) when { principal in AgentBrowser::Tenant::\"local\" };"
+    },
+    {
+      "key": "env.allowed-cidrs#2",
+      "ruleId": "env.allowed-cidrs",
+      "cedar": "@rule(\"env.allowed-cidrs\") permit(principal, action == AgentBrowser::Action::\"request.private\", resource) when { context has ip && (context.ip.isInRange(ip(\"192.168.1.0/24\")) || context.ip.isInRange(ip(\"10.8.0.0/16\"))) };"
+    },
+    {
+      "key": "env.block-private#3",
+      "ruleId": "env.block-private",
+      "cedar": "@rule(\"env.block-private\") forbid(principal, action == AgentBrowser::Action::\"request.private\", resource) unless { context has ip && (context.ip.isInRange(ip(\"192.168.1.0/24\")) || context.ip.isInRange(ip(\"10.8.0.0/16\"))) };"
+    },
+    {
+      "key": "env.capability.default#4",
+      "ruleId": "env.capability.default",
+      "cedar": "@rule(\"env.capability.default\") permit(principal, action in [AgentBrowser::Action::\"cdp.attach\", AgentBrowser::Action::\"downloads\", AgentBrowser::Action::\"serviceWorkers\", AgentBrowser::Action::\"cookie.seed\", AgentBrowser::Action::\"cookie.export\", AgentBrowser::Action::\"session.headed\", AgentBrowser::Action::\"cookie.handoff\"], resource);"
+    }
+  ]
+}
+```
+
+(Keep the `env.approval.*` rules the export emitted if you use approval classification; they are
+omitted here only for brevity. Without API keys only `Tenant::"local"` may appear — see the
+per-tenant pattern above for the keyed form.)
+
+**2. Validate before switching** — `policy check` (or shadow mode, below) confirms the document
+decides what you expect while the legacy env still governs.
+
+**3. Point the service at it and drop the deprecated vars.** In the plist, replace the old
+entries with the single pointer — and note the combination rule: `AGENTBROWSER_POLICY_FILE`
+together with any policy-bearing variable is a **startup refusal**, so leaving a stale
+`ALLOWED_CIDRS` behind fails loudly rather than half-applying:
+
+```sh
+brew services stop agentbrowser
+launchctl setenv AGENTBROWSER_POLICY_FILE "$(brew --prefix)/etc/agentbrowser/policy.json"
+# …or edit the plist to carry the variable, then:
+brew services start agentbrowser
+```
+
+Check the startup banner (it prints the loaded policy version) and `agentbrowser policy` for the
+active summary. After the next `brew upgrade`, re-adding this one variable is the entire
+recovery — the policy itself never went anywhere.
+
 ## The Cedar schema
 
 The schema is the versioned contract `CEDAR_SCHEMA` (`agentbrowser-cedar/v1`) in

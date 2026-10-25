@@ -59,15 +59,18 @@ export const COOKIE_USAGE: UsageGuidance = {
     'Without --output this command prints credential values. --output creates a new 0600 JSON file ' +
       'and prints only its path/count; existing paths and symlink destinations are refused.',
     'Import with session create --cookies-file PATH --cookies-format FORMAT. JSON is a cookie array; ' +
-      'Netscape uses exactly 7 tab-separated columns. chrome-devtools-tsv uses exactly 12 columns: ' +
+      'Netscape uses exactly 7 tab-separated columns. chrome-devtools-tsv uses 12 columns: ' +
       'Name, Value, Domain, Path, Expires, Size, HttpOnly, Secure, SameSite, Partition Key, ' +
-      'Cross Site Ancestor, Priority. No header or extra trailing column; preserve blank cells.',
+      'Cross Site Ancestor, Priority — plus an optional 13th artifact column from copying the ' +
+      'DevTools table when it is blank or a literal 0; anything else is refused. Preserve blank cells.',
     'JSON expiry is future Unix seconds or -1. DevTools expiry accepts Unix seconds, UTC ISO ' +
       '(YYYY-MM-DDTHH:mm:ss[.sss]Z), or Session; Netscape 0 means session expiry. ' +
-      'DevTools boolean cells are a checkmark (✓) or empty. Expired entries are rejected.',
+      'DevTools boolean cells are a checkmark (✓) or empty. Expired entries are omitted with a ' +
+      'counted warning; malformed entries are rejected.',
     'Imports are limited to 1 MiB and 1000 cookies. Unsupported partition attributes are refused; ' +
       '--cookies-skip-unsupported omits whole partitioned records, never widens their scope. ' +
-      'It does not skip expired or malformed entries. Export a fresh supported format rather than stripping attributes.',
+      'It never skips malformed entries — expired ones are omitted unconditionally. ' +
+      'Export a fresh supported format rather than stripping attributes.',
     INTERACTION_GUIDANCE.headedSession,
   ],
   examples: [

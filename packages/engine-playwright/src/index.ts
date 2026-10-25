@@ -2101,13 +2101,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         const response = await route.fetch({ maxRedirects: 0 });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop
-        // detection per hop. Allowed chains complete in two phases: the
-        // verified terminal URL is handed back as a redirect so the
-        // document lands at the right address, and the browser's native
-        // fetch of that already-checked URL is not re-capped (content
-        // TOCTOU, same residual class as the body-bearing passthrough).
-        // This retires the R4 redirect gap: fulfilling the first 302 let
-        // the browser follow every later hop unchecked.
+        // detection per hop. Allowed chains terminate in deliverTerminal
+        // below (see its comment for why the delivery is NOT a synthetic
+        // 302). This retires the R4 redirect gap: fulfilling the first 302
+        // let the browser follow every later hop unchecked.
         const seen = new Set([url]);
         let current = response;
         let currentUrl = url;
@@ -2189,6 +2186,39 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             }
           }
 
+          /** Deliver the verified terminal without a synthetic 302: on this
+           * Playwright, redirect-followers of fulfilled responses stall inside
+           * request interception (they reach neither the network nor any route
+           * handler — observed against Google SSO chains, where the follower
+           * request hung until the goto budget expired). A navigation gets a
+           * minimal stub whose inline script replaces the document with the
+           * terminal URL — a fresh renderer-initiated request that is
+           * choke-intercepted again (verdict + cap on the terminal) and lands
+           * the document at the right address. Everything else is served the
+           * verified terminal bytes directly: no synthetic redirect, no second
+           * fetch, no terminal TOCTOU. */
+          const deliverTerminal = async (body?: Buffer): Promise<void> => {
+            emitRequest('request.finished', request, {
+              status: 302,
+              redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
+            });
+            if (request.isNavigationRequest()) {
+              const attributeSafe = currentUrl
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+              const scriptSafe = JSON.stringify(currentUrl).replace(/</g, '\\u003c');
+              await fulfill({
+                status: 200,
+                contentType: 'text/html',
+                body: `<!doctype html><html><head><meta http-equiv="refresh" content="0;url=${attributeSafe}"><script>location.replace(${scriptSafe})</script></head><body></body></html>`,
+              });
+              return;
+            }
+            await fulfill(body === undefined ? { response: current } : { response: current, body });
+          };
+
           // Playwright buffers route.fetch before this gate; this limits what
           // reaches the page, NOT peak transport memory (ADR-008 residual).
           if (egress.checkBodySize !== undefined) {
@@ -2205,16 +2235,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               return;
             }
             if (hops > 0) {
-              emitRequest('request.finished', request, {
-                status: 302,
-                redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
-              });
-              await fulfill({
-                status: 302,
-                headers: { location: currentUrl },
-                contentType: 'text/plain',
-                body: '',
-              });
+              await deliverTerminal(body);
               return;
             }
             emitRequest('request.finished', request, {
@@ -2227,16 +2248,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
           const declaredLength = headers['content-length'];
           if (hops > 0) {
-            emitRequest('request.finished', request, {
-              status: 302,
-              redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
-            });
-            await fulfill({
-              status: 302,
-              headers: { location: currentUrl },
-              contentType: 'text/plain',
-              body: '',
-            });
+            await deliverTerminal();
             return;
           }
           emitRequest('request.finished', request, {

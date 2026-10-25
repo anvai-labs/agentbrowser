@@ -46,7 +46,14 @@ export class ObservationReads {
             reject(failure());
           }, remaining);
         }),
-      ]);
+      ]).catch((error: unknown) => {
+        // A driver rejection that wins the race still carries the typed
+        // timeout contract: a raw "Timeout 30000ms exceeded" would otherwise
+        // surface as INTERNAL 500 at the API layer instead of ACTION_TIMEOUT.
+        const message = error instanceof Error ? error.message : String(error);
+        if (error instanceof EngineError || !/timeout|timed out/i.test(message)) throw error;
+        throw failure();
+      });
     } finally {
       clearTimeout(timer);
     }
