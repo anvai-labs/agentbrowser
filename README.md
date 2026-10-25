@@ -9,6 +9,8 @@ The opt-in [delegated-session workflow](docs/delegated-sessions.md) adds a human
 panel, revocable session tokens, and operation reconciliation for cooperating agent
 harnesses.
 
+[![AgentBrowser demo video](https://img.youtube.com/vi/1ZEtWKqpxQI/maxresdefault.jpg)](https://youtu.be/1ZEtWKqpxQI)
+
 ## Install (Homebrew)
 
 ```bash
