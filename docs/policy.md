@@ -215,21 +215,32 @@ per-tenant pattern above for the keyed form.)
 **2. Validate before switching** — `policy check` (or shadow mode, below) confirms the document
 decides what you expect while the legacy env still governs.
 
-**3. Point the service at it and drop the deprecated vars.** In the plist, replace the old
-entries with the single pointer — and note the combination rule: `AGENTBROWSER_POLICY_FILE`
-together with any policy-bearing variable is a **startup refusal**, so leaving a stale
-`ALLOWED_CIDRS` behind fails loudly rather than half-applying:
+**3. Point the service at it and drop the deprecated vars.** On Homebrew, `brew services`
+regenerates the launchd plist from the formula on every start — hand-editing the plist does not
+survive that. Two durable mechanisms, both outside the plist:
+
+- Since the tap's formula revision accompanying 1.27.3, the service stanza itself sets
+  `AGENTBROWSER_POLICY_FILE=$(brew --prefix)/etc/agentbrowser/policy.json` and the install
+  writes a default document there once (never clobbered) — nothing to configure.
+- Non-policy env (API keys, operator-key path, login browser) belongs in brew's native
+  user-override file, which `brew services` re-applies to every generated plist:
+  `~/.homebrew/services/agentbrowser.env` (`KEY=value` lines; see `brew services --help`).
+
+Note the combination rule: `AGENTBROWSER_POLICY_FILE` together with any policy-bearing
+variable is a **startup refusal**, so a stale `AGENTBROWSER_MAX_RESPONSE_BYTES` or
+`ALLOWED_CIDRS` line left in the override file fails loudly rather than half-applying —
+remove the policy-bearing entries when you adopt the file.
 
 ```sh
-brew services stop agentbrowser
-launchctl setenv AGENTBROWSER_POLICY_FILE "$(brew --prefix)/etc/agentbrowser/policy.json"
-# …or edit the plist to carry the variable, then:
-brew services start agentbrowser
+# Remove policy-bearing lines from the override file, keep secrets:
+grep -v '^AGENTBROWSER_\(MAX_RESPONSE_BYTES\|ALLOW_LOOPBACK\|ALLOWED_CIDRS\|APPROVAL_POLICY\)=' \
+  ~/.homebrew/services/agentbrowser.env > /tmp/ab.env && mv /tmp/ab.env ~/.homebrew/services/agentbrowser.env
+brew services restart agentbrowser
 ```
 
 Check the startup banner (it prints the loaded policy version) and `agentbrowser policy` for the
-active summary. After the next `brew upgrade`, re-adding this one variable is the entire
-recovery — the policy itself never went anywhere.
+active summary — with a file loaded it prints the document hash. Restart the service again to
+confirm the configuration survives regeneration; upgrades never touch any of it.
 
 ## The Cedar schema
 
