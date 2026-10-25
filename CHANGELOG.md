@@ -7,6 +7,55 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.27.3] — 2026-10-25
+
+Maintenance release: the egress redirect walker no longer wedges on Playwright's interception
+when a chain crosses redirects. Found dogfooding Studio/LinkedIn end to end — every navigation
+whose chain crossed `accounts.google.com` hung for the full goto budget and failed as
+`NAVIGATION_TIMEOUT: engine_error`. **Upgrading from 1.27.2:**
+
+| Who | What changes |
+| --- | --- |
+| Any navigation crossing a redirect (Google SSO, `studio.youtube.com`, walled logins) | now completes: the walker's synthetic 302 is replaced by a renderer-initiated `location.replace` to the verified terminal (fresh choke-intercepted request) for documents, and the verified terminal bytes served directly for everything else |
+| Redirected subresource GETs | receive the already-verified response (same bytes, one fetch, no terminal TOCTOU) instead of a synthetic redirect the browser cannot follow |
+| `observe` on a stuck or mid-navigation page | returns **504 `ACTION_TIMEOUT`** instead of 500 `INTERNAL` (the same `mapError` hop `act` always had) |
+| `session create --cookies-file` | a DevTools table copy's trailing artifact column (blank or `0`) is accepted; **expired cookies are omitted with a counted warning** instead of aborting the whole import (previously one stale row killed the seed) |
+| CLI/SDK diagnostics | credential-safe coded errors (`UNAUTHORIZED`, `FORBIDDEN`, `INVALID_REQUEST`, `NOT_FOUND`) surface verbatim during cookie-seeded creates and exports instead of the blanket redaction; `navigate` (60 s) and `sessions.create` (120 s) get per-call client headroom so server-typed errors beat client timeouts |
+
+**Behavior disclosures:** hop>0 document navigations now pass the terminal through the choke
+(verdict + cap — strictly more enforcement than the previous uncapped native refetch);
+redirected subresource GETs see the terminal response at the original request URL
+(transparent-proxy semantics); the expired-cookie skip changes a hard error into a counted
+omission (malformed rows are still rejected, and `--cookies-skip-unsupported` never skips them).
+
+### Fixed — fulfilled-302 redirect followers stall inside Playwright's interception
+
+- On Playwright 1.64, a redirect follower of a **fulfilled** response never reaches the network
+  or any route handler: reproduces in raw Playwright (fulfill 302 → `example.com` follows; →
+  google targets hang; fetch/XHR followers fail likewise). The egress walker's synthetic
+  `302 {location}` therefore starved every cross-redirect navigation (measured: walker completes
+  in ~550 ms, then the browser issues not one further request until the goto budget expires).
+- Navigations now land a minimal HTML stub whose inline `location.replace` moves the document to
+  the verified terminal — renderer-initiated, choke-intercepted again, all-hop enforcement and
+  loop/hop-cap detection unchanged (`packages/engine-playwright/src/index.ts`; #634).
+- `observe` engine throws map through `service.mapError` (`ACTION_TIMEOUT`, 504) instead of
+  falling through the API's INTERNAL fallback; `ObservationReads` normalizes winning driver
+  timeout rejections to the typed read-timeout contract.
+- CLI cookie-file: trailing-tab artifact column tolerated; expired rows omitted with additive
+  counts (`Omitted N cookie(s) (unsupported partitioned or already expired).`); credential-safe
+  coded errors pass through the two redaction sites; usage notes corrected to match.
+
+### Docs — policy migration and the launch overview video
+
+- `docs/policy.md`: worked example retiring the deprecated env vars for a Cedar policy file
+  (generate via `policy export`, hand-add the `limits` object the export omits, scope loopback
+  per tenant, swap the launchd plist to the single `AGENTBROWSER_POLICY_FILE` pointer) — the
+  brew-upgrade plist regeneration that silently drops operator env is the motivating incident.
+- README and the published site home embed the video overview (a first-person author launch
+  walkthrough of the architecture and core mechanics).
+
+## [1.27.2] — 2026-10-24
+
 ### Performance - tldts initializes on first use; the v7 bump lands under the T8 gate
 
 - `@agentbrowser/core` loads `tldts` on first host question instead of at module import

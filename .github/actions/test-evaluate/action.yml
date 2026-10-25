@@ -5,7 +5,7 @@ description: >-
   fetches no evidence.
 inputs:
   version:
-    description: AgentBrowser release tag providing the CLI, e.g. v1.27.2.
+    description: AgentBrowser release tag providing the CLI, e.g. v1.27.3.
     required: true
   bundles:
     description: Newline-separated evaluation bundle files or directories (every *.json).
