@@ -45,13 +45,14 @@ omission (malformed rows are still rejected, and `--cookies-skip-unsupported` ne
   counts (`Omitted N cookie(s) (unsupported partitioned or already expired).`); credential-safe
   coded errors pass through the two redaction sites; usage notes corrected to match.
 
-### Docs — policy migration and the demo video
+### Docs — policy migration and the launch overview video
 
 - `docs/policy.md`: worked example retiring the deprecated env vars for a Cedar policy file
   (generate via `policy export`, hand-add the `limits` object the export omits, scope loopback
   per tenant, swap the launchd plist to the single `AGENTBROWSER_POLICY_FILE` pointer) — the
   brew-upgrade plist regeneration that silently drops operator env is the motivating incident.
-- README and the published site home embed the demo video.
+- README and the published site home embed the video overview (a first-person author launch
+  walkthrough of the architecture and core mechanics).
 
 ## [1.27.2] — 2026-10-24
 
