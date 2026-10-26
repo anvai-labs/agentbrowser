@@ -2761,6 +2761,7 @@ class PlaywrightPage implements EnginePage {
     dropFrameIdentityState(frame);
   };
   private resetFormIdentity(): void {
+    this.closeDisclosureCdp();
     this.formIdentityGeneration++;
     void this.formIdentityState?.dispose().catch(() => {});
     this.formIdentityState = undefined;
@@ -4482,12 +4483,14 @@ class PlaywrightPage implements EnginePage {
    * summary or one inside a closed details is skipped exactly as the browser decides.
    */
   private async disclosuresFromBrowser(): Promise<SummaryInfo[] | undefined> {
-    let cdp: import('playwright').CDPSession;
-    try {
-      cdp = await this.page.context().newCDPSession(this.page);
-    } catch {
-      return undefined;
-    }
+    // Mint-and-detach a CDP session per call (the original shape) detaches a
+    // sibling session on every observe, and Chromium tears down per-target
+    // domain state — including a foreign WebAuthn virtual-authenticator
+    // environment another session attached. One session per page, reused
+    // across observes and detached only on close/resetFormIdentity, keeps
+    // sibling sessions' domain state intact.
+    const cdp = await this.disclosureCdp();
+    if (cdp === undefined) return undefined;
     try {
       const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
       const { nodeIds } = await cdp.send('DOM.querySelectorAll', {
@@ -4522,8 +4525,20 @@ class PlaywrightPage implements EnginePage {
       // A CDP engine that lacks these domains (Obscura), or a DOM that changed between the
       // calls: fall back to the validated page-function scan rather than minting nothing.
       return undefined;
-    } finally {
-      await cdp.detach().catch(() => {});
+    }
+  }
+
+  /** Lazily minted, page-lifetime CDP session for the disclosure scan. */
+  private disclosureCdpSession: import('playwright').CDPSession | undefined;
+
+  private async disclosureCdp(): Promise<import('playwright').CDPSession | undefined> {
+    if (this.disclosureCdpSession !== undefined) return this.disclosureCdpSession;
+    try {
+      const session = await this.page.context().newCDPSession(this.page);
+      this.disclosureCdpSession = session;
+      return session;
+    } catch {
+      return undefined;
     }
   }
 
@@ -5549,8 +5564,14 @@ class PlaywrightPage implements EnginePage {
     }
   }
 
+  private closeDisclosureCdp(): void {
+    void this.disclosureCdpSession?.detach().catch(() => {});
+    this.disclosureCdpSession = undefined;
+  }
+
   async close(): Promise<void> {
     this.eventsClosed = true;
+    this.closeDisclosureCdp();
     this.releaseRefs();
     this.removeSelf();
     if (this.pendingDialog) {
