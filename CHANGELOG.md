@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — `policy export` carries the response cap
+
+- `policyDocumentFromEnvironment` now maps `AGENTBROWSER_MAX_RESPONSE_BYTES` to the document's
+  `limits.maxResponseBytes` (a malformed value fails with the same message startup uses — the
+  document never represents a cap the server would refuse to boot with). Previously the export
+  omitted `limits` entirely, so a migrated deployment silently fell back to the loader's
+  default response cap. The parser is now shared with the service startup path
+  (`maxResponseBytesFromEnvironment` in `@agentbrowser/policy-engine`).
+
 ## [1.27.3] — 2026-10-25
 
 Maintenance release: the egress redirect walker no longer wedges on Playwright's interception

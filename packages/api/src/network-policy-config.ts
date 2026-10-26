@@ -1,23 +1,14 @@
 import { NetworkPolicy } from '@agentbrowser/policy';
-import { type Authorizer, egressExceptionsOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
+import {
+  type Authorizer,
+  egressExceptionsOf,
+  LegacyAuthorizer,
+  maxResponseBytesFromEnvironment,
+} from '@agentbrowser/policy-engine';
 
-const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
-
-/** Startup-only, finite byte budget; malformed configuration must not disable the gate. */
-export function responseBytesFromEnvironment(raw: string | undefined): number | undefined {
-  const value = raw?.trim();
-  if (!value) return undefined;
-  const bytes = Number(value);
-  if (
-    !/^\d+$/.test(value) ||
-    !Number.isSafeInteger(bytes) ||
-    bytes < 1 ||
-    bytes > MAX_OPERATOR_RESPONSE_BYTES
-  ) {
-    throw new Error('AGENTBROWSER_MAX_RESPONSE_BYTES must be an integer from 1 to 67108864 bytes');
-  }
-  return bytes;
-}
+/** Startup-only, finite byte budget; malformed configuration must not disable
+ * the gate. Implementation shared with `policy export` (policy-engine). */
+export const responseBytesFromEnvironment = maxResponseBytesFromEnvironment;
 
 /** One default SSRF policy for embedded services and the server entrypoint. */
 export function createDefaultNetworkPolicy(allowedPrivateCIDRs: string[] = []): NetworkPolicy {

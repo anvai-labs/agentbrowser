@@ -140,10 +140,10 @@ writes the document for **today's environment configuration** — loopback, CIDR
 approval policy — parsed exactly as the service parses it. Operators migrate by generating, not
 hand-writing. Invalid configuration fails with the same startup messages.
 
-> **The export does not carry `limits`.** `AGENTBROWSER_MAX_RESPONSE_BYTES` (and the embedder
-> budget options) map to the document's `limits` object, which `policy export` does not emit —
-> add them by hand after generating, or the file's defaults (including the 10 MB response cap)
-> apply.
+> **The export carries the response cap in `limits`.** `AGENTBROWSER_MAX_RESPONSE_BYTES` maps
+> to the document's `limits.maxResponseBytes` automatically (and a malformed value fails with
+> the startup message). Only limits that were never env-configured — e.g. `extractMaxBytes` —
+> need adding by hand after generating; without them the file's defaults apply.
 
 ### Worked example: retiring the deprecated env vars (Homebrew deployment)
 

@@ -351,6 +351,25 @@ describe('policyDocumentFromEnvironment', () => {
       expect(document.policies.some((p) => p.ruleId === 'env.block-loopback')).toBe(true);
     }
   });
+  it('carries the response cap in limits so the export round trip keeps it', () => {
+    const document = policyDocumentFromEnvironment(
+      env({ AGENTBROWSER_MAX_RESPONSE_BYTES: '33554432' })
+    );
+    expect(document.limits).toEqual({ maxResponseBytes: 33554432 });
+    // The cap is dropped from the env, not duplicated: the document is the
+    // whole migrated configuration.
+    expect(document.policies.some((p) => p.ruleId === 'env.max-response-bytes')).toBe(false);
+  });
+  it('omits limits when no cap is configured', () => {
+    expect(policyDocumentFromEnvironment(env({})).limits).toBeUndefined();
+  });
+  it('refuses a malformed cap with the startup message', () => {
+    for (const bad of ['0', '-1', '1.5', 'abc', '999999999999999999999', '67108865']) {
+      expect(() =>
+        policyDocumentFromEnvironment(env({ AGENTBROWSER_MAX_RESPONSE_BYTES: bad }))
+      ).toThrow('AGENTBROWSER_MAX_RESPONSE_BYTES must be an integer from 1 to 67108864 bytes');
+    }
+  });
   it('refuses approval values the server would refuse at startup (review 3b F1)', () => {
     for (const bad of ['5', 'null', 'true', '"x"', '[]', '{"rules":5}']) {
       expect(() =>
