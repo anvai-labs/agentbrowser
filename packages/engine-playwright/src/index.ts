@@ -2761,7 +2761,10 @@ class PlaywrightPage implements EnginePage {
     dropFrameIdentityState(frame);
   };
   private resetFormIdentity(): void {
-    this.closeDisclosureCdp();
+    // The disclosure CDP session attaches to the page target, not the
+    // document, so it survives navigation. Detaching it here would kill
+    // sibling sessions' domain state (foreign WebAuthn environments) on
+    // every navigation; it is closed only with the page.
     this.formIdentityGeneration++;
     void this.formIdentityState?.dispose().catch(() => {});
     this.formIdentityState = undefined;
