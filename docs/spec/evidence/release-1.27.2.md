@@ -8,7 +8,7 @@ every verification row below was re-checked against live sources at writing time
 | Released | `v1.27.2` | `ed118c80964b5428cd925904390a69b5035a34cd` | Promotion merge #630; maintenance release (dedup series, hygiene ratchets, tldts lazy-load) |
 
 ```text
-develop ── #615 tldts ── #616–#622 dedup ── #623–#626 hygiene ── #627 version sync ──► main (#628)
+develop ── #616–#622 dedup ── #623–#626 hygiene ── #615 tldts ── #627 version sync ──► main (#628)
    ├─ tag v1.27.2 on #628 ─► release run 40056367409 ✗ (npm approval stall, then guard-flag bug)
    ├─ retag onto the unlanded fix ─► run 40105919900 ✗ (tag ancestry: not reachable from main)
    └─ #629 fix → develop ── #630 develop → main ── tag recut on ed118c80
@@ -21,17 +21,18 @@ main ─► tap dispatch (anvai-labs/homebrew-tap) ─► PR #129 ─► CI appr
 ## Release-run history — two failures before the green run
 
 1. **Run [40056367409](https://github.com/anvai-labs/agentbrowser/actions/runs/40056367409)**
-   (tag on the #628 promotion merge): the npm job sat ~8 h in `waiting` — the `npm`
-   deployment environment has required reviewers, and a gated deployment waits
-   indefinitely for a human (by design; the owner found and approved it). After
-   approval the job **failed**: the host-question guard was invoked as
-   `node --test <file> --test-name-pattern="npm MCP bundle"` — node --test ignores the
-   name-pattern flag when it follows the file argument, so all three guard tests ran and
-   the compiled-CLI test failed on a missing `dist-bin` (the npm job does not run
-   `pnpm compile`).
+   (tag on the #628 promotion merge): the npm job sat ~11.5 h in `waiting`
+   (03:04Z → approved 14:34Z) — the `npm` deployment environment has required
+   reviewers, and a gated deployment waits indefinitely for a human (by design; the
+   owner found and approved it). After approval the job **failed**: the host-question
+   guard was invoked as `node --test <file> --test-name-pattern="npm MCP bundle"` —
+   node --test ignores the name-pattern flag when it follows the file argument, so all
+   three guard tests ran and the compiled-CLI test failed on a missing `dist-bin` (the
+   npm job does not run `pnpm compile`). A re-run of the failed jobs (deployment
+   `7300265652`, approved promptly) hit the same deterministic failure at 15:06Z.
 2. **Run [40105919900](https://github.com/anvai-labs/agentbrowser/actions/runs/40105919900)**:
-   the flag-order fix (`3b95f0bb`) existed only as a local commit and the tag had been
-   force-moved onto it — `check-tag-ancestry` refused it: *"Tag commit 3b95f0bb… is not
+   the flag-order fix (`3b95f0bb`) was unlanded — on no branch, existing on GitHub
+   only as the force-moved tag's target — `check-tag-ancestry` refused it: *"Tag commit 3b95f0bb… is not
    reachable from origin/main: release tags must be cut from main."* Direct pushes to
    protected `main` were (correctly) rejected throughout; the gate did its job.
 3. **The sanctioned route landed the fix**: PR #629 (fix → develop, `ffc038bb`) → PR #630
@@ -62,7 +63,8 @@ approval prompt, not a hung runner.
 
 ## What shipped
 
-Maintenance window since 1.27.1 — 15 PRs, all through CI + adversarial review:
+Maintenance window since 1.27.1 — 15 PRs, all merged through required CI checks (10 of
+the 15 carry an explicit "Adversarial review pass" findings comment on the PR thread):
 
 - **#615** — tldts lazy-load, the headline: `@agentbrowser/core` loads tldts on the first
   host question instead of at import; the v7 bump (6.1.76 → 7.4.18) lands under the T8
@@ -76,8 +78,9 @@ Maintenance window since 1.27.1 — 15 PRs, all through CI + adversarial review:
 - **#624** — the two orphaned root test runners wired into CI (`spec-context` in
   test:release; `mcp-catalog-docs` in a post-build Test-job step).
 - **#625 / #626** — three two-sided CI ratchets (layering 0, duplication 4373 tokens at
-  window 100, dead exports 0) and the 88-export classification (26 de-exported,
-  1 deleted, 67 confirmed public API).
+  window 100, dead exports 0) and the 88-export classification (67 kept public API,
+  20 de-exported, 1 deleted); window-wide the diffs de-export 26 names — the extras are
+  policy-engine test helpers outside the candidate bucket.
 - **#627** — version sync; **#629** — the release-guard flag-order fix.
 
 ## Upgrade notes
