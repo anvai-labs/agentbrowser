@@ -199,11 +199,32 @@ export function cedarPolicySetFromLegacyConfig(
  * policy option): operators migrate to a policy file by generating it, not by
  * hand-writing one. Invalid values throw with the same messages startup uses.
  */
+const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
+
+/** Startup-only, finite byte budget; malformed configuration must not disable
+ * the gate. Shared by the service startup path and `policy export` so the
+ * document never represents a cap the server would refuse to boot with. */
+export function maxResponseBytesFromEnvironment(raw: string | undefined): number | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  const bytes = Number(value);
+  if (
+    !/^\d+$/.test(value) ||
+    !Number.isSafeInteger(bytes) ||
+    bytes < 1 ||
+    bytes > MAX_OPERATOR_RESPONSE_BYTES
+  ) {
+    throw new Error('AGENTBROWSER_MAX_RESPONSE_BYTES must be an integer from 1 to 67108864 bytes');
+  }
+  return bytes;
+}
+
 export function policyDocumentFromEnvironment(
   env: {
     AGENTBROWSER_ALLOWED_CIDRS?: string | undefined;
     AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
     AGENTBROWSER_APPROVAL_POLICY?: string | undefined;
+    AGENTBROWSER_MAX_RESPONSE_BYTES?: string | undefined;
   } = process.env
 ): PolicyDocument {
   const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
@@ -220,14 +241,20 @@ export function policyDocumentFromEnvironment(
   validateActionRiskRules(
     approval.rules === undefined ? undefined : (approval.rules as ActionRiskRule[])
   );
-  return policyDocumentFromLegacyConfig({
-    allowLoopback: /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? ''),
-    allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
-    ...(approval.unknownRisk !== undefined
-      ? { unknownRisk: approval.unknownRisk as 'allow' | 'required' }
-      : {}),
-    ...(approval.rules !== undefined ? { rules: approval.rules as ActionRiskRule[] } : {}),
-  });
+  const maxResponseBytes = maxResponseBytesFromEnvironment(env.AGENTBROWSER_MAX_RESPONSE_BYTES);
+  return {
+    ...policyDocumentFromLegacyConfig({
+      allowLoopback: /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? ''),
+      allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
+      ...(approval.unknownRisk !== undefined
+        ? { unknownRisk: approval.unknownRisk as 'allow' | 'required' }
+        : {}),
+      ...(approval.rules !== undefined ? { rules: approval.rules as ActionRiskRule[] } : {}),
+    }),
+    // The cap is policy-bearing: without this a migrated document would
+    // silently fall back to the loader's default response limit.
+    ...(maxResponseBytes !== undefined ? { limits: { maxResponseBytes } } : {}),
+  };
 }
 
 /** A document ready for `policy export`: the set plus the config it came from. */
