@@ -458,9 +458,9 @@ The repo ships a composite action that runs a saved plan against an already-runn
 pinned, checksum-verified release CLI:
 
 ```yaml
-- uses: anvai-labs/agentbrowser/.github/actions/plan-run@v1.27.3
+- uses: anvai-labs/agentbrowser/.github/actions/plan-run@v1.27.4
   with:
-    cli-version: v1.27.3
+    cli-version: v1.27.4
     base-url: http://127.0.0.1:5709   # your earlier step started the service
     tenant: ci
     plan: plan.json
