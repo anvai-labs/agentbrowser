@@ -331,6 +331,98 @@ describe('native disclosures (details/summary) in observe', () => {
     });
   }, 60_000);
 
+  it('the disclosure CDP session survives navigation: one mint per page, still on the CDP path after', async () => {
+    await withPage('<details><summary>Before nav</summary><p>x</p></details>', async (p) => {
+      const page = backingPage(p);
+      const context = page.context() as unknown as {
+        newCDPSession: (target: unknown) => Promise<unknown>;
+      };
+      const original = context.newCDPSession.bind(context);
+      let mints = 0;
+      context.newCDPSession = async (target: unknown) => {
+        mints += 1;
+        return original(target);
+      };
+      try {
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['Before nav']);
+        expect(mints).toBe(1);
+        // Navigate to a page that breaks the built-ins the fallback scan depends on:
+        // the correct row afterwards can only come through the session minted before
+        // the navigation (the CDP scan runs in Node, unaffected by page scripts).
+        // Detaching on navigation (the pre-fix shape) would leave the fallback with
+        // nothing valid to return — and re-minting would bump the counter.
+        const hostile =
+          '<details><summary>After nav</summary><p>y</p></details>' +
+          '<script>Array.from = () => { throw new Error("hostile"); };' +
+          'Array.prototype.map = () => [{ index: 0, name: { evil: 1 }, expanded: "x" }];</script>';
+        await p.navigate({ url: `data:text/html,${encodeURIComponent(hostile)}` });
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['After nav']);
+        expect(mints).toBe(1);
+      } finally {
+        context.newCDPSession = original;
+      }
+    });
+  }, 60_000);
+
+  it('a session killed browser-side is dropped and re-minted, not fallen back forever', async () => {
+    await withPage('<details><summary>Recover</summary><p>x</p></details>', async (p) => {
+      const page = backingPage(p);
+      const context = page.context() as unknown as {
+        newCDPSession: (target: unknown) => Promise<unknown>;
+      };
+      const original = context.newCDPSession.bind(context);
+      const minted: Array<{ detach: () => Promise<void> }> = [];
+      context.newCDPSession = async (target: unknown) => {
+        const real = (await original(target)) as { detach: () => Promise<void> };
+        minted.push(real);
+        return real;
+      };
+      try {
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['Recover']);
+        expect(minted).toHaveLength(1);
+        await minted[0].detach(); // browser-side death: fires the session's 'close' event
+        // Two observes so the pin holds whichever order the close event and the
+        // failed send race in: the first recovers via close-event or catch-clear,
+        // the second must run on a re-minted session, not a stale cached corpse.
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['Recover']);
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['Recover']);
+        expect(minted).toHaveLength(2);
+      } finally {
+        context.newCDPSession = original;
+      }
+    });
+  }, 60_000);
+
+  it('concurrent racers share one disclosure session mint (the loser cannot leak)', async () => {
+    await withPage('<details><summary>Race</summary><p>x</p></details>', async (p) => {
+      const page = backingPage(p);
+      const context = page.context() as unknown as {
+        newCDPSession: (target: unknown) => Promise<unknown>;
+      };
+      const original = context.newCDPSession.bind(context);
+      let mints = 0;
+      context.newCDPSession = async (target: unknown) => {
+        mints += 1;
+        return original(target);
+      };
+      try {
+        // disclosureCdp caches the minting PROMISE synchronously, so both racers
+        // (started in the same tick, while newCDPSession is still in flight)
+        // must settle on one shared session.
+        const internals = p as unknown as { disclosureCdp: () => Promise<unknown> };
+        const [first, second] = await Promise.all([
+          internals.disclosureCdp(),
+          internals.disclosureCdp(),
+        ]);
+        expect(first).toBe(second);
+        expect(mints).toBe(1);
+        expect((await summaries(p)).map((s) => s.name)).toEqual(['Race']);
+      } finally {
+        context.newCDPSession = original;
+      }
+    });
+  }, 60_000);
+
   it('a hostile child frame cannot inject rows: spoofed page-function output is dropped and reported', async () => {
     await withPage(
       '<iframe title="f" srcdoc="<details><summary>Real</summary><p>x</p></details>' +

@@ -2761,7 +2761,11 @@ class PlaywrightPage implements EnginePage {
     dropFrameIdentityState(frame);
   };
   private resetFormIdentity(): void {
-    this.closeDisclosureCdp();
+    // The disclosure CDP session attaches to the page target, not the
+    // document, so it survives navigation. Detaching it here would kill
+    // sibling sessions' domain state (foreign WebAuthn environments) on
+    // every navigation; it is closed with the page — or, if it dies before
+    // that, dropped and re-minted by disclosureCdp's invalidation.
     this.formIdentityGeneration++;
     void this.formIdentityState?.dispose().catch(() => {});
     this.formIdentityState = undefined;
@@ -4477,18 +4481,22 @@ class PlaywrightPage implements EnginePage {
 
   /**
    * A details' first summaries as Chromium's accessibility tree sees them, in light-DOM document
-   * order (the order of SUMMARY_LOCATOR). Undefined when the engine has no CDP (Firefox, WebKit),
-   * so the caller falls back to the page function. A row is minted only where Chromium exposes a
-   * disclosure (role DisclosureTriangle, not ignored): an explicit valid role, an unrendered
-   * summary or one inside a closed details is skipped exactly as the browser decides.
+   * order (the order of SUMMARY_LOCATOR). Undefined when the engine has no CDP (Firefox, WebKit)
+   * or when a CDP call failed — an engine lacking these domains (Obscura), a DOM that changed
+   * mid-scan, a dead session — so the caller falls back to the page function. A row is minted only
+   * where Chromium exposes a disclosure (role DisclosureTriangle, not ignored): an explicit valid
+   * role, an unrendered summary or one inside a closed details is skipped exactly as the browser
+   * decides.
    */
   private async disclosuresFromBrowser(): Promise<SummaryInfo[] | undefined> {
     // Mint-and-detach a CDP session per call (the original shape) detaches a
     // sibling session on every observe, and Chromium tears down per-target
     // domain state — including a foreign WebAuthn virtual-authenticator
     // environment another session attached. One session per page, reused
-    // across observes and detached only on close/resetFormIdentity, keeps
-    // sibling sessions' domain state intact.
+    // across observes (it attaches to the page target, so it survives
+    // navigation) and detached only when the page closes — or dropped and
+    // re-minted when it dies (disclosureCdp) — keeps sibling sessions'
+    // domain state intact without pinning a dead session forever.
     const cdp = await this.disclosureCdp();
     if (cdp === undefined) return undefined;
     try {
@@ -4521,25 +4529,66 @@ class PlaywrightPage implements EnginePage {
           };
         })
       );
-    } catch {
+    } catch (error) {
       // A CDP engine that lacks these domains (Obscura), or a DOM that changed between the
       // calls: fall back to the validated page-function scan rather than minting nothing.
+      // A session that DIED mid-scan is additionally dropped from the cache — the 'close'
+      // event normally does it, this covers a send that failed before the event landed —
+      // so the next observe re-mints instead of falling back forever. Identity-guarded:
+      // a racer may already have re-minted, and detaching the fresh session would repeat
+      // the sibling-state teardown this design avoids. An unsupported-domain failure
+      // (Obscura) keeps the cache: re-minting per observe would churn sessions there.
+      if (
+        error instanceof Error &&
+        /closed/i.test(error.message) &&
+        this.disclosureCdpSession === cdp
+      )
+        this.closeDisclosureCdp();
       return undefined;
     }
   }
 
-  /** Lazily minted, page-lifetime CDP session for the disclosure scan. */
+  /**
+   * Lazily minted, page-lifetime CDP session for the disclosure scan. The
+   * minting PROMISE is cached (mirroring formIdentityInitialization):
+   * concurrent observes share one session instead of racing mints whose
+   * loser would be overwritten in the cache and never detached. The cache
+   * is invalidated by the session's own 'close' event (target closed,
+   * renderer crash, browser-side detach) and by a dead-session send failure
+   * in disclosuresFromBrowser, so a dead session is re-minted on the next
+   * observe instead of pinning the page to the page-function fallback —
+   * untrusted page data — for the rest of its lifetime.
+   */
   private disclosureCdpSession: import('playwright').CDPSession | undefined;
+  private disclosureCdpInitialization:
+    | Promise<import('playwright').CDPSession | undefined>
+    | undefined;
 
   private async disclosureCdp(): Promise<import('playwright').CDPSession | undefined> {
     if (this.disclosureCdpSession !== undefined) return this.disclosureCdpSession;
-    try {
-      const session = await this.page.context().newCDPSession(this.page);
-      this.disclosureCdpSession = session;
-      return session;
-    } catch {
-      return undefined;
-    }
+    if (this.disclosureCdpInitialization !== undefined) return this.disclosureCdpInitialization;
+    const pending = (async (): Promise<import('playwright').CDPSession | undefined> => {
+      try {
+        const session = await this.page.context().newCDPSession(this.page);
+        session.once('close', () => {
+          // Identity-guarded: a newer session may already be cached by the
+          // time a dead one's close event is delivered.
+          if (this.disclosureCdpSession === session) this.disclosureCdpSession = undefined;
+        });
+        this.disclosureCdpSession = session;
+        return session;
+      } catch {
+        return undefined;
+      }
+    })();
+    this.disclosureCdpInitialization = pending;
+    // pending never rejects (a failed mint resolves undefined), so the
+    // derived finally-promise cannot leak an unhandled rejection.
+    void pending.finally(() => {
+      if (this.disclosureCdpInitialization === pending)
+        this.disclosureCdpInitialization = undefined;
+    });
+    return pending;
   }
 
   /**
