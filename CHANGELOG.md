@@ -7,7 +7,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-### Fixed — `policy export` carries the response cap
+## [1.27.4] — 2026-10-26
+
+Maintenance release: two focused fixes. **Upgrading from 1.27.3:**
+
+| Who | What changes |
+| --- | --- |
+| API consumers attaching WebAuthn virtual authenticators (or any sibling CDP domain state) | `observe()` no longer tears it down: the disclosure scan keeps one page-lifetime CDP session instead of minting and detaching per call, so `navigator.credentials.create` ceremonies survive semantic snapshots |
+| Operators migrating to a Cedar policy file | `policy export` now carries `AGENTBROWSER_MAX_RESPONSE_BYTES` in `limits.maxResponseBytes` — a migrated deployment no longer silently falls back to the loader's default response cap |
+
+**Behavior disclosures:** none beyond the two fixes above — both restore intended behavior.
+
+### Fixed — observes no longer kill sibling CDP domain state (#642)
+
+- `disclosuresFromBrowser` minted a CDP session per `observe()` and detached it in `finally`.
+  Detaching a sibling CDP session makes Chromium tear down per-target domain state — including
+  foreign WebAuthn virtual-authenticator environments attached by API consumers — so every
+  semantic snapshot silently killed attached authenticators and stalled any subsequent
+  `navigator.credentials.create` ceremony (observed blocking 15 Anvai Identity browser
+  harnesses). The scan now holds one lazily minted, page-lifetime CDP session, detached only
+  at page close.
+
+### Fixed — `policy export` carries the response cap (#641)
 
 - `policyDocumentFromEnvironment` now maps `AGENTBROWSER_MAX_RESPONSE_BYTES` to the document's
   `limits.maxResponseBytes` (a malformed value fails with the same message startup uses — the
@@ -15,6 +36,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   omitted `limits` entirely, so a migrated deployment silently fell back to the loader's
   default response cap. The parser is now shared with the service startup path
   (`maxResponseBytesFromEnvironment` in `@agentbrowser/policy-engine`).
+
+### Docs — policy migration follow-through (#640)
+
+- The Cedar-policy migration example's Homebrew step now teaches the durable mechanisms (the
+  tap formula's `AGENTBROWSER_POLICY_FILE` stanza + `~/.homebrew/services/formula.env` for
+  secrets) instead of editing the launchd plist, which `brew services` regenerates.
 
 ## [1.27.3] — 2026-10-25
 
