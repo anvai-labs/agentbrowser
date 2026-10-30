@@ -1,5 +1,6 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { EngagementScopeStatusSchema } from './schemas.js';
 
 const choice = <const T extends readonly string[]>(values: T) =>
   Type.Union(values.map((value) => Type.Literal(value as T[number])));
@@ -196,6 +197,9 @@ export type ActionLease = Static<typeof ActionLeaseSchema>;
 
 /** The HTTP session view; distinct from the coordinator's capability-bearing result. */
 export const SessionViewSchema = Type.Object({
+  userAgent: Type.Optional(Type.String()),
+  /** T10 M5: read-only engagement counters for session watchers. */
+  scope: Type.Optional(Type.Pick(EngagementScopeStatusSchema, ['budget', 'rateLimit'])),
   sessionId: Type.String(),
   status: Type.String(),
   engine: Type.Object({ name: Type.String(), version: Type.String() }),

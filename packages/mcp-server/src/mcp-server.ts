@@ -322,6 +322,10 @@ export function buildTools(
         properties: {
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
+          userAgent: {
+            type: 'string',
+            description: 'Explicit research User-Agent; visible in session status.',
+          },
           headless: {
             type: 'boolean',
             description: 'Set false for a visible window on the server host; defaults to headless.',
@@ -497,6 +501,7 @@ export function buildTools(
         const request: SessionRequest = { tenantId: args.tenantId };
         if (typeof args.cdpAttach === 'boolean') request.cdpAttach = args.cdpAttach;
         if (typeof args.engine === 'string') request.engine = args.engine;
+        if (typeof args.userAgent === 'string') request.userAgent = args.userAgent;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
         if (typeof args.idleTimeoutMs === 'number') request.idleTimeoutMs = args.idleTimeoutMs;

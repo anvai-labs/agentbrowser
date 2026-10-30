@@ -38,7 +38,7 @@ export type {
  */
 /** One request outcome, origin+path only (T10 M2 engagement ledger). */
 export interface EngineRequestRecord {
-  type: 'request.finished' | 'request.failed';
+  type: 'request.finished' | 'request.failed' | 'request.headersInjected';
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -57,6 +57,7 @@ export interface EngineSessionOptions {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  userAgent?: string;
   /**
    * Seed cookies injected into the session's context before first navigation.
    * Lets a caller reuse an already-authenticated session (e.g. to skip an
@@ -106,6 +107,9 @@ export interface EngineSessionOptions {
  * throwing means ALLOW.
  */
 export interface RequestPolicy {
+  /** Destination-specific research markers; apply before policy checks and dispatch. */
+  headersForRequest?(hostname: string, headers: Record<string, string>): Record<string, string>;
+  injectedHeaderNames?(hostname: string): string[];
   /**
    * `method` and `headers` are additive, optional context the Playwright
    * engine passes at the choke point (initial request and per redirect
@@ -169,6 +173,8 @@ export interface NavigationRequest {
  * Navigation result
  */
 export interface NavigationResult {
+  /** T10 M5: scope denials attributed to this page during navigation. */
+  scopeDenials?: Record<string, number>;
   status: 'success' | 'timeout' | 'blocked';
   url: string;
   redirectChain: string[];

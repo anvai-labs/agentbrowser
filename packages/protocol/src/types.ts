@@ -62,6 +62,8 @@ export interface SessionRequest {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  /** T10 M5: explicit research user-agent override. */
+  userAgent?: string;
   /**
    * Seed cookies injected into the session before first navigation, to reuse
    * an already-authenticated session (e.g. bypass an SSO / device-trust login
@@ -144,6 +146,7 @@ export interface EngagementScope {
   /** Total choke-point requests in scope, redirect hops included. */
   requestBudget?: number;
   identityBindings?: ScopeIdentityBinding[];
+  requestHeaders?: Array<{ header: string; value: string; hostSuffix?: string }>;
   /** T10 M2: record the engagement in a hash-chained, metadata-only ledger (needs AGENTBROWSER_ENGAGEMENT_DIR). */
   ledger?: boolean;
   /** T10 M3: hosts (exact or ".suffix") removed from scope even when allowed. */
@@ -247,6 +250,8 @@ export interface EngineCapabilities {
   supportsCdpAttach?: boolean;
   /** T10 M2: reports every request outcome through `EngineSessionOptions.requestRecorder`. */
   requestRecording?: boolean;
+  requestHeaderInjection?: boolean;
+  userAgentOverride?: boolean;
   supportedObservationModes: ObservationMode[];
   supportedActionTypes: ActionType[];
   /**
@@ -965,6 +970,7 @@ export interface ActionResult {
  * Navigation status
  */
 export interface NavigationStatus {
+  scopeDenials?: Record<string, number>;
   status: 'success' | 'timeout' | 'blocked';
   url: string;
   redirectChain: string[];

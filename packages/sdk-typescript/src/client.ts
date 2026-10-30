@@ -124,6 +124,8 @@ export interface NavigationRequest {
 }
 
 export interface NavigationResponse {
+  scopeDenials?: Record<string, number>;
+  scope?: import('@agentbrowser/protocol').ScopeDenialCode;
   status: string;
   url: string;
   redirectChain: string[];
