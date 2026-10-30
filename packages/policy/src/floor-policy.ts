@@ -10,6 +10,8 @@ export interface RequestPolicyChain {
     url: string;
     method?: string;
     headers?: Record<string, string>;
+    resourceType?: string;
+    initiatorHost?: string;
   }): Promise<void>;
   checkRedirectChain?(
     requests: Array<{ url: string; hostname?: string; method?: string }>

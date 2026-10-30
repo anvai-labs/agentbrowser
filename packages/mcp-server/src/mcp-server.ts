@@ -1,3 +1,4 @@
+import { EngagementScopeSchema } from '@agentbrowser/protocol';
 /**
  * AgentBrowser MCP server (ADR-009)
  *
@@ -52,7 +53,6 @@ import {
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
-  SCOPE_HOST_PATTERN,
   ScopeToolResultSchema,
   ScreenshotRequestSchema,
   SessionClosedResultSchema,
@@ -228,18 +228,6 @@ const FINDING_INPUT_PROPERTIES: Record<string, unknown> = {
   },
 };
 
-/** One path rule, shared by the scope schema's pathRules and excludePaths arrays:
- * a segment-boundary prefix, optionally narrowed to one host subtree. */
-const PATH_RULE_ITEM: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-    prefix: { type: 'string', minLength: 1, pattern: '^/' },
-  },
-  required: ['prefix'],
-  additionalProperties: false,
-};
-
 /** The ok:false + issues branch both finding tools advertise — the output-schema twin of
  * readCheckedFindings' failure value, so schema and handler cannot drift apart. */
 const FINDING_FAILURE_SCHEMA: Record<string, unknown> = {
@@ -292,7 +280,8 @@ async function readCheckedFindings(args: Record<string, unknown>) {
 export function buildTools(
   client: McpClient,
   boundSessionId?: string,
-  artifactDirectory?: string
+  artifactDirectory?: string,
+  mode?: AgentMode
 ): ToolDefinition[] {
   const captureResult = async (sessionId: string, artifact: ArtifactRef, inline: unknown) => {
     if (inline !== undefined && typeof inline !== 'boolean')
@@ -320,6 +309,11 @@ export function buildTools(
       inputSchema: {
         type: 'object',
         properties: {
+          mode: {
+            type: 'string',
+            enum: ['bounty'],
+            description: 'Contained bounty defaults; CDP remains unenforced.',
+          },
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           userAgent: {
@@ -390,106 +384,7 @@ export function buildTools(
               'response marks this with degraded: true when it happens. Raise this for a ' +
               'session known to navigate large/complex forms (many fields, custom comboboxes).',
           },
-          scope: {
-            type: 'object',
-            description:
-              'T7 engagement scope for authorized security testing: the outermost restrict-only ' +
-              'layer of the session policy chain, enforced per request and per redirect hop. ' +
-              'Fields: allowedHosts (required, exhaustive entries — a bare bounded domain like ' +
-              'example.com covers itself and its subdomains; .example.com is subdomains-only), pathRules ' +
-              '[{hostSuffix?, prefix}] (segment-boundary prefixes), allowedMethods, expiresAt ' +
-              '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
-              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts), ledger ' +
-              '(operator-configured engagement ledger). Narrowing only: excludeHosts, ' +
-              'excludePaths [{hostSuffix?, prefix}], allowedSchemes, allowedPorts, rateLimit ' +
-              '{requests, perSeconds} (paces up to 15 s, then SCOPE_RATE_LIMITED); program ' +
-              '{id, version?, authorizedBy, authorizedAt} is recorded, never enforced. Unknown ' +
-              'fields are refused. Refused together with allowServiceWorkers: true, a lane the ' +
-              'scope cannot check.',
-            properties: {
-              allowedHosts: {
-                type: 'array',
-                items: { type: 'string', minLength: 1 },
-                minItems: 1,
-              },
-              pathRules: {
-                type: 'array',
-                items: { ...PATH_RULE_ITEM },
-                minItems: 1,
-              },
-              allowedMethods: {
-                type: 'array',
-                items: { type: 'string', minLength: 1 },
-                minItems: 1,
-              },
-              expiresAt: { type: 'number', minimum: 0 },
-              requestBudget: { type: 'number', minimum: 1 },
-              identityBindings: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    header: { type: 'string', minLength: 1 },
-                    value: { type: 'string', minLength: 1 },
-                    allowedHosts: {
-                      type: 'array',
-                      items: { type: 'string', minLength: 1 },
-                      minItems: 1,
-                    },
-                  },
-                  required: ['header', 'value', 'allowedHosts'],
-                },
-                minItems: 1,
-              },
-              ledger: { type: 'boolean' },
-              excludeHosts: {
-                type: 'array',
-                items: { type: 'string', minLength: 1, pattern: SCOPE_HOST_PATTERN },
-                minItems: 1,
-              },
-              excludePaths: {
-                type: 'array',
-                items: { ...PATH_RULE_ITEM },
-                minItems: 1,
-              },
-              allowedSchemes: {
-                type: 'array',
-                items: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9+.-]*$' },
-                minItems: 1,
-              },
-              allowedPorts: {
-                type: 'array',
-                items: { type: 'integer', minimum: 1, maximum: 65535 },
-                minItems: 1,
-              },
-              rateLimit: {
-                type: 'object',
-                properties: {
-                  requests: { type: 'integer', minimum: 1, maximum: 10000 },
-                  perSeconds: { type: 'integer', minimum: 1, maximum: 3600 },
-                },
-                required: ['requests', 'perSeconds'],
-                additionalProperties: false,
-              },
-              program: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string', minLength: 1, maxLength: 200 },
-                  version: { type: 'string', minLength: 1, maxLength: 200 },
-                  authorizedBy: { type: 'string', minLength: 1, maxLength: 200 },
-                  authorizedAt: {
-                    type: 'string',
-                    maxLength: 64,
-                    pattern:
-                      '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
-                  },
-                },
-                required: ['id', 'authorizedBy', 'authorizedAt'],
-                additionalProperties: false,
-              },
-            },
-            required: ['allowedHosts'],
-          },
+          scope: EngagementScopeSchema,
         },
         required: ['tenantId'],
       },
@@ -499,6 +394,7 @@ export function buildTools(
           throw new UsageError('tenantId is required and must be a non-empty string.');
         }
         const request: SessionRequest = { tenantId: args.tenantId };
+        if (args.mode === 'bounty' || mode === 'bounty') request.mode = 'bounty';
         if (typeof args.cdpAttach === 'boolean') request.cdpAttach = args.cdpAttach;
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.userAgent === 'string') request.userAgent = args.userAgent;
@@ -1524,7 +1420,12 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
   const mode = deps.mode ?? DEFAULT_AGENT_MODE;
-  const tools = buildTools(client, deps.sessionId || undefined, deps.artifactDirectory).filter(
+  const tools = buildTools(
+    client,
+    deps.sessionId || undefined,
+    deps.artifactDirectory,
+    mode
+  ).filter(
     (tool) =>
       toolAvailable(mode, tool) &&
       // cookie_handoff is dropped when bound for the same reason as

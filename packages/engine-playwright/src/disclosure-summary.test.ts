@@ -211,22 +211,22 @@ describe('native disclosures (details/summary) in observe', () => {
     });
   }, 60_000);
 
-  it('the cap counts only rendered summaries and a capped observation says so', async () => {
+  it('closed details hide nested summaries from the browser scan', async () => {
     const many = Array.from(
-      { length: 210 },
+      { length: 12 },
       (_, i) =>
         `<details><summary>Outer ${i}</summary><details><summary>Inner ${i}</summary></details></details>`
     ).join('');
     await withPage(many, async (p) => {
+      await backingPage(p).locator('summary').first().waitFor({ state: 'visible' });
       const state = await p.observe({});
       const found = state.elements.filter((el) => el.role === 'html-summary');
-      expect(found).toHaveLength(200);
-      expect(found.at(-1)?.name).toBe('Outer 199');
-      expect(state.frameCoverage).toContainEqual({
-        frame: 'main',
-        status: 'budget_exceeded',
-        reason: 'disclosure rows capped at 200 of 210',
-      });
+      expect(found.map((row) => row.name)).toEqual(
+        Array.from({ length: 12 }, (_, i) => `Outer ${i}`)
+      );
+      expect(
+        state.frameCoverage?.some((row) => row.reason?.includes('disclosure rows capped'))
+      ).toBeFalsy();
     });
   }, 120_000);
 

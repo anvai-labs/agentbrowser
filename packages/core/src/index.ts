@@ -18,6 +18,8 @@ export * from './observation-normalizer.js';
 export * from './observation-projection.js';
 export * from './program-scope-import.js';
 export * from './ring-buffer.js';
+export * from './scope-assets.js';
+export * from './scope-bundles.js';
 export * from './scope-request-headers.js';
 export * from './secret-manager.js';
 export * from './session-control.js';

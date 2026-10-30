@@ -117,3 +117,30 @@ it('imports an explicit bounty budget and reports low-budget warnings in human a
   expect((await runCli([...argv, '--pages-planned', '4'])).code).toBe(1);
   expect((await runCli([...argv, '--rate-limit', 'bogus'])).code).toBe(1);
 });
+
+it('imports explicit asset bundles without extending program targets or restoring excluded hosts', async () => {
+  const input = file('bundle.txt', 'app.example.com\n- cdn.cookielaw.org\n');
+  const result = await runCli([
+    '--json',
+    'scope',
+    'import',
+    input,
+    '--from',
+    'text',
+    '--asset-bundle',
+    'retail,sso',
+  ]);
+  expect(result.code).toBe(0);
+  const parsed = JSON.parse(result.out);
+  expect(parsed.scope.allowedHosts).toEqual(['app.example.com']);
+  expect(parsed.scope.assetHosts.every((entry: { class: string }) => entry.class === 'asset')).toBe(
+    true
+  );
+  expect(
+    parsed.scope.assetHosts.some((entry: { host: string }) => entry.host === 'cdn.cookielaw.org')
+  ).toBe(false);
+  expect(parsed.warnings.join(' ')).toContain('not testing authorization');
+  expect(
+    (await runCli(['scope', 'import', input, '--from', 'text', '--asset-bundle', 'unknown'])).code
+  ).not.toBe(0);
+});

@@ -94,6 +94,25 @@ export class EngagementLedger {
     return this.unavailable ?? 'open';
   }
 
+  /** Authority changes need an acknowledged, synced record, not a queued intent. */
+  async appendCritical(type: string, data: Record<string, unknown>): Promise<void> {
+    if (this.closed || this.unavailable !== undefined)
+      throw new Error('Engagement ledger unavailable');
+    const before = this.seq;
+    this.append(type, data);
+    await this.writes;
+    if (this.closed || this.unavailable !== undefined || this.seq <= before)
+      throw new Error('Engagement ledger unavailable');
+    try {
+      await this.handle.sync();
+    } catch {
+      this.markUnavailable('write_failed');
+      throw new Error('Engagement ledger unavailable');
+    }
+    if (this.closed || this.unavailable !== undefined)
+      throw new Error('Engagement ledger unavailable');
+  }
+
   /** Appends one record, in call order. Never throws; failures fail the scope closed. */
   append(type: string, data: Record<string, unknown>): void {
     if (this.closed) return;

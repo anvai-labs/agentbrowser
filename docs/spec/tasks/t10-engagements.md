@@ -74,3 +74,19 @@ automatic submission or outside communication of findings.
 | M2: ledger release smoke; crash-path ordering | `scope-consumer-smoke.mjs` ledger check (export over REST, CLI verify, edited copy refused); crash keeps close-time records |
 | M5: first bounty run polish | explicit import sizing and low-budget warnings; page-local scope denial counts on navigation failure; scope pacing/budget counters in session views; `engagement export --force`; headed-directory and CLI page cadence guidance |
 | M5: research traffic identity | [design](../design/t10-research-traffic-identity.md); custom scope `requestHeaders`, per-hop injection/stripping and hashed ledger configuration; session `userAgent`; unsupported lanes refused. Colocated policy, API and real-Chromium fixture tests cover validation, wire behavior and evidence |
+
+## B1–B6: operator-first bounty workflow (unreleased)
+
+Implementation follows the [operator workflow design](../design/t10-bounty-operator-workflow.md)
+in order: bounty defaults; operator-only evidence state transfer (ADR-027);
+denied-host summaries and offline asset adoption; live asset append (ADR-028);
+opt-in import bundles; two-window operations guidance. Only asset hosts may append;
+program targets and other scope constraints stay fixed. This is an explicit operator
+grant within immutable outer network layers, not an agent capability or policy-reload relaxation.
+
+Qualification covers exact-origin cookies/localStorage, private hash-only ledger
+records, operator/tenant/unknown-field refusals, hidden-target cleanup and bounded
+initialization, amendment revision and critical-write failures, static-only dispatch,
+asset credential/marker stripping, exclusion preservation and same-page live append.
+Local Chromium receivers exercise actual transfer and denied asset hops. Full-suite
+and independent adversarial review are merge gates, not inferred from isolated tests.

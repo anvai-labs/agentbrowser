@@ -4,6 +4,8 @@ import {
   type ScopePathRule,
   validateEngagementScope,
 } from '@agentbrowser/protocol';
+import { hostPatternsOverlap } from './domain-matcher.js';
+import { scopeBundleHosts } from './scope-bundles.js';
 import { tldts } from './tldts-lazy.js';
 
 /**
@@ -40,6 +42,7 @@ export type ProgramScopeImport =
   | { ok: false; error: string; report: ProgramScopeEntry[] };
 
 export interface ProgramScopeMeta {
+  assetBundles?: string[];
   requestBudget?: number;
   pagesPlanned?: number;
   rateLimit?: { requests: number; perSeconds: number };
@@ -197,14 +200,6 @@ function classify(raw: string): Classified {
 const covered = (p: string, full: string[]): boolean =>
   full.some((f) => f === p || (f.startsWith('.') && p.endsWith(f)));
 
-/** Do two host patterns admit at least one common host? */
-const overlaps = (a: string, b: string): boolean => {
-  if (!a.startsWith('.') && !b.startsWith('.')) return a === b;
-  if (!a.startsWith('.')) return a.endsWith(b);
-  if (!b.startsWith('.')) return b.endsWith(a);
-  return a.endsWith(b) || b.endsWith(a);
-};
-
 export function importProgramScope(
   input: string,
   format: ProgramScopeFormat,
@@ -269,6 +264,13 @@ export function importProgramScope(
       allowedHosts.push(item.pattern);
   if (allowedHosts.length === 0)
     return { ok: false, error: 'nothing in scope can be expressed', report };
+  const assetHosts = scopeBundleHosts(meta.assetBundles ?? []).filter(
+    (asset) =>
+      !allowedHosts.some((host) => hostPatternsOverlap(host, asset.host)) &&
+      !exclusions.some(
+        (entry) => entry.path === undefined && hostPatternsOverlap(entry.pattern, asset.host)
+      )
+  );
   const pathRules: ScopePathRule[] = [];
   for (const item of accepted) {
     const entry = report[item.index] as ProgramScopeEntry;
@@ -295,7 +297,11 @@ export function importProgramScope(
   const excludePaths: ScopePathRule[] = [];
   for (const item of exclusions) {
     const entry = report[item.index] as ProgramScopeEntry;
-    if (!allowedHosts.some((allowed) => overlaps(item.pattern, allowed))) {
+    if (
+      ![...allowedHosts, ...assetHosts.map((a) => a.host)].some((allowed) =>
+        hostPatternsOverlap(item.pattern, allowed)
+      )
+    ) {
       entry.decision = 'ignored';
       entry.note = 'already outside the scope';
       continue;
@@ -322,6 +328,7 @@ export function importProgramScope(
     ...(requestBudget !== undefined ? { requestBudget } : {}),
     ...(meta.rateLimit !== undefined ? { rateLimit: { ...meta.rateLimit } } : {}),
     allowedHosts,
+    ...(assetHosts.length ? { assetHosts } : {}),
     ...(pathRules.length > 0 ? { pathRules } : {}),
     allowedSchemes: schemes,
     // Every accepted entry is on its scheme's default port (per-host ports are refused).
@@ -354,11 +361,17 @@ export function importProgramScope(
     ok: true,
     scope,
     report,
-    warnings:
-      requestBudget !== undefined && requestBudget < 150
+    warnings: [
+      ...(requestBudget !== undefined && requestBudget < 150
         ? [
             'A single JS-heavy page load consumes 50–120 requests; budget counts every subrequest and redirect hop. Plan about pages × 120 requests, with at least 150 for one page.',
           ]
-        : [],
+        : []),
+      ...(meta.assetBundles?.length
+        ? [
+            'Asset bundles are optional support-host suggestions, not testing authorization. Only static GET/HEAD resources are admitted; navigation, fetch/XHR and interactive SSO/captcha remain operator-browser work.',
+          ]
+        : []),
+    ],
   };
 }

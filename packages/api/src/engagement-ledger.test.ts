@@ -32,6 +32,38 @@ async function ledgerWith(maxBytes = 1024 * 1024) {
 }
 
 describe('engagement ledger (T10 M2)', () => {
+  it('acknowledges critical records only after persistence and refuses closed ledgers', async () => {
+    const { ledger } = await ledgerWith();
+    await ledger.appendCritical('scope.amended', { revision: 1 });
+    expect(await readFile(ledger.path, 'utf8')).toContain('scope.amended');
+    await ledger.close({});
+    await expect(ledger.appendCritical('scope.amended', { revision: 2 })).rejects.toThrow();
+  });
+  it('refuses a critical authority change when fsync fails', async () => {
+    const unavailable: string[] = [];
+    const ledger = await EngagementLedger.open(
+      {
+        directory: await scratch(),
+        tenantId: 'one',
+        maxBytes: 1024 * 1024,
+        onUnavailable: (reason) => unavailable.push(reason),
+        openFile: async () => ({
+          write: async (line) => ({
+            bytesWritten: Buffer.byteLength(line as string),
+            buffer: line,
+          }),
+          sync: async () => {
+            throw new Error('disk failure');
+          },
+          close: async () => {},
+        }),
+      },
+      {}
+    );
+    await expect(ledger.appendCritical('scope.amended', { revision: 1 })).rejects.toThrow();
+    expect(unavailable).toEqual(['write_failed']);
+    await ledger.close({});
+  });
   it('writes a chain that verifies, opened to closed, in a private tenant-scoped file', async () => {
     const { ledger, directory } = await ledgerWith();
     expect(ledger.engagementId).toMatch(ENGAGEMENT_ID);

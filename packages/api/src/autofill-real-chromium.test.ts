@@ -3,9 +3,11 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { setImmediate as settlePublication } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import type { EnginePage } from '@agentbrowser/engine';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
-import { expect, it } from 'vitest';
+import type { Page } from 'playwright';
+import { expect, it, vi } from 'vitest';
 import { runAgentCli } from '../../../scripts/cli-outcome-acceptance.mjs';
 import { buildServer } from './server.js';
 import { openHarness } from './test-support/coexistence-harness.js';
@@ -420,6 +422,31 @@ it('fills three native fields over a large background with an unrelated uncommit
   });
   await new Promise<void>((done) => fixture.listen(0, '127.0.0.1', done));
   const engine = new PlaywrightChromiumEngine();
+  // Hold the request at the page route, before context routing's fetch timeout.
+  // A server that never responds becomes a committed error frame after 30s.
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let held = false;
+  let browserPage!: Page;
+  const createSession = engine.createSession.bind(engine);
+  vi.spyOn(engine, 'createSession').mockImplementation(async (options) => {
+    const session = await createSession(options);
+    const newPage = session.newPage.bind(session);
+    session.newPage = async (...args) => {
+      const page = await newPage(...args);
+      browserPage = (page as EnginePage & { backingPage(): Page }).backingPage();
+      await browserPage.route('**/pending-frame', async (route) => {
+        held = true;
+        await pending;
+        held = false;
+        await route.abort().catch(() => {});
+      });
+      return page;
+    };
+    return session;
+  });
   const service = new AgentBrowserService({
     engine,
     networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
@@ -429,6 +456,17 @@ it('fills three native fields over a large background with an unrelated uncommit
     const { pageId } = await service.createPage(session.sessionId);
     const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
     await service.navigate(session.sessionId, pageId, { url });
+    await expect.poll(() => held, { timeout: 10000 }).toBe(true);
+    expect(held).toBe(true);
+    expect(
+      browserPage
+        .frames()
+        .some(
+          (frame) =>
+            frame !== browserPage.mainFrame() &&
+            (frame.url() === '' || frame.url() === 'about:blank')
+        )
+    ).toBe(true);
     const report = await service.autofill(session.sessionId, pageId, {
       scope: { url },
       fields: [
@@ -462,11 +500,13 @@ it('fills three native fields over a large background with an unrelated uncommit
     ).toBe(true);
     expect(report.receipts.map((r) => r.status)).toEqual(['verified', 'verified', 'verified']);
     expect(report.diagnostics?.stages.find((s) => s.stage === 'dispatch')?.calls).toBe(3);
+    expect(held).toBe(true);
     expect(report.diagnostics?.frameReadiness?.incomplete).toBeGreaterThan(0);
     expect(JSON.stringify(report.diagnostics)).not.toContain('fixture@example.test');
     // Cooperative deadline semantics are covered by deterministic budget tests.
     // This browser regression must also tolerate parallel CI load.
   } finally {
+    release();
     await engine.close();
     fixture.closeAllConnections();
     await new Promise<void>((done) => fixture.close(() => done()));

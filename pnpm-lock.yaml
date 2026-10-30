@@ -185,6 +185,9 @@ importers:
       '@agentbrowser/engagement':
         specifier: workspace:*
         version: link:../engagement
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript

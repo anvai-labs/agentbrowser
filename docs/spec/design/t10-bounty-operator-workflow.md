@@ -1,6 +1,12 @@
 # T10 design: bounty exploration workflow — operator browser first, scoped evidence second
 
-**Status: proposal (2026-10-30). Implementation handoff for Codex.**
+**Status: implemented for review (2026-10-30), T10 B1–B6.**
+B2 is specified by [ADR-027](../../adr/027-evidence-pass-state-transfer.md).
+B4 is narrowed by [ADR-028](../../adr/028-operator-asset-scope-amendments.md):
+only static asset hosts append; program `allowedHosts` remain immutable.
+The three-command acceptance reaches a fresh ledgered evidence context;
+reproduction, close/seal and export are explicit subsequent actions.
+See the [operator guide](../modes/bounty.md).
 Evidence: three live bounty engagements run 2026-10-29/30 (Vercel ×2, Wolt, Vinted
 recon, A&F attempt) plus two program-directory vetting passes, executed with
 agentbrowser 1.28.0 built artifacts. Sealed ledgers referenced below exist under

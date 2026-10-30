@@ -28,6 +28,7 @@ describe('EngagementScopePolicy status and dry-run check', () => {
       method: 'GET',
     });
     expect(scope.status()).toEqual({
+      revision: 0,
       allowedHosts: ['in.example', '.sub.example'],
       pathRules: [{ prefix: '/api' }],
       allowedMethods: ['GET', 'POST'],

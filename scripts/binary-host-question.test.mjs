@@ -145,3 +145,32 @@ test('npm MCP bundle ANSWERS a host question (finding_check over stdio)', async 
   // "cannot be required" error instead).
   assert.ok(text.length > 0, 'finding_check returned no content');
 });
+
+test('standalone CLI adopts explicit assets without node_modules and refuses unobserved approval', async () => {
+  const {copyFileSync} = await import('node:fs');
+  const {ENGAGEMENT_GENESIS, engagementChainHash} = await import('../packages/core/dist/index.js');
+  assert.ok(existsSync(CLI_BIN), 'compile the candidate CLI before this smoke');
+  const dir = mkdtempSync(join(tmpdir(), 'standalone-assets-'));
+  const binary = join(dir, 'agentbrowser');
+  copyFileSync(CLI_BIN, binary);
+  const scope = join(dir, 'scope.json');
+  const ledger = join(dir, 'ledger.jsonl');
+  writeFileSync(scope, JSON.stringify({allowedHosts: ['example.com']}));
+  let prev = ENGAGEMENT_GENESIS;
+  const records = [
+    {type: 'engagement.opened', data: {}},
+    {type: 'request.failed', data: {url: 'https://cdn.example.net/app.js', scope: 'SCOPE_HOST_DENIED', resourceType: 'script'}},
+  ].map((entry, seq) => {
+    const record = {seq, at: '2026-10-30T00:00:00.000Z', ...entry};
+    const hash = engagementChainHash(prev, JSON.stringify(record));
+    const line = JSON.stringify({...record, prev, hash});
+    prev = hash;
+    return line;
+  });
+  writeFileSync(ledger, records.join('\n') + '\n');
+  const options = {cwd: dir, env: {...process.env, NODE_PATH: ''}, encoding: 'utf8', timeout: 30000};
+  assert.throws(() => execFileSync(binary, ['scope','adopt-assets',scope,'--from',ledger,'--approve-hosts','unobserved.example.org'], options));
+  assert.deepEqual(JSON.parse(readFileSync(scope, 'utf8')), {allowedHosts: ['example.com']});
+  execFileSync(binary, ['scope','adopt-assets',scope,'--from',ledger,'--approve-hosts','cdn.example.net'], options);
+  assert.deepEqual(JSON.parse(readFileSync(scope, 'utf8')).assetHosts, [{host:'cdn.example.net', class:'asset'}]);
+});
