@@ -286,7 +286,7 @@ is made for those integrations.
   `updateConfig()` calls affect new sessions, not existing captured generations;
   close/recreate those sessions to apply updated rules, including deny changes.
 
-See the [production integration contract](connection-authority-design.md#t2b2-production-integration-boundary)
+the production integration contract (formerly docs/connection-authority-design.md)
 for policy snapshot and cancellation semantics. Validate custom integrations
 before upgrading. The [release tracker](release-milestones.md) distinguishes
 candidate integration checks from published and installed acceptance; version
@@ -410,7 +410,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug`, `info` (default), `warn` or `error`, case-insensitive. Unknown values print a warning and use `info`. `warn` drops successful-operation lines; `error` also drops failed operations, including policy and approval denials, so alert on the `errors_total` metric rather than on logs at that level. Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF` | service entrypoint | `1` = shut down cleanly (closing all sessions and browsers) when stdin closes. Opt-in lifeline for a supervising launcher: if the launcher is killed, the OS closes the pipe and the server still exits instead of orphaning Chromium. Leave unset under service managers that give the server an empty stdin (it would stop immediately). |
 | `AGENTBROWSER_ALLOW_LOOPBACK` | service entrypoint | Set `1`/`true` to disable the loopback/unspecified-address block (127/8, `0.0.0.0`, `::1`, `::`, `localhost` hostnames) for **all** sessions on this server — local-machine testing against `127.0.0.1` dev servers. Startup-only; session/request input can never set it. **With this set, visited pages can reach every loopback service, including this server's own API: in no-keys local mode that is full unauthenticated control of all sessions; in keyed mode the service is auth-gated but other loopback services are exposed.** Cloud-metadata blocking and session host restrictions still apply. Loud warning at startup. |
-| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. Metadata includes the whole link-local ranges (`169.254.0.0/16`, `fe80::/10`), so a CIDR exception cannot reach link-local devices. See [LAN CIDR policy](HANDOFF-LAN-CIDR-ALLOWLIST.md). |
+| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.50/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. Metadata includes the whole link-local ranges (`169.254.0.0/16`, `fe80::/10`), so a CIDR exception cannot reach link-local devices.  |
 | `AGENTBROWSER_CORS_ORIGINS` | service entrypoint | Comma-separated exact browser origins (`scheme://host[:port]`) allowed to call the API and to receive CORS headers, e.g. `https://console.example`. Unset/blank: none — cross-origin browser requests are refused with `403 FORBIDDEN` and no CORS headers are sent; the same-origin [operator panel](#browser-request-guard) still works. Malformed origins or empty list entries abort startup. `*` disables the origin check (loud warning). Merged with `ServerOptions.corsOrigin`. |
 | `AGENTBROWSER_ALLOWED_HOSTS` | service entrypoint | Comma-separated hostnames (no port) accepted in the `Host` header in addition to loopback names, e.g. `agentbrowser.internal`. Without API keys only loopback names are accepted on **any** bind (DNS-rebinding defense), so Compose/LAN clients that use a container or host name must be listed here; setting the list also enables the Host check on keyed wide binds. See [browser request guard](#browser-request-guard). |
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | service entrypoint | Per-response network byte cap, default 10485760 (10 MiB). Startup-only decimal integer from 1 to 67108864 (64 MiB); unset/blank keeps the default, invalid input aborts startup. Example: 33554432 for large LinkedIn JavaScript bundles. Applies to all sessions on that server; session input cannot raise it. Host/SSRF rules remain intact. Distinct from extraction and download budgets. Playwright buffers before its actual-byte check, so this does not bound peak transport memory. |
@@ -652,7 +652,7 @@ which an export includes).
 Delivery note: the direct-download and captured-download improvements below
 merged into `develop` in [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80).
 This is a partial correction, not browser containment: R4 remains open in the
-[delivery tracker](engineering-review-remediation.md). Integration into `develop`
+delivery tracker (formerly docs/engineering-review-remediation.md). Integration into `develop`
 does not itself publish a release.
 
 Direct URL downloads validate every redirect and resolved address, pin the
@@ -695,7 +695,7 @@ cannot stream through it either. A transport-level fix requires an
 interception layer that can forward WebSockets (OS/CDP-level proxy),
 which the `context.route` fetch/fulfill design cannot provide — the
 candidate mechanisms are gated as failed in
-[egress-transport feasibility](egress-transport-feasibility.md), and
+the egress-transport feasibility study (removed 2026-10), and
 the [threat model](threat-model.md) carries the enforcement-boundary
 caveats (page-routing coverage only, no worker guarantee, explicit
 `off`/no-policy modes unguarded).
@@ -969,7 +969,7 @@ attaches the SSRF default by design), plus the operator `cdp-attach`
 lane, which never installs the WS deny handler and is likewise
 unguarded for WS. If live streaming is a hard
 requirement, track the transport-level replacement in
-[egress-transport feasibility](egress-transport-feasibility.md) — until
+the egress-transport feasibility study (removed 2026-10) — until
 that lands, reload-to-read-final-state or REST polling is the supported
 pattern.
 
@@ -1189,7 +1189,7 @@ authority model and the acceptance fixture
 | Upgrading to 1.15.2 | Observation redaction is engine-side and needs a service restart to take effect; sessions created before the restart keep the old behavior for their lifetime. No client update is required (all new fields are optional). |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |
-| A live-updating SPA never updates (a server-side action completes but the UI stays stale; reloading the page shows the final result) | With any active egress policy — the default SSRF policy included — page WebSocket upgrades are closed outright (close code `1014`, reason `blocked by egress policy`): a Playwright limitation makes allowed-WebSocket forwarding impossible under the fetch/fulfill choke point, so upgrades are denied cleanly instead of failing opaquely. Treat long-running actions as fire-and-reload (or poll a REST endpoint) rather than waiting for push; a page WebSocket closing with `1014` is this behavior, not a site or bot wall. `allowServiceWorkers` restores service-worker transport only, never WebSockets. See the [egress notes](threat-model.md) and [egress-transport feasibility](egress-transport-feasibility.md). |
+| A live-updating SPA never updates (a server-side action completes but the UI stays stale; reloading the page shows the final result) | With any active egress policy — the default SSRF policy included — page WebSocket upgrades are closed outright (close code `1014`, reason `blocked by egress policy`): a Playwright limitation makes allowed-WebSocket forwarding impossible under the fetch/fulfill choke point, so upgrades are denied cleanly instead of failing opaquely. Treat long-running actions as fire-and-reload (or poll a REST endpoint) rather than waiting for push; a page WebSocket closing with `1014` is this behavior, not a site or bot wall. `allowServiceWorkers` restores service-worker transport only, never WebSockets. See the [egress notes](threat-model.md). |
 
 
 ### Windows

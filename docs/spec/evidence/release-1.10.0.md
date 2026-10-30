@@ -116,6 +116,6 @@ passing CI before final delivery closes.
 ## Scope limits
 
 The LAN positive/negative headed qualification is recorded in the
-[CIDR handoff](../../HANDOFF-LAN-CIDR-ALLOWLIST.md). The public additions do not
+CIDR handoff (removed 2026-10). The public additions do not
 complete T4/T6, HTTP publication, durable recovery, production evidence configuration,
 installed external-harness qualification, inbound CIDRs, OIDC or Basic authentication.

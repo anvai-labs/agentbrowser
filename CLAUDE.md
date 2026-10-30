@@ -50,7 +50,6 @@ agentbrowser/
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
 │   ├── td/                # Post-MVP technical designs (TD-BROWSER-5..16)
-│   ├── technical-design.md # MVP implementation plan (historical record)
 │   └── operations.md      # Operator guide
 └── agentbrowser-mvp-spec.md # Complete MVP specification
 ```
@@ -322,14 +321,14 @@ Before making changes that affect security boundaries:
 - **Engine interface**: `packages/engine/src/types.ts`
 - **Session coordination**: `packages/core/src/session-coordinator.ts`
 - **FakeEngine**: `packages/testkit/src/fake-engine.ts`
-- **Technical design**: `docs/technical-design.md` (detailed task breakdown)
 - **MVP spec**: `agentbrowser-mvp-spec.md` (complete product specification)
 
 ## Phase Status
 
-The MVP (TD-001..TD-026, `docs/technical-design.md`) is complete and shipped
-(2026-08); releases are cut from `main` (v1.x). Post-MVP work is tracked in
-`docs/td/` (TD-BROWSER-5..16) and summarized in `CHANGELOG.md`.
+The MVP (TD-001..TD-026) is complete and shipped (2026-08); releases are cut
+from `main` (v1.x). Post-MVP work is tracked in `docs/td/` (TD-BROWSER-5..16)
+and summarized in `CHANGELOG.md`. Historical MVP planning records were
+removed with the 2026-10 interim-docs cleanup (see git history).
 
 ## Debugging Tips
 
@@ -372,8 +371,6 @@ const session = await engine.createSession({});
 ## Related Documentation
 
 - **README.md**: Project overview and quick start
-- **docs/technical-design.md**: Detailed implementation plan with task breakdown
-- **docs/implementation-roadmap.md**: Historical MVP planning record (progress history: docs/phase1-progress.md; current status: CHANGELOG.md)
 - **docs/adr/*.md**: Architecture decision records
 - **agentbrowser-mvp-spec.md**: Complete MVP specification with principles and invariants
 

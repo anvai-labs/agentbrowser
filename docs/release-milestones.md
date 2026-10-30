@@ -199,7 +199,7 @@ hold verified local-mode fixes for the gateway/containment program.
 | Milestone | Cohesive scope | Promotion / release condition | Version guidance |
 | --- | --- | --- | --- |
 | M1: local reliability checkpoint | T2b0–T2b2, reviewed snapshot resilience, packaged/installed acceptance checks | Snapshot and smoke units independently reviewed and merged; exact candidate and post-merge CI green; release gates below satisfied | Owner selected `v1.8.5` with explicit additive-API exception and custom-policy migration notice |
-| M2: gateway design checkpoint | [T2c authentication, ownership, revocation, resource bounds and integration contract](session-gateway-m2-scope.md) | Complete: [PR 103](https://github.com/anvai-labs/agentbrowser/pull/103), two clean independent reviews, eight green PR checks, merge `46807ea`; docs-only post-merge push skips CI by design | No release solely for a design document or unused internal primitive |
+| M2: gateway design checkpoint | T2c authentication, ownership, revocation, resource bounds and integration contract (removed 2026-10) | Complete: [PR 103](https://github.com/anvai-labs/agentbrowser/pull/103), two clean independent reviews, eight green PR checks, merge `46807ea`; docs-only post-merge push skips CI by design | No release solely for a design document or unused internal primitive |
 | M3: usable opt-in gateway — deferred | Small end-to-end gateway capability with installation, lifecycle and cross-session tests | Not a dependency of local functional delivery; requires a new owner decision before resuming | No gateway release planned |
 | M4: contained-browser checkpoint — deferred | Supported browser integration, gateway enforcement and OS-enforced gateway-only egress | Not a dependency of local functional delivery; T1–T4 acceptance still required if containment is later promised | No contained release planned |
 
@@ -221,8 +221,8 @@ Urgent corrective patches can interrupt this sequence when justified.
 If resumed, M4 would pull forward only the necessary OS containment slice of ADR-008. Full
 multi-tenant process/container isolation remains deferred for trusted local
 deployments. Native/Homebrew delivery is not hostile-browser containment.
-The [transport integration contract](transport-integration-contract.md) and
-[remediation tracker](engineering-review-remediation.md) retain the detailed
+The transport integration contract and remediation tracker (both removed
+2026-10) retained the detailed
 security scope; this document tracks release completion, not R4 closure.
 
 ## Local functional pivot: priority and sequence

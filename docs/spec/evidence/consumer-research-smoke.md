@@ -3,7 +3,7 @@
 Status: local candidate validation before commit/PR; no release or installed-harness
 qualification claimed. Base: develop `5ebf820`. Scope: R1–R3 in the
 [consumer intake](../design/consumer-research-intake.md), derived from the
-[field report](../../consumer-field-handoff-2026-09-24.md).
+consumer field report (removed 2026-10).
 
 ## Reproduce before publication
 

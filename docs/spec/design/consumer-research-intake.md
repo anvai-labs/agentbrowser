@@ -15,7 +15,7 @@ merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
  merged in PR #294 (`752da5e`) and shipped in 1.12.0.
  R5b2 [typed disconnect evidence](session-disconnect.md) is an unreleased source candidate
  with a qualified headed process-loss smoke across REST, SDK, CLI and MCP.
-Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
+Source: consumer field report, 2026-09-24 (removed 2026-10).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations
 must not be attributed to that code revision without runtime evidence.
@@ -152,7 +152,7 @@ pre-existing versus newly created pages, what may be instrumented, whether detac
 leaves the browser alive, and what is refused when policy cannot be installed.
 Follow [ADR-008](../../adr/008-process-container-isolation.md),
 [ADR-005](../../adr/005-ephemeral-sessions-explicit-persistence.md) and
-[shared infrastructure](../../shared-session-infrastructure.md).
+the shared infrastructure design (removed 2026-10).
 Reconnection must revalidate attachment identity and obtain current authority; it
 never restores an old grant or automatically repeats an ambiguous operation.
 

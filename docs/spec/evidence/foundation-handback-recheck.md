@@ -3,7 +3,7 @@
 Checkpoint: 2026-09-19 America/Chicago (health probe returned 2026-09-20 UTC).
 Rechecked base: `4601e77d4390133ec554c13919b25f0edecf5472`, the PR #222 handback
 merge after code tip `13f1073`. This supersedes stale status observations in the
-[original handback](../../agent-handoffs/handback-foundation-alignment.md).
+original handback (removed 2026-10).
 
 ## Repository, release and machine identity
 

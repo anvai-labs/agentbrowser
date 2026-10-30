@@ -72,6 +72,6 @@ existing primitives reused, incremental memory/dependencies, and a removal path.
 Features have statuses: proposed, implemented, qualified (named surface/backend),
 released (artifact identity). These are separate facts, never one generic checkmark.
 
-The [September 2026 research review](../research/2026-09-browser-agents/README.md)
+The September 2026 research review (removed 2026-10)
 maps current browser-agent literature to bounded experiments over these owners.
 It is optional engineering context, not a runtime dependency or evidence of delivery.

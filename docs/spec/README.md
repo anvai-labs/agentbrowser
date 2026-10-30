@@ -155,7 +155,7 @@ This is the current cross-mode design proposal, extending the historical
 defined by protocol source and qualified tests; new behavior requires explicit
 versioned migration. Existing [engine qualifications](../engines.md),
 [bulk autofill limits](../bulk-autofill.md), and
-[transport deferrals](../transport-integration-contract.md) remain factual limits.
+the transport deferrals (formerly docs/transport-integration-contract.md) remain factual limits.
 This proposal does not restart the deferred browser-egress gateway project.
 
 Invariant IDs in core are normative for this design. Detailed modules refine them
