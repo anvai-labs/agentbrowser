@@ -23,6 +23,7 @@
   "dependencies": {
     "@agentbrowser/core": "workspace:^",
     "@agentbrowser/engagement": "workspace:*",
+    "@agentbrowser/protocol": "workspace:*",
     "@agentbrowser/sdk-typescript": "workspace:*",
     "commander": "^15.0.0"
   },

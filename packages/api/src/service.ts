@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
+import { type DeniedHostSummary, summarizeDeniedHosts } from '@agentbrowser/core';
 import {
   isNavigationFailureReason,
   isScopeDenialCode,
@@ -7,8 +8,12 @@ import {
   type NavigationFailureReason,
   navigationFailureDetailFromParts,
   sessionLeaseRemainingMs,
+  validateScopeAssetAmendment,
 } from '@agentbrowser/protocol';
+import { applyBountyDefaults, bountyPacing } from './bounty-defaults.js';
 import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
+import { evidenceLifetime } from './evidence-lifetime.js';
+import { evidenceOrigins, evidenceStateDigest, filterEvidenceState } from './evidence-state.js';
 import {
   attachRequestHasOptions,
   type CdpAttachAdmission,
@@ -209,6 +214,7 @@ export class ServiceError extends Error {
 }
 
 export interface ServiceSessionRequest {
+  mode?: 'bounty';
   cdpAttach?: boolean;
   controlMode?: 'delegated';
   tenantId?: string;
@@ -469,6 +475,7 @@ export interface ServiceEvidenceReviewContext {
 export type SessionEventPage = Omit<SessionEventsPage, 'events'> & { events: EngineEvent[] };
 
 export interface ServiceDependencies {
+  defaultMode?: 'bounty';
   /** Trusted startup capability. Absent means disabled. */
   cdpAttachAdmission?: CdpAttachAdmission;
   /**
@@ -807,6 +814,7 @@ export class AgentBrowserService {
   readonly applicationAuthority: ApplicationAuthority;
   private readonly controlledContexts = new WeakSet<SessionContext>();
   private readonly cdpAttachAdmission: CdpAttachAdmission;
+  private readonly bountyDefaults: { mode?: 'bounty'; ttlMs?: number; idleTimeoutMs?: number };
   private readonly engine: BrowserEngine;
   private readonly extractMaxBytes: number;
   private readonly engines: Map<string, BrowserEngine> = new Map();
@@ -855,6 +863,12 @@ export class AgentBrowserService {
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
   private readonly sessionUserAgents = new Map<string, string>();
   /** Each scoped session's engagement scope, for status and dry-run checks (T10 M2). */
+  private readonly assetClassified = new Set<string>();
+  private readonly deniedHosts = new Map<
+    string,
+    { hosts: DeniedHostSummary[]; truncated: boolean }
+  >();
+  private readonly initializingEvidence = new Set<string>();
   private readonly sessionScopes = new Map<string, EngagementScopePolicy>();
   /** Each ledgered session's engagement ledger (T10 M2). */
   private readonly sessionLedgers = new Map<string, EngagementLedger>();
@@ -918,6 +932,13 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.bountyDefaults = {
+      ...(deps.defaultMode ? { mode: deps.defaultMode } : {}),
+      ...(deps.defaultTtlMs !== undefined ? { ttlMs: deps.defaultTtlMs } : {}),
+      ...(deps.defaultIdleTimeoutMs !== undefined
+        ? { idleTimeoutMs: deps.defaultIdleTimeoutMs }
+        : {}),
+    };
     this.operationJournal = deps.operationJournal;
     this.historyJournals = (deps.historyJournals ?? []).map((entry) => entry.journal);
     this.refusedHistoryNamespaces = [...(deps.refusedHistoryNamespaces ?? [])];
@@ -1113,6 +1134,9 @@ export class AgentBrowserService {
    * reintroduce the leak class TD-BROWSER-9 (A8) closed.
    */
   private deleteSessionState(sessionId: string): void {
+    this.initializingEvidence.delete(sessionId);
+    this.deniedHosts.delete(sessionId);
+    this.assetClassified.delete(sessionId);
     this.authority.remove(sessionId);
     this.downloads.get(sessionId)?.revoke(new ServiceError('SESSION_NOT_FOUND', 'Session closed'));
     this.downloads.delete(sessionId);
@@ -1731,6 +1755,97 @@ export class AgentBrowserService {
     return this.scopeOf(sessionId).status();
   }
 
+  /** ADR-028. The authenticated operator request is the explicit grant for these assets. */
+  async amendScopeAssets(
+    sessionId: string,
+    input: import('@agentbrowser/protocol').ScopeAssetAmendment,
+    principal: SessionPrincipal
+  ): Promise<EngagementScopeStatus> {
+    if (principal.actor !== 'human-operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+    const owner = this.coordinator.inspect(sessionId)?.context;
+    if (!owner || owner.metadata.tenantId !== principal.tenant)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    const checked = validateScopeAssetAmendment(input);
+    if (!checked.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid scope asset amendment');
+    const request = structuredClone(checked.value);
+    return this.serializeHandoff(sessionId, async () => {
+      const current = () => {
+        if (owner.signal.aborted || this.coordinator.inspect(sessionId)?.context !== owner)
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during amendment');
+      };
+      current();
+      if (!this.assetClassified.has(sessionId))
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The selected engine cannot classify asset requests'
+        );
+      const scope = this.scopeOf(sessionId);
+      if ((scope.status().revision ?? 0) !== request.expectedRevision)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'Scope revision changed; re-read before approving',
+          false,
+          { rule: 'scope.amendment.revision' }
+        );
+      const ledger = this.sessionLedgers.get(sessionId);
+      if (ledger?.state !== 'open')
+        throw new ServiceError(
+          'POLICY_DENIED',
+          'Scope amendment requires an open engagement ledger',
+          false,
+          { scope: 'SCOPE_LEDGER_UNAVAILABLE' }
+        );
+      let evidence: Record<string, unknown> | undefined;
+      try {
+        const status = await scope.appendAssets(
+          request.assetHosts,
+          request.expectedRevision,
+          async (next) => {
+            evidence = {
+              expectedRevision: request.expectedRevision,
+              ...next,
+              authorizedBy: 'human-operator',
+              tenantId: principal.tenant,
+              policyVersion: this.policyVersion ?? 'legacy',
+            };
+            await ledger.appendCritical('scope.amendment.authorized', evidence);
+            current();
+          }
+        );
+        if (evidence) await ledger.appendCritical('scope.amendment.completed', evidence);
+        current();
+        return status;
+      } catch (error) {
+        if (evidence !== undefined || ledger.state !== 'open') scope.stop('amendment incomplete');
+        if (evidence !== undefined && !(error instanceof Error && 'code' in error))
+          throw new ServiceError(
+            'POLICY_DENIED',
+            'Scope amendment could not be durably completed',
+            false,
+            { scope: 'SCOPE_LEDGER_UNAVAILABLE', rule: 'scope.amendment.commit' }
+          );
+        throw this.mapError(error);
+      }
+    });
+  }
+
+  getScopeDenied(sessionId: string): import('@agentbrowser/protocol').ScopeDeniedSummary {
+    this.requireSession(sessionId);
+    this.scopeOf(sessionId);
+    const result = this.deniedHosts.get(sessionId);
+    if (!result)
+      throw new ServiceError(
+        'ENGINE_UNSUPPORTED',
+        'The selected engine cannot summarize request denials'
+      );
+    return structuredClone({
+      hosts: [...result.hosts].sort(
+        (a, b) => b.count - a.count || a.hostname.localeCompare(b.hostname)
+      ),
+      truncated: result.truncated,
+    });
+  }
+
   /** Dry run: would the scope rules allow this request now? Spends nothing, counts nothing. */
   checkScope(
     sessionId: string,
@@ -1748,7 +1863,11 @@ export class AgentBrowserService {
     return scope.check({ url: parsed.href, ...(request.method ? { method: request.method } : {}) });
   }
 
-  async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
+  async createSession(
+    requestInput: ServiceSessionRequest,
+    initialize?: (id: string, engineSession: EngineSession) => Promise<void>
+  ): Promise<ServiceSessionView> {
+    const input = applyBountyDefaults(requestInput, this.bountyDefaults);
     if (
       input.userAgent !== undefined &&
       (typeof input.userAgent !== 'string' || !/^[\x20-\x7e]{1,512}$/.test(input.userAgent))
@@ -1801,7 +1920,9 @@ export class AgentBrowserService {
           {
             rule: issues.some((issue) => issue.startsWith('requestHeaders'))
               ? 'scope.requestHeaders.invalid'
-              : 'scope.unbound',
+              : issues.some((issue) => issue.startsWith('assetHosts'))
+                ? 'scope.assets.invalid'
+                : 'scope.unbound',
           }
         );
     }
@@ -1876,6 +1997,13 @@ export class AgentBrowserService {
       };
       const engine = this.resolveEngine(request.engine);
       const capabilities = await engine.capabilities();
+      if (request.scope?.assetHosts?.length && capabilities.assetRequestClassification !== true)
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The selected engine cannot classify static asset requests',
+          false,
+          { rule: 'scope.assets.engine' }
+        );
       if (
         request.scope?.requestHeaders !== undefined &&
         capabilities.requestHeaderInjection !== true
@@ -1903,21 +2031,33 @@ export class AgentBrowserService {
               pending: [] as EngineRequestRecord[],
             }
           : undefined;
-      if (ledgerFeed !== undefined) {
-        if ((await engine.capabilities()).requestRecording !== true)
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            'The selected engine cannot record every request outcome, so it cannot keep an engagement ledger.',
-            false,
-            { rule: 'scope.ledger.engine' }
-          );
+      const denied = { hosts: [] as DeniedHostSummary[], truncated: false };
+      if (ledgerFeed && capabilities.requestRecording !== true)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'The selected engine cannot keep an engagement ledger',
+          false,
+          { rule: 'scope.ledger.engine' }
+        );
+      if (request.scope && capabilities.requestRecording === true) {
         engineRequest.requestRecorder = (record) => {
           const redacted: EngineRequestRecord = {
             ...record,
             data: this.secretManager.redactUntrusted(record.data) as Record<string, unknown>,
           };
-          if (ledgerFeed.ledger !== undefined) ledgerRecord(ledgerFeed.ledger, redacted);
-          else ledgerFeed.pending.push(redacted);
+          for (const entry of summarizeDeniedHosts([redacted]).hosts) {
+            const previous = denied.hosts.find((row) => row.hostname === entry.hostname);
+            if (previous) {
+              previous.count += entry.count;
+              for (const [code, n] of Object.entries(entry.codes))
+                previous.codes[code] = (previous.codes[code] ?? 0) + n;
+              for (const [type, n] of Object.entries(entry.resourceTypes))
+                previous.resourceTypes[type] = (previous.resourceTypes[type] ?? 0) + n;
+            } else if (denied.hosts.length < 256) denied.hosts.push(entry);
+            else denied.truncated = true;
+          }
+          if (ledgerFeed?.ledger) ledgerRecord(ledgerFeed.ledger, redacted);
+          else if (ledgerFeed) ledgerFeed.pending.push(redacted);
         };
       }
       // TD-BROWSER-15: every capability this session asks for must be granted.
@@ -1966,7 +2106,11 @@ export class AgentBrowserService {
           : hostPolicy;
       // TD-BROWSER-15 phase 0: the metadata floor wraps the whole chain, so it
       // holds whatever policy was injected (ADR-024 §1).
-      const sessionPolicy = withMetadataFloor(scopedPolicy);
+      const pacing =
+        request.mode === 'bounty' && !request.cdpAttach && !request.scope
+          ? bountyPacing(scopedPolicy)
+          : undefined;
+      const sessionPolicy = withMetadataFloor(pacing?.policy ?? scopedPolicy);
 
       let allocation: Awaited<ReturnType<SessionCoordinator['createOwned']>>;
       try {
@@ -1983,10 +2127,12 @@ export class AgentBrowserService {
           engine
         );
       } catch (error) {
+        pacing?.stop();
         throw this.mapError(error);
       }
 
       const { response: session, context } = allocation;
+      if (initialize) this.initializingEvidence.add(session.sessionId);
       try {
         const inspection = this.coordinator.inspect(session.sessionId);
         if (
@@ -2034,6 +2180,10 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (capabilities.assetRequestClassification === true)
+          this.assetClassified.add(session.sessionId);
+        if (request.scope && capabilities.requestRecording === true)
+          this.deniedHosts.set(session.sessionId, denied);
         if (request.userAgent !== undefined)
           this.sessionUserAgents.set(session.sessionId, request.userAgent);
         if (scopedPolicy instanceof EngagementScopePolicy)
@@ -2073,8 +2223,11 @@ export class AgentBrowserService {
             ledgerFeed.ledger = ledger;
           }
         }
-        if (sessionDisposer !== undefined)
-          this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
+        if (sessionDisposer !== undefined || pacing !== undefined)
+          this.sessionPolicyDisposers.set(session.sessionId, () => {
+            pacing?.stop();
+            sessionDisposer?.();
+          });
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
         // TD-BROWSER-16 phase 5: the marking and the session's own allowlist
         // (request + engagement scope), which bounds any lease the operator
@@ -2097,10 +2250,12 @@ export class AgentBrowserService {
           ...(request.controlMode !== undefined ? { controlMode: request.controlMode } : {}),
         });
 
+        if (initialize) await initialize(session.sessionId, context.engineSession);
         const finalInspection = this.coordinator.inspect(session.sessionId);
         if (!finalInspection || finalInspection.context !== context || context.signal.aborted) {
           throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
         }
+        this.initializingEvidence.delete(session.sessionId);
         const result = this.sessionView(context, finalInspection.lease, true);
         this.metrics?.incrementCounter('sessions_created_total');
         this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
@@ -2147,7 +2302,178 @@ export class AgentBrowserService {
     return context !== undefined && this.controlledContexts.has(context);
   }
 
+  /** ADR-027. Only the separately authenticated operator route may call this transfer. */
+  async createEvidenceSession(
+    sourceId: string,
+    input: import('@agentbrowser/protocol').EvidencePassRequest,
+    principal: SessionPrincipal
+  ): Promise<ServiceSessionView> {
+    if (principal.actor !== 'human-operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+    if (input.tenantId !== undefined && input.tenantId !== principal.tenant)
+      throw new ServiceError('FORBIDDEN', 'Evidence tenant does not match operator');
+    const source = this.coordinator.inspect(sourceId)?.context;
+    if (!source || source.metadata.tenantId !== principal.tenant)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Source session not found');
+    if (this.sessionScopes.has(sourceId))
+      throw new ServiceError(
+        'FORBIDDEN',
+        'Evidence transfer needs an unscoped operator source',
+        false,
+        { rule: 'floor.evidence.source' }
+      );
+    const request = structuredClone(input);
+    const checked = validateEngagementScope(request.scope);
+    if (!checked.ok || !request.scope.ledger)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'Evidence passes require a valid ledgered scope',
+        false,
+        { rule: 'scope.evidence.ledger' }
+      );
+    this.requireCapability('cookie.seed', principal.tenant);
+    let selected = request.origins;
+    if (!selected) {
+      const urls = await Promise.all(
+        [...this.pages.values()]
+          .filter((p) => p.sessionId === sourceId)
+          .map(async (p) =>
+            p.enginePage.getUrl ? p.enginePage.getUrl() : (await p.enginePage.observe({})).url
+          )
+      );
+      selected = [
+        ...new Set(
+          urls.flatMap((url) => {
+            try {
+              const origin = new URL(url).origin;
+              evidenceOrigins([origin], request.scope);
+              return [origin];
+            } catch {
+              return [];
+            }
+          })
+        ),
+      ];
+    }
+    let origins: string[];
+    try {
+      origins = evidenceOrigins(selected, request.scope);
+    } catch {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'Select exact scope-authorized program origins',
+        false,
+        { rule: 'floor.evidence.origins' }
+      );
+    }
+    for (const origin of origins) {
+      const decision = this.authorizer.decide({
+        action: 'cookie.handoff',
+        context: { domain: new URL(origin).hostname, tenantId: principal.tenant },
+      });
+      if (!decision.allowed)
+        throw new ServiceError('POLICY_DENIED', 'Operator policy denies state transfer', false, {
+          rule: 'floor.evidence.policy',
+        });
+    }
+    const current = () => {
+      if (source.signal.aborted || this.coordinator.inspect(sourceId)?.context !== source)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Source session ended during transfer');
+    };
+    current();
+    const captureState = source.engineSession.captureEvidenceState?.bind(source.engineSession);
+    if (!captureState)
+      throw new ServiceError('ENGINE_UNSUPPORTED', 'Source engine cannot capture evidence state');
+    return this.createSession(
+      {
+        mode: 'bounty',
+        tenantId: principal.tenant,
+        scope: request.scope,
+        credentialSource: 'operator',
+        ...(request.headless !== undefined ? { headless: request.headless } : {}),
+        ...(request.userAgent !== undefined ? { userAgent: request.userAgent } : {}),
+        ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
+        ...(request.idleTimeoutMs !== undefined ? { idleTimeoutMs: request.idleTimeoutMs } : {}),
+      },
+      async (id, target) => {
+        const targetOwner = this.coordinator.inspect(id)?.context;
+        if (!targetOwner)
+          throw new ServiceError(
+            'SESSION_NOT_FOUND',
+            'Evidence target ended during initialization'
+          );
+        const lifetime = evidenceLifetime(source.signal, targetOwner.signal);
+        const currentTransfer = () => {
+          current();
+          if (targetOwner.signal.aborted || this.coordinator.inspect(id)?.context !== targetOwner)
+            throw new ServiceError(
+              'SESSION_NOT_FOUND',
+              'Evidence target ended during initialization'
+            );
+        };
+        try {
+          currentTransfer();
+          if (!target.seedEvidenceState || !target.addInitScript)
+            throw new ServiceError(
+              'ENGINE_UNSUPPORTED',
+              'Target engine cannot seed evidence state'
+            );
+          const seedState = target.seedEvidenceState.bind(target);
+          const addScript = target.addInitScript.bind(target);
+          let state: import('@agentbrowser/engine').EvidenceState;
+          try {
+            state = filterEvidenceState(
+              await lifetime.run(() => captureState(origins)),
+              request.scope,
+              origins
+            );
+          } catch (error) {
+            if (error instanceof Error && 'code' in error) throw this.mapError(error);
+            throw new ServiceError(
+              'FORBIDDEN',
+              'Evidence state capture failed or exceeded bounds',
+              false,
+              { rule: 'floor.evidence.state' }
+            );
+          }
+          currentTransfer();
+          for (const value of [
+            ...state.cookies.map((c) => c.value),
+            ...state.origins.flatMap((o) => o.localStorage.map((e) => e.value)),
+          ])
+            this.secretManager.registerSessionSecret(id, value);
+          const ledger = this.sessionLedgers.get(id);
+          if (!ledger) throw new ServiceError('POLICY_DENIED', 'Evidence ledger unavailable');
+          const metadata = {
+            sourceSessionId: sourceId,
+            origins,
+            scopeSha256: createHash('sha256').update(JSON.stringify(request.scope)).digest('hex'),
+            policyVersion: this.policyVersion ?? 'legacy',
+            ...evidenceStateDigest(state),
+          };
+          try {
+            await lifetime.run(() => ledger.appendCritical('state.transfer.prepared', metadata));
+            currentTransfer();
+            await lifetime.run(() => addScript(HANDOFF_RTC_REMOVAL_INIT_SCRIPT));
+            await lifetime.run(() => seedState(state));
+            currentTransfer();
+            await lifetime.run(() => ledger.appendCritical('state.transfer.completed', metadata));
+          } catch {
+            throw new ServiceError(
+              'POLICY_DENIED',
+              'Evidence transfer could not be durably completed',
+              false,
+              { rule: 'scope.evidence.transfer' }
+            );
+          }
+        } finally {
+          lifetime.stop();
+        }
+      }
+    );
+  }
+
   getSession(sessionId: string): ServiceSessionView | undefined {
+    if (this.initializingEvidence.has(sessionId)) return undefined;
     const inspection = this.coordinator.inspect(sessionId);
     return inspection ? this.sessionView(inspection.context, inspection.lease, true) : undefined;
   }
@@ -2209,6 +2535,7 @@ export class AgentBrowserService {
   listSessions(tenantId?: string): ServiceSessionView[] {
     return this.coordinator
       .inspectAll(tenantId)
+      .filter(({ context }) => !this.initializingEvidence.has(context.id))
       .map(({ context, lease }) => this.sessionView(context, lease, false));
   }
 
@@ -4141,6 +4468,22 @@ export class AgentBrowserService {
         const scopeCode = (error as { details?: { scope?: unknown } }).details?.scope;
         if (isScopeDenialCode(scopeCode)) {
           const target = new URL(url);
+          const summary = this.deniedHosts.get(sessionId);
+          if (summary) {
+            const row = summary.hosts.find((entry) => entry.hostname === hostname);
+            if (row) {
+              row.count += 1;
+              row.codes[scopeCode] = (row.codes[scopeCode] ?? 0) + 1;
+              row.resourceTypes.document = (row.resourceTypes.document ?? 0) + 1;
+            } else if (summary.hosts.length < 256)
+              summary.hosts.push({
+                hostname,
+                count: 1,
+                codes: { [scopeCode]: 1 },
+                resourceTypes: { document: 1 },
+              });
+            else summary.truncated = true;
+          }
           this.sessionLedgers.get(sessionId)?.append('preflight.denied', {
             method: 'GET',
             url: `${target.origin}${target.pathname}`,
@@ -5751,7 +6094,7 @@ export class AgentBrowserService {
 
   private requireSession(sessionId: string) {
     const session = this.coordinator.get(sessionId);
-    if (!session) {
+    if (!session || this.initializingEvidence.has(sessionId)) {
       throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} does not exist.`);
     }
     return session;

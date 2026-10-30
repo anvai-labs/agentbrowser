@@ -185,6 +185,8 @@ nav:
     - '024 Server Policy Engine Cedar': adr/024-server-policy-engine-cedar.md
     - '025 Operator Login Browser And Cookie Handoff': adr/025-operator-cookie-handoff.md
     - '026 Policy Reload Without Restart': adr/026-policy-reload-without-restart.md
+    - '027 Evidence Pass State Transfer': adr/027-evidence-pass-state-transfer.md
+    - '028 Operator Asset Scope Amendments': adr/028-operator-asset-scope-amendments.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
@@ -233,6 +235,7 @@ nav:
     - 'Session Launch Diagnostics': spec/design/session-launch-diagnostics.md
     - 'Session Lease Visibility': spec/design/session-lease-visibility.md
     - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
+    - 'T10 Bounty Operator Workflow': spec/design/t10-bounty-operator-workflow.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md
     - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
     - 'T3 Live Junit': spec/design/t3-live-junit.md
@@ -287,6 +290,7 @@ nav:
     - 'Foundation Coverage Findings': spec/evidence/foundation-coverage-findings.md
     - 'Foundation Handback Recheck': spec/evidence/foundation-handback-recheck.md
     - 'Foundation Progress 2026 09 20': spec/evidence/foundation-progress-2026-09-20.md
+    - 'T10 Bounty Operator Workflow': spec/evidence/t10-bounty-operator-workflow.md
     - 'Navigation Failure Reasons': spec/evidence/navigation-failure-reasons.md
     - 'Node24 Baseline': spec/evidence/node24-baseline.md
     - 'Observation 120 Baseline': spec/evidence/observation-120-baseline.md

@@ -1,3 +1,4 @@
+import { adoptScopeAssets } from './scope-assets-file.js';
 /**
  * AgentBrowser CLI
  *
@@ -252,6 +253,7 @@ export interface CliClient
     Partial<
       Pick<
         AgentBrowserClient['sessions'],
+        | 'scopeDenied'
         | 'control'
         | 'takeover'
         | 'prepareResume'
@@ -560,10 +562,10 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         // TD-BROWSER-16 phase 1 (ADR-025): an operator key is NEVER taken
         // from the environment — an env var is agent-reachable. Only the
-        // approval commands read it, from the key file or a no-echo prompt.
+        // operator commands read it, from the key file or a no-echo prompt.
         .option(
           '--operator-key-file <path>',
-          'file holding a human-operator key (AGENTBROWSER_OPERATOR_KEYS_FILE format); approval commands only'
+          'file holding a human-operator key (AGENTBROWSER_OPERATOR_KEYS_FILE format); human-operator commands only'
         )
         .exitOverride();
 
@@ -641,6 +643,71 @@ export function buildCli(deps: CliDependencies): Cli {
               `  ttl:     ${got.ttlMs ?? '?'} ms`,
               `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
               ...sessionFacts(got),
+            ]);
+          })
+        );
+      session
+        .command('scope-amend <sessionId>')
+        .description(
+          'Operator-only: append static asset hosts to the live scope without replacing program targets or limits'
+        )
+        .requiredOption('--add-assets <hosts>', 'comma-separated approved asset hosts')
+        .requiredOption('--expected-revision <revision>', 'scope revision reviewed by the operator')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: { addAssets: string; expectedRevision: string }
+            ) => {
+              const revision = Number(options.expectedRevision);
+              if (!Number.isSafeInteger(revision) || revision < 0)
+                throw new UsageError('A non-negative scope revision is required');
+              const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+              if (!operatorKey)
+                throw new UsageError(
+                  'Scope amendment requires an operator key file or human prompt'
+                );
+              const response = await fetchOrUsageError(
+                'scope amendment',
+                `${ctx.baseUrl}/v1/operator/sessions/${encodeURIComponent(sessionId)}/scope/assets`,
+                30000,
+                {
+                  method: 'POST',
+                  headers: {
+                    authorization: `Bearer ${operatorKey}`,
+                    'content-type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    expectedRevision: revision,
+                    assetHosts: options.addAssets
+                      .split(',')
+                      .map((host) => ({ host: host.trim(), class: 'asset' })),
+                  }),
+                }
+              );
+              const status =
+                (await response.json()) as import('@agentbrowser/protocol').EngagementScopeStatus;
+              ctx.emit(status, () => [
+                `Scope revision ${status.revision}`,
+                ...(status.assetHosts ?? []).map((a) => `  asset ${a.host}`),
+              ]);
+            }
+          )
+        );
+      session
+        .command('scope-denied <sessionId>')
+        .description('T10: bounded typed denial counts by actual destination hostname')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            if (!ctx.client.sessions.scopeDenied)
+              throw new UsageError('Client does not support scope-denied');
+            const result = await ctx.client.sessions.scopeDenied(sessionId);
+            ctx.emit(result, () => [
+              ...result.hosts.map(
+                (host) => `${host.hostname}: ${host.count} ${JSON.stringify(host.codes)}`
+              ),
+              ...(result.truncated ? ['Host summary truncated; inspect the ledger'] : []),
             ]);
           })
         );
@@ -811,6 +878,15 @@ export function buildCli(deps: CliDependencies): Cli {
           'create an isolated session; --tenant is required; use --no-headless for a visible browser on the server host'
         )
         .requiredOption('--tenant <id>', 'tenant identifier')
+        .option(
+          '--evidence',
+          'operator-approved fresh evidence pass: cookies and localStorage from --from, scoped and ledgered'
+        )
+        .option('--from <session>', 'source operator session for --evidence')
+        .option(
+          '--origins <origins>',
+          'comma-separated exact program origins for --evidence; otherwise infer from source-owned pages'
+        )
         .option('--delegated', 'require explicit human review and revocable agent authority')
         .option(
           '--reviewed-approval',
@@ -822,6 +898,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'attach to the startup-configured dedicated operator Chrome profile; local only, initial navigation policy checks only'
         )
         .option('--user-agent <value>', 'explicit research User-Agent (visible in session status)')
+        .option(
+          '--mode <mode>',
+          'session preset: bounty (headed, 4h TTL, 1h idle, 5 requests/s for contained traffic)'
+        )
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
           '--no-headless',
@@ -887,6 +967,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
+            if (options.mode !== undefined) {
+              if (options.mode !== 'bounty') throw new UsageError('--mode must be bounty');
+              request.mode = 'bounty';
+            }
             if (options.reviewedApproval && !options.delegated)
               throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
@@ -996,6 +1080,75 @@ export function buildCli(deps: CliDependencies): Cli {
               request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;
             }
 
+            if ((options.from || options.origins) && !options.evidence)
+              throw new UsageError('--from/--origins require --evidence');
+            if (options.evidence) {
+              if (!options.from || !request.policy?.scope)
+                throw new UsageError('--evidence requires --from and --scope-file');
+              if (
+                request.engine !== undefined ||
+                request.viewport !== undefined ||
+                request.locale !== undefined ||
+                request.timezoneId !== undefined ||
+                request.snapshotTimeoutMs !== undefined ||
+                Object.keys(request.policy).some((key) => key !== 'scope')
+              )
+                throw new UsageError(
+                  'Evidence creation cannot honor extra launch or policy flags; put enforceable host restrictions in the scope file'
+                );
+              if (
+                request.cookies ||
+                request.cdpAttach ||
+                request.controlMode ||
+                request.policy.allowDownloads ||
+                request.policy.allowServiceWorkers ||
+                request.policy.scope.ledger === false
+              )
+                throw new UsageError(
+                  'Evidence passes require a fresh contained, ledgered session without seed cookies or unsupported lanes'
+                );
+              const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+              if (!operatorKey)
+                throw new UsageError(
+                  'Evidence transfer requires an operator key file or human prompt'
+                );
+              const response = await fetchOrUsageError(
+                'evidence pass',
+                `${ctx.baseUrl}/v1/operator/sessions/${encodeURIComponent(String(options.from))}/evidence`,
+                60000,
+                {
+                  method: 'POST',
+                  headers: {
+                    authorization: `Bearer ${operatorKey}`,
+                    'content-type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    tenantId: request.tenantId,
+                    scope: { ...request.policy.scope, ledger: true },
+                    ...(options.origins
+                      ? {
+                          origins: String(options.origins)
+                            .split(',')
+                            .map((o) => o.trim()),
+                        }
+                      : {}),
+                    ...(request.headless !== undefined ? { headless: request.headless } : {}),
+                    ...(request.userAgent !== undefined ? { userAgent: request.userAgent } : {}),
+                    ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
+                    ...(request.idleTimeoutMs !== undefined
+                      ? { idleTimeoutMs: request.idleTimeoutMs }
+                      : {}),
+                  }),
+                }
+              );
+              const created =
+                (await response.json()) as import('@agentbrowser/sdk-typescript').SessionResponse;
+              ctx.emit(created, () => [
+                `Evidence session ${created.sessionId}`,
+                ...sessionFacts(created),
+              ]);
+              return;
+            }
             if (options.cookiesFile !== undefined) assertCookieRequestSize(request);
             const created = await ctx.client.sessions.create(request).catch((error) => {
               if (options.cookiesFile !== undefined && !isCredentialSafeSeedError(error))
@@ -3079,6 +3232,36 @@ export function buildCli(deps: CliDependencies): Cli {
         .command('scope')
         .description('T10 engagement scopes: convert a published program scope (offline)');
       scopeCommand
+        .command('adopt-assets <file>')
+        .description(
+          'Preview denied static asset hosts; --approve-hosts explicitly commits selected candidates with a private amendment log'
+        )
+        .requiredOption('--from <ledger>', 'verified engagement ledger JSONL')
+        .option(
+          '--approve-hosts <hosts>',
+          'comma-separated exact candidate hosts approved by the operator'
+        )
+        .action(
+          action(async (ctx, file: string, options: { from: string; approveHosts?: string }) => {
+            const result = await adoptScopeAssets(
+              file,
+              options.from,
+              options.approveHosts?.split(',')
+            );
+            const report = {
+              ...result,
+              scope: undefined,
+              assetHosts: result.scope.assetHosts ?? [],
+            };
+            ctx.emit(report, () => [
+              result.preview
+                ? 'Asset adoption preview; review hosts and supply --approve-hosts to commit'
+                : 'Asset adoption recorded',
+              ...report.assetHosts.map((a) => `  asset ${a.host}`),
+            ]);
+          })
+        );
+      scopeCommand
         .command('import <file>')
         .description(
           'convert a HackerOne, Bugcrowd or text program scope into an engagement scope; ' +
@@ -3097,6 +3280,10 @@ export function buildCli(deps: CliDependencies): Cli {
           '--rate-limit <requests/seconds>',
           'published scanner cap, e.g. 5/1; never inferred'
         )
+        .option(
+          '--asset-bundle <names>',
+          'explicit support-host suggestions: retail, saas, consent, captcha, assets, sso (comma-separated; static asset class only)'
+        )
         .option('--program-id <id>', 'program identifier recorded in the scope')
         .option('--program-version <version>', 'program scope version recorded in the scope')
         .option('--authorized-by <who>', 'who authorized this engagement (needs --authorized-at)')
@@ -3112,6 +3299,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 requestBudget?: string;
                 pagesPlanned?: string;
                 rateLimit?: string;
+                assetBundle?: string;
                 programId?: string;
                 programVersion?: string;
                 authorizedBy?: string;
@@ -3141,6 +3329,9 @@ export function buildCli(deps: CliDependencies): Cli {
               let result: ReturnType<typeof importProgramScope>;
               try {
                 result = importProgramScope(input, options.from as ProgramScopeFormat, {
+                  ...(options.assetBundle
+                    ? { assetBundles: options.assetBundle.split(',').map((name) => name.trim()) }
+                    : {}),
                   ...(requestBudget !== undefined ? { requestBudget } : {}),
                   ...(pagesPlanned !== undefined ? { pagesPlanned } : {}),
                   ...(rate

@@ -111,6 +111,14 @@ export function covers(matcher: string, host: string): DomainVerdict {
  * Both the session host rules and the engagement scope must answer host
  * questions with this one function so their semantics cannot drift.
  */
+export function hostPatternsOverlap(a: string, b: string): boolean {
+  const left = a.replace(/^\./, '');
+  const right = b.replace(/^\./, '');
+  return [left, right, `probe.${left}`, `probe.${right}`].some(
+    (host) => hostMatchesPattern(host, a) && hostMatchesPattern(host, b)
+  );
+}
+
 export function hostMatchesPattern(hostname: string, pattern: string): boolean {
   const patternDotted = pattern.startsWith('.');
   const p = pattern.toLowerCase().replace(/\.+$/, '');

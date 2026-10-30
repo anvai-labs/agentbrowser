@@ -1,36 +1,60 @@
 # Mode: researcher-directed bug-bounty assistance
 
-Status: proposed profile layered on appsec; inherits its scope and execution contract.
+Status: T10 B1–B6, layered on appsec.
 
-## Incremental job and data
+## Two windows, two contracts
 
-Assist a researcher with reproduction and report preparation for one authorized
-program. Load the current program scope/rules version, selected finding and minimal
-evidence references. Revalidate program scope and test authorization before running;
-public reachability or a remembered rule is not permission.
+Use dedicated persistent **operator Chrome** for identity, policy vetting, signup
+and exploration. CDP attachment requires the explicit unenforced-egress
+acknowledgment. This window has navigation preflight, **no network containment
+or enforced pacing**: follow current program targets and traffic caps manually.
+Diagnostics label it unenforced.
 
-Directory and policy browsing may need a headed context: HackerOne showed a
-JavaScript-disabled wall headless in the first bounty run. Browse with
-`--no-headless`, then use a separate scoped headless session for the authorized
-pass. CLI session creation returns no page: follow it with `page create
-SESSION --url URL`; MCP create includes an initial page id. Size budgets in
-subrequests and redirect hops (about 120 per planned JS-heavy page, at least
-150 for one page) and respect the program's published scanner cap. See the
-[engagement operations guide](../../operations.md#engagements-authorized-testing)
-for import sizing, traffic identity and ledger exports.
+Use a fresh **scoped evidence session** for a short authorized reproduction.
+Covered hops enforce hosts, paths, methods, exclusions, expiry, budget and pacing,
+inject configured markers and record a ledger. The authenticated human operator
+can transfer selected program-origin cookies/localStorage once; profile files and
+other stores never move. See [ADR-027](../../adr/027-evidence-pass-state-transfer.md).
 
-## Reuse and outcomes
+## Three-command workflow
 
-Reuse appsec identity isolation, diagnostics, verification and report helpers. Add only
-program-specific policy fields and report templates. No separate bounty executor,
-scanner, browser profile store or transport. Track suspected/confirmed findings,
-reproducer version, sensitivity and potential duplicate references without asserting
-a platform has accepted the report. Bounty payout is never an execution success metric.
+Configure private ledger storage, an operator key file and `cookie.seed`/
+`cookie.handoff` grants for selected domains. Vet program authorization, exclusions
+and required public research headers; import is not permission. Never put
+credentials in marker values.
 
-## Acceptance
+```bash
+agentbrowser scope import brief.json --from h1 --pages-planned 3 --rate-limit 5/1 --out scope.json
+agentbrowser session create --tenant research --mode bounty --cdp-attach
+agentbrowser --operator-key-file /private/path/operator-keys.json session create --tenant research --evidence --from SOURCE_ID --origins https://app.example.com --scope-file scope.json
+```
 
-Test rule changes, excluded targets, report redaction, unconfirmed claims and duplicate
-reproductions. An approved test must not implicitly submit a report or contact a program.
-Load only the current finding, not a global cross-customer vulnerability corpus.
+Use command two's id as `SOURCE_ID`; browse and log in manually between commands
+two and three. Select exact origins. Use 5/s only if the program permits it.
+Command three creates a headed, scoped, ledgered context. Failed initialization
+closes the unpublished target. API keys cannot authorize transfer.
 
-Primary packet: T7 report/profile slice after appsec qualification and demonstrated demand.
+Reproduction/sealing are explicit subsequent steps. CLI creation returns `pages: 0`:
+use `page create EVIDENCE_ID --url URL`, reproduce, then `session close EVIDENCE_ID`
+and `engagement export ENGAGEMENT_ID --out ledger.jsonl`. Run `engagement verify
+ledger.jsonl` before checking findings/SARIF. Transferred credentials retain export refusal and action-review floors; no action
+lease is granted by transfer.
+
+## Defaults and rendering support
+
+Bounty mode defaults to headed, idle 1h, TTL 4h and contained pacing 5/s. Explicit settings/service timeout defaults override the preset; existing caps
+stay fixed and CDP stays unenforced. Budget roughly 120 subrequests/hops
+per JS-heavy page, at least 150 for one page, within program policy.
+
+Assets permit classified static GET/HEAD subresources from program pages, without
+program markers or credentials; documents, fetch/XHR and interactive SSO/captcha
+do not qualify. Human operators can append assets with a matching revision and
+durable ledger, retaining page state/counters; program targets and other constraints
+stay fixed ([ADR-028](../../adr/028-operator-asset-scope-amendments.md)). Scoped
+Playwright contexts enforce `worker-src 'none'`; Worker/SharedWorker UI may be
+unavailable. Worklets remain outside qualified containment.
+
+See [operations](../../operations.md#engagements-authorized-testing) for support-host
+bundles, denial summaries, adoption commands and response-delivery bounds. Marker
+events prove dispatch intent, not receipt. Distinguish suspected/confirmed findings;
+reports are drafts and submission is manual. No expanded containment claim is made.

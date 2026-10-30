@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import {
   hostMatchesPattern,
+  hostPatternsOverlap,
   type ResearchRequestHeader,
   requestHeaderIssues,
+  type ScopeAssetHost,
+  STATIC_ASSET_TYPES,
 } from '@agentbrowser/core';
 import { NetworkPolicyError } from './network-policy.js';
 
@@ -38,6 +41,7 @@ export interface ScopeIdentityBinding {
 }
 
 export interface EngagementScopeOptions {
+  assetHosts?: ScopeAssetHost[];
   /** Exhaustive when set: exact hosts and ".suffix" entries in scope. */
   allowedHosts: string[];
   /** Pathname rules; absent = all paths on allowed hosts. */
@@ -85,6 +89,8 @@ export interface ScopeProgram {
 
 /** The scope in effect, as `EngagementScopePolicy.status()` reports it (T10 M2). */
 export interface EngagementScopeStatus {
+  revision?: number;
+  assetHosts?: ScopeAssetHost[];
   requestHeaders?: Array<{ header: string; hostSuffix?: string; valueSha256: string }>;
   allowedHosts: string[];
   pathRules: ScopePathRule[];
@@ -197,12 +203,7 @@ const DENIED = 'POLICY_DENIED' as const;
 const normalizeHost = (host: string): string => host.toLowerCase().replace(/\.+$/, '');
 
 /** Do two host patterns (exact or ".suffix") admit at least one common host? */
-const patternsOverlap = (a: string, b: string): boolean => {
-  if (!a.startsWith('.') && !b.startsWith('.')) return a === b;
-  if (!a.startsWith('.')) return a.endsWith(b);
-  if (!b.startsWith('.')) return b.endsWith(a);
-  return a.endsWith(b) || b.endsWith(a);
-};
+const patternsOverlap = hostPatternsOverlap;
 
 /**
  * Configuration a scope cannot enforce as written, refused at create time: a path rule
@@ -213,9 +214,17 @@ export function scopeConfigurationIssues(scope: {
   pathRules?: Array<{ hostSuffix?: string }>;
   excludePaths?: Array<{ hostSuffix?: string }>;
   requestHeaders?: ResearchRequestHeader[];
+  assetHosts?: ScopeAssetHost[];
 }): string[] {
   const allowed = scope.allowedHosts.map(normalizeHost);
   const issues: string[] = scope.requestHeaders ? requestHeaderIssues(scope.requestHeaders) : [];
+  for (const asset of scope.assetHosts ?? []) {
+    if (
+      asset.class !== 'asset' ||
+      allowed.some((p) => patternsOverlap(p, normalizeHost(asset.host)))
+    )
+      issues.push('assetHosts must be asset-class and disjoint from program hosts');
+  }
   // pathRules: an unbound rule leaves its host unrestricted. excludePaths: an unbound
   // exclusion is a restriction silently ignored. Both are refused.
   for (const field of ['pathRules', 'excludePaths', 'requestHeaders'] as const) {
@@ -224,7 +233,11 @@ export function scopeConfigurationIssues(scope: {
       const host = normalizeHost(rule.hostSuffix);
       const sample = (pattern: string) =>
         pattern.startsWith('.') ? `scope-probe${pattern}` : pattern;
-      const binds = allowed.some((pattern) =>
+      const bindingHosts =
+        field === 'excludePaths'
+          ? [...allowed, ...(scope.assetHosts ?? []).map((a) => normalizeHost(a.host))]
+          : allowed;
+      const binds = bindingHosts.some((pattern) =>
         field === 'requestHeaders'
           ? hostMatchesPattern(sample(host), pattern) || hostMatchesPattern(sample(pattern), host)
           : patternsOverlap(host, pattern)
@@ -280,6 +293,8 @@ export class EngagementScopePolicy {
     hostname: string,
     headers: Record<string, string>
   ) => Record<string, string>;
+  private revision = 0;
+  private readonly assetHosts: ScopeAssetHost[];
   private readonly injected: ResearchRequestHeader[];
   private readonly allowed: string[];
   private readonly paths: ScopePathRule[];
@@ -327,6 +342,8 @@ export class EngagementScopePolicy {
         url?: string;
         method?: string;
         headers?: Record<string, string>;
+        resourceType?: string;
+        initiatorHost?: string;
       }): Promise<void>;
       checkRedirectChain?(requests: Array<{ url: string; hostname?: string }>): Promise<void>;
       checkResponse?(response: { headers: Record<string, string> }): Promise<void>;
@@ -335,17 +352,34 @@ export class EngagementScopePolicy {
     },
     scope: EngagementScopeOptions
   ) {
-    const headerIssues = scope.requestHeaders ? scopeConfigurationIssues(scope) : [];
+    const headerIssues = scopeConfigurationIssues(scope);
     if (headerIssues.length)
       throw new NetworkPolicyError('POLICY_DENIED', headerIssues.join('; '), false, {
         rule: 'scope.requestHeaders.invalid',
       });
+    this.assetHosts = (scope.assetHosts ?? []).map((entry) => ({
+      ...entry,
+      host: normalizeHost(entry.host),
+    }));
+    if (
+      this.assetHosts.some(
+        (asset) =>
+          asset.class !== 'asset' ||
+          scope.allowedHosts.some((p) => patternsOverlap(normalizeHost(p), asset.host))
+      )
+    )
+      throw new NetworkPolicyError(
+        'POLICY_DENIED',
+        'Asset and program hosts must be disjoint',
+        false,
+        { rule: 'scope.assets.invalid' }
+      );
     this.injected = (scope.requestHeaders ?? []).map((entry) => ({
       ...entry,
       header: entry.header.toLowerCase(),
       ...(entry.hostSuffix ? { hostSuffix: normalizeHost(entry.hostSuffix) } : {}),
     }));
-    if (this.injected.length) this.headersForRequest = this.transformHeaders.bind(this);
+    this.headersForRequest = this.transformHeaders.bind(this);
     this.allowed = scope.allowedHosts.map(normalizeHost);
     this.paths = (scope.pathRules ?? []).map((rule) => ({
       ...rule,
@@ -461,6 +495,8 @@ export class EngagementScopePolicy {
     url?: string;
     method?: string;
     headers?: Record<string, string>;
+    resourceType?: string;
+    initiatorHost?: string;
   }): void {
     try {
       this.rules(request);
@@ -480,6 +516,13 @@ export class EngagementScopePolicy {
     const result = Object.fromEntries(
       Object.entries(headers).filter(([name]) => !names.has(name.toLowerCase()))
     );
+    if (this.assetHosts.some((a) => hostMatches(normalizeHost(hostname), a.host))) {
+      for (const name of Object.keys(result))
+        if (['cookie', 'authorization', 'proxy-authorization'].includes(name.toLowerCase()))
+          delete result[name];
+      // Explicit empty Cookie also prevents route.fetch's automatic cookie-jar reattachment.
+      return { ...result, cookie: '' };
+    }
     for (const entry of this.injected)
       if (!entry.hostSuffix || hostMatchesPattern(normalizeHost(hostname), entry.hostSuffix))
         result[entry.header] = entry.value;
@@ -487,6 +530,7 @@ export class EngagementScopePolicy {
   }
 
   injectedHeaderNames(hostname: string): string[] {
+    if (this.assetHosts.some((a) => hostMatches(normalizeHost(hostname), a.host))) return [];
     return this.injected
       .filter(
         (entry) =>
@@ -495,9 +539,98 @@ export class EngagementScopePolicy {
       .map((entry) => entry.header);
   }
 
+  /** Stable authority identity, including secret bindings inside the digest only. */
+  configurationSha256(assets = this.assetHosts): string {
+    const {
+      budget,
+      denials: _denials,
+      expired: _expired,
+      rateLimit,
+      stopped: _stopped,
+      revision: _revision,
+      ...config
+    } = this.status();
+    return createHash('sha256')
+      .update(
+        JSON.stringify({
+          ...config,
+          assetHosts: assets,
+          budget: budget?.limit,
+          rateLimit: rateLimit
+            ? { requests: rateLimit.requests, perSeconds: rateLimit.perSeconds }
+            : undefined,
+          identities: this.identities,
+          requestHeaders: this.injected,
+        })
+      )
+      .digest('hex');
+  }
+
+  /** ADR-028: only the operator service calls this, after strict request validation. */
+  async appendAssets(
+    entries: ScopeAssetHost[],
+    expectedRevision: number,
+    persist: (next: {
+      revision: number;
+      assets: ScopeAssetHost[];
+      beforeSha256: string;
+      afterSha256: string;
+    }) => Promise<void>
+  ): Promise<EngagementScopeStatus> {
+    const active = () => {
+      if (this.revision !== expectedRevision)
+        throw scopeDenial('SCOPE_HOST_DENIED', 'scope amendment revision changed');
+      if (this.stopped !== undefined)
+        throw scopeDenial('SCOPE_LEDGER_UNAVAILABLE', 'scope is stopped');
+      if (this.expiresAt !== undefined && this.now() >= this.expiresAt)
+        throw scopeDenial('SCOPE_EXPIRED', 'scope expired');
+      if (this.budget !== undefined && this.spent >= this.budget)
+        throw scopeDenial('SCOPE_BUDGET_EXHAUSTED', 'scope budget exhausted');
+    };
+    active();
+    const existing = new Set(this.assetHosts.map((entry) => entry.host));
+    const additions: ScopeAssetHost[] = [];
+    for (const entry of entries) {
+      const host = normalizeHost(entry.host);
+      const name = host.replace(/^\./, '');
+      if (
+        !/^[a-z0-9.-]+$/.test(name) ||
+        new URL(`https://${name}`).hostname !== name ||
+        entry.class !== 'asset'
+      )
+        throw scopeDenial('SCOPE_HOST_DENIED', 'invalid asset host');
+      if (!existing.has(host)) {
+        existing.add(host);
+        additions.push({ ...entry, host });
+      }
+    }
+    const assets = [...this.assetHosts, ...additions];
+    if (
+      assets.length > 128 ||
+      scopeConfigurationIssues({ allowedHosts: this.allowed, assetHosts: assets }).length
+    )
+      throw scopeDenial(
+        'SCOPE_HOST_DENIED',
+        'asset additions must be bounded and disjoint from program targets'
+      );
+    if (!additions.length) return this.status();
+    await persist({
+      revision: expectedRevision + 1,
+      assets,
+      beforeSha256: this.configurationSha256(),
+      afterSha256: this.configurationSha256(assets),
+    });
+    active();
+    this.assetHosts.push(...additions);
+    this.revision += 1;
+    return this.status();
+  }
+
   /** The scope in effect, budget and denials; marker values are never reported. */
   status(): EngagementScopeStatus {
     return {
+      revision: this.revision,
+      ...(this.assetHosts.length ? { assetHosts: this.assetHosts.map((a) => ({ ...a })) } : {}),
       ...(this.injected.length
         ? {
             requestHeaders: this.injected.map(({ header, hostSuffix, value }) => ({
@@ -547,6 +680,8 @@ export class EngagementScopePolicy {
     url: string;
     method?: string;
     headers?: Record<string, string>;
+    resourceType?: string;
+    initiatorHost?: string;
   }): { allowed: true } | { allowed: false; scope: string } {
     try {
       this.rules({
@@ -568,6 +703,8 @@ export class EngagementScopePolicy {
     url?: string;
     method?: string;
     headers?: Record<string, string>;
+    resourceType?: string;
+    initiatorHost?: string;
   }): void {
     if (this.stopped !== undefined) {
       throw scopeDenial(
@@ -585,8 +722,33 @@ export class EngagementScopePolicy {
       );
     }
     const hostname = request.hostname.toLowerCase();
-    if (!this.allowed.some((pattern) => hostMatches(hostname, pattern))) {
-      throw scopeDenial('SCOPE_HOST_DENIED', `host ${hostname} is outside the engagement scope`);
+    const program = this.allowed.some((pattern) => hostMatches(hostname, pattern));
+    const initiatorHost = request.initiatorHost;
+    const asset = this.assetHosts.some((entry) => hostMatches(hostname, entry.host));
+    if (
+      !program &&
+      !(
+        asset &&
+        ['GET', 'HEAD'].includes(request.method ?? '') &&
+        STATIC_ASSET_TYPES.has(request.resourceType ?? '') &&
+        initiatorHost &&
+        this.allowed.some((p) => hostMatches(initiatorHost, p)) &&
+        !this.excludedHosts.some((p) => hostMatches(initiatorHost, p))
+      )
+    ) {
+      throw scopeDenial(
+        'SCOPE_HOST_DENIED',
+        `host ${hostname} is outside the authorized program/static-asset class`
+      );
+    }
+    if (asset && !program) {
+      if (!request.url) throw scopeDenial('SCOPE_HOST_DENIED', 'asset URL is required');
+      const assetUrl = new URL(request.url);
+      if (assetUrl.username || assetUrl.password || normalizeHost(assetUrl.hostname) !== hostname)
+        throw scopeDenial(
+          'SCOPE_HOST_DENIED',
+          'asset URLs cannot carry credentials or a mismatched host'
+        );
     }
     if (this.excludedHosts.some((pattern) => hostMatches(hostname, pattern))) {
       throw scopeDenial(
@@ -623,7 +785,7 @@ export class EngagementScopePolicy {
         );
       }
     }
-    if (this.paths.length > 0) {
+    if (program && this.paths.length > 0) {
       const pathname = request.url !== undefined ? new URL(request.url).pathname : '/';
       // Rules bind their own hosts: a host with no binding rule is fully
       // in scope for paths. Prefixes match on path-SEGMENT boundaries —
@@ -676,6 +838,8 @@ export class EngagementScopePolicy {
     url?: string;
     method?: string;
     headers?: Record<string, string>;
+    resourceType?: string;
+    initiatorHost?: string;
   }): Promise<void> {
     // Deny-if runs BEFORE the spend: denied attempts consume no budget.
     this.denyIf(request);
@@ -698,6 +862,8 @@ export class EngagementScopePolicy {
     url?: string;
     method?: string;
     headers?: Record<string, string>;
+    resourceType?: string;
+    initiatorHost?: string;
   }): Promise<void> {
     this.denyIf(request);
   }

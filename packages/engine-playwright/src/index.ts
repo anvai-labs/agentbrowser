@@ -1,3 +1,5 @@
+import { type SummaryInfo, selectDisclosureRows } from './disclosure-rows.js';
+import { denyWorkersInDocument } from './worker-document-policy.js';
 /**
  * Playwright Chromium Browser Engine Implementation
  *
@@ -137,18 +139,6 @@ interface StoredElement {
   context?: string;
   /** Enrichment-minted marker (protocol, round-15/F2). */
   minted?: boolean;
-}
-
-/** One details' first summary, as the disclosure scan reports it. */
-interface SummaryInfo {
-  /** Position within the SUMMARY_SELECTOR match list (document order). */
-  index: number;
-  name: string;
-  expanded: boolean;
-  visible: boolean;
-  /** A valid explicit ARIA role: the snapshot already reports it under that role. */
-  explicitRole: boolean;
-  hasPopup: boolean;
 }
 
 /** The DOM surface the page function touches (the engine compiles without the DOM lib). */
@@ -1338,6 +1328,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsAccessibilityTree: true,
       supportsCdp: this.browserFamily === 'chromium',
       requestRecording: true,
+      assetRequestClassification: true,
       requestHeaderInjection: true,
       userAgentOverride: true,
       ...(this.operatorCdp?.allowUnenforcedEgress &&
@@ -1890,7 +1881,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const verdictOf = async (
       hostname: string,
       url: string,
-      context?: { method?: string; headers?: Record<string, string> }
+      context?: {
+        method?: string;
+        headers?: Record<string, string>;
+        resourceType?: string;
+        initiatorHost?: string;
+      }
     ): Promise<{
       verdict: 'allow' | 'deny';
       reason?: NavigationFailureReason;
@@ -1906,6 +1902,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           url,
           ...(context?.method !== undefined ? { method: context.method } : {}),
           ...(context?.headers !== undefined ? { headers: context.headers } : {}),
+          ...(context?.resourceType !== undefined ? { resourceType: context.resourceType } : {}),
+          ...(context?.initiatorHost !== undefined ? { initiatorHost: context.initiatorHost } : {}),
         });
         if (egress.checkResolvedAddresses !== undefined) {
           const addresses = await resolveOf(hostname);
@@ -2019,6 +2017,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                   onInjection: recordInjection,
                 }
               : {}),
+            blockDocumentWorkers: true,
             maxHops: MAX_REDIRECT_HOPS,
             // The guard sees every response of a body-bearing chain: its outcomes
             // are the ledger's record (the passthrough emit is intent only).
@@ -2064,9 +2063,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // Playwright marks a terminal route operation handled before awaiting
       // transport completion. A failed fulfill/dispose must not abort it again.
       let terminalStarted = false;
-      const fulfill = (options: Parameters<typeof route.fulfill>[0]) => {
+      const fulfill = (options: NonNullable<Parameters<typeof route.fulfill>[0]>) => {
+        // A scoped context blocks Worker/SharedWorker creation before any asset append.
+        // Playwright attributes worker scripts to owner frames, so frame() alone
+        // cannot establish asset provenance. Browser CSP prevents their creation.
+        const headers =
+          egress.requireRedirectGuard === true
+            ? denyWorkersInDocument(options.headers ?? options.response?.headers() ?? {})
+            : options.headers;
         terminalStarted = true;
-        return route.fulfill(options);
+        return route.fulfill({ ...options, ...(headers ? { headers } : {}) });
       };
       const continueRequest = (headers: Record<string, string>) => {
         terminalStarted = true;
@@ -2093,7 +2099,21 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           ? await request.allHeaders()
           : request.headers();
         const requestHeaders = headersFor(hostname, originalHeaders);
-        const initial = await verdictOf(hostname, url, { method, headers: requestHeaders });
+        let initiatorHost: string | undefined;
+        try {
+          initiatorHost = new URL(request.frame().url()).hostname;
+        } catch {
+          /* Unknown frames never authorize assets; scoped document CSP blocks workers. */
+        }
+        const classification = {
+          resourceType: request.resourceType(),
+          ...(initiatorHost ? { initiatorHost } : {}),
+        };
+        const initial = await verdictOf(hostname, url, {
+          method,
+          headers: requestHeaders,
+          ...classification,
+        });
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, {
             blocked: true,
@@ -2200,6 +2220,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             const hop = await verdictOf(absolute.hostname, absolute.toString(), {
               method: current.status() === 307 || current.status() === 308 ? method : 'GET',
               headers: hopRequestHeaders,
+              ...classification,
             });
             if (hop.verdict === 'deny') {
               emitRequest('request.failed', request, {
@@ -2654,6 +2675,58 @@ class PlaywrightSession implements EngineSession {
   }
 
   /** TD-BROWSER-16 phase 6 (ADR-025 §3): the operator cookie handoff write. */
+  async captureEvidenceState(
+    origins: string[]
+  ): Promise<import('@agentbrowser/engine').EvidenceState> {
+    if (origins.length < 1 || origins.length > 16)
+      throw new EngineError('INVALID_REQUEST', 'Select 1–16 origins');
+    const storage = [];
+    for (const origin of origins) {
+      if (new URL(origin).origin !== origin)
+        throw new EngineError('INVALID_REQUEST', 'An exact origin is required');
+      const page = this.context.pages().find((candidate) => {
+        try {
+          return new URL(candidate.url()).origin === origin;
+        } catch {
+          return false;
+        }
+      });
+      if (!page)
+        throw new EngineError(
+          'ENGINE_UNSUPPORTED',
+          'Selected storage origin must be open in the operator browser'
+        );
+      const localStorage = await page.evaluate((expected) => {
+        const browser = globalThis as unknown as {
+          location: { origin: string };
+          localStorage: Record<string, string>;
+        };
+        if (browser.location.origin !== expected) throw new Error('Storage origin changed');
+        return Object.entries(browser.localStorage).map(([name, value]) => ({ name, value }));
+      }, origin);
+      storage.push({ origin, localStorage });
+    }
+    // URL-based cookies(origins) loses cookies whose Path is not '/'. Read through
+    // the private adapter and return only selected destination domains, preserving paths.
+    const hosts = origins.map((origin) => new URL(origin).hostname);
+    const cookies = (await this.context.cookies()).filter((cookie) => {
+      const domain = cookie.domain.replace(/^\./, '').toLowerCase();
+      return hosts.some(
+        (host) => host === domain || (cookie.domain.startsWith('.') && host.endsWith(`.${domain}`))
+      );
+    });
+    if (cookies.some((cookie) => cookie.partitionKey !== undefined))
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Partitioned state transfer is unsupported');
+    return { cookies, origins: storage };
+  }
+
+  async seedEvidenceState(state: import('@agentbrowser/engine').EvidenceState): Promise<void> {
+    if (this.attached || this.context.pages().length)
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Evidence state needs a fresh contained context');
+    await this.context.setStorageState({ cookies: [], origins: state.origins });
+    await this.addCookies(state.cookies);
+  }
+
   async addCookies(cookies: NormalizedCookie[]): Promise<void> {
     if (cookies.length === 0) return;
     await this.context.addCookies(playwrightCookieWrite(cookies));
@@ -3540,21 +3613,15 @@ class PlaywrightPage implements EnginePage {
           });
           continue;
         }
-        const eligible = found.filter(
-          (info) =>
-            info.visible &&
-            !info.explicitRole &&
-            // include:["formControls"] already mints an aria-haspopup summary (with row context).
-            !(formControlsRequested && info.hasPopup)
-        );
-        if (eligible.length > MAX_FORM_CONTROLS) {
+        const selected = selectDisclosureRows(found, formControlsRequested);
+        if (selected.capReason) {
           frameCoverage.push({
             frame: identity,
             status: 'budget_exceeded',
-            reason: `disclosure rows capped at ${MAX_FORM_CONTROLS} of ${eligible.length}`,
+            reason: selected.capReason,
           });
         }
-        for (const info of eligible.slice(0, MAX_FORM_CONTROLS)) {
+        for (const info of selected.rows) {
           elements.push({
             ref: `e${this.revision}_${elements.length}`,
             role: 'html-summary',

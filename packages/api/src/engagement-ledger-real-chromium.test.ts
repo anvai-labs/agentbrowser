@@ -477,17 +477,24 @@ describe('engagement ledger (T10 M2)', () => {
     expect(text).not.toContain('hop-secret');
   }, 60_000);
 
-  it('records an aborted worker POST (its end is unobserved) when the session closes', async () => {
+  it('seals the ledger without a worker request when scoped CSP refuses creation', async () => {
     const { text, records } = await ledgerAfter('/worker-abort');
+    expect(verifyEngagementLedger(text)).toMatchObject({ ok: true, closed: true });
     expect(
       records.some(
-        (r) =>
-          r.type === 'request' &&
-          r.data.method === 'POST' &&
-          r.data.url.endsWith('/wslow') &&
-          r.data.outcome === 'failed'
+        (record) =>
+          record.type === 'request' &&
+          record.data.url.endsWith('/worker-abort') &&
+          record.data.outcome === 'finished'
       )
     ).toBe(true);
+    expect(
+      records.some(
+        (record) =>
+          record.type === 'request' &&
+          (record.data.url.endsWith('/abort-worker.js') || record.data.url.endsWith('/wslow'))
+      )
+    ).toBe(false);
     expect(text).not.toContain('worker-secret');
   }, 60_000);
 

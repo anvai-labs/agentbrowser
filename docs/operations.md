@@ -434,7 +434,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 4.375-hour default. |
 | `AGENTBROWSER_EXTRACT_MAX_BYTES` | service | Hard ceiling for complete compact JSON extraction responses, including evidence, in UTF-8 bytes. Default 1048576 (1 MiB). A positive decimal safe integer; invalid/empty values abort startup. Per-request `maxBytes` may only lower this ceiling. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
-| `AGENTBROWSER_MODE` | MCP server | Fixed tool profile for this MCP connection: `qa` (default), `operations`, `audit`, `appsec`, `bounty`, `forms` or `application`. An invalid value aborts startup. See the [MCP server README](https://github.com/anvai-labs/agentbrowser/blob/main/packages/mcp-server/README.md). |
+| `AGENTBROWSER_MODE` | service and MCP server | Service value `bounty` selects bounty session defaults (headed, idle 1h, TTL 4h, contained pacing 5/s). MCP: fixed tool profile for this MCP connection: `qa` (default), `operations`, `audit`, `appsec`, `bounty`, `forms` or `application`. An invalid value aborts startup. See the [MCP server README](https://github.com/anvai-labs/agentbrowser/blob/main/packages/mcp-server/README.md). |
 | `AGENTBROWSER_SESSION_ID` | MCP server | Operator-configured delegated-session binding: the MCP server drives that one session with its current delegated credential ([delegated sessions](delegated-sessions.md)). Unrelated to the CLI. |
 | `AGENTBROWSER_HOSTED` | service entrypoint | `true`/`1` declares a hosted deployment (default `false`/`0`); hosted mode refuses operator CDP attachment. Any other value aborts startup. |
 | `AGENTBROWSER_APPROVAL_POLICY` | service entrypoint | Operator approval policy as a JSON object; see [operator approval policy](#operator-approval-policy). |
@@ -702,13 +702,19 @@ caveats (page-routing coverage only, no worker guarantee, explicit
 
 ### Engagements (authorized testing)
 
-Program directories and authentication surfaces may fingerprint headless
-contexts. In the first bounty run, HackerOne's directory showed a
-JavaScript-disabled wall headless and rendered headed with the same engine.
-Use `session create --tenant TENANT --no-headless` for directory/policy
-browsing, then a separate scoped headless session for the authorized pass.
-The CLI creates a session with `pages: 0`: follow with
-`page create SESSION --url URL`. MCP create returns an initial `pageId`.
+Bounty research uses two windows: a dedicated persistent operator Chrome for
+identity and exploration, then a fresh scoped, marked, ledgered evidence pass.
+The operator CDP lane is explicitly **unenforced** (navigation preflight only):
+human discipline must enforce program scope and traffic caps. Headed launched
+contexts can also be fingerprinted. See the [three-command workflow and transfer
+prerequisites](spec/modes/bounty.md#three-command-workflow).
+
+`session create --mode bounty` defaults contained sessions to headed, idle 1h,
+TTL 4h and 5 requests/s; explicit request settings and configured service timeout
+defaults win. An existing scope rate cap is preserved. Set a lower program cap
+explicitly. CDP sessions get no enforced pacing. CLI creation returns `pages: 0`:
+use `page create SESSION --url URL` for the evidence reproduction; MCP ordinary
+create includes an initial page id.
 
 **Engagement scope for authorized testing (`policy.scope` /
 `--scope-file`).** Sessions can pin an engagement — exhaustive
@@ -867,6 +873,41 @@ SHA-256 hashes, never raw marker values. The ledger also records
 does not prove remote receipt. UA text is recorded verbatim, so use only
 the public research identity you intend to disclose. See the
 [design note](spec/design/t10-research-traffic-identity.md).
+
+**Operator workflow (T10 B2–B5).** Human-operator credentials, same-tenant source
+ownership and current `cookie.seed`/`cookie.handoff` policy grants are required.
+Ordinary API credentials and agent approval booleans cannot authorize these writes.
+
+| Operation | Surface and behavior |
+| --- | --- |
+| Fresh evidence context | CLI `session create --evidence --from SOURCE --origins https://app.example.com --scope-file scope.json`; operator `POST /v1/operator/sessions/{sourceId}/evidence`; SDK `sessions.createEvidence` |
+| Denied destinations | CLI `session scope-denied SESSION`; `GET /v1/sessions/{sessionId}/scope/denied`; SDK `sessions.scopeDenied`. Bounded host/code/resource-type counts, including redirect destinations; truncation is explicit |
+| Offline asset adoption | `scope adopt-assets scope.json --from ledger.jsonl` previews; `--approve-hosts HOST,...` applies selected static candidates with a private amendment log beside the scope. A valid ledger chain is not proof of external authenticity |
+| Live asset append | CLI `session scope-amend SESSION --add-assets HOST,... --expected-revision N`; operator `POST /v1/operator/sessions/{sessionId}/scope/assets`; SDK `sessions.amendScopeAssets`. Requires open ledger and matching revision; retains page state and budget/pacing counters |
+| Suggested support hosts | `scope import brief.json --from h1 --asset-bundle retail,consent`. Available bundles: `retail`, `saas`, `consent`, `captcha`, `assets`, `sso`. Opt-in suggestions, never testing authorization |
+
+For operator writes, pass `--operator-key-file FILE` or use the no-echo terminal
+prompt. Exact program origins select cookies and localStorage only; asset hosts
+never receive transferred state. Cookie attributes are retained; broad parent-domain
+cookies cannot be copied into narrower grants. Partitioned cookies refuse transfer.
+The hidden target has a 30-second initialization bound; failures close it. Prepared
+and completed ledger records contain hashes/counts, never state values or keys.
+
+Asset entries do not extend `allowedHosts`. They permit trusted engine-classified
+static GET/HEAD subresources initiated by program pages. Program exclusions and
+all base/tenant/floor, method, scheme, port, expiry, budget and rate checks still
+apply. Fetch/XHR, documents, frames and interactive SSO/captcha refuse asset authority.
+All scoped Playwright contexts append enforced `worker-src 'none'` from creation,
+including before a live asset grant. Worker/SharedWorker creation is disabled;
+service workers remain separately refused. Existing site CSP is retained, including
+through native POST redirects. Worker-dependent UI may remain unavailable. Scoped native responses are buffered
+within an 8 MiB / 15-second bound for reliable CSP delivery; oversized/stalled
+responses refuse while upload request bytes remain native. Worklets
+are outside this qualified containment claim.
+Markers, cookies and authorization are removed on asset hops. Live amendments
+require the human-operator plane and durable ledger acknowledgments; a critical
+ledger failure stops the scope. See [ADR-027](adr/027-evidence-pass-state-transfer.md)
+and [ADR-028](adr/028-operator-asset-scope-amendments.md).
 
 **Findings bound to an engagement (T10 M3).** Findings are a researcher-owned JSON array
 (`id`, `title`, `severity`, `status: suspected|confirmed`, `url`, `description`, optional `method`,

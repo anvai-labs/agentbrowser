@@ -49,6 +49,7 @@ export interface CookieHandoffRequest {
  * Session creation request
  */
 export interface SessionRequest {
+  mode?: 'bounty';
   /** Select a trusted, startup-configured operator profile attachment. */
   cdpAttach?: boolean;
   controlMode?: 'delegated';
@@ -137,6 +138,11 @@ export interface ScopeIdentityBinding {
  * restrict-only layer of the session's policy chain.
  */
 export interface EngagementScope {
+  assetHosts?: Array<{
+    host: string;
+    class: 'asset';
+    category?: 'asset' | 'consent' | 'captcha' | 'sso';
+  }>;
   /** Exhaustive when set: exact hosts and ".suffix" entries in scope. */
   allowedHosts: string[];
   pathRules?: ScopePathRule[];
@@ -250,6 +256,7 @@ export interface EngineCapabilities {
   supportsCdpAttach?: boolean;
   /** T10 M2: reports every request outcome through `EngineSessionOptions.requestRecorder`. */
   requestRecording?: boolean;
+  assetRequestClassification?: boolean;
   requestHeaderInjection?: boolean;
   userAgentOverride?: boolean;
   supportedObservationModes: ObservationMode[];

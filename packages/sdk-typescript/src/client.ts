@@ -498,6 +498,23 @@ export class SessionsClient {
   }
 
   /** T10 M2: the engagement scope in effect, budget and denials (never a marker value). */
+  /** Separately authenticated human-operator endpoint; ordinary API credentials refuse. */
+  async amendScopeAssets(
+    sessionId: string,
+    request: import('@agentbrowser/protocol').ScopeAssetAmendment
+  ): Promise<EngagementScopeStatus> {
+    return this.http.requestJson(
+      `/v1/operator/sessions/${encodeURIComponent(sessionId)}/scope/assets`,
+      { method: 'POST', body: request }
+    );
+  }
+
+  async scopeDenied(
+    sessionId: string
+  ): Promise<import('@agentbrowser/protocol').ScopeDeniedSummary> {
+    return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/scope/denied`);
+  }
+
   async scopeStatus(sessionId: string): Promise<EngagementScopeStatus> {
     return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/scope`);
   }
@@ -790,6 +807,17 @@ export class SessionsClient {
    * those to the operator, then retry with the token. Counts are numbers
    * only; values and cookie names never cross this boundary.
    */
+  /** ADR-027: use a separately configured operator credential; tenant API keys refuse. */
+  async createEvidence(
+    sourceId: string,
+    request: import('@agentbrowser/protocol').EvidencePassRequest
+  ): Promise<import('@agentbrowser/protocol').SessionView> {
+    return this.http.requestJson(`/v1/operator/sessions/${encodeURIComponent(sourceId)}/evidence`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
   async cookieHandoff(
     sessionId: string,
     request: CookieHandoffRequest,
