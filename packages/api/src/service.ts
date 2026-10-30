@@ -219,6 +219,7 @@ export interface ServiceSessionRequest {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  userAgent?: string;
   /**
    * Seed cookies for the session's context, to reuse an already-authenticated
    * session (e.g. bypass an SSO / device-trust login the browser can't pass).
@@ -317,6 +318,14 @@ const LEDGER_REQUEST_FIELDS = [
 ] as const;
 
 function ledgerRecord(ledger: EngagementLedger, record: EngineRequestRecord): void {
+  if (record.type === 'request.headersInjected') {
+    ledger.append(record.type, {
+      url: record.data.url,
+      hostname: record.data.hostname,
+      headers: record.data.headers,
+    });
+    return;
+  }
   const out: Record<string, unknown> = {
     outcome: record.type === 'request.failed' ? 'failed' : 'finished',
   };
@@ -844,6 +853,7 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  private readonly sessionUserAgents = new Map<string, string>();
   /** Each scoped session's engagement scope, for status and dry-run checks (T10 M2). */
   private readonly sessionScopes = new Map<string, EngagementScopePolicy>();
   /** Each ledgered session's engagement ledger (T10 M2). */
@@ -1133,6 +1143,7 @@ export class AgentBrowserService {
       this.ledgerClosings.set(sessionId, closing);
     }
     this.sessionScopes.delete(sessionId);
+    this.sessionUserAgents.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
     this.sessionCredentialSources.delete(sessionId);
     this.sessionHostAllowlists.delete(sessionId);
@@ -1738,6 +1749,26 @@ export class AgentBrowserService {
   }
 
   async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
+    if (
+      input.userAgent !== undefined &&
+      (typeof input.userAgent !== 'string' || !/^[\x20-\x7e]{1,512}$/.test(input.userAgent))
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'userAgent must be 1–512 printable ASCII bytes',
+        false,
+        { rule: 'scope.userAgent.invalid' }
+      );
+    if (
+      input.allowDownloads &&
+      (input.userAgent !== undefined || input.scope?.requestHeaders !== undefined)
+    )
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'Research traffic identity is not supported by service-side downloads',
+        false,
+        { rule: 'scope.identity.downloads' }
+      );
     const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
     if (
       request.approval?.review !== undefined &&
@@ -1767,7 +1798,11 @@ export class AgentBrowserService {
           'INVALID_REQUEST',
           `Engagement scope cannot be enforced as written: ${issues.slice(0, 3).join('; ')}`,
           false,
-          { rule: 'scope.unbound' }
+          {
+            rule: issues.some((issue) => issue.startsWith('requestHeaders'))
+              ? 'scope.requestHeaders.invalid'
+              : 'scope.unbound',
+          }
         );
     }
     if (request.approval !== undefined) {
@@ -1840,6 +1875,24 @@ export class AgentBrowserService {
         maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       };
       const engine = this.resolveEngine(request.engine);
+      const capabilities = await engine.capabilities();
+      if (
+        request.scope?.requestHeaders !== undefined &&
+        capabilities.requestHeaderInjection !== true
+      )
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'The selected engine cannot inject scope request headers',
+          false,
+          { rule: 'scope.requestHeaders.engine' }
+        );
+      if (request.userAgent !== undefined && capabilities.userAgentOverride !== true)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'The selected engine cannot override userAgent',
+          false,
+          { rule: 'scope.userAgent.engine' }
+        );
       // T10 M2: the ledger is fed by the engine's request recorder, which sees every
       // outcome (any page, popup or worker) before page attribution. Records that
       // arrive before the ledger file is open are held and flushed in order.
@@ -1889,6 +1942,7 @@ export class AgentBrowserService {
       if (request.locale !== undefined) engineRequest.locale = request.locale;
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
       if (request.headless !== undefined) engineRequest.headless = request.headless;
+      if (request.userAgent !== undefined) engineRequest.userAgent = request.userAgent;
       if (request.cookies !== undefined) engineRequest.cookies = request.cookies;
       if (request.allowServiceWorkers !== undefined)
         engineRequest.allowServiceWorkers = request.allowServiceWorkers;
@@ -1980,6 +2034,8 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (request.userAgent !== undefined)
+          this.sessionUserAgents.set(session.sessionId, request.userAgent);
         if (scopedPolicy instanceof EngagementScopePolicy)
           this.sessionScopes.set(session.sessionId, scopedPolicy);
         if (
@@ -2000,6 +2056,7 @@ export class AgentBrowserService {
               ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
               product: PRODUCT_VERSION,
               scope: scope.status(),
+              ...(request.userAgent !== undefined ? { userAgent: request.userAgent } : {}),
             }
           ).catch(async () => {
             await this.closeSession(session.sessionId).catch(() => {});
@@ -2105,7 +2162,18 @@ export class AgentBrowserService {
     lease: import('@agentbrowser/protocol').SessionLease | undefined,
     includeTenant: boolean
   ): ServiceSessionView {
+    const scope = this.sessionScopes.get(context.id)?.status();
+    const userAgent = this.sessionUserAgents.get(context.id);
     return {
+      ...(userAgent !== undefined ? { userAgent } : {}),
+      ...(scope
+        ? {
+            scope: {
+              ...(scope.budget ? { budget: scope.budget } : {}),
+              ...(scope.rateLimit ? { rateLimit: scope.rateLimit } : {}),
+            },
+          }
+        : {}),
       sessionId: context.id,
       status: context.state.toLowerCase(),
       engine: { ...context.engineIdentity },
@@ -3923,6 +3991,7 @@ export class AgentBrowserService {
           const detail = navigationFailureDetailFromParts({
             reason,
             ...(scope !== undefined ? { scope } : {}),
+            ...(navigation.scopeDenials ? { scopeDenials: navigation.scopeDenials } : {}),
           });
           throw new ServiceError(code, detail.message, detail.retryable, detail.details);
         }
@@ -4088,6 +4157,18 @@ export class AgentBrowserService {
       page.revision += 1;
       page.lastObservation = undefined;
       let result: Awaited<ReturnType<EnginePage['navigate']>>;
+      // T10 M5: page attribution and a live subscription avoid session-wide
+      // deltas, clock races and bounded-history eviction during long loads.
+      const scopeDenials: Record<string, number> = {};
+      const unsubscribe = this.sessionScopes.has(sessionId)
+        ? this.subscribe(sessionId, (event) => {
+            if (event.pageId !== pageId || event.type !== 'request.failed') return;
+            const code = event.data?.scope;
+            if (isScopeDenialCode(code)) scopeDenials[code] = (scopeDenials[code] ?? 0) + 1;
+          })
+        : undefined;
+      const denialDetails = () =>
+        Object.keys(scopeDenials).length > 0 ? { scopeDenials: { ...scopeDenials } } : {};
       try {
         result = await page.enginePage.navigate({
           url,
@@ -4104,10 +4185,15 @@ export class AgentBrowserService {
             'ENGINE_CRASHED',
             'The browser engine closed; the session has been terminated.',
             false,
-            { reason: 'engine_error' }
+            { reason: 'engine_error', ...denialDetails() }
           );
         }
-        throw new ServiceError(failure.code, failure.message, failure.retryable, failure.details);
+        throw new ServiceError(failure.code, failure.message, failure.retryable, {
+          ...failure.details,
+          ...denialDetails(),
+        });
+      } finally {
+        unsubscribe?.();
       }
 
       return this.secretManager.redact({
@@ -4115,7 +4201,10 @@ export class AgentBrowserService {
         url: result.url,
         redirectChain: result.redirectChain,
         ...(result.status !== 'success'
-          ? { reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error' }
+          ? {
+              reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error',
+              ...denialDetails(),
+            }
           : {}),
         ...(result.status === 'blocked' && isScopeDenialCode(result.scope)
           ? { scope: result.scope }

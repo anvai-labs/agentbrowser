@@ -51,6 +51,7 @@ export function isScopeDenialCode(value: unknown): value is ScopeDenialCode {
 export function navigationFailureDetailFromParts(input: {
   reason: NavigationFailureReason;
   scope?: ScopeDenialCode;
+  scopeDenials?: Record<string, number>;
   code?: ErrorCode;
   operationId?: string;
 }): ApiErrorDetail {
@@ -60,6 +61,7 @@ export function navigationFailureDetailFromParts(input: {
     retryable: false,
     details: {
       reason: input.reason,
+      ...(input.scopeDenials ? { scopeDenials: input.scopeDenials } : {}),
       ...(input.scope !== undefined ? { scope: input.scope } : {}),
       ...(input.operationId !== undefined && CONTROL_OPERATION_ID.test(input.operationId)
         ? { operationId: input.operationId }
@@ -73,7 +75,7 @@ export function navigationFailureDetail(error: unknown): ApiErrorDetail | undefi
   if (!error || typeof error !== 'object') return undefined;
   const candidate = error as {
     code?: unknown;
-    details?: { reason?: unknown; operationId?: unknown; scope?: unknown };
+    details?: { reason?: unknown; operationId?: unknown; scope?: unknown; scopeDenials?: unknown };
   };
   const reason = candidate.details?.reason;
   if (!isNavigationFailureReason(reason)) return undefined;
@@ -84,7 +86,17 @@ export function navigationFailureDetail(error: unknown): ApiErrorDetail | undefi
   // Read once: a getter must not pass the check and then return something else.
   const scopeValue = candidate.details?.scope;
   const scope = isScopeDenialCode(scopeValue) ? scopeValue : undefined;
+  const counts = candidate.details?.scopeDenials;
+  const scopeDenials: Record<string, number> = {};
+  if (counts && typeof counts === 'object') {
+    for (const name of SCOPE_DENIAL_CODES) {
+      const count = (counts as Record<string, unknown>)[name];
+      if (typeof count === 'number' && Number.isSafeInteger(count) && count > 0)
+        scopeDenials[name] = count;
+    }
+  }
   return navigationFailureDetailFromParts({
+    ...(Object.keys(scopeDenials).length ? { scopeDenials } : {}),
     reason,
     ...(code !== undefined ? { code } : {}),
     ...(scope !== undefined ? { scope } : {}),

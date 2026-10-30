@@ -1,4 +1,9 @@
-import { hostMatchesPattern } from '@agentbrowser/core';
+import { createHash } from 'node:crypto';
+import {
+  hostMatchesPattern,
+  type ResearchRequestHeader,
+  requestHeaderIssues,
+} from '@agentbrowser/core';
 import { NetworkPolicyError } from './network-policy.js';
 
 /**
@@ -47,6 +52,7 @@ export interface EngagementScopeOptions {
   requestBudget?: number;
   /** Identity markers that must not leave their bound hosts. */
   identityBindings?: ScopeIdentityBinding[];
+  requestHeaders?: ResearchRequestHeader[];
   /** T10 M3: hosts (exact or ".suffix") removed from scope even when allowed. */
   excludeHosts?: string[];
   /** T10 M3: segment-bounded path prefixes removed from scope (optionally host-bound). */
@@ -79,6 +85,7 @@ export interface ScopeProgram {
 
 /** The scope in effect, as `EngagementScopePolicy.status()` reports it (T10 M2). */
 export interface EngagementScopeStatus {
+  requestHeaders?: Array<{ header: string; hostSuffix?: string; valueSha256: string }>;
   allowedHosts: string[];
   pathRules: ScopePathRule[];
   allowedMethods?: string[];
@@ -205,16 +212,24 @@ export function scopeConfigurationIssues(scope: {
   allowedHosts: string[];
   pathRules?: Array<{ hostSuffix?: string }>;
   excludePaths?: Array<{ hostSuffix?: string }>;
+  requestHeaders?: ResearchRequestHeader[];
 }): string[] {
   const allowed = scope.allowedHosts.map(normalizeHost);
-  const issues: string[] = [];
+  const issues: string[] = scope.requestHeaders ? requestHeaderIssues(scope.requestHeaders) : [];
   // pathRules: an unbound rule leaves its host unrestricted. excludePaths: an unbound
   // exclusion is a restriction silently ignored. Both are refused.
-  for (const field of ['pathRules', 'excludePaths'] as const) {
+  for (const field of ['pathRules', 'excludePaths', 'requestHeaders'] as const) {
     for (const [index, rule] of (scope[field] ?? []).entries()) {
       if (rule.hostSuffix === undefined) continue;
       const host = normalizeHost(rule.hostSuffix);
-      if (!allowed.some((pattern) => patternsOverlap(host, pattern)))
+      const sample = (pattern: string) =>
+        pattern.startsWith('.') ? `scope-probe${pattern}` : pattern;
+      const binds = allowed.some((pattern) =>
+        field === 'requestHeaders'
+          ? hostMatchesPattern(sample(host), pattern) || hostMatchesPattern(sample(pattern), host)
+          : patternsOverlap(host, pattern)
+      );
+      if (!binds)
         issues.push(`${field}[${index}].hostSuffix ${rule.hostSuffix} binds no allowed host`);
     }
   }
@@ -261,6 +276,11 @@ export const CHAIN_SPENT_BOUND = 4096;
 export class EngagementScopePolicy {
   /** A scope never lets a redirect hop go unchecked (T10 M1). */
   readonly requireRedirectGuard = true;
+  declare readonly headersForRequest?: (
+    hostname: string,
+    headers: Record<string, string>
+  ) => Record<string, string>;
+  private readonly injected: ResearchRequestHeader[];
   private readonly allowed: string[];
   private readonly paths: ScopePathRule[];
   private readonly methods: Set<string> | undefined;
@@ -315,6 +335,17 @@ export class EngagementScopePolicy {
     },
     scope: EngagementScopeOptions
   ) {
+    const headerIssues = scope.requestHeaders ? scopeConfigurationIssues(scope) : [];
+    if (headerIssues.length)
+      throw new NetworkPolicyError('POLICY_DENIED', headerIssues.join('; '), false, {
+        rule: 'scope.requestHeaders.invalid',
+      });
+    this.injected = (scope.requestHeaders ?? []).map((entry) => ({
+      ...entry,
+      header: entry.header.toLowerCase(),
+      ...(entry.hostSuffix ? { hostSuffix: normalizeHost(entry.hostSuffix) } : {}),
+    }));
+    if (this.injected.length) this.headersForRequest = this.transformHeaders.bind(this);
     this.allowed = scope.allowedHosts.map(normalizeHost);
     this.paths = (scope.pathRules ?? []).map((rule) => ({
       ...rule,
@@ -440,12 +471,42 @@ export class EngagementScopePolicy {
     }
   }
 
-  /**
-   * The scope in effect, budget and denials (T10 M2). Identity marker values
-   * are never reported: they are the credential the binding protects.
-   */
+  /** Remove configured markers first, so cross-host hops cannot inherit one. */
+  private transformHeaders(
+    hostname: string,
+    headers: Record<string, string>
+  ): Record<string, string> {
+    const names = new Set(this.injected.map((entry) => entry.header));
+    const result = Object.fromEntries(
+      Object.entries(headers).filter(([name]) => !names.has(name.toLowerCase()))
+    );
+    for (const entry of this.injected)
+      if (!entry.hostSuffix || hostMatchesPattern(normalizeHost(hostname), entry.hostSuffix))
+        result[entry.header] = entry.value;
+    return result;
+  }
+
+  injectedHeaderNames(hostname: string): string[] {
+    return this.injected
+      .filter(
+        (entry) =>
+          !entry.hostSuffix || hostMatchesPattern(normalizeHost(hostname), entry.hostSuffix)
+      )
+      .map((entry) => entry.header);
+  }
+
+  /** The scope in effect, budget and denials; marker values are never reported. */
   status(): EngagementScopeStatus {
     return {
+      ...(this.injected.length
+        ? {
+            requestHeaders: this.injected.map(({ header, hostSuffix, value }) => ({
+              header,
+              ...(hostSuffix ? { hostSuffix } : {}),
+              valueSha256: createHash('sha256').update(value).digest('hex'),
+            })),
+          }
+        : {}),
       allowedHosts: [...this.allowed],
       pathRules: this.paths.map((rule) => ({ ...rule })),
       ...(this.methods !== undefined ? { allowedMethods: [...this.methods] } : {}),

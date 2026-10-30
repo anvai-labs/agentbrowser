@@ -1338,6 +1338,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsAccessibilityTree: true,
       supportsCdp: this.browserFamily === 'chromium',
       requestRecording: true,
+      requestHeaderInjection: true,
+      userAgentOverride: true,
       ...(this.operatorCdp?.allowUnenforcedEgress &&
       this.browserFamily === 'chromium' &&
       this.cdpEndpoint === undefined
@@ -1463,6 +1465,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       const contextViewport = resolveContextViewport(options.viewport, headless);
       context = await browser.newContext({
         viewport: contextViewport,
+        ...(options.userAgent !== undefined ? { userAgent: options.userAgent } : {}),
         locale,
         timezoneId: options.timezoneId || 'America/New_York',
         // Service-worker fetches bypass context.route; a choke point with a
@@ -1576,6 +1579,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     }
     if (
       options.headless !== undefined ||
+      options.userAgent !== undefined ||
       options.viewport !== undefined ||
       options.locale !== undefined ||
       options.timezoneId !== undefined ||
@@ -1866,6 +1870,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
     };
 
+    const headersFor = (hostname: string, headers: Record<string, string>) =>
+      egress.headersForRequest?.(hostname, headers) ?? headers;
+    const recordInjection = (url: string) => {
+      const at = new URL(url);
+      const headers = egress.injectedHeaderNames?.(at.hostname) ?? [];
+      if (headers.length)
+        sink.record?.({
+          type: 'request.headersInjected',
+          timestamp: new Date().toISOString(),
+          data: {
+            url: at.origin + at.pathname,
+            hostname: at.hostname,
+            headers,
+          },
+        });
+    };
+
     const verdictOf = async (
       hostname: string,
       url: string,
@@ -1989,7 +2010,15 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const redirectGuard =
       egress.requireRedirectGuard === true
         ? new BodyRedirectGuard(context, {
-            verdictOf: (hostname, url, hop) => verdictOf(hostname, url, hop),
+            verdictOf: (hostname, url, hop) =>
+              verdictOf(hostname, url, { ...hop, headers: headersFor(hostname, hop.headers) }),
+            ...(egress.headersForRequest
+              ? {
+                  headersForRequest: (url: string, headers: Record<string, string>) =>
+                    headersFor(new URL(url).hostname, headers),
+                  onInjection: recordInjection,
+                }
+              : {}),
             maxHops: MAX_REDIRECT_HOPS,
             // The guard sees every response of a body-bearing chain: its outcomes
             // are the ledger's record (the passthrough emit is intent only).
@@ -2039,9 +2068,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         terminalStarted = true;
         return route.fulfill(options);
       };
-      const continueRequest = () => {
+      const continueRequest = (headers: Record<string, string>) => {
         terminalStarted = true;
-        return route.continue();
+        // Native scoped bodies were transformed by their target's CDP guard.
+        // route.continue({headers}) would persist that override across redirects
+        // and overwrite the guard's destination-specific headers on a later hop.
+        return route.continue(egress.headersForRequest && !redirectGuard ? { headers } : undefined);
       };
 
       const deny = async (reason: NavigationFailureReason, scope?: ScopeDenialCode) => {
@@ -2057,7 +2089,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // Method and headers ride along so engagement-scope rules can
         // enforce methods and identity bindings; redirect hops reuse the
         // original request's headers (a redirect re-issues them).
-        const requestHeaders = request.headers();
+        const originalHeaders = egress.headersForRequest
+          ? await request.allHeaders()
+          : request.headers();
+        const requestHeaders = headersFor(hostname, originalHeaders);
         const initial = await verdictOf(hostname, url, { method, headers: requestHeaders });
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, {
@@ -2094,11 +2129,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             { passthrough: true },
             redirectGuard === undefined
           );
-          await continueRequest();
+          recordInjection(url);
+          await continueRequest(requestHeaders);
           return;
         }
 
-        const response = await route.fetch({ maxRedirects: 0 });
+        recordInjection(url);
+        const response = await route.fetch({
+          maxRedirects: 0,
+          ...(egress.headersForRequest ? { headers: requestHeaders } : {}),
+        });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop
         // detection per hop. Allowed chains terminate in deliverTerminal
@@ -2106,6 +2146,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // 302). This retires the R4 redirect gap: fulfilling the first 302
         // let the browser follow every later hop unchecked.
         const seen = new Set([url]);
+        // Explicit marker overrides must not pin the source host's cookies or
+        // restore credentials after an origin-changing redirect. The context's
+        // request transport selects fresh destination cookies when omitted.
+        let redirectHeaders = originalHeaders;
         let current = response;
         let currentUrl = url;
         let hops = 0;
@@ -2139,9 +2183,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               return;
             }
             seen.add(hopKey);
+            if (egress.headersForRequest) {
+              const crossOrigin = new URL(currentUrl).origin !== absolute.origin;
+              redirectHeaders = Object.fromEntries(
+                Object.entries(redirectHeaders).filter(([name]) => {
+                  const lower = name.toLowerCase();
+                  return (
+                    lower !== 'cookie' &&
+                    lower !== 'host' &&
+                    !(crossOrigin && (lower === 'authorization' || lower === 'proxy-authorization'))
+                  );
+                })
+              );
+            }
+            const hopRequestHeaders = headersFor(absolute.hostname, redirectHeaders);
             const hop = await verdictOf(absolute.hostname, absolute.toString(), {
               method: current.status() === 307 || current.status() === 308 ? method : 'GET',
-              headers: requestHeaders,
+              headers: hopRequestHeaders,
             });
             if (hop.verdict === 'deny') {
               emitRequest('request.failed', request, {
@@ -2158,7 +2216,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             // original method.
             const followMethod =
               current.status() === 307 || current.status() === 308 ? method : 'GET';
+            recordInjection(absolute.toString());
             const next = await route.fetch({
+              ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
               url: absolute.toString(),
               method: followMethod,
               maxRedirects: 0,
@@ -2761,7 +2821,11 @@ class PlaywrightPage implements EnginePage {
     dropFrameIdentityState(frame);
   };
   private resetFormIdentity(): void {
-    this.closeDisclosureCdp();
+    // The disclosure CDP session attaches to the page target, not the
+    // document, so it survives navigation. Detaching it here would kill
+    // sibling sessions' domain state (foreign WebAuthn environments) on
+    // every navigation; it is closed with the page — or, if it dies before
+    // that, dropped and re-minted by disclosureCdp's invalidation.
     this.formIdentityGeneration++;
     void this.formIdentityState?.dispose().catch(() => {});
     this.formIdentityState = undefined;
@@ -4477,18 +4541,22 @@ class PlaywrightPage implements EnginePage {
 
   /**
    * A details' first summaries as Chromium's accessibility tree sees them, in light-DOM document
-   * order (the order of SUMMARY_LOCATOR). Undefined when the engine has no CDP (Firefox, WebKit),
-   * so the caller falls back to the page function. A row is minted only where Chromium exposes a
-   * disclosure (role DisclosureTriangle, not ignored): an explicit valid role, an unrendered
-   * summary or one inside a closed details is skipped exactly as the browser decides.
+   * order (the order of SUMMARY_LOCATOR). Undefined when the engine has no CDP (Firefox, WebKit)
+   * or when a CDP call failed — an engine lacking these domains (Obscura), a DOM that changed
+   * mid-scan, a dead session — so the caller falls back to the page function. A row is minted only
+   * where Chromium exposes a disclosure (role DisclosureTriangle, not ignored): an explicit valid
+   * role, an unrendered summary or one inside a closed details is skipped exactly as the browser
+   * decides.
    */
   private async disclosuresFromBrowser(): Promise<SummaryInfo[] | undefined> {
     // Mint-and-detach a CDP session per call (the original shape) detaches a
     // sibling session on every observe, and Chromium tears down per-target
     // domain state — including a foreign WebAuthn virtual-authenticator
     // environment another session attached. One session per page, reused
-    // across observes and detached only on close/resetFormIdentity, keeps
-    // sibling sessions' domain state intact.
+    // across observes (it attaches to the page target, so it survives
+    // navigation) and detached only when the page closes — or dropped and
+    // re-minted when it dies (disclosureCdp) — keeps sibling sessions'
+    // domain state intact without pinning a dead session forever.
     const cdp = await this.disclosureCdp();
     if (cdp === undefined) return undefined;
     try {
@@ -4521,25 +4589,66 @@ class PlaywrightPage implements EnginePage {
           };
         })
       );
-    } catch {
+    } catch (error) {
       // A CDP engine that lacks these domains (Obscura), or a DOM that changed between the
       // calls: fall back to the validated page-function scan rather than minting nothing.
+      // A session that DIED mid-scan is additionally dropped from the cache — the 'close'
+      // event normally does it, this covers a send that failed before the event landed —
+      // so the next observe re-mints instead of falling back forever. Identity-guarded:
+      // a racer may already have re-minted, and detaching the fresh session would repeat
+      // the sibling-state teardown this design avoids. An unsupported-domain failure
+      // (Obscura) keeps the cache: re-minting per observe would churn sessions there.
+      if (
+        error instanceof Error &&
+        /closed/i.test(error.message) &&
+        this.disclosureCdpSession === cdp
+      )
+        this.closeDisclosureCdp();
       return undefined;
     }
   }
 
-  /** Lazily minted, page-lifetime CDP session for the disclosure scan. */
+  /**
+   * Lazily minted, page-lifetime CDP session for the disclosure scan. The
+   * minting PROMISE is cached (mirroring formIdentityInitialization):
+   * concurrent observes share one session instead of racing mints whose
+   * loser would be overwritten in the cache and never detached. The cache
+   * is invalidated by the session's own 'close' event (target closed,
+   * renderer crash, browser-side detach) and by a dead-session send failure
+   * in disclosuresFromBrowser, so a dead session is re-minted on the next
+   * observe instead of pinning the page to the page-function fallback —
+   * untrusted page data — for the rest of its lifetime.
+   */
   private disclosureCdpSession: import('playwright').CDPSession | undefined;
+  private disclosureCdpInitialization:
+    | Promise<import('playwright').CDPSession | undefined>
+    | undefined;
 
   private async disclosureCdp(): Promise<import('playwright').CDPSession | undefined> {
     if (this.disclosureCdpSession !== undefined) return this.disclosureCdpSession;
-    try {
-      const session = await this.page.context().newCDPSession(this.page);
-      this.disclosureCdpSession = session;
-      return session;
-    } catch {
-      return undefined;
-    }
+    if (this.disclosureCdpInitialization !== undefined) return this.disclosureCdpInitialization;
+    const pending = (async (): Promise<import('playwright').CDPSession | undefined> => {
+      try {
+        const session = await this.page.context().newCDPSession(this.page);
+        session.once('close', () => {
+          // Identity-guarded: a newer session may already be cached by the
+          // time a dead one's close event is delivered.
+          if (this.disclosureCdpSession === session) this.disclosureCdpSession = undefined;
+        });
+        this.disclosureCdpSession = session;
+        return session;
+      } catch {
+        return undefined;
+      }
+    })();
+    this.disclosureCdpInitialization = pending;
+    // pending never rejects (a failed mint resolves undefined), so the
+    // derived finally-promise cannot leak an unhandled rejection.
+    void pending.finally(() => {
+      if (this.disclosureCdpInitialization === pending)
+        this.disclosureCdpInitialization = undefined;
+    });
+    return pending;
   }
 
   /**

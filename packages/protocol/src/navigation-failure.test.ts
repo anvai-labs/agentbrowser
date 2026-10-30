@@ -92,3 +92,26 @@ it('reads the scope once, so a changing getter cannot smuggle prose', () => {
   expect(JSON.stringify(projected)).not.toContain('attacker');
   expect(projected?.details).toEqual({ reason: 'egress_policy', scope: 'SCOPE_HOST_DENIED' });
 });
+
+it('retains only recognized positive integer navigation-window scope counts (T10 M5)', () => {
+  expect(
+    navigationFailureDetail({
+      code: 'NAVIGATION_TIMEOUT',
+      details: {
+        reason: 'engine_error',
+        scopeDenials: {
+          SCOPE_RATE_LIMITED: 17,
+          SCOPE_BUDGET_EXHAUSTED: 3,
+          SCOPE_HOST_DENIED: -1,
+          SCOPE_PATH_DENIED: 1.5,
+          SCOPE_METHOD_DENIED: Number.POSITIVE_INFINITY,
+          SCOPE_EXPIRED: 'secret',
+          unknown: 10,
+        },
+      },
+    })?.details
+  ).toEqual({
+    reason: 'engine_error',
+    scopeDenials: { SCOPE_RATE_LIMITED: 17, SCOPE_BUDGET_EXHAUSTED: 3 },
+  });
+});

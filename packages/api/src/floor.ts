@@ -138,6 +138,7 @@ export function attachRequestHasOptions(
   request: Readonly<{
     controlMode?: unknown;
     headless?: unknown;
+    userAgent?: unknown;
     viewport?: unknown;
     locale?: unknown;
     timezoneId?: unknown;
@@ -156,6 +157,7 @@ export function attachRequestHasOptions(
   return (
     request.controlMode !== undefined ||
     request.headless !== undefined ||
+    request.userAgent !== undefined ||
     request.viewport !== undefined ||
     request.locale !== undefined ||
     request.timezoneId !== undefined ||

@@ -36,10 +36,13 @@ export interface ProgramScopeEntry {
 }
 
 export type ProgramScopeImport =
-  | { ok: true; scope: EngagementScope; report: ProgramScopeEntry[] }
+  | { ok: true; scope: EngagementScope; report: ProgramScopeEntry[]; warnings: string[] }
   | { ok: false; error: string; report: ProgramScopeEntry[] };
 
 export interface ProgramScopeMeta {
+  requestBudget?: number;
+  pagesPlanned?: number;
+  rateLimit?: { requests: number; perSeconds: number };
   programId?: string;
   programVersion?: string;
   authorizedBy?: string;
@@ -211,6 +214,16 @@ export function importProgramScope(
     throw new Error('Program authorization needs both authorizedBy and authorizedAt.');
   if (meta.authorizedBy !== undefined && meta.programId === undefined)
     throw new Error('Program authorization needs a programId.');
+  if (meta.requestBudget !== undefined && meta.pagesPlanned !== undefined)
+    throw new Error('Choose requestBudget or pagesPlanned, not both.');
+  for (const value of [meta.requestBudget, meta.pagesPlanned])
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1))
+      throw new Error('Budget and planned pages must be positive safe integers.');
+  const requestBudget =
+    meta.requestBudget ??
+    (meta.pagesPlanned !== undefined ? Math.max(150, meta.pagesPlanned * 120) : undefined);
+  if (requestBudget !== undefined && !Number.isSafeInteger(requestBudget))
+    throw new Error('Planned budget is too large.');
   const raw =
     format === 'h1'
       ? parseH1(input)
@@ -306,6 +319,8 @@ export function importProgramScope(
       entry.note = entry.note === undefined ? note : `${entry.note}; ${note}`;
     }
   const scope: EngagementScope = {
+    ...(requestBudget !== undefined ? { requestBudget } : {}),
+    ...(meta.rateLimit !== undefined ? { rateLimit: { ...meta.rateLimit } } : {}),
     allowedHosts,
     ...(pathRules.length > 0 ? { pathRules } : {}),
     allowedSchemes: schemes,
@@ -335,5 +350,15 @@ export function importProgramScope(
       error: `the converted scope is invalid: ${valid.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ')}`,
       report,
     };
-  return { ok: true, scope, report };
+  return {
+    ok: true,
+    scope,
+    report,
+    warnings:
+      requestBudget !== undefined && requestBudget < 150
+        ? [
+            'A single JS-heavy page load consumes 50–120 requests; budget counts every subrequest and redirect hop. Plan about pages × 120 requests, with at least 150 for one page.',
+          ]
+        : [],
+  };
 }

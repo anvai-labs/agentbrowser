@@ -1,5 +1,10 @@
 # T7 slice 2: engagement scope enforcement
 
+T10 M5 adds explicit, destination-specific research marker injection and a
+session UA override; `identityBindings` remains validation-only. See the
+[research traffic identity design](t10-research-traffic-identity.md) for the
+restrict-only composition, refusal paths and evidence contract.
+
 Status: slice 2a DELIVERED 2026-10-02 (primitive + service surface +
 synthetic/real-Chromium gates). Task packet:
 [t7-audit-security](../tasks/t7-audit-security.md). The bounty use case

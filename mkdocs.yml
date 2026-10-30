@@ -232,6 +232,7 @@ nav:
     - 'Session Disconnect': spec/design/session-disconnect.md
     - 'Session Launch Diagnostics': spec/design/session-launch-diagnostics.md
     - 'Session Lease Visibility': spec/design/session-lease-visibility.md
+    - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md
     - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
     - 'T3 Live Junit': spec/design/t3-live-junit.md
@@ -309,7 +310,9 @@ nav:
     - 'Release 1.25.0': spec/evidence/release-1.25.0.md
     - 'Release 1.26.0': spec/evidence/release-1.26.0.md
     - 'Release 1.27.1': spec/evidence/release-1.27.1.md
+    - 'Release 1.27.2': spec/evidence/release-1.27.2.md
     - 'Release 1.27.3': spec/evidence/release-1.27.3.md
+    - 'Release 1.27.4': spec/evidence/release-1.27.4.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md
@@ -380,6 +383,7 @@ nav:
     - 'T7 Scanner Regression': spec/evidence/t7-scanner-regression.md
     - 'T8 Installed Harness Availability': spec/evidence/t8-installed-harness-availability.md
     - 'T9 Runner Minutes': spec/evidence/t9-runner-minutes.md
+    - 'T10 Bounty Workflow': spec/evidence/t10-bounty-workflow.md
   - History:
     - 'MVP implementation plan (technical design)': technical-design.md
     - 'Implementation roadmap': implementation-roadmap.md

@@ -208,3 +208,39 @@ describe('importProgramScope (T10 M3)', () => {
     expect(() => importProgramScope('{"target_groups": 3}', 'bugcrowd')).toThrow(/Bugcrowd/);
   });
 });
+
+// T10 M5: sizing is explicit, warnings do not change the imported host rules.
+it('sizes subrequests, warns below 150 and leaves an absent budget unbounded', () => {
+  const small = importProgramScope('app.test', 'text', { requestBudget: 80 });
+  expect(small).toMatchObject({
+    ok: true,
+    scope: { requestBudget: 80 },
+    warnings: [expect.stringContaining('every subrequest and redirect hop')],
+  });
+  expect(importProgramScope('app.test', 'text', { requestBudget: 150 })).toMatchObject({
+    ok: true,
+    warnings: [],
+  });
+  expect(
+    importProgramScope('app.test', 'text', {
+      pagesPlanned: 4,
+      rateLimit: { requests: 5, perSeconds: 1 },
+    })
+  ).toMatchObject({
+    ok: true,
+    scope: { requestBudget: 480, rateLimit: { requests: 5, perSeconds: 1 } },
+    warnings: [],
+  });
+  expect(importProgramScope('app.test', 'text', { pagesPlanned: 1 })).toMatchObject({
+    ok: true,
+    scope: { requestBudget: 150 },
+  });
+  const absent = importProgramScope('app.test', 'text');
+  expect(absent.ok && absent.scope).not.toHaveProperty('requestBudget');
+  expect(() =>
+    importProgramScope('app.test', 'text', { pagesPlanned: 1, requestBudget: 80 })
+  ).toThrow(/not both/);
+  expect(
+    importProgramScope('app.test', 'text', { rateLimit: { requests: 0, perSeconds: 1 } }).ok
+  ).toBe(false);
+});

@@ -91,3 +91,29 @@ describe('scope import (T10 M3)', () => {
     expect((await runCli(['scope', 'import', bad, '--from', 'h1'])).code).not.toBe(0);
   });
 });
+
+it('imports an explicit bounty budget and reports low-budget warnings in human and JSON output', async () => {
+  const input = file('sizing.txt', 'app.test');
+  const argv = [
+    'scope',
+    'import',
+    input,
+    '--from',
+    'text',
+    '--request-budget',
+    '80',
+    '--rate-limit',
+    '2/1',
+  ];
+  const human = await runCli(argv);
+  expect(human.code).toBe(0);
+  expect(human.out).toContain('WARNING: A single JS-heavy page');
+  const json = JSON.parse((await runCli(['--json', ...argv])).out);
+  expect(json.scope).toMatchObject({
+    requestBudget: 80,
+    rateLimit: { requests: 2, perSeconds: 1 },
+  });
+  expect(json.warnings).toHaveLength(1);
+  expect((await runCli([...argv, '--pages-planned', '4'])).code).toBe(1);
+  expect((await runCli([...argv, '--rate-limit', 'bogus'])).code).toBe(1);
+});

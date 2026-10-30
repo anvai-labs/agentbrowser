@@ -1,5 +1,5 @@
 // T10 M2: `engagement export` and the offline `engagement verify`.
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ENGAGEMENT_GENESIS, engagementChainHash } from '@agentbrowser/core';
@@ -78,6 +78,25 @@ describe('engagement commands (T10 M2)', () => {
       engagements: { export: exportLedger },
     });
     expect(again.code).not.toBe(0);
+    expect(await readFile(file, 'utf8')).toBe(sample);
+    await writeFile(file, 'old');
+    await chmod(file, 0o666);
+    const forced = await run(['engagement', 'export', 'eng_x', '--out', file, '--force'], {
+      engagements: { export: exportLedger },
+    });
+    expect(forced.code).toBe(0);
+    expect(await readFile(file, 'utf8')).toBe(sample);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+
+  it('requires --out with --force before downloading', async () => {
+    const exportLedger = vi.fn();
+    const result = await run(['engagement', 'export', 'eng_x', '--force'], {
+      engagements: { export: exportLedger },
+    });
+    expect(result.code).toBe(1);
+    expect(result.err.join('\n')).toContain('--force needs --out');
+    expect(exportLedger).not.toHaveBeenCalled();
   });
 
   it('export --out exits 1 when the downloaded chain is broken (the file is still written)', async () => {

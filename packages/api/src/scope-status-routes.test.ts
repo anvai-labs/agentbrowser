@@ -54,6 +54,9 @@ describe('scope status and dry-run check (T10 M2)', () => {
         denials: {},
       });
       expect(status.body).not.toContain('secret-token');
+      expect((await call('GET', `/v1/sessions/${sessionId}`)).json().scope).toEqual({
+        budget: { limit: 5, spent: 0, remaining: 5 },
+      });
     } finally {
       await app.close();
     }

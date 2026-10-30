@@ -145,6 +145,20 @@ export const ScopeIdentityBindingSchema = Type.Object(
   { additionalProperties: false }
 );
 
+// T10 M5: research markers only; semantic checks also run in the service/policy.
+export const ScopeRequestHeaderSchema = Type.Object(
+  {
+    header: Type.String({
+      minLength: 3,
+      maxLength: 64,
+      pattern: '^[xX]-[A-Za-z0-9][A-Za-z0-9-]*$',
+    }),
+    value: Type.String({ minLength: 1, maxLength: 1024, pattern: '^[\\x20-\\x7e]+$' }),
+    hostSuffix: Type.Optional(Type.String({ minLength: 2, pattern: SCOPE_HOST_PATTERN })),
+  },
+  { additionalProperties: false }
+);
+
 // T10 M3: the program an engagement runs under. Metadata only: reported in the
 // scope status and the ledger, never used to widen or narrow traffic.
 export const ScopeProgramSchema = Type.Object(
@@ -174,6 +188,9 @@ export const EngagementScopeSchema = Type.Object(
     // Total choke-point requests in scope, redirect hops included.
     requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
     identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
+    requestHeaders: Type.Optional(
+      Type.Array(ScopeRequestHeaderSchema, { minItems: 1, maxItems: 16 })
+    ),
     // T10 M2: record this engagement in a hash-chained, metadata-only ledger. Needs the
     // operator's AGENTBROWSER_ENGAGEMENT_DIR; refused when unconfigured.
     ledger: Type.Optional(Type.Boolean()),
@@ -210,6 +227,18 @@ export const EngagementScopeSchema = Type.Object(
 // credential the binding protects and is never returned.
 export const EngagementScopeStatusSchema = Type.Object(
   {
+    requestHeaders: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            header: Type.String(),
+            hostSuffix: Type.Optional(Type.String()),
+            valueSha256: Type.String(),
+          },
+          { additionalProperties: false }
+        )
+      )
+    ),
     allowedHosts: Type.Array(Type.String()),
     pathRules: Type.Array(ScopePathRuleSchema),
     allowedMethods: Type.Optional(Type.Array(Type.String())),
@@ -319,6 +348,9 @@ export const SessionRequestSchema = Type.Object(
     locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
     timezoneId: Type.Optional(Type.String()),
     headless: Type.Optional(Type.Boolean()),
+    userAgent: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 512, pattern: '^[\\x20-\\x7e]+$' })
+    ),
     cookies: Type.Optional(Type.Array(SessionCookieSchema)),
     policy: Type.Optional(SessionPolicySchema),
     snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
@@ -399,6 +431,8 @@ export const EngineCapabilitiesSchema = Type.Object({
   supportsCdp: Type.Boolean(),
   supportsCdpAttach: Type.Optional(Type.Boolean()),
   requestRecording: Type.Optional(Type.Boolean()),
+  requestHeaderInjection: Type.Optional(Type.Boolean()),
+  userAgentOverride: Type.Optional(Type.Boolean()),
   supportedObservationModes: Type.Array(ObservationModeSchema, { minItems: 1 }),
   supportedActionTypes: Type.Array(ActionTypeSchema, { minItems: 1 }),
 });
@@ -912,6 +946,7 @@ export const ActionRequestSchema = Type.Object({
 });
 
 export const NavigationStatusSchema = Type.Object({
+  scopeDenials: Type.Optional(Type.Record(Type.String(), Type.Integer({ minimum: 0 }))),
   status: Type.Union([Type.Literal('success'), Type.Literal('timeout'), Type.Literal('blocked')]),
   url: Type.String({ pattern: '^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$' }),
   redirectChain: Type.Array(Type.String()),
