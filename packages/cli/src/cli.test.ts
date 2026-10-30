@@ -1900,6 +1900,21 @@ describe('AgentBrowser CLI', () => {
       const code = await run('session', 'get', 'ses_1');
       expect(code).toBe(0);
       expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
+      expect(out.join('\n')).not.toContain('paced:');
+      expect(out.join('\n')).not.toContain('budget:');
+    });
+
+    it('renders scoped pacing and budget facts', async () => {
+      sessions.get.mockResolvedValue({
+        sessionId: 'ses_1',
+        scope: {
+          rateLimit: { requests: 5, perSeconds: 1, paced: 196 },
+          budget: { limit: 400, spent: 196, remaining: 204 },
+        },
+      });
+      expect(await run('session', 'get', 'ses_1')).toBe(0);
+      expect(out.join('\n')).toContain('paced:   196 requests');
+      expect(out.join('\n')).toContain('204 remaining');
     });
 
     it('renders allowlisted terminal facts from the shared error projection', async () => {

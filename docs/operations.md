@@ -702,6 +702,14 @@ caveats (page-routing coverage only, no worker guarantee, explicit
 
 ### Engagements (authorized testing)
 
+Program directories and authentication surfaces may fingerprint headless
+contexts. In the first bounty run, HackerOne's directory showed a
+JavaScript-disabled wall headless and rendered headed with the same engine.
+Use `session create --tenant TENANT --no-headless` for directory/policy
+browsing, then a separate scoped headless session for the authorized pass.
+The CLI creates a session with `pages: 0`: follow with
+`page create SESSION --url URL`. MCP create returns an initial `pageId`.
+
 **Engagement scope for authorized testing (`policy.scope` /
 `--scope-file`).** Sessions can pin an engagement — exhaustive
 `allowedHosts` (`.suffix` covers subdomains only; list the apex
@@ -798,6 +806,68 @@ published scope is not permission: test only what you are authorized to test. Fo
 structured scopes (`data[].attributes`, `eligible_for_submission`), Bugcrowd `target_groups`, and
 text (one entry per line, `-` for out of scope, `#` comments).
 
+**Sizing an engagement (T10 M5).** Budget requests, not navigations: a JS-heavy
+page can consume 50–120 requests across scripts, images, frames and redirect
+hops. `scope import` accepts `--pages-planned N` (budget `max(150, N × 120)`)
+or `--request-budget N`; a budget below 150 emits a warning in human output
+and the JSON `warnings` array. These are planning estimates, not guarantees.
+
+| Planned pass | Request budget | Arithmetic |
+| --- | --- | --- |
+| One JS-heavy page | 150 | 120 subrequests plus margin |
+| Three pages | 360 | 3 × 120 |
+| Five pages | 600 | 5 × 120 |
+| Small first-run budget | 80 (warning) | less than one heavy page plus margin |
+
+Set `--rate-limit REQUESTS/SECONDS` at or below the program's published
+scanner cap; import never infers one from a platform name. For a program
+whose policy permits five requests per second, use `--rate-limit 5/1`.
+At two requests per second, a burst of 100 subresources needs roughly 50
+seconds; requests queued beyond the 15-second pacing cap can be denied.
+Raising the total budget alone does not address that queue. Review the
+published cap and plan a narrower pass if it cannot accommodate the page.
+
+`session get SESSION` includes `scope.rateLimit.paced` and `scope.budget`
+when configured; `session scope SESSION` adds denial totals. Failed
+navigations include `scopeDenials` keyed by `SCOPE_*` for that page during
+the navigation call (under `details` on errors). Counts explain scope
+starvation without changing the original reason or policy verdict.
+
+**Research traffic identity (T10 M5).** A scope can explicitly inject public
+research markers, separately from `identityBindings`, which continues to
+validate marked traffic. For example:
+
+```json
+{
+  "allowedHosts": [".wolt.com"],
+  "requestHeaders": [
+    {"header": "X-HackerOne-Research", "value": "H1_USERNAME", "hostSuffix": ".wolt.com"}
+  ]
+}
+```
+
+For the same marker on the apex and subdomains, use one entry with no
+`hostSuffix` when those are the scope's only hosts. Header names are unique
+case-insensitively. Matching follows the existing scope host matcher: a
+`.suffix` covers subdomains only; a bare registrable domain covers its subtree.
+Every request and redirect hop gets a fresh set; configured marker names are
+removed on nonmatching destinations. Only custom `X-` research headers are
+accepted, with transport/credential names refused, 16 entries maximum,
+1024 printable ASCII bytes per value and 8192 combined name/value bytes.
+`identityBindings` retains its existing validation semantics.
+
+Use `session create --user-agent 'ResearchBrowser H1_USERNAME'` (REST/SDK
+`userAgent`, MCP session create `userAgent`) for an explicit modified UA;
+session status reports it. Header injection and UA overrides require an
+engine advertising the corresponding capability; unsupported engines,
+operator attachment and service-side downloads are refused. Status and
+ledger scope records expose injected header names, host rules and value
+SHA-256 hashes, never raw marker values. The ledger also records
+`request.headersInjected` dispatch intent with destination and names; this
+does not prove remote receipt. UA text is recorded verbatim, so use only
+the public research identity you intend to disclose. See the
+[design note](spec/design/t10-research-traffic-identity.md).
+
 **Findings bound to an engagement (T10 M3).** Findings are a researcher-owned JSON array
 (`id`, `title`, `severity`, `status: suspected|confirmed`, `url`, `description`, optional `method`,
 `ruleId`, `ledgerRefs`, `evidence`), checked offline against an exported ledger:
@@ -851,6 +921,7 @@ engagement.opened → request … preflight.denied … → engagement.closed
 | --- | --- |
 | `engagement.opened` | engagement and session ids, tenant, product version, the scope status (no identity values) |
 | `request` | outcome, method, origin+path, host, resource type, status, bytes, blocked, reason, scope sub-code, redirect |
+| `request.headersInjected` | dispatch intent: destination origin+path, hostname, injected header names (values hashed in scope status) |
 | `preflight.denied` | a navigation the scope refused before the wire |
 | `engagement.closed` | the scope status at close, record count, dropped count, state |
 
@@ -878,6 +949,7 @@ engagement.opened → request … preflight.denied … → engagement.closed
 | Read it back | Surface |
 | --- | --- |
 | export (NDJSON, verbatim; during or after the session, across restarts) | `GET /v1/engagements/{engagementId}` · SDK `engagements.export(id)` · CLI `engagement export <id> [--out FILE]` |
+| replace an earlier export (new file, mode 0600; default remains exclusive/EEXIST) | CLI `engagement export <id> --out FILE --force` |
 | verify offline (recomputes the chain; exit 1 if broken) | CLI `engagement verify FILE` |
 
 Export takes a tenant API key or the operator key and is scoped to that tenant (another tenant's

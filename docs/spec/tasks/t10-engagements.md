@@ -21,7 +21,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 | --- | --- |
 | Authorized targets only | a scope is necessary, not sufficient: live targets need the researcher's explicit authorization (recorded as `program.authorizedBy/At`); public reachability or an imported program file is not permission. Until a live target is named, T10 is tested on local fixtures only |
 | No parity claim | T10 ships engagement tooling; T7's T4 condition still governs any application-security parity claim, which T10 does not make |
-| Restrictive-only | every new scope field can only narrow; inexpressible program rules are refused |
+| Restrictive-only | scope authorization can only narrow; inexpressible program rules are refused. Explicit research header injection grants no network permission and remains subject to every policy layer |
 | Metadata only | the ledger never holds request or response bodies (a later ADR decides bodies) |
 | Manual submission | reports are drafts; nothing sends a finding anywhere |
 | Reuse, don't build | no scanner, payload database or bounty executor (T7 rule); ZAP stays the adapter |
@@ -40,6 +40,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 | M2 status and ledger | 1.22.0 (status, sub-codes); 1.23.0 (ledger, export, offline verify); 1.24.0 (denial reporting on page creation, downloads, completed actions, autofill; strict session requests) | scope status (in-effect scope, budget used/remaining, expiry, denials by sub-code) and a no-budget dry-run check on REST/SDK/CLI/MCP; `SCOPE_*` sub-codes in request events and wire-level denials (blocked redirects, `page_create`, `act`/`plan`); the `navigate` preflight refusal already carries one on all four surfaces; an opt-in append-only hash-chained ledger that is exportable after close, refuses when full, never writes query strings, bodies or identity values, and fails verification when edited |
 | M3 program scope and findings | 1.25.0 | restrictive fields (excludes, ports, schemes, rate limit, program metadata); an importer for published program scope that maps `*.host` to subdomains only (the apex is in scope only when listed), refuses ambiguous wildcards and anything else it cannot express; findings bound to the engagement (out-of-scope evidence refused, confirmations cite ledger entries), SARIF draft export |
 | M4 automation runs | 1.26.0 | a saved plan file runs from the CLI with label targets, optional durable classification and JUnit/JSON results; the CI action accepts it. Released alongside: T6 rollback and async/recycled-option coverage, owned and recorded by [T6](t6-widget-strategies.md) |
+| M5 bounty workflow polish | unreleased | explicit subrequest sizing and warnings, page-local navigation denial counts, session pacing/budget facts, private forced re-export, validated per-hop research markers and UA overrides with ledger evidence; local Chromium fixtures cover redirect stripping and re-injection |
 
 ## Not in T10
 
@@ -71,3 +72,5 @@ automatic submission or outside communication of findings.
 | M2: scope status and dry-run check (REST, SDK, CLI, MCP) | `GET /v1/sessions/{id}/scope`, `…/scope/check`; MCP `scope` tool (#548, #551); released in 1.22.0 |
 | M2: export and offline verify | `GET /v1/engagements/{id}`, SDK, CLI `engagement export` / `verify` |
 | M2: ledger release smoke; crash-path ordering | `scope-consumer-smoke.mjs` ledger check (export over REST, CLI verify, edited copy refused); crash keeps close-time records |
+| M5: first bounty run polish | explicit import sizing and low-budget warnings; page-local scope denial counts on navigation failure; scope pacing/budget counters in session views; `engagement export --force`; headed-directory and CLI page cadence guidance |
+| M5: research traffic identity | [design](../design/t10-research-traffic-identity.md); custom scope `requestHeaders`, per-hop injection/stripping and hashed ledger configuration; session `userAgent`; unsupported lanes refused. Colocated policy, API and real-Chromium fixture tests cover validation, wire behavior and evidence |

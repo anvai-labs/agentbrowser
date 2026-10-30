@@ -9,6 +9,16 @@ program. Load the current program scope/rules version, selected finding and mini
 evidence references. Revalidate program scope and test authorization before running;
 public reachability or a remembered rule is not permission.
 
+Directory and policy browsing may need a headed context: HackerOne showed a
+JavaScript-disabled wall headless in the first bounty run. Browse with
+`--no-headless`, then use a separate scoped headless session for the authorized
+pass. CLI session creation returns no page: follow it with `page create
+SESSION --url URL`; MCP create includes an initial page id. Size budgets in
+subrequests and redirect hops (about 120 per planned JS-heavy page, at least
+150 for one page) and respect the program's published scanner cap. See the
+[engagement operations guide](../../operations.md#engagements-authorized-testing)
+for import sizing, traffic identity and ledger exports.
+
 ## Reuse and outcomes
 
 Reuse appsec identity isolation, diagnostics, verification and report helpers. Add only

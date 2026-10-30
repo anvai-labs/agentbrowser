@@ -1338,6 +1338,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsAccessibilityTree: true,
       supportsCdp: this.browserFamily === 'chromium',
       requestRecording: true,
+      requestHeaderInjection: true,
+      userAgentOverride: true,
       ...(this.operatorCdp?.allowUnenforcedEgress &&
       this.browserFamily === 'chromium' &&
       this.cdpEndpoint === undefined
@@ -1463,6 +1465,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       const contextViewport = resolveContextViewport(options.viewport, headless);
       context = await browser.newContext({
         viewport: contextViewport,
+        ...(options.userAgent !== undefined ? { userAgent: options.userAgent } : {}),
         locale,
         timezoneId: options.timezoneId || 'America/New_York',
         // Service-worker fetches bypass context.route; a choke point with a
@@ -1576,6 +1579,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     }
     if (
       options.headless !== undefined ||
+      options.userAgent !== undefined ||
       options.viewport !== undefined ||
       options.locale !== undefined ||
       options.timezoneId !== undefined ||
@@ -1866,6 +1870,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
     };
 
+    const headersFor = (hostname: string, headers: Record<string, string>) =>
+      egress.headersForRequest?.(hostname, headers) ?? headers;
+    const recordInjection = (url: string) => {
+      const at = new URL(url);
+      const headers = egress.injectedHeaderNames?.(at.hostname) ?? [];
+      if (headers.length)
+        sink.record?.({
+          type: 'request.headersInjected',
+          timestamp: new Date().toISOString(),
+          data: {
+            url: at.origin + at.pathname,
+            hostname: at.hostname,
+            headers,
+          },
+        });
+    };
+
     const verdictOf = async (
       hostname: string,
       url: string,
@@ -1989,7 +2010,15 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const redirectGuard =
       egress.requireRedirectGuard === true
         ? new BodyRedirectGuard(context, {
-            verdictOf: (hostname, url, hop) => verdictOf(hostname, url, hop),
+            verdictOf: (hostname, url, hop) =>
+              verdictOf(hostname, url, { ...hop, headers: headersFor(hostname, hop.headers) }),
+            ...(egress.headersForRequest
+              ? {
+                  headersForRequest: (url: string, headers: Record<string, string>) =>
+                    headersFor(new URL(url).hostname, headers),
+                  onInjection: recordInjection,
+                }
+              : {}),
             maxHops: MAX_REDIRECT_HOPS,
             // The guard sees every response of a body-bearing chain: its outcomes
             // are the ledger's record (the passthrough emit is intent only).
@@ -2039,9 +2068,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         terminalStarted = true;
         return route.fulfill(options);
       };
-      const continueRequest = () => {
+      const continueRequest = (headers: Record<string, string>) => {
         terminalStarted = true;
-        return route.continue();
+        // Native scoped bodies were transformed by their target's CDP guard.
+        // route.continue({headers}) would persist that override across redirects
+        // and overwrite the guard's destination-specific headers on a later hop.
+        return route.continue(egress.headersForRequest && !redirectGuard ? { headers } : undefined);
       };
 
       const deny = async (reason: NavigationFailureReason, scope?: ScopeDenialCode) => {
@@ -2057,7 +2089,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // Method and headers ride along so engagement-scope rules can
         // enforce methods and identity bindings; redirect hops reuse the
         // original request's headers (a redirect re-issues them).
-        const requestHeaders = request.headers();
+        const originalHeaders = egress.headersForRequest
+          ? await request.allHeaders()
+          : request.headers();
+        const requestHeaders = headersFor(hostname, originalHeaders);
         const initial = await verdictOf(hostname, url, { method, headers: requestHeaders });
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, {
@@ -2094,11 +2129,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             { passthrough: true },
             redirectGuard === undefined
           );
-          await continueRequest();
+          recordInjection(url);
+          await continueRequest(requestHeaders);
           return;
         }
 
-        const response = await route.fetch({ maxRedirects: 0 });
+        recordInjection(url);
+        const response = await route.fetch({
+          maxRedirects: 0,
+          ...(egress.headersForRequest ? { headers: requestHeaders } : {}),
+        });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop
         // detection per hop. Allowed chains terminate in deliverTerminal
@@ -2106,6 +2146,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // 302). This retires the R4 redirect gap: fulfilling the first 302
         // let the browser follow every later hop unchecked.
         const seen = new Set([url]);
+        // Explicit marker overrides must not pin the source host's cookies or
+        // restore credentials after an origin-changing redirect. The context's
+        // request transport selects fresh destination cookies when omitted.
+        let redirectHeaders = originalHeaders;
         let current = response;
         let currentUrl = url;
         let hops = 0;
@@ -2139,9 +2183,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               return;
             }
             seen.add(hopKey);
+            if (egress.headersForRequest) {
+              const crossOrigin = new URL(currentUrl).origin !== absolute.origin;
+              redirectHeaders = Object.fromEntries(
+                Object.entries(redirectHeaders).filter(([name]) => {
+                  const lower = name.toLowerCase();
+                  return (
+                    lower !== 'cookie' &&
+                    lower !== 'host' &&
+                    !(crossOrigin && (lower === 'authorization' || lower === 'proxy-authorization'))
+                  );
+                })
+              );
+            }
+            const hopRequestHeaders = headersFor(absolute.hostname, redirectHeaders);
             const hop = await verdictOf(absolute.hostname, absolute.toString(), {
               method: current.status() === 307 || current.status() === 308 ? method : 'GET',
-              headers: requestHeaders,
+              headers: hopRequestHeaders,
             });
             if (hop.verdict === 'deny') {
               emitRequest('request.failed', request, {
@@ -2158,7 +2216,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             // original method.
             const followMethod =
               current.status() === 307 || current.status() === 308 ? method : 'GET';
+            recordInjection(absolute.toString());
             const next = await route.fetch({
+              ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
               url: absolute.toString(),
               method: followMethod,
               maxRedirects: 0,

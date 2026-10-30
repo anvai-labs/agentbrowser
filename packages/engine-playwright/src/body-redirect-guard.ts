@@ -36,6 +36,8 @@ export interface RedirectVerdict {
 }
 
 export interface BodyRedirectGuardOptions {
+  headersForRequest?(url: string, headers: Record<string, string>): Record<string, string>;
+  onInjection?(url: string): void;
   verdictOf(
     hostname: string,
     url: string,
@@ -328,7 +330,44 @@ export class BodyRedirectGuard {
         }
         this.open(target, event, networkId);
       }
-      await cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+      const chain = networkId === undefined ? undefined : target.chains.get(networkId);
+      // Native bodies use per-hop CDP overrides, including the initial hop.
+      // Playwright route.continue({headers}) persists overrides across redirects
+      // and would reapply an old marker after this guard stripped it.
+      try {
+        const headers = chain
+          ? this.options.headersForRequest?.(
+              event.request.url,
+              event.request.headers ?? chain.headers
+            )
+          : undefined;
+        if (headers && chain && chain.hops > 0) this.options.onInjection?.(event.request.url);
+        await cdp.send('Fetch.continueRequest', {
+          requestId: event.requestId,
+          ...(headers
+            ? { headers: Object.entries(headers).map(([name, value]) => ({ name, value })) }
+            : {}),
+        });
+      } catch {
+        // A failed transform/continue must never release the original headers.
+        const at = new URL(event.request.url);
+        try {
+          this.options.onOutcome?.({
+            type: 'request.failed',
+            data: {
+              url: at.origin + at.pathname,
+              hostname: at.hostname,
+              method: event.request.method,
+              reason: 'egress_policy',
+              detail: 'REQUEST_HEADERS_UNCHECKABLE',
+            },
+          });
+        } catch {}
+        if (chain) this.close(target, chain);
+        await cdp
+          .send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' })
+          .catch(() => {});
+      }
       return;
     }
     const proceed = () =>

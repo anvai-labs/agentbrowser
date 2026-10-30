@@ -185,6 +185,7 @@ export class SessionCoordinator {
         sessionOptions.viewport = request.viewport;
       }
 
+      if (request.userAgent !== undefined) sessionOptions.userAgent = request.userAgent;
       if (request.locale !== undefined) {
         sessionOptions.locale = request.locale;
       }

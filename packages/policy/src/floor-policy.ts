@@ -3,6 +3,8 @@ import { NetworkPolicyError } from './network-policy.js';
 
 /** The request-policy port (engine `RequestPolicy`), structurally. */
 export interface RequestPolicyChain {
+  headersForRequest?(hostname: string, headers: Record<string, string>): Record<string, string>;
+  injectedHeaderNames?(hostname: string): string[];
   checkRequest(request: {
     hostname: string;
     url: string;
@@ -62,7 +64,11 @@ export class MetadataFloorPolicy implements RequestPolicyChain {
   declare readonly preflightCheck?: NonNullable<RequestPolicyChain['preflightCheck']>;
   declare readonly requireRedirectGuard?: true;
 
+  declare readonly headersForRequest?: NonNullable<RequestPolicyChain['headersForRequest']>;
+  declare readonly injectedHeaderNames?: NonNullable<RequestPolicyChain['injectedHeaderNames']>;
   constructor(private readonly base: RequestPolicyChain) {
+    if (base.headersForRequest) this.headersForRequest = base.headersForRequest.bind(base);
+    if (base.injectedHeaderNames) this.injectedHeaderNames = base.injectedHeaderNames.bind(base);
     if (base.requireRedirectGuard === true) this.requireRedirectGuard = true;
     const {
       checkRedirectChain,

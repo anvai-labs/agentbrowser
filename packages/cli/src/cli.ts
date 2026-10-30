@@ -154,6 +154,13 @@ function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionRespon
   const facts = view.diagnostics;
   const lease = view.lease;
   return [
+    ...(view.userAgent ? [`  user-agent: ${view.userAgent}`] : []),
+    ...(view.scope?.rateLimit ? [`  paced:   ${view.scope.rateLimit.paced} requests`] : []),
+    ...(view.scope?.budget
+      ? [
+          `  budget:  ${view.scope.budget.remaining} remaining (${view.scope.budget.spent}/${view.scope.budget.limit} spent)`,
+        ]
+      : []),
     ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
     ...(lease
       ? [
@@ -669,6 +676,10 @@ export function buildCli(deps: CliDependencies): Cli {
                     `  program: ${status.program.id}${status.program.version ? ` (${status.program.version})` : ''}, authorized by ${status.program.authorizedBy} at ${status.program.authorizedAt}`,
                   ]
                 : []),
+              ...(status.requestHeaders ?? []).map(
+                (entry) =>
+                  `  inject:  ${entry.header} on ${entry.hostSuffix ?? 'all scoped hosts'} (sha256:${entry.valueSha256})`
+              ),
               ...status.identityBindings.map(
                 (binding) =>
                   `  identity: ${binding.header} bound to ${binding.allowedHosts.join(', ')}`
@@ -810,6 +821,7 @@ export function buildCli(deps: CliDependencies): Cli {
           '--cdp-attach',
           'attach to the startup-configured dedicated operator Chrome profile; local only, initial navigation policy checks only'
         )
+        .option('--user-agent <value>', 'explicit research User-Agent (visible in session status)')
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
           '--no-headless',
@@ -855,7 +867,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--scope-file <path>',
           'engagement scope JSON (T7): {allowedHosts, pathRules?, allowedMethods?, ' +
-            'expiresAt?, requestBudget?, identityBindings?, ledger?, excludeHosts?, ' +
+            'expiresAt?, requestBudget?, identityBindings?, requestHeaders?, ledger?, excludeHosts?, ' +
             'excludePaths?, allowedSchemes?, allowedPorts?, rateLimit?, program?} — enforced per ' +
             'request and ' +
             'per redirect hop on top of every other policy layer; unknown fields are refused ' +
@@ -883,6 +895,7 @@ export function buildCli(deps: CliDependencies): Cli {
             if (options.engine) {
               request.engine = String(options.engine);
             }
+            if (options.userAgent !== undefined) request.userAgent = String(options.userAgent);
             // Neither flag: omit the field entirely so the SERVER default
             // (headless) applies — the CLI must not shadow service policy.
             if (options.headless !== undefined) {
@@ -2823,14 +2836,27 @@ export function buildCli(deps: CliDependencies): Cli {
           '--out <file>',
           'write to this file (created exclusively, mode 0600) instead of stdout'
         )
+        .option('--force', 'replace --out with a private file even if it exists')
         .action(
-          action(async (ctx, engagementId: string, options: { out?: string }) => {
+          action(async (ctx, engagementId: string, options: { out?: string; force?: boolean }) => {
+            if (options.force && options.out === undefined)
+              throw new UsageError('--force needs --out.');
             if (!ctx.client.engagements)
               throw new UsageError('Client does not support engagement ledgers');
             const text = await ctx.client.engagements.export(engagementId);
             if (options.out !== undefined) {
-              const { writeFile } = await import('node:fs/promises');
-              await writeFile(options.out, text, { flag: 'wx', mode: 0o600 });
+              const { writeFile, mkdtemp, rename, rm } = await import('node:fs/promises');
+              if (options.force) {
+                const { dirname, join } = await import('node:path');
+                const temp = await mkdtemp(join(dirname(options.out), '.engagement-export-'));
+                try {
+                  const replacement = join(temp, 'ledger');
+                  await writeFile(replacement, text, { flag: 'wx', mode: 0o600 });
+                  await rename(replacement, options.out);
+                } finally {
+                  await rm(temp, { recursive: true, force: true });
+                }
+              } else await writeFile(options.out, text, { flag: 'wx', mode: 0o600 });
               const verdict = verifyEngagementLedger(text);
               ctx.emit(
                 {
@@ -3059,6 +3085,18 @@ export function buildCli(deps: CliDependencies): Cli {
             'inexpressible entries are refused, never guessed (an inexpressible exclusion fails the import)'
         )
         .requiredOption('--from <format>', 'h1 | bugcrowd | text')
+        .option(
+          '--request-budget <requests>',
+          'total subrequests and redirect hops (warns below 150)'
+        )
+        .option(
+          '--pages-planned <pages>',
+          'size budget as max(150, pages × 120); exclusive with --request-budget'
+        )
+        .option(
+          '--rate-limit <requests/seconds>',
+          'published scanner cap, e.g. 5/1; never inferred'
+        )
         .option('--program-id <id>', 'program identifier recorded in the scope')
         .option('--program-version <version>', 'program scope version recorded in the scope')
         .option('--authorized-by <who>', 'who authorized this engagement (needs --authorized-at)')
@@ -3071,6 +3109,9 @@ export function buildCli(deps: CliDependencies): Cli {
               file: string,
               options: {
                 from: string;
+                requestBudget?: string;
+                pagesPlanned?: string;
+                rateLimit?: string;
                 programId?: string;
                 programVersion?: string;
                 authorizedBy?: string;
@@ -3080,6 +3121,17 @@ export function buildCli(deps: CliDependencies): Cli {
             ) => {
               if (!['h1', 'bugcrowd', 'text'].includes(options.from))
                 throw new UsageError('--from must be h1, bugcrowd or text.');
+              const positive = (value: string | undefined) => {
+                if (value === undefined) return undefined;
+                if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))
+                  throw new UsageError('Sizing options require positive safe integers.');
+                return Number(value);
+              };
+              const requestBudget = positive(options.requestBudget);
+              const pagesPlanned = positive(options.pagesPlanned);
+              const rate = options.rateLimit?.match(/^([1-9]\d*)\/([1-9]\d*)$/);
+              if (options.rateLimit !== undefined && !rate)
+                throw new UsageError('--rate-limit must be requests/seconds, e.g. 5/1.');
               const input = await createTextArgumentReader({ noFollow: true })(
                 `@${file}`,
                 'program scope'
@@ -3089,6 +3141,11 @@ export function buildCli(deps: CliDependencies): Cli {
               let result: ReturnType<typeof importProgramScope>;
               try {
                 result = importProgramScope(input, options.from as ProgramScopeFormat, {
+                  ...(requestBudget !== undefined ? { requestBudget } : {}),
+                  ...(pagesPlanned !== undefined ? { pagesPlanned } : {}),
+                  ...(rate
+                    ? { rateLimit: { requests: Number(rate[1]), perSeconds: Number(rate[2]) } }
+                    : {}),
                   ...(options.programId !== undefined ? { programId: options.programId } : {}),
                   ...(options.programVersion !== undefined
                     ? { programVersion: options.programVersion }
@@ -3121,20 +3178,24 @@ export function buildCli(deps: CliDependencies): Cli {
                 await writeFile(options.out, json, { flag: 'wx', mode: 0o600 });
               }
               const refused = result.report.filter((entry) => entry.decision === 'refused').length;
-              ctx.emit({ ok: true, scope: result.scope, report: result.report }, () => [
-                ...lines,
-                refused > 0
-                  ? `${refused} in-scope entr${refused === 1 ? 'y' : 'ies'} refused: the scope is narrower than the program`
-                  : 'every in-scope entry was expressed',
-                ...(result.scope.program === undefined
-                  ? [
-                      'no program authorization recorded (pass --program-id, --authorized-by, --authorized-at)',
-                    ]
-                  : []),
-                options.out !== undefined
-                  ? `wrote ${options.out}; use it with: session create --scope-file ${options.out}`
-                  : json.trimEnd(),
-              ]);
+              ctx.emit(
+                { ok: true, scope: result.scope, report: result.report, warnings: result.warnings },
+                () => [
+                  ...result.warnings.map((warning) => `WARNING: ${warning}`),
+                  ...lines,
+                  refused > 0
+                    ? `${refused} in-scope entr${refused === 1 ? 'y' : 'ies'} refused: the scope is narrower than the program`
+                    : 'every in-scope entry was expressed',
+                  ...(result.scope.program === undefined
+                    ? [
+                        'no program authorization recorded (pass --program-id, --authorized-by, --authorized-at)',
+                      ]
+                    : []),
+                  options.out !== undefined
+                    ? `wrote ${options.out}; use it with: session create --scope-file ${options.out}`
+                    : json.trimEnd(),
+                ]
+              );
             }
           )
         );

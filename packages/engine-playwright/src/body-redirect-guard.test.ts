@@ -10,7 +10,11 @@ import { createServer, type Server } from 'node:http';
 import type { EnginePage, RequestPolicy } from '@agentbrowser/engine';
 import { EngagementScopePolicy, NetworkPolicy } from '@agentbrowser/policy';
 import { describe, expect, it } from 'vitest';
-import { BodyRedirectGuard, followMethod } from './body-redirect-guard.js';
+import {
+  BodyRedirectGuard,
+  type BodyRedirectGuardOptions,
+  followMethod,
+} from './body-redirect-guard.js';
 import { PlaywrightChromiumEngine } from './index.js';
 
 const IN_HOST = '127.0.0.1';
@@ -410,7 +414,7 @@ describe('BodyRedirectGuard unit rules', () => {
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   /** A page target and an out-of-process child frame target, both guarded. */
-  async function harness(maxChains?: number) {
+  async function harness(maxChains?: number, overrides: Partial<BodyRedirectGuardOptions> = {}) {
     const pageCdp = fakeCdp();
     const frameCdp = fakeCdp();
     const pageEvents = emitter();
@@ -427,6 +431,7 @@ describe('BodyRedirectGuard unit rules', () => {
       onBlocked: () => {},
       maxHops: 10,
       ...(maxChains !== undefined ? { maxChains } : {}),
+      ...overrides,
     });
     await settle();
     pageEvents.emit('frameattached', child);
@@ -450,6 +455,30 @@ describe('BodyRedirectGuard unit rules', () => {
       });
     return { guard, pageCdp, frameCdp, main, child, request, seen };
   }
+
+  it('fails closed if a per-hop header transform cannot be applied', async () => {
+    const outcomes: unknown[] = [];
+    const { guard, pageCdp, main, request, seen } = await harness(undefined, {
+      headersForRequest: () => {
+        throw new Error('private marker');
+      },
+      onOutcome: (record) => {
+        outcomes.push(record);
+      },
+    });
+    seen(pageCdp, 'headers');
+    await settle();
+    expect(pageCdp.sent.some((call) => call.method === 'Fetch.failRequest')).toBe(true);
+    expect(pageCdp.sent.some((call) => call.method === 'Fetch.continueRequest')).toBe(false);
+    expect(guard.track(request(main) as never)).toBe(false);
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        type: 'request.failed',
+        data: expect.objectContaining({ detail: 'REQUEST_HEADERS_UNCHECKABLE' }),
+      }),
+    ]);
+    expect(JSON.stringify(outcomes)).not.toContain('private marker');
+  });
 
   it('claims a request only after the guard saw it (fail closed)', async () => {
     const { guard, pageCdp, main, request, seen } = await harness();
