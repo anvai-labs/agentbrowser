@@ -206,7 +206,7 @@ remote Chromium provider diversifies hosting, not rendering. PDF/CDP capabilitie
 now report Chromium-only support. No independent browser fallback is delivered
 by this change; no automatic switch occurs after an uncertain action.
 
-The [follow-up qualification](firefox-and-application-seams.md) adds a standalone
+The follow-up qualification (formerly docs/firefox-and-application-seams.md) adds a standalone
 native Firefox adapter and a shared UI/API fixture. It still does not deliver a
 guarded REST/MCP fallback; the refusal of unqualified policies remains intentional.
 
