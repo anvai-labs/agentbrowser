@@ -2,7 +2,7 @@
 
 Goal: let an operator explicitly allow navigation to specific private
 network ranges (e.g. `192.168.1.0/24` for a lab control plane at
-`192.168.1.89:8080`) without weakening the default SSRF posture for
+`192.168.1.50:8080`) without weakening the default SSRF posture for
 anyone else. The capability is operator-set, explicit, and off by
 default.
 
@@ -51,19 +51,19 @@ the existing browser egress coverage guarantees described in the threat model.
 To allow only the lab host, launch the server with:
 
 ```sh
-AGENTBROWSER_ALLOWED_CIDRS=192.168.1.89/32 agentbrowser-server
+AGENTBROWSER_ALLOWED_CIDRS=192.168.1.50/32 agentbrowser-server
 ```
 
 Then use a headed session through the CLI or API:
 
 ```
-navigate http://192.168.1.89:8080/        # lab control plane allowed
-navigate http://192.168.1.89:9001/        # same host also allowed (CIDRs do not restrict ports)
+navigate http://192.168.1.50:8080/        # lab control plane allowed
+navigate http://192.168.1.50:9001/        # same host also allowed (CIDRs do not restrict ports)
 navigate http://192.168.1.65/             # unlisted host denied
 navigate http://169.254.169.254/          # metadata denied
 ```
 
-`192.168.1.0/24` permits **both** `.89` and `.65`; it cannot prove denial of
+`192.168.1.0/24` permits **both** `.50` and `.65`; it cannot prove denial of
 `.65`. Use a `/32` for the single-host qualification above, or choose a host
 outside the configured subnet for a `/24` negative check. CIDR exceptions only
 relax private-address blocking: loopback and metadata blocks still win.
@@ -89,16 +89,16 @@ against the built entrypoint during qualification.
 ## Local qualification (2026-09-23)
 
 Candidate based on `develop` `2294942`; separate loopback service on port 5719,
-configured with `AGENTBROWSER_ALLOWED_CIDRS=192.168.1.89/32`. Through the built
+configured with `AGENTBROWSER_ALLOWED_CIDRS=192.168.1.50/32`. Through the built
 AgentBrowser CLI and a real headed Chromium session:
 
 | Check | Result |
 | --- | --- |
-| Navigate `http://192.168.1.89:8080/` | `status: success`; observed title `AnvaiOps Control Plane — Data Quality` |
+| Navigate `http://192.168.1.50:8080/` | `status: success`; observed title `AnvaiOps Control Plane — Data Quality` |
 | Navigate `http://192.168.1.65/` | CLI exit 1, `POLICY_DENIED` |
 | Navigate `http://169.254.169.254/` | CLI exit 1, `POLICY_DENIED` |
 | Observe after denied attempts | Lab URL/title retained |
-| Start built server with `192.168.1.89/999` | Exit 1 with CIDR validation error before listening |
+| Start built server with `192.168.1.50/999` | Exit 1 with CIDR validation error before listening |
 
 No assertion about the upstream HTTP status is made by the navigation receipt.
 The existing installed service and release were not changed. External lab checks
