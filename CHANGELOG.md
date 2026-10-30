@@ -7,6 +7,58 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.28.0] — 2026-10-30
+
+Minor release: explicit research traffic identity and engagement diagnostics, plus the
+remaining disclosure-session navigation repair. **Upgrading from 1.27.4:**
+
+| Who | What changes |
+| --- | --- |
+| Authorized bounty researchers | A scope can inject bounded custom research headers per destination, with separate session `userAgent` configuration and ledger evidence |
+| Engagement operators | Import sizes budgets in subrequests; failed navigations expose page-local scope denials, and session views show pacing and remaining budget |
+| Ledger consumers | `engagement export --out FILE --force` replaces an earlier export with a fresh private file; default creation remains exclusive |
+| Consumers using sibling CDP domain state | The disclosure scan's CDP session survives navigation, so observing a new document does not tear down attached virtual authenticators |
+
+### Added — research traffic identity and bounty workflow support (T10 M5, #653)
+
+- `policy.scope.requestHeaders: [{header, value, hostSuffix?}]` injects custom `X-`
+  research markers on matching requests and each redirect hop. Configuration is
+  validated server-side, with transport/credential headers refused, unique names,
+  at most 16 entries, 1024 printable ASCII bytes per value and 8192 combined name/value
+  bytes. The scope/base/metadata-floor checks still gate every covered request.
+- `userAgent` on session creation (CLI `--user-agent`) configures the browser context
+  and is visible in session status. Engines that cannot honor these options and
+  unsupported transport lanes are explicitly refused.
+- Scope status and engagement ledger configuration record injected names, host rules
+  and value hashes. `request.headersInjected` records dispatch intent without marker
+  plaintext; it does not prove remote receipt. Custom request recorders can receive
+  this new event for marker-enabled scopes.
+- `scope import --pages-planned N` sizes the budget as `max(150, N × 120)`, or accepts
+  `--request-budget N`; budgets below 150 warn. `--rate-limit REQUESTS/SECONDS` is
+  explicit, so the importer never guesses a program's scanner cap.
+- Navigation failures include page-local `scopeDenials` keyed by `SCOPE_*` (under
+  `details` on errors), while retaining the original failure reason. Session views
+  include scope pacing and budget counters when configured.
+- `engagement export --force` atomically replaces `--out` with a new 0600 file.
+- The operations/bounty guides explain engagement sizing, headed directory browsing,
+  research identity, and the CLI session-create → page-create cadence.
+
+### Fixed — disclosure CDP state survives navigation (#645)
+
+- Keep the disclosure CDP session for the page's lifetime, including across navigation.
+  Concurrent initialization shares one mint; a dead session is invalidated and
+  re-minted rather than pinning observations to a stale session.
+
+### Build tooling
+
+- Update the container build-stage Node image to 24.22.1 and the pinned CI
+  `actions/setup-python` action to 7.1.0 (#643, #644).
+
+Existing `identityBindings` remain validation-only and compose with explicit injection.
+Unconfigured headers, UA, budgets and export behavior keep their existing defaults.
+Research identity does not expand the documented worker/WebSocket or OS-containment
+coverage. Program authorization and published rate caps still come from the researcher.
+
 ## [1.27.4] — 2026-10-26
 
 Maintenance release: two focused fixes. **Upgrading from 1.27.3:**
