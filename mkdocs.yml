@@ -233,6 +233,7 @@ nav:
     - 'Session Launch Diagnostics': spec/design/session-launch-diagnostics.md
     - 'Session Lease Visibility': spec/design/session-lease-visibility.md
     - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
+    - 'T10 Bounty Operator Workflow': spec/design/t10-bounty-operator-workflow.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md
     - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
     - 'T3 Live Junit': spec/design/t3-live-junit.md
