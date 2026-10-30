@@ -524,7 +524,7 @@ Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options 
   and redacted errors; Windows fails closed for that option. Credentials are never shortened.
 - Regression coverage includes large capture receipts, modern MCP media output, cache ownership
   and concurrent pruning, browser read recovery, large synthetic forms and authorization boundaries.
-  [Consumer handoff](docs/consumer-field-handoff-2026-10-16.txt) records remaining limits: hard write
+  consumer handoff note (removed 2026-10) records remaining limits: hard write
   cancellation, live-site qualification, shorter ID aliases and streaming transport remain open.
 
 ### Added — the MCP `scope` tool (T10 M2)
@@ -3279,13 +3279,13 @@ introduce a contained browser profile or close the remaining egress gaps.
 - Native local operation remains supported. A contained Linux Chromium profile
   still requires the accepted transport gates and OS-enforced gateway-only
   egress; full multi-tenant ADR-008 isolation remains deferred. See the
-  [remediation tracker](docs/engineering-review-remediation.md) and
-  [transport reassessment](docs/egress-transport-reassessment.md).
+  remediation tracker (removed 2026-10) and
+  transport reassessment (removed 2026-10).
 
 ## [1.8.3] — 2026-09-05
 
 Closes the 2026-08-31 engineering-hygiene audit in full — every finding is now
-fixed (see [docs/hygiene-audit.md](docs/hygiene-audit.md)).
+fixed (see docs/hygiene-audit.md (removed 2026-10)).
 
 ### Fixed
 
