@@ -52,10 +52,7 @@ test('npm MCP bundle embeds tldts (bundler saw the lazy import)', () => {
 });
 
 test('npm MCP bundle ANSWERS a host question (finding_check over stdio)', async () => {
-  assert.ok(
-    existsSync(MCP_BUNDLE),
-    'MCP bundle missing: run pnpm --filter @anvailabs/agentbrowser-mcp build'
-  );
+  assert.ok(existsSync(MCP_BUNDLE), 'MCP bundle missing: run pnpm --filter @anvailabs/agentbrowser-mcp build');
   // Drive the real bundle over JSON-RPC stdio: initialize → finding_check with a
   // minimal valid ledger (one opened event + scope). The engagement check asks
   // tldts about the scope's hosts — a bundler-invisible lazy load throws here
@@ -88,14 +85,7 @@ test('npm MCP bundle ANSWERS a host question (finding_check over stdio)', async 
       digest = Math.imul(digest, 0x01000193) >>> 0;
     }
     const hash = digest.toString(16).padStart(8, '0');
-    const line = JSON.stringify({
-      seq,
-      at: record.at,
-      type: record.type,
-      data: record.data,
-      prev,
-      hash,
-    });
+    const line = JSON.stringify({ seq, at: record.at, type: record.type, data: record.data, prev, hash });
     prev = hash;
     return line;
   });
@@ -139,24 +129,17 @@ test('npm MCP bundle ANSWERS a host question (finding_check over stdio)', async 
   });
   await new Promise((resolve) => setTimeout(resolve, 2500));
   child.kill();
-  const lines = out
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
-    });
+  const lines = out.split('\n').filter(Boolean).map((l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return null;
+    }
+  });
   const reply = lines.find((l) => l?.id === 2);
   assert.ok(reply, `no tools/call reply; output: ${out.slice(0, 300)}`);
   const text = reply?.result?.content?.[0]?.text ?? '';
-  assert.doesNotMatch(
-    text,
-    /is not loaded and cannot be required/,
-    'tldts lazy load failed in the bundle'
-  );
+  assert.doesNotMatch(text, /is not loaded and cannot be required/, 'tldts lazy load failed in the bundle');
   // The reply text is the tool's JSON payload or a plain UsageError message; both
   // prove the host question was ANSWERED (a failed lazy load throws the
   // "cannot be required" error instead).
@@ -164,64 +147,30 @@ test('npm MCP bundle ANSWERS a host question (finding_check over stdio)', async 
 });
 
 test('standalone CLI adopts explicit assets without node_modules and refuses unobserved approval', async () => {
-  const { copyFileSync } = await import('node:fs');
-  const { ENGAGEMENT_GENESIS, engagementChainHash } = await import(
-    '../packages/core/dist/index.js'
-  );
+  const {copyFileSync} = await import('node:fs');
+  const {ENGAGEMENT_GENESIS, engagementChainHash} = await import('../packages/core/dist/index.js');
   assert.ok(existsSync(CLI_BIN), 'compile the candidate CLI before this smoke');
   const dir = mkdtempSync(join(tmpdir(), 'standalone-assets-'));
   const binary = join(dir, 'agentbrowser');
   copyFileSync(CLI_BIN, binary);
   const scope = join(dir, 'scope.json');
   const ledger = join(dir, 'ledger.jsonl');
-  writeFileSync(scope, JSON.stringify({ allowedHosts: ['example.com'] }));
+  writeFileSync(scope, JSON.stringify({allowedHosts: ['example.com']}));
   let prev = ENGAGEMENT_GENESIS;
   const records = [
-    { type: 'engagement.opened', data: {} },
-    {
-      type: 'request.failed',
-      data: {
-        url: 'https://cdn.example.net/app.js',
-        scope: 'SCOPE_HOST_DENIED',
-        resourceType: 'script',
-      },
-    },
+    {type: 'engagement.opened', data: {}},
+    {type: 'request.failed', data: {url: 'https://cdn.example.net/app.js', scope: 'SCOPE_HOST_DENIED', resourceType: 'script'}},
   ].map((entry, seq) => {
-    const record = { seq, at: '2026-10-30T00:00:00.000Z', ...entry };
+    const record = {seq, at: '2026-10-30T00:00:00.000Z', ...entry};
     const hash = engagementChainHash(prev, JSON.stringify(record));
-    const line = JSON.stringify({ ...record, prev, hash });
+    const line = JSON.stringify({...record, prev, hash});
     prev = hash;
     return line;
   });
   writeFileSync(ledger, records.join('\n') + '\n');
-  const options = {
-    cwd: dir,
-    env: { ...process.env, NODE_PATH: '' },
-    encoding: 'utf8',
-    timeout: 30000,
-  };
-  assert.throws(() =>
-    execFileSync(
-      binary,
-      [
-        'scope',
-        'adopt-assets',
-        scope,
-        '--from',
-        ledger,
-        '--approve-hosts',
-        'unobserved.example.org',
-      ],
-      options
-    )
-  );
-  assert.deepEqual(JSON.parse(readFileSync(scope, 'utf8')), { allowedHosts: ['example.com'] });
-  execFileSync(
-    binary,
-    ['scope', 'adopt-assets', scope, '--from', ledger, '--approve-hosts', 'cdn.example.net'],
-    options
-  );
-  assert.deepEqual(JSON.parse(readFileSync(scope, 'utf8')).assetHosts, [
-    { host: 'cdn.example.net', class: 'asset' },
-  ]);
+  const options = {cwd: dir, env: {...process.env, NODE_PATH: ''}, encoding: 'utf8', timeout: 30000};
+  assert.throws(() => execFileSync(binary, ['scope','adopt-assets',scope,'--from',ledger,'--approve-hosts','unobserved.example.org'], options));
+  assert.deepEqual(JSON.parse(readFileSync(scope, 'utf8')), {allowedHosts: ['example.com']});
+  execFileSync(binary, ['scope','adopt-assets',scope,'--from',ledger,'--approve-hosts','cdn.example.net'], options);
+  assert.deepEqual(JSON.parse(readFileSync(scope, 'utf8')).assetHosts, [{host:'cdn.example.net', class:'asset'}]);
 });

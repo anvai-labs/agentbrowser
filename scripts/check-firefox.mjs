@@ -14,11 +14,4 @@ run(['--filter', '@agentbrowser/engine-firefox...', 'build']);
 run(['test:egress-evidence']);
 run(['--filter', '@agentbrowser/testkit', 'exec', 'vitest', 'run', 'src/versioned-app.test.ts']);
 run(['--filter', '@agentbrowser/engine-firefox', 'test']);
-run([
-  '--filter',
-  '@agentbrowser/engine-playwright',
-  'exec',
-  'vitest',
-  'run',
-  'src/application-parity.test.ts',
-]);
+run(['--filter', '@agentbrowser/engine-playwright', 'exec', 'vitest', 'run', 'src/application-parity.test.ts']);

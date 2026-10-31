@@ -17,68 +17,36 @@ test('copied recipe loads with only its documented companion from an unrelated c
     const result = await withStandaloneRecipe(directory, async ({ script, cwd }) => {
       staged = dirname(script);
       assert.notEqual(cwd, staged);
-      assert.deepEqual((await readdir(staged)).sort(), [
-        'application-outcome.mjs',
-        'report-artifacts.mjs',
-      ]);
+      assert.deepEqual((await readdir(staged)).sort(), ['application-outcome.mjs', 'report-artifacts.mjs']);
       for (const name of await readdir(staged)) {
-        assert.deepEqual(
-          await readFile(join(staged, name)),
-          await readFile(new URL(`../examples/node-test/${name}`, import.meta.url))
-        );
+        assert.deepEqual(await readFile(join(staged, name)), await readFile(new URL(`../examples/node-test/${name}`, import.meta.url)));
         assert.equal((await stat(join(staged, name))).mode & 0o777, 0o600);
       }
       const probe = `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(m.applicationRecipeTestName('pass'));`;
-      const loaded = await runExecutable([process.execPath, '--input-type=module', '-e', probe], {
-        cwd,
-      });
+      const loaded = await runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd });
       assert.equal(loaded.stdout.trim(), 'application outcome: pass');
-      const direct = await runExecutable(
-        [process.execPath, script, join(cwd, 'absent-config.json')],
-        {
-          cwd,
-          expectedExitCode: 1,
-        }
-      );
+      const direct = await runExecutable([process.execPath, script, join(cwd, 'absent-config.json')], {
+        cwd,
+        expectedExitCode: 1,
+      });
       assert.equal(direct.stdout, '');
       assert.equal(direct.stderr.trim(), 'Application outcome recipe configuration is invalid.');
       // Prove the companion is loaded from the copied location, not the workspace.
       await rm(join(staged, 'report-artifacts.mjs'));
-      await assert.rejects(
-        runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd })
-      );
+      await assert.rejects(runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd }));
       return 'qualified';
     });
     assert.equal(result, 'qualified');
     await assert.rejects(access(staged), { code: 'ENOENT' });
     assert.deepEqual(await readdir(directory), []);
     const sentinel = new Error('exercise failure');
-    await assert.rejects(
-      withStandaloneRecipe(directory, async () => {
-        throw sentinel;
-      }),
-      (error) => error === sentinel
-    );
+    await assert.rejects(withStandaloneRecipe(directory, async () => { throw sentinel; }), (error) => error === sentinel);
     assert.deepEqual(await readdir(directory), []);
-    await assert.rejects(
-      withStandaloneRecipe(
-        directory,
-        async () => {
-          throw sentinel;
-        },
-        {
-          remove: async (path, options) => {
-            await rm(path, options);
-            throw new Error('PRIVATE_CLEANUP_PATH');
-          },
-        }
-      ),
-      { message: 'Standalone recipe execution and cleanup failed' }
-    );
+    await assert.rejects(withStandaloneRecipe(directory, async () => { throw sentinel; }, {
+      remove: async (path, options) => { await rm(path, options); throw new Error('PRIVATE_CLEANUP_PATH'); },
+    }), { message: 'Standalone recipe execution and cleanup failed' });
     assert.deepEqual(await readdir(directory), []);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('application recipe isolates CLI credentials and Node injection from operator context', async () => {
@@ -469,9 +437,7 @@ test('recipe qualification binds exact failure identities to independently obser
 });
 
 test('private report artifacts bind exact bytes and retain an independent oracle mismatch', async () => {
-  const { publishRecipeArtifacts, readRecipeArtifacts } = await import(
-    '../examples/node-test/report-artifacts.mjs'
-  );
+  const { publishRecipeArtifacts, readRecipeArtifacts } = await import('../examples/node-test/report-artifacts.mjs');
   const { mkdtemp, readFile, rm, stat, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -486,10 +452,8 @@ test('private report artifacts bind exact bytes and retain an independent oracle
       schemaVersion: 1,
       provenance: 'caller_observed',
       evaluation: {
-        href: encodeURIComponent('report #?%é.json'),
-        mediaType: 'application/json',
-        sizeBytes: bytes.length,
-        sha256: createHash('sha256').update(bytes).digest('hex'),
+        href: encodeURIComponent('report #?%é.json'), mediaType: 'application/json',
+        sizeBytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
       },
       oracleMatches: false,
     });
@@ -503,12 +467,8 @@ test('private report artifacts bind exact bytes and retain an independent oracle
       assert.equal((await stat(`${path}.manifest.json`)).mode & 0o077, 0);
     }
     await writeFile(path, `${JSON.stringify({ ...evaluation, verdict: 'failed' })}\n`);
-    await assert.rejects(readRecipeArtifacts(path), {
-      message: 'Private recipe artifacts are invalid.',
-    });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+    await assert.rejects(readRecipeArtifacts(path), { message: 'Private recipe artifacts are invalid.' });
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('private report publication preserves collisions and rolls back only owned files', async () => {
@@ -532,54 +492,30 @@ test('private report publication preserves collisions and rolls back only owned 
     await assert.rejects(publishRecipeArtifacts(path, result, { signal: AbortSignal.abort() }));
     await assert.rejects(access(path), { code: 'ENOENT' });
     await assert.rejects(access(`${path}.manifest.json`), { code: 'ENOENT' });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('private report readers reject unsafe files and inconsistent manifest metadata', async () => {
-  const { publishRecipeArtifacts, readRecipeArtifacts, readPrivateRecipeBytes } = await import(
-    '../examples/node-test/report-artifacts.mjs'
-  );
+  const { publishRecipeArtifacts, readRecipeArtifacts, readPrivateRecipeBytes } = await import('../examples/node-test/report-artifacts.mjs');
   const { mkdtemp, readFile, rm, writeFile, chmod, symlink } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const directory = await mkdtemp(join(tmpdir(), 'recipe-artifacts-invalid-'));
   const path = join(directory, 'report.json');
   try {
-    const manifest = await publishRecipeArtifacts(path, {
-      evaluation: { verdict: 'failed' },
-      oracleMatches: true,
-    });
+    const manifest = await publishRecipeArtifacts(path, { evaluation: { verdict: 'failed' }, oracleMatches: true });
     for (const mutation of [
-      (m) => {
-        m.evaluation.href = '../PRIVATE_ESCAPE';
-      },
-      (m) => {
-        m.evaluation.href = 'https://example.invalid/PRIVATE';
-      },
-      (m) => {
-        m.evaluation.sizeBytes++;
-      },
-      (m) => {
-        m.evaluation.sha256 = '0'.repeat(64);
-      },
-      (m) => {
-        m.evaluation.mediaType = 'text/html';
-      },
-      (m) => {
-        m.extra = 'PRIVATE_EXTRA';
-      },
-      (m) => {
-        m.oracleMatches = 'true';
-      },
+      (m) => { m.evaluation.href = '../PRIVATE_ESCAPE'; },
+      (m) => { m.evaluation.href = 'https://example.invalid/PRIVATE'; },
+      (m) => { m.evaluation.sizeBytes++; },
+      (m) => { m.evaluation.sha256 = '0'.repeat(64); },
+      (m) => { m.evaluation.mediaType = 'text/html'; },
+      (m) => { m.extra = 'PRIVATE_EXTRA'; },
+      (m) => { m.oracleMatches = 'true'; },
     ]) {
-      const modified = structuredClone(manifest);
-      mutation(modified);
+      const modified = structuredClone(manifest); mutation(modified);
       await writeFile(`${path}.manifest.json`, JSON.stringify(modified));
-      await assert.rejects(readRecipeArtifacts(path), {
-        message: 'Private recipe artifacts are invalid.',
-      });
+      await assert.rejects(readRecipeArtifacts(path), { message: 'Private recipe artifacts are invalid.' });
     }
     await writeFile(`${path}.manifest.json`, JSON.stringify(manifest));
     await writeFile(path, 'x'.repeat(65537));
@@ -595,9 +531,7 @@ test('private report readers reject unsafe files and inconsistent manifest metad
     await assert.rejects(readPrivateRecipeBytes(link));
     assert.equal(await readFile(path, 'utf8'), '{}');
     await assert.rejects(readPrivateRecipeBytes(directory));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('abort after report creation removes the partial pair and never publishes a manifest', async () => {
@@ -610,50 +544,30 @@ test('abort after report creation removes the partial pair and never publishes a
   const path = join(directory, 'report.json');
   const controller = new AbortController();
   let observedCreatedReport = false;
-  Object.defineProperty(controller.signal, 'throwIfAborted', {
-    value() {
-      if (existsSync(path)) {
-        observedCreatedReport = true;
-        controller.abort();
-      }
-      AbortSignal.prototype.throwIfAborted.call(this);
-    },
-  });
+  Object.defineProperty(controller.signal, 'throwIfAborted', { value() {
+    if (existsSync(path)) { observedCreatedReport = true; controller.abort(); }
+    AbortSignal.prototype.throwIfAborted.call(this);
+  } });
   try {
-    await assert.rejects(
-      publishRecipeArtifacts(
-        path,
-        {
-          evaluation: { verdict: 'failed' },
-          oracleMatches: true,
-        },
-        { signal: controller.signal }
-      ),
-      { message: 'Private recipe artifacts are invalid.' }
-    );
+    await assert.rejects(publishRecipeArtifacts(path, {
+      evaluation: { verdict: 'failed' }, oracleMatches: true,
+    }, { signal: controller.signal }), { message: 'Private recipe artifacts are invalid.' });
     assert.equal(observedCreatedReport, true);
     await assert.rejects(access(path), { code: 'ENOENT' });
     await assert.rejects(access(`${path}.manifest.json`), { code: 'ENOENT' });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('artifact cleanup attempts every owned path and sanitizes unlink failures', async () => {
   const { cleanupRecipeFiles } = await import('../examples/node-test/report-artifacts.mjs');
   const attempts = [];
-  await assert.rejects(
-    cleanupRecipeFiles(['PRIVATE_MANIFEST', 'PRIVATE_REPORT'], {
-      async remove(path) {
-        attempts.push(path);
-        if (path === 'PRIVATE_MANIFEST') throw new Error(`EPERM: ${path}`);
-      },
-    }),
-    (error) =>
-      error.message === 'Private recipe artifacts are invalid.' &&
-      !error.stack.includes('PRIVATE_') &&
-      error.cause === undefined
-  );
+  await assert.rejects(cleanupRecipeFiles(['PRIVATE_MANIFEST', 'PRIVATE_REPORT'], {
+    async remove(path) {
+      attempts.push(path);
+      if (path === 'PRIVATE_MANIFEST') throw new Error(`EPERM: ${path}`);
+    },
+  }), (error) => error.message === 'Private recipe artifacts are invalid.' &&
+    !error.stack.includes('PRIVATE_') && error.cause === undefined);
   assert.deepEqual(attempts, ['PRIVATE_MANIFEST', 'PRIVATE_REPORT']);
 });
 
@@ -665,18 +579,12 @@ test('artifact publisher refuses non-object serialization before creating any ou
   const directory = await mkdtemp(join(tmpdir(), 'recipe-artifacts-serialize-'));
   try {
     for (const value of [undefined, 'PRIVATE_STRING', null, 3, [], { big: 'x'.repeat(65536) }]) {
-      await assert.rejects(
-        publishRecipeArtifacts(join(directory, 'report.json'), {
-          evaluation: { toJSON: () => value },
-          oracleMatches: true,
-        }),
-        { message: 'Private recipe artifacts are invalid.' }
-      );
+      await assert.rejects(publishRecipeArtifacts(join(directory, 'report.json'), {
+        evaluation: { toJSON: () => value }, oracleMatches: true,
+      }), { message: 'Private recipe artifacts are invalid.' });
       assert.deepEqual(await readdir(directory), []);
     }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('recipe qualification closes its fixture even when artifact removal fails', async () => {
@@ -700,45 +608,26 @@ test('recipe qualification closes its fixture even when artifact removal fails',
   try {
     // rm(force:true) cannot unlink a directory; this simulates an artifact finalizer failure.
     await mkdir(join(directory, 'application-recipe-pass.report.json.manifest.json'));
-    await assert.rejects(
-      qualifyApplicationRecipe({
-        proc,
-        cli: [process.execPath, '-e', 'process.exit(2)'],
-        directory,
-        env: process.env,
-        key: 'PRIVATE_OPERATOR',
-        baseUrl: 'http://127.0.0.1:1',
-        fixture: { id: 'fixture-counter', version: '1' },
-        expectedVersion: '1.9.0',
-      }),
-      (error) =>
-        error.message === 'Private recipe artifacts are invalid.' &&
-        !error.stack.includes(directory)
-    );
+    await assert.rejects(qualifyApplicationRecipe({
+      proc, cli: [process.execPath, '-e', 'process.exit(2)'], directory,
+      env: process.env, key: 'PRIVATE_OPERATOR', baseUrl: 'http://127.0.0.1:1',
+      fixture: { id: 'fixture-counter', version: '1' }, expectedVersion: '1.9.0',
+    }), (error) => error.message === 'Private recipe artifacts are invalid.' &&
+      !error.stack.includes(directory));
     assert.deepEqual(calls, ['fixture', 'closeFixture', 'fixtureState']);
-    await assert.rejects(access(join(directory, 'application-recipe-pass.json')), {
-      code: 'ENOENT',
-    });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+    await assert.rejects(access(join(directory, 'application-recipe-pass.json')), { code: 'ENOENT' });
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('native report qualification never echoes unexpected private stderr', async () => {
-  const { validateApplicationRecipeNativeReport } = await import(
-    './application-recipe-acceptance.mjs'
-  );
+  const { validateApplicationRecipeNativeReport } = await import('./application-recipe-acceptance.mjs');
   let failure;
   try {
     validateApplicationRecipeNativeReport({
-      name: 'pass',
-      stdout: '',
-      stderr: 'PRIVATE_STDERR /private/operator/path',
+      name: 'pass', stdout: '', stderr: 'PRIVATE_STDERR /private/operator/path',
       digest: 'a'.repeat(64),
     });
-  } catch (error) {
-    failure = error;
-  }
+  } catch (error) { failure = error; }
   assert.equal(failure?.message, 'Application recipe native report is invalid');
   assert.equal(failure.cause, undefined);
   assert.ok(!failure.stack.includes('PRIVATE_STDERR'));

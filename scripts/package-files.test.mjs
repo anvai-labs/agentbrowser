@@ -26,8 +26,7 @@ export async function deployClosure() {
     // Same edges as the extracted-package audit: optional and peer
     // workspace dependencies deploy too.
     for (const deps of [pkg.dependencies, pkg.optionalDependencies, pkg.peerDependencies]) {
-      for (const dep of Object.keys(deps ?? {}))
-        if (dep.startsWith('@agentbrowser/')) queue.push(dirOf(dep));
+      for (const dep of Object.keys(deps ?? {})) if (dep.startsWith('@agentbrowser/')) queue.push(dirOf(dep));
     }
   }
   return seen;
@@ -41,10 +40,8 @@ test('the server deploy closure ships only built output', async () => {
       `${pkg.name} must declare "files": ["dist"] (or ["dist", "README.md"]); got ${JSON.stringify(pkg.files)}`
     );
   }
-  assert.ok(
-    closure.has('engine-playwright') && closure.has('protocol') && closure.size >= 9,
-    `expected the API's full workspace closure, saw ${[...closure.keys()].join(', ')}`
-  );
+  assert.ok(closure.has('engine-playwright') && closure.has('protocol') && closure.size >= 9,
+    `expected the API's full workspace closure, saw ${[...closure.keys()].join(', ')}`);
 });
 
 test('the allowlist check rejects widened or missing allowlists', () => {

@@ -51,7 +51,9 @@
       "get": {
         "operationId": "getSessionControl",
         "summary": "Read current controller and in-flight operation",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -121,7 +123,9 @@
       "post": {
         "operationId": "takeOverSession",
         "summary": "Operator: revoke the agent and wait for active work to drain",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -191,7 +195,9 @@
       "post": {
         "operationId": "prepareSessionResume",
         "summary": "Operator: invalidate old refs and capture fresh page summaries for review",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -261,7 +267,9 @@
       "post": {
         "operationId": "delegateSession",
         "summary": "Operator: issue a new session-scoped bearer token after review",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -279,7 +287,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["epoch"],
+                "required": [
+                  "epoch"
+                ],
                 "properties": {
                   "epoch": {
                     "type": "integer",
@@ -381,7 +391,9 @@
       "get": {
         "operationId": "getSessionOperation",
         "summary": "Reconcile command status; completed is not proof of application success",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -460,7 +472,9 @@
       "get": {
         "operationId": "getOperatorApproval",
         "summary": "Read a private operator action review",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "description": "Requires an authenticated owning operator. Private action projection only; not full-form or file-content consent. Responses are not cached.",
         "parameters": [
           {
@@ -544,7 +558,9 @@
       "post": {
         "operationId": "decideOperatorApproval",
         "summary": "Approve or deny a reviewed action",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "description": "Requires an authenticated owning operator and ordinary controlled-session admission. Repeated operation identities return the recorded outcome without repeating the decision.",
         "parameters": [
           {
@@ -661,7 +677,9 @@
       "get": {
         "operationId": "discoverApplication",
         "summary": "List the bound adapter and its operations; null when nothing is bound",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -736,7 +754,9 @@
       "put": {
         "operationId": "bindApplication",
         "summary": "Operator: bind an application adapter to a resource while the human owns the session",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -765,7 +785,10 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["adapter", "resource"],
+                  "required": [
+                    "adapter",
+                    "resource"
+                  ],
                   "properties": {
                     "adapter": {
                       "type": "string"
@@ -823,7 +846,9 @@
       "delete": {
         "operationId": "unbindApplication",
         "summary": "Operator: drop the application binding",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -842,7 +867,9 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["unbound"],
+                  "required": [
+                    "unbound"
+                  ],
                   "properties": {
                     "unbound": {
                       "const": true
@@ -888,7 +915,9 @@
     "/v1/sessions/{sessionId}/application/reviews": {
       "post": {
         "operationId": "applicationReview",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "summary": "Operator: create a pending complete application review without executing it",
         "description": "Requires trusted evidence configuration. Source selectors are lookup hints, not permission. Creation allocates a pending expiring token and is not idempotent; a lost response may leave a pending token. The future execution ID belongs in the body request. Execution operation headers are rejected. The response contains private reviewed data; use a private output destination.",
         "parameters": [
@@ -991,7 +1020,9 @@
         "operationId": "executeApplication",
         "summary": "Dispatch one application operation; writes need an operation ID and expected version",
         "description": "The application enforces business versioning independently of the control epoch. A repeated operation ID replays the recorded operation instead of re-executing.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1071,7 +1102,9 @@
       "get": {
         "operationId": "getApplicationReceipt",
         "summary": "Read one application receipt; an application-verified outcome, not a browser receipt",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1158,7 +1191,9 @@
         "operationId": "grantActionLease",
         "summary": "Grant the session action lease (human operator only)",
         "description": "TD-BROWSER-16 (ADR-025 s5): grants the operator action lease for a session holding operator credentials. Human-operator key only - an agent (or an API-key operator) can never request, extend or widen one, and no agent-facing schema accepts lease fields. Every host must lie within the session host allowlist; at most 4h and 500 actions.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1177,7 +1212,11 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["hosts", "expiresInMs", "maxActions"],
+                "required": [
+                  "hosts",
+                  "expiresInMs",
+                  "maxActions"
+                ],
                 "properties": {
                   "hosts": {
                     "type": "array",
@@ -1208,7 +1247,13 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["hosts", "grantedAt", "expiresAt", "maxActions", "remainingActions"],
+                  "required": [
+                    "hosts",
+                    "grantedAt",
+                    "expiresAt",
+                    "maxActions",
+                    "remainingActions"
+                  ],
                   "properties": {
                     "hosts": {
                       "type": "array",
@@ -1280,7 +1325,9 @@
       "get": {
         "operationId": "getOpenApiDocument",
         "summary": "This document",
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "responses": {
           "200": {
             "description": "The OpenAPI 3.1 document describing the API.",
@@ -1299,7 +1346,9 @@
       "get": {
         "operationId": "getLiveness",
         "summary": "Report process liveness",
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "responses": {
           "200": {
             "description": "The process is serving.",
@@ -1307,11 +1356,15 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status"],
+                  "required": [
+                    "status"
+                  ],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "examples": ["live"]
+                      "examples": [
+                        "live"
+                      ]
                     }
                   }
                 }
@@ -1326,7 +1379,9 @@
         "operationId": "getReadiness",
         "summary": "Report service readiness",
         "description": "Readiness probes the engine; an unresponsive engine yields 503.",
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "responses": {
           "200": {
             "description": "The service can serve requests.",
@@ -1334,11 +1389,16 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status", "engine"],
+                  "required": [
+                    "status",
+                    "engine"
+                  ],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "examples": ["ready"]
+                      "examples": [
+                        "ready"
+                      ]
                     },
                     "engine": {
                       "type": "string"
@@ -1369,7 +1429,9 @@
         "operationId": "streamSessionEvents",
         "summary": "Stream session events over WebSocket",
         "description": "Upgrades to a WebSocket and streams engine events (page loads, console output, crashes) as one JSON object per frame, stamped with the session and page ids. Unknown sessions close with code 4404. Live-only: events emitted before subscribing are not replayed.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1404,7 +1466,9 @@
         "operationId": "getMetrics",
         "summary": "Prometheus metrics exposition",
         "description": "Counters (operations, errors, sessions), the active-session gauge and operation latency percentiles (p50/p95/p99).",
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "responses": {
           "200": {
             "description": "Metrics in the Prometheus text exposition format.",
@@ -1423,7 +1487,9 @@
       "get": {
         "operationId": "getHealth",
         "summary": "Report service health",
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "responses": {
           "200": {
             "description": "The service is healthy.",
@@ -1431,11 +1497,17 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status", "version", "uptime"],
+                  "required": [
+                    "status",
+                    "version",
+                    "uptime"
+                  ],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "examples": ["healthy"]
+                      "examples": [
+                        "healthy"
+                      ]
                     },
                     "version": {
                       "type": "string"
@@ -1457,14 +1529,18 @@
         "operationId": "createSession",
         "summary": "Create a browser session",
         "description": "Sessions are ephemeral by default and are isolated from one another. Element references are scoped to a single session and page.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["tenantId"],
+                "required": [
+                  "tenantId"
+                ],
                 "properties": {
                   "tenantId": {
                     "type": "string",
@@ -1483,7 +1559,12 @@
                     "description": "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Each cookie requires name, value, domain and path — a {url, ...} cookie fails validation; convert it to domain + path ('/') instead. The compatible form is exactly what GET /v1/sessions/{id}/cookies exports. An empty array is a silent no-op; __Host- cookies are rewritten to the host-only + Secure form.",
                     "items": {
                       "type": "object",
-                      "required": ["name", "value", "domain", "path"],
+                      "required": [
+                        "name",
+                        "value",
+                        "domain",
+                        "path"
+                      ],
                       "properties": {
                         "name": {
                           "type": "string"
@@ -1508,7 +1589,11 @@
                         },
                         "sameSite": {
                           "type": "string",
-                          "enum": ["Strict", "Lax", "None"]
+                          "enum": [
+                            "Strict",
+                            "Lax",
+                            "None"
+                          ]
                         }
                       }
                     }
@@ -1533,7 +1618,9 @@
                   "policy": {
                     "type": "object",
                     "description": "Per-session policy, mapped onto the session at creation. allowedHosts is an exhaustive allow-list; blockedHosts denies on top of the base policy; downloads stay denied unless allowDownloads is true. (The flat top-level spellings of these fields keep working.)",
-                    "required": ["allowedHosts"],
+                    "required": [
+                      "allowedHosts"
+                    ],
                     "properties": {
                       "allowedHosts": {
                         "type": "array",
@@ -1598,7 +1685,9 @@
       "get": {
         "operationId": "listSessions",
         "summary": "List sessions",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "responses": {
           "200": {
             "description": "The current sessions.",
@@ -1606,7 +1695,9 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["sessions"],
+                  "required": [
+                    "sessions"
+                  ],
                   "properties": {
                     "sessions": {
                       "type": "array",
@@ -1637,7 +1728,9 @@
         "operationId": "exportEngagement",
         "summary": "Export one of the caller's engagement ledgers (NDJSON, verbatim)",
         "description": "T10 M2. The hash-chained, metadata-only ledger of a scoped session created with policy.scope.ledger; readable after the session closes and across restarts. Tenant API key or operator key; verify offline with `agentbrowser engagement verify`.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "engagementId",
@@ -1708,7 +1801,9 @@
         "operationId": "getSessionScope",
         "summary": "Read the engagement scope in effect, its budget and denials",
         "description": "T10 M2. Identity bindings report header and hosts only; a marker value is never returned. 404 when the session has no engagement scope.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1758,7 +1853,9 @@
       "get": {
         "operationId": "getSessionScopeTraffic",
         "summary": "Observed method × destination-class fingerprint, including denied methods",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1829,7 +1926,9 @@
         "operationId": "topUpSessionScopeBudget",
         "summary": "Human-operator-approved finite live budget increase",
         "description": "ADR-029. Same tenant and revision, open engagement ledger, critical authorization before grant. Preserves spending, pacing and pages; stopped/expired sessions cannot be revived. No automatic request replay.",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1909,7 +2008,9 @@
       "get": {
         "operationId": "traceSessionScopeDenials",
         "summary": "Follow live scope denials and advisory dependency starvation hints",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -1990,7 +2091,9 @@
       "get": {
         "operationId": "getSessionScopeDenied",
         "summary": "Summarize actual hosts denied by the scope",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2061,7 +2164,9 @@
       "post": {
         "operationId": "createEvidenceSession",
         "summary": "Transfer selected operator state into a fresh scoped evidence session",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "description": "T10 B2 / ADR-027. Human-operator key only, same tenant and unscoped source. Exact program origins; cookies and localStorage only. Requires cookie.seed and per-domain cookie.handoff authorization. Ledger required; hash/count metadata only. No automatic action lease or credential export.",
         "parameters": [
           {
@@ -2172,7 +2277,9 @@
       "post": {
         "operationId": "amendSessionScopeAssets",
         "summary": "Append operator-approved static asset hosts without replacing page state",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "description": "T10 B4 / ADR-028. Human-operator key, same tenant, classified engine, live ledger and exact revision required. Program hosts and all other constraints remain fixed. Critical ledger failure stops the scope.",
         "parameters": [
           {
@@ -2284,7 +2391,9 @@
         "operationId": "checkSessionScope",
         "summary": "Dry run: would the scope rules allow this request now?",
         "description": "T10 M2. Spends no budget and records no denial. Judges the scope rules only; the base policy and DNS still apply when the request is made.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2360,7 +2469,9 @@
       "get": {
         "operationId": "getSession",
         "summary": "Get a session",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2409,7 +2520,9 @@
         "operationId": "closeSession",
         "summary": "Close a session",
         "description": "Closing a session releases its browser context and invalidates its refs.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2428,14 +2541,19 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["sessionId", "status"],
+                  "required": [
+                    "sessionId",
+                    "status"
+                  ],
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     },
                     "status": {
                       "type": "string",
-                      "examples": ["closed"]
+                      "examples": [
+                        "closed"
+                      ]
                     }
                   }
                 }
@@ -2470,7 +2588,9 @@
         "operationId": "exportSessionTrace",
         "summary": "Export the session trace as an artifact",
         "description": "A3 evidence: the session's completed spans (secret-scrubbed, bounded) serialized as a JSON artifact. Served via the standard artifact route (TTL, ownership or signed token).",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2511,7 +2631,9 @@
         "operationId": "getSessionEvents",
         "summary": "Replay the session event ledger",
         "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved). Paging: since/limit require a type filter (cursors are per-ledger entry sequences; the cursor is returned as nextCursor and advances past entries of other types). Paged rows match the type exactly. A cursor older than the retained window re-reads from the oldest kept entry; a paged response with since then reports gap: true and oldestSeq, the lowest retained sequence, so evicted entries are never silently skipped. limit defaults to 200 and is capped at 1000.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2557,7 +2679,10 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["events", "nextCursor"],
+                  "required": [
+                    "events",
+                    "nextCursor"
+                  ],
                   "properties": {
                     "events": {
                       "type": "array",
@@ -2612,7 +2737,9 @@
         "operationId": "exportPageHtml",
         "summary": "Capture the page HTML as an artifact",
         "description": "A3 evidence: the page's current HTML as a text/html artifact. Raw HTML is NOT secret-redacted - values typed into forms ride it verbatim; the artifact metadata carries an explicit warning.",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2682,7 +2809,9 @@
         "operationId": "getPageSnapshot",
         "summary": "Self-contained observation for plan",
         "description": "ADR-012/TD-BROWSER-8: a self-contained snapshot (url, title, revision, mode, fields) usable as plan targets in one round trip, with no separate observe call. `mode` reflects the adaptive stable/verified state (raised after repeated ref churn). Optional ?maxElements=/?maxBytes= bound the fields payload (pressure-matrix payload economics).",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2725,7 +2854,10 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": ["true", "false"]
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "description": "Mint custom widget controls, PROJECTED from the same single observe (each with row/section context for generic-named menus) and budgeted separately from fields, so neither can cut the other; controlsProjection discloses matched/total for the controls list."
           }
@@ -2737,7 +2869,13 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["url", "title", "revision", "mode", "fields"],
+                  "required": [
+                    "url",
+                    "title",
+                    "revision",
+                    "mode",
+                    "fields"
+                  ],
                   "properties": {
                     "url": {
                       "type": "string"
@@ -2750,13 +2888,20 @@
                     },
                     "mode": {
                       "type": "string",
-                      "enum": ["stable", "verified"]
+                      "enum": [
+                        "stable",
+                        "verified"
+                      ]
                     },
                     "fields": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "required": ["ref", "role", "label"],
+                        "required": [
+                          "ref",
+                          "role",
+                          "label"
+                        ],
                         "properties": {
                           "ref": {
                             "type": "string"
@@ -2775,7 +2920,11 @@
                       "description": "Present with ?controls=true: minted custom widget controls, a separate array the fields budget never drops.",
                       "items": {
                         "type": "object",
-                        "required": ["ref", "role", "label"],
+                        "required": [
+                          "ref",
+                          "role",
+                          "label"
+                        ],
                         "properties": {
                           "ref": {
                             "type": "string"
@@ -2831,7 +2980,9 @@
         "operationId": "autofillPage",
         "summary": "Fill structured fields serially and return verification receipts",
         "description": "One controlled mutation for native inputs/selects and explicitly selected qualified react-select/chip-multiselect widgets. Unique fieldset scope and bounded read-only retries. Uncertain writes or observed blocked navigation stop remaining actions and fields without replay. A navigationObservation reports a denial during dispatch, not causation or field verification; absence does not imply navigation success. Includes a raw HTML artifact; no explicit submit action.",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -2869,12 +3020,16 @@
               "schema": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["fields"],
+                "required": [
+                  "fields"
+                ],
                 "properties": {
                   "scope": {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["url"],
+                    "required": [
+                      "url"
+                    ],
                     "properties": {
                       "url": {
                         "minLength": 1,
@@ -2890,7 +3045,9 @@
                     "items": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["match"],
+                      "required": [
+                        "match"
+                      ],
                       "properties": {
                         "match": {
                           "additionalProperties": false,
@@ -2943,7 +3100,9 @@
                         "option": {
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["value"],
+                          "required": [
+                            "value"
+                          ],
                           "properties": {
                             "value": {
                               "maxLength": 8192,
@@ -2954,7 +3113,10 @@
                         "options": {
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["values", "mode"],
+                          "required": [
+                            "values",
+                            "mode"
+                          ],
                           "properties": {
                             "values": {
                               "maxItems": 32,
@@ -3082,7 +3244,11 @@
                   "additionalProperties": false,
                   "$id": "urn:agentbrowser:autofill-report:v1",
                   "type": "object",
-                  "required": ["ok", "receipts", "elapsedMs"],
+                  "required": [
+                    "ok",
+                    "receipts",
+                    "elapsedMs"
+                  ],
                   "properties": {
                     "ok": {
                       "type": "boolean"
@@ -3093,7 +3259,12 @@
                       "items": {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["field", "match", "status", "verified"],
+                        "required": [
+                          "field",
+                          "match",
+                          "status",
+                          "verified"
+                        ],
                         "properties": {
                           "field": {
                             "minimum": 0,
@@ -3156,7 +3327,12 @@
                           "navigationObservation": {
                             "additionalProperties": false,
                             "type": "object",
-                            "required": ["status", "reason", "scope", "observedDuring"],
+                            "required": [
+                              "status",
+                              "reason",
+                              "scope",
+                              "observedDuring"
+                            ],
                             "properties": {
                               "status": {
                                 "const": "blocked",
@@ -3252,7 +3428,10 @@
                           "effects": {
                             "additionalProperties": false,
                             "type": "object",
-                            "required": ["removed", "added"],
+                            "required": [
+                              "removed",
+                              "added"
+                            ],
                             "properties": {
                               "removed": {
                                 "maxItems": 32,
@@ -3275,7 +3454,10 @@
                           "error": {
                             "additionalProperties": false,
                             "type": "object",
-                            "required": ["code", "message"],
+                            "required": [
+                              "code",
+                              "message"
+                            ],
                             "properties": {
                               "code": {
                                 "type": "string"
@@ -3325,7 +3507,12 @@
                           "items": {
                             "additionalProperties": false,
                             "type": "object",
-                            "required": ["stage", "calls", "elapsedMs", "remainingMs"],
+                            "required": [
+                              "stage",
+                              "calls",
+                              "elapsedMs",
+                              "remainingMs"
+                            ],
                             "properties": {
                               "stage": {
                                 "anyOf": [
@@ -3377,7 +3564,11 @@
                         "frameReadiness": {
                           "additionalProperties": false,
                           "type": "object",
-                          "required": ["incomplete", "loading", "timedOut"],
+                          "required": [
+                            "incomplete",
+                            "loading",
+                            "timedOut"
+                          ],
                           "properties": {
                             "incomplete": {
                               "minimum": 0,
@@ -3398,7 +3589,9 @@
                     "snapshot": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["artifactId"],
+                      "required": [
+                        "artifactId"
+                      ],
                       "properties": {
                         "artifactId": {
                           "type": "string"
@@ -3464,7 +3657,9 @@
         "operationId": "executePagePlan",
         "summary": "Execute a batched action plan in one call",
         "description": "TD-BROWSER-8: run several act steps sequentially in one call. The first hard failure aborts with the completed prefix reported. Stale refs self-heal once by re-observing (adaptive stable/verified matching by churn). A step for a field revealed by a prior step (Phase 2) may declare `waitForLabel` (substring match on the element name) instead of `target` - the executor waits for it to appear (bounded by `waitMs`, default 5000) and resolves the ref itself.",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -3501,7 +3696,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["actions"],
+                "required": [
+                  "actions"
+                ],
                 "properties": {
                   "actions": {
                     "maxItems": 100,
@@ -3577,7 +3774,9 @@
         "operationId": "executeVerifiedPageOutcome",
         "summary": "Execute one plan and verify its outcome through a trusted source",
         "description": "Runs the existing ordered plan exactly once, then performs bounded read-only polling through a server-registered evidence source and verifier. The response keeps execution, verification and cleanup separate and has no aggregate success flag. Controlled sessions require X-AgentBrowser-Operation-Id.",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -3674,7 +3873,9 @@
         "operationId": "handoffCookies",
         "summary": "Hand the operator login cookies into this session",
         "description": "TD-BROWSER-16 phase 6 (ADR-025 s3): floors (login browser open, isolated non-delegated session, egress enforced, no service workers, about:blank only, no existing cookies, the whole allowlist inside the requested domains), one cookie.handoff policy decision per domain, then a human-operator approval bound to (kind, session, sorted domains, policy version). The approved retry re-reads for freshness, MARKS the session credentialSource:operator, applies any lease the decision carried, registers the values as session secrets, removes WebRTC peer connections on every frame, and writes the cookies. Cookie/HTML/download export are refused in the marked session afterwards.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -3693,7 +3894,9 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["domains"],
+                "required": [
+                  "domains"
+                ],
                 "properties": {
                   "domains": {
                     "type": "array",
@@ -3718,14 +3921,21 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["sessionId", "credentialSource", "domains", "counts"],
+                  "required": [
+                    "sessionId",
+                    "credentialSource",
+                    "domains",
+                    "counts"
+                  ],
                   "properties": {
                     "sessionId": {
                       "type": "string"
                     },
                     "credentialSource": {
                       "type": "string",
-                      "enum": ["operator"]
+                      "enum": [
+                        "operator"
+                      ]
                     },
                     "domains": {
                       "type": "array",
@@ -3792,7 +4002,9 @@
         "operationId": "getSessionCookies",
         "summary": "Export session cookies",
         "description": "Scoped credential export (ADR-005, TD-BROWSER-6): read the session context cookies so a caller can re-seed future sessions via the create request `cookies` option. Ownership required.",
-        "tags": ["sessions"],
+        "tags": [
+          "sessions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -3811,13 +4023,20 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["cookies"],
+                  "required": [
+                    "cookies"
+                  ],
                   "properties": {
                     "cookies": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "required": ["name", "value", "domain", "path"],
+                        "required": [
+                          "name",
+                          "value",
+                          "domain",
+                          "path"
+                        ],
                         "properties": {
                           "name": {
                             "type": "string"
@@ -3842,7 +4061,11 @@
                           },
                           "sameSite": {
                             "type": "string",
-                            "enum": ["Strict", "Lax", "None"]
+                            "enum": [
+                              "Strict",
+                              "Lax",
+                              "None"
+                            ]
                           }
                         }
                       }
@@ -3870,7 +4093,9 @@
         "operationId": "listPages",
         "summary": "List the pages of a session",
         "description": "Creation order. Pages exist once created through the create-page endpoint; this is the discovery path when that response was lost and the answer to \"which page ids are live here\". Optional URL metadata is secret-redacted and comes only from a synchronous engine cache: it may lag navigation and is omitted when unavailable. Listing never waits for browser URL I/O.",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -3889,7 +4114,9 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["pages"],
+                  "required": [
+                    "pages"
+                  ],
                   "properties": {
                     "pages": {
                       "type": "array",
@@ -3928,7 +4155,9 @@
         "operationId": "createPage",
         "summary": "Create a page in a session",
         "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank. Blocked or timed-out initial navigation returns a bounded error and removes only the new page, except when human takeover retains ownership. Do not automatically retry creation after a failure.",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -4044,7 +4273,9 @@
       "get": {
         "operationId": "getPage",
         "summary": "Get a page",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -4101,7 +4332,9 @@
       "delete": {
         "operationId": "closePage",
         "summary": "Close a page",
-        "tags": ["pages"],
+        "tags": [
+          "pages"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -4139,14 +4372,19 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["pageId", "status"],
+                  "required": [
+                    "pageId",
+                    "status"
+                  ],
                   "properties": {
                     "pageId": {
                       "type": "string"
                     },
                     "status": {
                       "type": "string",
-                      "examples": ["closed"]
+                      "examples": [
+                        "closed"
+                      ]
                     }
                   }
                 }
@@ -4191,7 +4429,9 @@
         "operationId": "navigatePage",
         "summary": "Navigate a page to a URL",
         "description": "Every request passes through the network egress policy. Loopback, private address ranges and cloud metadata endpoints are blocked by default and are reported as POLICY_DENIED.",
-        "tags": ["navigation"],
+        "tags": [
+          "navigation"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -4228,7 +4468,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["url"],
+                "required": [
+                  "url"
+                ],
                 "properties": {
                   "url": {
                     "type": "string",
@@ -4236,7 +4478,11 @@
                   },
                   "waitUntil": {
                     "type": "string",
-                    "enum": ["load", "domcontentloaded", "networkidle"]
+                    "enum": [
+                      "load",
+                      "domcontentloaded",
+                      "networkidle"
+                    ]
                   }
                 }
               }
@@ -4312,7 +4558,9 @@
         "operationId": "observePage",
         "summary": "Capture a semantic observation",
         "description": "Returns accessibility roles, names and form state rather than a screenshot. Output is bounded by maxBytes and maxElements; when truncation occurs, dialogs and the focused element are preserved ahead of ordinary content. The returned refs are valid only for the returned revision.",
-        "tags": ["observation"],
+        "tags": [
+          "observation"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -4422,7 +4670,9 @@
         "operationId": "executeAction",
         "summary": "Execute an action through an element reference",
         "description": "Targets are addressed by element reference only; CSS selectors and XPath are not accepted. If the page revision has moved on, or the target element no longer matches the fingerprint it was observed with, the action fails with STALE_TARGET and must not be retried without observing again.",
-        "tags": ["actions"],
+        "tags": [
+          "actions"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -4459,7 +4709,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["action"],
+                "required": [
+                  "action"
+                ],
                 "properties": {
                   "action": {
                     "anyOf": [
@@ -4539,7 +4791,9 @@
                   },
                   "target": {
                     "type": "object",
-                    "required": ["ref"],
+                    "required": [
+                      "ref"
+                    ],
                     "properties": {
                       "ref": {
                         "pattern": "^e\\d+_\\d+$",
@@ -4646,7 +4900,9 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["until"],
+                        "required": [
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4693,7 +4949,10 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["pattern", "until"],
+                        "required": [
+                          "pattern",
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4724,7 +4983,10 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["selector", "until"],
+                        "required": [
+                          "selector",
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4755,7 +5017,10 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["count", "until"],
+                        "required": [
+                          "count",
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4791,7 +5056,9 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["until"],
+                        "required": [
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4838,7 +5105,10 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["pattern", "until"],
+                        "required": [
+                          "pattern",
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4869,7 +5139,10 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["selector", "until"],
+                        "required": [
+                          "selector",
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -4900,7 +5173,10 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["count", "until"],
+                        "required": [
+                          "count",
+                          "until"
+                        ],
                         "properties": {
                           "timeoutMs": {
                             "minimum": 0,
@@ -5023,7 +5299,9 @@
         "operationId": "capturePdf",
         "summary": "Capture a PDF artifact",
         "description": "Prints the page to PDF and stores it as a session-scoped artifact; retrieve bytes via the artifact endpoint. Requires an engine that supports PDF capture (ENGINE_UNSUPPORTED otherwise).",
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -5134,7 +5412,9 @@
         "operationId": "downloadArtifact",
         "summary": "Download a payload as a stored artifact",
         "description": "Downloads are denied unless the session was created with allowDownloads. The target passes the same network egress policy as navigation, and the payload is capped by the session maxDownloadBytes.",
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -5171,7 +5451,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["url"],
+                "required": [
+                  "url"
+                ],
                 "properties": {
                   "url": {
                     "type": "string",
@@ -5254,7 +5536,9 @@
         "operationId": "collectDownloadedFile",
         "summary": "Collect the browser-session download of one file as a stored artifact",
         "description": "Collects by download ID (preferred), or by unique filename. Ambiguous filenames fail. The selected download was already fetched under the same allowDownloads / egress / maxDownloadBytes rules as the download endpoint and is stored into an artifact whose bytes are retrievable via the artifact endpoint.",
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -5363,7 +5647,9 @@
         "operationId": "getArtifact",
         "summary": "Retrieve a stored artifact",
         "description": "Returns metadata plus base64 content, scoped to the owning session.",
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -5391,7 +5677,10 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["metadata", "contentBase64"],
+                  "required": [
+                    "metadata",
+                    "contentBase64"
+                  ],
                   "properties": {
                     "metadata": {
                       "$ref": "#/components/schemas/ArtifactRef"
@@ -5433,7 +5722,9 @@
         "operationId": "extractPage",
         "summary": "Extract deterministic structured data from the page",
         "description": "Pure-function extractors over a fresh observation: visible text, article markdown, links (text/absolute URL/rel), tables (headers and rows), observed form controls with their refs, JSON-LD, or records (repeating structure via CSS selectors). Every result carries evidence - source URL, revision and a content hash - so an extraction can be audited. No model calls.",
-        "tags": ["observation"],
+        "tags": [
+          "observation"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -5470,7 +5761,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["format"],
+                "required": [
+                  "format"
+                ],
                 "properties": {
                   "format": {
                     "type": "string",
@@ -5509,7 +5802,10 @@
                   "records": {
                     "type": "object",
                     "description": "Repeating-structure selectors for format=records: a container CSS selector matching each repeated block (job card, table row) plus per-field CSS selectors evaluated inside each block. Field values are the collapsed text of the first match; a field that matches nothing becomes \"\".",
-                    "required": ["container", "fields"],
+                    "required": [
+                      "container",
+                      "fields"
+                    ],
                     "properties": {
                       "container": {
                         "type": "string"
@@ -5540,14 +5836,21 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["data", "evidence"],
+                  "required": [
+                    "data",
+                    "evidence"
+                  ],
                   "properties": {
                     "data": {},
                     "evidence": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "required": ["url", "revision", "hash"],
+                        "required": [
+                          "url",
+                          "revision",
+                          "hash"
+                        ],
                         "properties": {
                           "url": {
                             "type": "string"
@@ -5634,7 +5937,9 @@
         "operationId": "captureScreenshot",
         "summary": "Capture a screenshot artifact",
         "description": "Screenshots are optional evidence, not the primary observation mode. Prefer observe for deciding what to do next.",
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "parameters": [
           {
             "name": "sessionId",
@@ -5744,7 +6049,9 @@
         "operationId": "operatorLoginOpen",
         "summary": "Open the operator login browser (human operators only)",
         "description": "TD-BROWSER-16 phase 4. Requires a human-operator key (operator routes only); agent credentials and API-key operators are refused. Headed, single-tenant, local deployments.",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -5804,7 +6111,9 @@
         "operationId": "operatorLoginClose",
         "summary": "Close the operator login browser",
         "description": "TD-BROWSER-16 phase 4. Human operators only.",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -5864,7 +6173,9 @@
         "operationId": "operatorLoginReset",
         "summary": "Delete the login browser profile",
         "description": "TD-BROWSER-16 phase 4. Deletes the profile directory (close first). Human operators only.",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -5924,7 +6235,9 @@
         "operationId": "operatorLoginRead",
         "summary": "Read the open login browser's cookies",
         "description": "TD-BROWSER-16 phase 4. The OPEN browser only; no headless read. Partitioned and expired cookies are skipped and counted. Human operators only; the values are the operator's own.",
-        "tags": ["operator"],
+        "tags": [
+          "operator"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -5998,7 +6311,9 @@
         "operationId": "getJournalStatus",
         "summary": "The durable journal: configuration, health and qualified runtime",
         "description": "T5 J3b (accepted J-design, D5). Read-only; a tenant API key or the operator key may call it. recoveryQualified is advisory (no exactly-once promise): true only when the journal is configured and open on the qualified matrix (Node 24 on Linux or macOS). Keyless deployments authenticate nobody and get 401. Rate limited per tenant.",
-        "tags": ["journal"],
+        "tags": [
+          "journal"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6011,7 +6326,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["schemaVersion", "configured", "runtime", "recoveryQualified"],
+                  "required": [
+                    "schemaVersion",
+                    "configured",
+                    "runtime",
+                    "recoveryQualified"
+                  ],
                   "properties": {
                     "schemaVersion": {
                       "type": "integer",
@@ -6027,7 +6347,12 @@
                     },
                     "health": {
                       "type": "string",
-                      "enum": ["open", "quarantined", "poisoned", "closed"],
+                      "enum": [
+                        "open",
+                        "quarantined",
+                        "poisoned",
+                        "closed"
+                      ],
                       "description": "The opened journal handle health, when it is open."
                     },
                     "acceptUntil": {
@@ -6040,7 +6365,11 @@
                     },
                     "runtime": {
                       "type": "object",
-                      "required": ["platform", "node", "qualified"],
+                      "required": [
+                        "platform",
+                        "node",
+                        "qualified"
+                      ],
                       "properties": {
                         "platform": {
                           "type": "string"
@@ -6063,7 +6392,12 @@
                       "description": "T5 J3d: namespaces rotated away from (AGENTBROWSER_JOURNAL_HISTORY_FILE), plus the current namespace once its accept horizon has passed (current: true, recover-only). open: searched by lookup and recoverable by the operator until retainUntil; refused: the store did not open it (reason), so its records are unread.",
                       "items": {
                         "type": "object",
-                        "required": ["namespace", "state", "acceptUntil", "retainUntil"],
+                        "required": [
+                          "namespace",
+                          "state",
+                          "acceptUntil",
+                          "retainUntil"
+                        ],
                         "properties": {
                           "namespace": {
                             "type": "string"
@@ -6074,7 +6408,11 @@
                           },
                           "state": {
                             "type": "string",
-                            "enum": ["open", "refused", "unavailable"]
+                            "enum": [
+                              "open",
+                              "refused",
+                              "unavailable"
+                            ]
                           },
                           "reason": {
                             "type": "string"
@@ -6121,7 +6459,9 @@
         "operationId": "lookupJournalOperation",
         "summary": "Historical records of one durable operation, tenant-scoped and read-only",
         "description": "T5 J3b (accepted J-design, D1 amended). Every stored record of the operation ID in the configured namespace, projected to classification, application identity and the departed session's opaque identity; fingerprints, digests, actors, inputs and evidence content never cross the wire. Readable by a tenant API key or the operator key, scoped to the credential's tenant; delegated grants are refused; writes do not exist here (J3c). An absent result is scoped absence in this namespace, never proof of non-execution. Rate limited per tenant.",
-        "tags": ["journal"],
+        "tags": [
+          "journal"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6145,7 +6485,13 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["schemaVersion", "operationId", "absent", "truncated", "records"],
+                  "required": [
+                    "schemaVersion",
+                    "operationId",
+                    "absent",
+                    "truncated",
+                    "records"
+                  ],
                   "properties": {
                     "schemaVersion": {
                       "type": "integer",
@@ -6203,7 +6549,11 @@
                           },
                           "application": {
                             "type": "object",
-                            "required": ["adapter", "resource", "bindingGeneration"],
+                            "required": [
+                              "adapter",
+                              "resource",
+                              "bindingGeneration"
+                            ],
                             "properties": {
                               "adapter": {
                                 "type": "string"
@@ -6218,7 +6568,10 @@
                           },
                           "session": {
                             "type": "object",
-                            "required": ["sessionIncarnation", "epoch"],
+                            "required": [
+                              "sessionIncarnation",
+                              "epoch"
+                            ],
                             "description": "Opaque identity of the departed session.",
                             "properties": {
                               "sessionIncarnation": {
@@ -6297,7 +6650,9 @@
         "operationId": "closeJournalOperation",
         "summary": "Close the never-dispatched records of an operation as marked pre-dispatch failures",
         "description": "T5 J3c (accepted design, D2 first half). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). Closes ONLY the never-dispatched records of the operation (actionability is per record; dispatched or terminal siblings are left to settle/reconcile, so a mixed-state operation composes instead of deadlocking). The terminal carries a supersession marker in the evidence-ref id format (the operation ID when it fits 128 characters, else its SHA-256 prefix); it resolves to nothing. Rate limited per tenant.",
-        "tags": ["journal"],
+        "tags": [
+          "journal"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6321,7 +6676,10 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["closed", "truncated"],
+                  "required": [
+                    "closed",
+                    "truncated"
+                  ],
                   "properties": {
                     "unreadNamespaces": {
                       "type": "array",
@@ -6421,7 +6779,9 @@
         "operationId": "settleJournalOperation",
         "summary": "Settle the in-doubt records of an operation as terminal unknown (irreversible)",
         "description": "T5 J3c (accepted design, D3 operator fallback). OPERATOR KEY ONLY. Settles ONLY the in-doubt (dispatched, terminal-less) records; undispatched siblings are closed, terminal ones are final. IRREVERSIBLE: a settled record can never be reconciled — try reconcile first. Claims nothing about the external effect. Rate limited per tenant.",
-        "tags": ["journal"],
+        "tags": [
+          "journal"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6445,7 +6805,10 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["settled", "truncated"],
+                  "required": [
+                    "settled",
+                    "truncated"
+                  ],
                   "properties": {
                     "unreadNamespaces": {
                       "type": "array",
@@ -6545,7 +6908,9 @@
         "operationId": "reconcileJournalOperation",
         "summary": "Resolve an operation's in-doubt records by asking the bound adapter",
         "description": "T5 J3c part 2 (accepted design, D3). OPERATOR KEY ONLY: a tenant API key may read history but is forbidden here (403). For each in-doubt (dispatched, terminal-less) record, asks the bound adapter's opt-in reconcile for that exact operation (tenant, application identity, session incarnation and operation ID; no fingerprint crosses). committed and rejected commit the matching terminal (completed, failed) with no evidence refs; unknown, or an adapter error, changes nothing and counts as unresolved. An adapter without reconcile refuses with 409 CONTROL_REQUIRED: settle instead. Never replays the effect. Rate limited per tenant.",
-        "tags": ["journal"],
+        "tags": [
+          "journal"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6569,7 +6934,11 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["reconciled", "unresolved", "truncated"],
+                  "required": [
+                    "reconciled",
+                    "unresolved",
+                    "truncated"
+                  ],
                   "properties": {
                     "unreadNamespaces": {
                       "type": "array",
@@ -6674,7 +7043,9 @@
         "operationId": "getPolicy",
         "summary": "The loaded policy: version, limits, capability summary",
         "description": "TD-BROWSER-15 phase 5. The capability summary is decided for a default session of the caller's tenant (the response says so). Without a policy file the answers come from the legacy environment decisions and are unconditional for a default session. Rate limited per tenant.",
-        "tags": ["policy"],
+        "tags": [
+          "policy"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6731,7 +7102,9 @@
         "operationId": "checkPolicy",
         "summary": "Ask what the loaded policy would decide",
         "description": "Answers by enumeration, never by DNS resolution: an IP literal is classified directly; a hostname passes the name-level rules and then gets one answer per class set the classifier can produce (the non-public sets depend on the resolved address and say so). A caller cannot smuggle a tenant: the authenticated tenant decides. Rate limited per tenant.",
-        "tags": ["policy"],
+        "tags": [
+          "policy"
+        ],
         "security": [
           {
             "bearerAuth": []
@@ -6743,7 +7116,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["action"],
+                "required": [
+                  "action"
+                ],
                 "properties": {
                   "action": {
                     "type": "string",
@@ -6835,7 +7210,11 @@
     "schemas": {
       "ControlView": {
         "type": "object",
-        "required": ["state", "epoch", "busy"],
+        "required": [
+          "state",
+          "epoch",
+          "busy"
+        ],
         "properties": {
           "state": {
             "anyOf": [
@@ -6870,7 +7249,12 @@
           "operation": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["operationId", "epoch", "status", "dispatched"],
+            "required": [
+              "operationId",
+              "epoch",
+              "status",
+              "dispatched"
+            ],
             "properties": {
               "operationId": {
                 "minLength": 1,
@@ -6982,7 +7366,13 @@
       "EngagementScopeStatus": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["allowedHosts", "pathRules", "identityBindings", "expired", "denials"],
+        "required": [
+          "allowedHosts",
+          "pathRules",
+          "identityBindings",
+          "expired",
+          "denials"
+        ],
         "properties": {
           "revision": {
             "minimum": 0,
@@ -6993,7 +7383,10 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["header", "valueSha256"],
+              "required": [
+                "header",
+                "valueSha256"
+              ],
               "properties": {
                 "header": {
                   "type": "string"
@@ -7018,7 +7411,10 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["host", "class"],
+              "required": [
+                "host",
+                "class"
+              ],
               "properties": {
                 "host": {
                   "minLength": 1,
@@ -7058,7 +7454,9 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["prefix"],
+              "required": [
+                "prefix"
+              ],
               "properties": {
                 "hostSuffix": {
                   "minLength": 2,
@@ -7084,7 +7482,10 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["header", "allowedHosts"],
+              "required": [
+                "header",
+                "allowedHosts"
+              ],
               "properties": {
                 "header": {
                   "type": "string"
@@ -7107,7 +7508,11 @@
           "budget": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["limit", "spent", "remaining"],
+            "required": [
+              "limit",
+              "spent",
+              "remaining"
+            ],
             "properties": {
               "limit": {
                 "minimum": 0,
@@ -7146,7 +7551,9 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["prefix"],
+              "required": [
+                "prefix"
+              ],
               "properties": {
                 "hostSuffix": {
                   "minLength": 2,
@@ -7176,7 +7583,11 @@
           "program": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["id", "authorizedBy", "authorizedAt"],
+            "required": [
+              "id",
+              "authorizedBy",
+              "authorizedAt"
+            ],
             "properties": {
               "id": {
                 "minLength": 1,
@@ -7203,7 +7614,11 @@
           "rateLimit": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["requests", "perSeconds", "paced"],
+            "required": [
+              "requests",
+              "perSeconds",
+              "paced"
+            ],
             "properties": {
               "requests": {
                 "minimum": 1,
@@ -7226,7 +7641,9 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["allowed"],
+            "required": [
+              "allowed"
+            ],
             "properties": {
               "allowed": {
                 "const": true,
@@ -7237,7 +7654,10 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["allowed", "scope"],
+            "required": [
+              "allowed",
+              "scope"
+            ],
             "properties": {
               "allowed": {
                 "const": false,
@@ -7255,7 +7675,11 @@
         "allOf": [
           {
             "type": "object",
-            "required": ["state", "epoch", "busy"],
+            "required": [
+              "state",
+              "epoch",
+              "busy"
+            ],
             "properties": {
               "state": {
                 "anyOf": [
@@ -7290,7 +7714,12 @@
               "operation": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["operationId", "epoch", "status", "dispatched"],
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
                 "properties": {
                   "operationId": {
                     "minLength": 1,
@@ -7401,13 +7830,21 @@
           },
           {
             "type": "object",
-            "required": ["pages"],
+            "required": [
+              "pages"
+            ],
             "properties": {
               "pages": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["pageId", "url", "title", "revision", "summary"],
+                  "required": [
+                    "pageId",
+                    "url",
+                    "title",
+                    "revision",
+                    "summary"
+                  ],
                   "properties": {
                     "pageId": {
                       "type": "string"
@@ -7436,7 +7873,11 @@
         "allOf": [
           {
             "type": "object",
-            "required": ["state", "epoch", "busy"],
+            "required": [
+              "state",
+              "epoch",
+              "busy"
+            ],
             "properties": {
               "state": {
                 "anyOf": [
@@ -7471,7 +7912,12 @@
               "operation": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["operationId", "epoch", "status", "dispatched"],
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
                 "properties": {
                   "operationId": {
                     "minLength": 1,
@@ -7582,7 +8028,11 @@
           },
           {
             "type": "object",
-            "required": ["token", "mode", "cursor"],
+            "required": [
+              "token",
+              "mode",
+              "cursor"
+            ],
             "properties": {
               "token": {
                 "type": "string"
@@ -7696,7 +8146,9 @@
       "OperatorApprovalDecision": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["decision"],
+        "required": [
+          "decision"
+        ],
         "properties": {
           "decision": {
             "anyOf": [
@@ -7713,7 +8165,11 @@
           "lease": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["hosts", "expiresInMs", "maxActions"],
+            "required": [
+              "hosts",
+              "expiresInMs",
+              "maxActions"
+            ],
             "properties": {
               "hosts": {
                 "minItems": 1,
@@ -7739,7 +8195,13 @@
       "OperatorApprovalView": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["tokenId", "status", "createdAt", "expiresAt", "action"],
+        "required": [
+          "tokenId",
+          "status",
+          "createdAt",
+          "expiresAt",
+          "action"
+        ],
         "properties": {
           "tokenId": {
             "minLength": 1,
@@ -7805,7 +8267,11 @@
       "NonActApprovalView": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["kind", "sessionId", "status"],
+        "required": [
+          "kind",
+          "sessionId",
+          "status"
+        ],
         "properties": {
           "kind": {
             "anyOf": [
@@ -7860,7 +8326,10 @@
       "NonActApprovalDecision": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["kind", "status"],
+        "required": [
+          "kind",
+          "status"
+        ],
         "properties": {
           "kind": {
             "anyOf": [
@@ -7895,7 +8364,12 @@
       "OperationRecord": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["operationId", "epoch", "status", "dispatched"],
+        "required": [
+          "operationId",
+          "epoch",
+          "status",
+          "dispatched"
+        ],
         "properties": {
           "operationId": {
             "minLength": 1,
@@ -7936,7 +8410,10 @@
         "additionalProperties": false,
         "$id": "urn:agentbrowser:operation-replay:v1",
         "type": "object",
-        "required": ["replay", "operation"],
+        "required": [
+          "replay",
+          "operation"
+        ],
         "properties": {
           "replay": {
             "const": true,
@@ -7945,7 +8422,12 @@
           "operation": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["operationId", "epoch", "status", "dispatched"],
+            "required": [
+              "operationId",
+              "epoch",
+              "status",
+              "dispatched"
+            ],
             "properties": {
               "operationId": {
                 "minLength": 1,
@@ -7987,7 +8469,10 @@
       "ApplicationBinding": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["adapter", "resource"],
+        "required": [
+          "adapter",
+          "resource"
+        ],
         "properties": {
           "adapter": {
             "minLength": 1,
@@ -8006,7 +8491,11 @@
       "ApplicationDiscovery": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["adapter", "resource", "operations"],
+        "required": [
+          "adapter",
+          "resource",
+          "operations"
+        ],
         "properties": {
           "adapter": {
             "type": "string"
@@ -8020,7 +8509,10 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["name", "mode"],
+              "required": [
+                "name",
+                "mode"
+              ],
               "properties": {
                 "name": {
                   "minLength": 1,
@@ -8050,7 +8542,10 @@
           "writeExecution": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["defaultRequirement", "supportedRequirements"],
+            "required": [
+              "defaultRequirement",
+              "supportedRequirements"
+            ],
             "properties": {
               "defaultRequirement": {
                 "const": "ephemeral",
@@ -8080,7 +8575,10 @@
       "ApplicationExecuteRequest": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["operation", "input"],
+        "required": [
+          "operation",
+          "input"
+        ],
         "properties": {
           "operation": {
             "minLength": 1,
@@ -8119,7 +8617,10 @@
           "supersedes": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["namespace", "operationId"],
+            "required": [
+              "namespace",
+              "operationId"
+            ],
             "properties": {
               "namespace": {
                 "minLength": 1,
@@ -8139,7 +8640,11 @@
       "ApplicationReviewRequest": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["pageId", "source", "request"],
+        "required": [
+          "pageId",
+          "source",
+          "request"
+        ],
         "properties": {
           "pageId": {
             "minLength": 1,
@@ -8149,7 +8654,10 @@
           "source": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["ownerId", "contract"],
+            "required": [
+              "ownerId",
+              "contract"
+            ],
             "properties": {
               "ownerId": {
                 "pattern": "^[!-~]{1,255}$",
@@ -8158,7 +8666,10 @@
               "contract": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["id", "version"],
+                "required": [
+                  "id",
+                  "version"
+                ],
                 "properties": {
                   "id": {
                     "minLength": 1,
@@ -8179,7 +8690,12 @@
           "request": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["operation", "input", "operationId", "expectedVersion"],
+            "required": [
+              "operation",
+              "input",
+              "operationId",
+              "expectedVersion"
+            ],
             "properties": {
               "operation": {
                 "minLength": 1,
@@ -8214,7 +8730,10 @@
               "supersedes": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["namespace", "operationId"],
+                "required": [
+                  "namespace",
+                  "operationId"
+                ],
                 "properties": {
                   "namespace": {
                     "minLength": 1,
@@ -8238,7 +8757,10 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["status", "value"],
+            "required": [
+              "status",
+              "value"
+            ],
             "properties": {
               "status": {
                 "anyOf": [
@@ -8258,7 +8780,10 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["status", "reason"],
+            "required": [
+              "status",
+              "reason"
+            ],
             "properties": {
               "status": {
                 "const": "rejected",
@@ -8272,7 +8797,10 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["replay", "operation"],
+            "required": [
+              "replay",
+              "operation"
+            ],
             "properties": {
               "replay": {
                 "const": true,
@@ -8281,7 +8809,12 @@
               "operation": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["operationId", "epoch", "status", "dispatched"],
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
                 "properties": {
                   "operationId": {
                     "minLength": 1,
@@ -8324,11 +8857,17 @@
       },
       "ApiError": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message", "retryable"],
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
             "properties": {
               "code": {
                 "anyOf": [
@@ -8510,7 +9049,11 @@
       },
       "ApiErrorDetail": {
         "type": "object",
-        "required": ["code", "message", "retryable"],
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
         "properties": {
           "code": {
             "anyOf": [
@@ -8690,7 +9233,10 @@
       },
       "Viewport": {
         "type": "object",
-        "required": ["width", "height"],
+        "required": [
+          "width",
+          "height"
+        ],
         "properties": {
           "width": {
             "minimum": 1,
@@ -8767,7 +9313,10 @@
           },
           "viewport": {
             "type": "object",
-            "required": ["width", "height"],
+            "required": [
+              "width",
+              "height"
+            ],
             "properties": {
               "width": {
                 "minimum": 1,
@@ -8801,7 +9350,12 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["name", "value", "domain", "path"],
+              "required": [
+                "name",
+                "value",
+                "domain",
+                "path"
+              ],
               "properties": {
                 "name": {
                   "minLength": 1,
@@ -8918,7 +9472,9 @@
               "scope": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["allowedHosts"],
+                "required": [
+                  "allowedHosts"
+                ],
                 "properties": {
                   "assetHosts": {
                     "minItems": 1,
@@ -8927,7 +9483,10 @@
                     "items": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["host", "class"],
+                      "required": [
+                        "host",
+                        "class"
+                      ],
                       "properties": {
                         "host": {
                           "minLength": 1,
@@ -8976,7 +9535,9 @@
                     "items": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["prefix"],
+                      "required": [
+                        "prefix"
+                      ],
                       "properties": {
                         "hostSuffix": {
                           "minLength": 2,
@@ -9013,7 +9574,11 @@
                     "items": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["header", "value", "allowedHosts"],
+                      "required": [
+                        "header",
+                        "value",
+                        "allowedHosts"
+                      ],
                       "properties": {
                         "header": {
                           "minLength": 1,
@@ -9041,7 +9606,10 @@
                     "items": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["header", "value"],
+                      "required": [
+                        "header",
+                        "value"
+                      ],
                       "properties": {
                         "header": {
                           "minLength": 3,
@@ -9081,7 +9649,9 @@
                     "items": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["prefix"],
+                      "required": [
+                        "prefix"
+                      ],
                       "properties": {
                         "hostSuffix": {
                           "minLength": 2,
@@ -9116,7 +9686,11 @@
                   "program": {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["id", "authorizedBy", "authorizedAt"],
+                    "required": [
+                      "id",
+                      "authorizedBy",
+                      "authorizedAt"
+                    ],
                     "properties": {
                       "id": {
                         "minLength": 1,
@@ -9143,7 +9717,10 @@
                   "rateLimit": {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["requests", "perSeconds"],
+                    "required": [
+                      "requests",
+                      "perSeconds"
+                    ],
                     "properties": {
                       "requests": {
                         "minimum": 1,
@@ -9171,7 +9748,9 @@
       "EvidencePassRequest": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["scope"],
+        "required": [
+          "scope"
+        ],
         "properties": {
           "trace": {
             "anyOf": [
@@ -9188,7 +9767,9 @@
           "scope": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["allowedHosts"],
+            "required": [
+              "allowedHosts"
+            ],
             "properties": {
               "assetHosts": {
                 "minItems": 1,
@@ -9197,7 +9778,10 @@
                 "items": {
                   "additionalProperties": false,
                   "type": "object",
-                  "required": ["host", "class"],
+                  "required": [
+                    "host",
+                    "class"
+                  ],
                   "properties": {
                     "host": {
                       "minLength": 1,
@@ -9246,7 +9830,9 @@
                 "items": {
                   "additionalProperties": false,
                   "type": "object",
-                  "required": ["prefix"],
+                  "required": [
+                    "prefix"
+                  ],
                   "properties": {
                     "hostSuffix": {
                       "minLength": 2,
@@ -9283,7 +9869,11 @@
                 "items": {
                   "additionalProperties": false,
                   "type": "object",
-                  "required": ["header", "value", "allowedHosts"],
+                  "required": [
+                    "header",
+                    "value",
+                    "allowedHosts"
+                  ],
                   "properties": {
                     "header": {
                       "minLength": 1,
@@ -9311,7 +9901,10 @@
                 "items": {
                   "additionalProperties": false,
                   "type": "object",
-                  "required": ["header", "value"],
+                  "required": [
+                    "header",
+                    "value"
+                  ],
                   "properties": {
                     "header": {
                       "minLength": 3,
@@ -9351,7 +9944,9 @@
                 "items": {
                   "additionalProperties": false,
                   "type": "object",
-                  "required": ["prefix"],
+                  "required": [
+                    "prefix"
+                  ],
                   "properties": {
                     "hostSuffix": {
                       "minLength": 2,
@@ -9386,7 +9981,11 @@
               "program": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["id", "authorizedBy", "authorizedAt"],
+                "required": [
+                  "id",
+                  "authorizedBy",
+                  "authorizedAt"
+                ],
                 "properties": {
                   "id": {
                     "minLength": 1,
@@ -9413,7 +10012,10 @@
               "rateLimit": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["requests", "perSeconds"],
+                "required": [
+                  "requests",
+                  "perSeconds"
+                ],
                 "properties": {
                   "requests": {
                     "minimum": 1,
@@ -9467,7 +10069,10 @@
       "ScopeAssetAmendment": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["expectedRevision", "assetHosts"],
+        "required": [
+          "expectedRevision",
+          "assetHosts"
+        ],
         "properties": {
           "expectedRevision": {
             "minimum": 0,
@@ -9480,7 +10085,10 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["host", "class"],
+              "required": [
+                "host",
+                "class"
+              ],
               "properties": {
                 "host": {
                   "minLength": 1,
@@ -9520,7 +10128,10 @@
       "ScopeDeniedSummary": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["hosts", "truncated"],
+        "required": [
+          "hosts",
+          "truncated"
+        ],
         "properties": {
           "hosts": {
             "maxItems": 256,
@@ -9528,7 +10139,12 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["hostname", "count", "codes", "resourceTypes"],
+              "required": [
+                "hostname",
+                "count",
+                "codes",
+                "resourceTypes"
+              ],
               "properties": {
                 "hostname": {
                   "type": "string"
@@ -9568,7 +10184,12 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["type", "timestamp", "sessionId", "data"],
+            "required": [
+              "type",
+              "timestamp",
+              "sessionId",
+              "data"
+            ],
             "properties": {
               "type": {
                 "const": "scope.denied",
@@ -9592,7 +10213,12 @@
               "data": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["scope", "method", "url", "hostname"],
+                "required": [
+                  "scope",
+                  "method",
+                  "url",
+                  "hostname"
+                ],
                 "properties": {
                   "scope": {
                     "anyOf": [
@@ -9653,7 +10279,12 @@
           {
             "additionalProperties": false,
             "type": "object",
-            "required": ["type", "timestamp", "sessionId", "data"],
+            "required": [
+              "type",
+              "timestamp",
+              "sessionId",
+              "data"
+            ],
             "properties": {
               "type": {
                 "const": "scope.dependency-starved",
@@ -9677,7 +10308,11 @@
               "data": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["hostname", "count", "message"],
+                "required": [
+                  "hostname",
+                  "count",
+                  "message"
+                ],
                 "properties": {
                   "hostname": {
                     "maxLength": 253,
@@ -9702,7 +10337,9 @@
       "ScopeTraceEnd": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "properties": {
           "reason": {
             "anyOf": [
@@ -9729,7 +10366,10 @@
       "ScopeBudgetTopup": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["expectedRevision", "requestBudget"],
+        "required": [
+          "expectedRevision",
+          "requestBudget"
+        ],
         "properties": {
           "expectedRevision": {
             "minimum": 0,
@@ -9745,7 +10385,10 @@
       "ScopeTrafficSummary": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["rows", "truncated"],
+        "required": [
+          "rows",
+          "truncated"
+        ],
         "properties": {
           "rows": {
             "maxItems": 128,
@@ -9753,7 +10396,12 @@
             "items": {
               "additionalProperties": false,
               "type": "object",
-              "required": ["method", "hostClass", "requests", "denied"],
+              "required": [
+                "method",
+                "hostClass",
+                "requests",
+                "denied"
+              ],
               "properties": {
                 "method": {
                   "minLength": 1,
@@ -9799,7 +10447,13 @@
       },
       "SessionResponse": {
         "type": "object",
-        "required": ["sessionId", "engine", "createdAt", "ttlMs", "idleTimeoutMs"],
+        "required": [
+          "sessionId",
+          "engine",
+          "createdAt",
+          "ttlMs",
+          "idleTimeoutMs"
+        ],
         "properties": {
           "trace": {
             "anyOf": [
@@ -9832,7 +10486,10 @@
           },
           "engine": {
             "type": "object",
-            "required": ["name", "version"],
+            "required": [
+              "name",
+              "version"
+            ],
             "properties": {
               "name": {
                 "type": "string"
@@ -10041,7 +10698,10 @@
       },
       "EngineInfo": {
         "type": "object",
-        "required": ["name", "version"],
+        "required": [
+          "name",
+          "version"
+        ],
         "properties": {
           "name": {
             "type": "string"
@@ -10476,7 +11136,12 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["ref", "role", "visible", "enabled"],
+              "required": [
+                "ref",
+                "role",
+                "visible",
+                "enabled"
+              ],
               "properties": {
                 "ref": {
                   "pattern": "^e\\d+_\\d+$",
@@ -10585,7 +11250,11 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["ref", "change", "properties"],
+              "required": [
+                "ref",
+                "change",
+                "properties"
+              ],
               "properties": {
                 "ref": {
                   "type": "string"
@@ -10611,7 +11280,10 @@
                   "patternProperties": {
                     "^(.*)$": {
                       "type": "object",
-                      "required": ["old", "new"],
+                      "required": [
+                        "old",
+                        "new"
+                      ],
                       "properties": {
                         "old": {},
                         "new": {}
@@ -10626,7 +11298,10 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["tag", "covers"],
+              "required": [
+                "tag",
+                "covers"
+              ],
               "properties": {
                 "tag": {
                   "type": "string"
@@ -10652,7 +11327,10 @@
           },
           "continuation": {
             "type": "object",
-            "required": ["nextOrdinal", "remaining"],
+            "required": [
+              "nextOrdinal",
+              "remaining"
+            ],
             "properties": {
               "nextOrdinal": {
                 "minimum": 0,
@@ -10666,7 +11344,10 @@
           },
           "projection": {
             "type": "object",
-            "required": ["matched", "total"],
+            "required": [
+              "matched",
+              "total"
+            ],
             "properties": {
               "roles": {
                 "maxItems": 32,
@@ -10702,7 +11383,10 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["frame", "status"],
+              "required": [
+                "frame",
+                "status"
+              ],
               "properties": {
                 "frame": {
                   "maxLength": 512,
@@ -10762,7 +11446,12 @@
       },
       "PageElement": {
         "type": "object",
-        "required": ["ref", "role", "visible", "enabled"],
+        "required": [
+          "ref",
+          "role",
+          "visible",
+          "enabled"
+        ],
         "properties": {
           "ref": {
             "pattern": "^e\\d+_\\d+$",
@@ -10862,7 +11551,9 @@
       },
       "ElementTarget": {
         "type": "object",
-        "required": ["ref"],
+        "required": [
+          "ref"
+        ],
         "properties": {
           "ref": {
             "pattern": "^e\\d+_\\d+$",
@@ -10931,7 +11622,9 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["until"],
+                "required": [
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -10978,7 +11671,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["pattern", "until"],
+                "required": [
+                  "pattern",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11009,7 +11705,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["selector", "until"],
+                "required": [
+                  "selector",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11040,7 +11739,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["count", "until"],
+                "required": [
+                  "count",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11154,7 +11856,9 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["until"],
+                "required": [
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11201,7 +11905,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["pattern", "until"],
+                "required": [
+                  "pattern",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11232,7 +11939,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["selector", "until"],
+                "required": [
+                  "selector",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11263,7 +11973,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["count", "until"],
+                "required": [
+                  "count",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11297,7 +12010,9 @@
       },
       "PlanStep": {
         "type": "object",
-        "required": ["action"],
+        "required": [
+          "action"
+        ],
         "properties": {
           "action": {
             "anyOf": [
@@ -11377,7 +12092,9 @@
           },
           "target": {
             "type": "object",
-            "required": ["ref"],
+            "required": [
+              "ref"
+            ],
             "properties": {
               "ref": {
                 "pattern": "^e\\d+_\\d+$",
@@ -11484,7 +12201,9 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["until"],
+                "required": [
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11531,7 +12250,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["pattern", "until"],
+                "required": [
+                  "pattern",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11562,7 +12284,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["selector", "until"],
+                "required": [
+                  "selector",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11593,7 +12318,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["count", "until"],
+                "required": [
+                  "count",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11629,7 +12357,9 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["until"],
+                "required": [
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11676,7 +12406,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["pattern", "until"],
+                "required": [
+                  "pattern",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11707,7 +12440,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["selector", "until"],
+                "required": [
+                  "selector",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11738,7 +12474,10 @@
               {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["count", "until"],
+                "required": [
+                  "count",
+                  "until"
+                ],
                 "properties": {
                   "timeoutMs": {
                     "minimum": 0,
@@ -11789,7 +12528,11 @@
       "PlanReport": {
         "$id": "urn:agentbrowser:plan-report:v1",
         "type": "object",
-        "required": ["ok", "completed", "results"],
+        "required": [
+          "ok",
+          "completed",
+          "results"
+        ],
         "properties": {
           "ok": {
             "type": "boolean"
@@ -11802,7 +12545,10 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["step", "ok"],
+              "required": [
+                "step",
+                "ok"
+              ],
               "properties": {
                 "step": {
                   "minimum": 0,
@@ -11817,7 +12563,12 @@
                 "navigationObservation": {
                   "additionalProperties": false,
                   "type": "object",
-                  "required": ["status", "reason", "scope", "observedDuring"],
+                  "required": [
+                    "status",
+                    "reason",
+                    "scope",
+                    "observedDuring"
+                  ],
                   "properties": {
                     "status": {
                       "const": "blocked",
@@ -11871,7 +12622,10 @@
                 },
                 "remap": {
                   "type": "object",
-                  "required": ["from", "to"],
+                  "required": [
+                    "from",
+                    "to"
+                  ],
                   "properties": {
                     "from": {
                       "type": "string"
@@ -11906,7 +12660,10 @@
           },
           "error": {
             "type": "object",
-            "required": ["code", "message"],
+            "required": [
+              "code",
+              "message"
+            ],
             "properties": {
               "code": {
                 "type": "string"
@@ -11922,7 +12679,10 @@
         "additionalProperties": false,
         "$id": "urn:agentbrowser:outcome-run-request:v1",
         "type": "object",
-        "required": ["actions", "verification"],
+        "required": [
+          "actions",
+          "verification"
+        ],
         "properties": {
           "actions": {
             "minItems": 1,
@@ -11930,7 +12690,9 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["action"],
+              "required": [
+                "action"
+              ],
               "properties": {
                 "action": {
                   "anyOf": [
@@ -12010,7 +12772,9 @@
                 },
                 "target": {
                   "type": "object",
-                  "required": ["ref"],
+                  "required": [
+                    "ref"
+                  ],
                   "properties": {
                     "ref": {
                       "pattern": "^e\\d+_\\d+$",
@@ -12117,7 +12881,9 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["until"],
+                      "required": [
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12164,7 +12930,10 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["pattern", "until"],
+                      "required": [
+                        "pattern",
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12195,7 +12964,10 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["selector", "until"],
+                      "required": [
+                        "selector",
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12226,7 +12998,10 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["count", "until"],
+                      "required": [
+                        "count",
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12262,7 +13037,9 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["until"],
+                      "required": [
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12309,7 +13086,10 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["pattern", "until"],
+                      "required": [
+                        "pattern",
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12340,7 +13120,10 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["selector", "until"],
+                      "required": [
+                        "selector",
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12371,7 +13154,10 @@
                     {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["count", "until"],
+                      "required": [
+                        "count",
+                        "until"
+                      ],
                       "properties": {
                         "timeoutMs": {
                           "minimum": 0,
@@ -12423,12 +13209,18 @@
           "verification": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["verifier", "input"],
+            "required": [
+              "verifier",
+              "input"
+            ],
             "properties": {
               "verifier": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["id", "version"],
+                "required": [
+                  "id",
+                  "version"
+                ],
                 "properties": {
                   "id": {
                     "minLength": 1,
@@ -12460,12 +13252,19 @@
         "additionalProperties": false,
         "$id": "urn:agentbrowser:outcome-run-report:v1",
         "type": "object",
-        "required": ["plan", "outcome"],
+        "required": [
+          "plan",
+          "outcome"
+        ],
         "properties": {
           "plan": {
             "$id": "urn:agentbrowser:plan-report:v1",
             "type": "object",
-            "required": ["ok", "completed", "results"],
+            "required": [
+              "ok",
+              "completed",
+              "results"
+            ],
             "properties": {
               "ok": {
                 "type": "boolean"
@@ -12478,7 +13277,10 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["step", "ok"],
+                  "required": [
+                    "step",
+                    "ok"
+                  ],
                   "properties": {
                     "step": {
                       "minimum": 0,
@@ -12493,7 +13295,12 @@
                     "navigationObservation": {
                       "additionalProperties": false,
                       "type": "object",
-                      "required": ["status", "reason", "scope", "observedDuring"],
+                      "required": [
+                        "status",
+                        "reason",
+                        "scope",
+                        "observedDuring"
+                      ],
                       "properties": {
                         "status": {
                           "const": "blocked",
@@ -12547,7 +13354,10 @@
                     },
                     "remap": {
                       "type": "object",
-                      "required": ["from", "to"],
+                      "required": [
+                        "from",
+                        "to"
+                      ],
                       "properties": {
                         "from": {
                           "type": "string"
@@ -12582,7 +13392,10 @@
               },
               "error": {
                 "type": "object",
-                "required": ["code", "message"],
+                "required": [
+                  "code",
+                  "message"
+                ],
                 "properties": {
                   "code": {
                     "type": "string"
@@ -12597,7 +13410,13 @@
           "outcome": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["availability", "execution", "verification", "cleanup", "testedSeam"],
+            "required": [
+              "availability",
+              "execution",
+              "verification",
+              "cleanup",
+              "testedSeam"
+            ],
             "properties": {
               "availability": {
                 "anyOf": [
@@ -12642,7 +13461,11 @@
               "verification": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["status", "requiredLayer", "evidenceRefIds"],
+                "required": [
+                  "status",
+                  "requiredLayer",
+                  "evidenceRefIds"
+                ],
                 "properties": {
                   "status": {
                     "anyOf": [
@@ -12667,7 +13490,10 @@
                   "verifier": {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["id", "version"],
+                    "required": [
+                      "id",
+                      "version"
+                    ],
                     "properties": {
                       "id": {
                         "minLength": 1,
@@ -12834,7 +13660,11 @@
           "result": {},
           "navigationStatus": {
             "type": "object",
-            "required": ["status", "url", "redirectChain"],
+            "required": [
+              "status",
+              "url",
+              "redirectChain"
+            ],
             "properties": {
               "scopeDenials": {
                 "type": "object",
@@ -12956,7 +13786,12 @@
           "navigationObservation": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["status", "reason", "scope", "observedDuring"],
+            "required": [
+              "status",
+              "reason",
+              "scope",
+              "observedDuring"
+            ],
             "properties": {
               "status": {
                 "const": "blocked",
@@ -13013,7 +13848,10 @@
           },
           "policyDecision": {
             "type": "object",
-            "required": ["allowed", "reason"],
+            "required": [
+              "allowed",
+              "reason"
+            ],
             "properties": {
               "allowed": {
                 "type": "boolean"
@@ -13034,7 +13872,9 @@
           },
           "approvalDecision": {
             "type": "object",
-            "required": ["approved"],
+            "required": [
+              "approved"
+            ],
             "properties": {
               "approved": {
                 "type": "boolean"
@@ -13104,7 +13944,12 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["ref", "role", "visible", "enabled"],
+                  "required": [
+                    "ref",
+                    "role",
+                    "visible",
+                    "enabled"
+                  ],
                   "properties": {
                     "ref": {
                       "pattern": "^e\\d+_\\d+$",
@@ -13213,7 +14058,11 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["ref", "change", "properties"],
+                  "required": [
+                    "ref",
+                    "change",
+                    "properties"
+                  ],
                   "properties": {
                     "ref": {
                       "type": "string"
@@ -13239,7 +14088,10 @@
                       "patternProperties": {
                         "^(.*)$": {
                           "type": "object",
-                          "required": ["old", "new"],
+                          "required": [
+                            "old",
+                            "new"
+                          ],
                           "properties": {
                             "old": {},
                             "new": {}
@@ -13254,7 +14106,10 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["tag", "covers"],
+                  "required": [
+                    "tag",
+                    "covers"
+                  ],
                   "properties": {
                     "tag": {
                       "type": "string"
@@ -13280,7 +14135,10 @@
               },
               "continuation": {
                 "type": "object",
-                "required": ["nextOrdinal", "remaining"],
+                "required": [
+                  "nextOrdinal",
+                  "remaining"
+                ],
                 "properties": {
                   "nextOrdinal": {
                     "minimum": 0,
@@ -13294,7 +14152,10 @@
               },
               "projection": {
                 "type": "object",
-                "required": ["matched", "total"],
+                "required": [
+                  "matched",
+                  "total"
+                ],
                 "properties": {
                   "roles": {
                     "maxItems": 32,
@@ -13330,7 +14191,10 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["frame", "status"],
+                  "required": [
+                    "frame",
+                    "status"
+                  ],
                   "properties": {
                     "frame": {
                       "maxLength": 512,
@@ -13392,11 +14256,19 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["artifactId", "type", "contentType", "sizeBytes"],
+              "required": [
+                "artifactId",
+                "type",
+                "contentType",
+                "sizeBytes"
+              ],
               "properties": {
                 "file": {
                   "type": "object",
-                  "required": ["path", "bytes"],
+                  "required": [
+                    "path",
+                    "bytes"
+                  ],
                   "properties": {
                     "path": {
                       "type": "string"
@@ -13453,7 +14325,10 @@
                 },
                 "inline": {
                   "type": "object",
-                  "required": ["contentBase64", "byteSize"],
+                  "required": [
+                    "contentBase64",
+                    "byteSize"
+                  ],
                   "properties": {
                     "contentBase64": {
                       "type": "string"
@@ -13490,7 +14365,11 @@
           },
           "error": {
             "type": "object",
-            "required": ["code", "message", "retryable"],
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
             "properties": {
               "code": {
                 "anyOf": [
@@ -13672,7 +14551,11 @@
       },
       "NavigationStatus": {
         "type": "object",
-        "required": ["status", "url", "redirectChain"],
+        "required": [
+          "status",
+          "url",
+          "redirectChain"
+        ],
         "properties": {
           "scopeDenials": {
             "type": "object",
@@ -13793,11 +14676,19 @@
       },
       "ArtifactRef": {
         "type": "object",
-        "required": ["artifactId", "type", "contentType", "sizeBytes"],
+        "required": [
+          "artifactId",
+          "type",
+          "contentType",
+          "sizeBytes"
+        ],
         "properties": {
           "file": {
             "type": "object",
-            "required": ["path", "bytes"],
+            "required": [
+              "path",
+              "bytes"
+            ],
             "properties": {
               "path": {
                 "type": "string"
@@ -13854,7 +14745,10 @@
           },
           "inline": {
             "type": "object",
-            "required": ["contentBase64", "byteSize"],
+            "required": [
+              "contentBase64",
+              "byteSize"
+            ],
             "properties": {
               "contentBase64": {
                 "type": "string"
@@ -13926,7 +14820,11 @@
               "budget": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["limit", "spent", "remaining"],
+                "required": [
+                  "limit",
+                  "spent",
+                  "remaining"
+                ],
                 "properties": {
                   "limit": {
                     "minimum": 0,
@@ -13945,7 +14843,11 @@
               "rateLimit": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["requests", "perSeconds", "paced"],
+                "required": [
+                  "requests",
+                  "perSeconds",
+                  "paced"
+                ],
                 "properties": {
                   "requests": {
                     "minimum": 1,
@@ -13971,7 +14873,10 @@
           },
           "engine": {
             "type": "object",
-            "required": ["name", "version"],
+            "required": [
+              "name",
+              "version"
+            ],
             "properties": {
               "name": {
                 "type": "string"
@@ -14138,7 +15043,11 @@
               "context": {
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["isolation", "viewport", "initScript"],
+                "required": [
+                  "isolation",
+                  "viewport",
+                  "initScript"
+                ],
                 "properties": {
                   "isolation": {
                     "anyOf": [
@@ -14161,7 +15070,11 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["mode", "width", "height"],
+                        "required": [
+                          "mode",
+                          "width",
+                          "height"
+                        ],
                         "properties": {
                           "mode": {
                             "const": "fixed",
@@ -14182,7 +15095,9 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["mode"],
+                        "required": [
+                          "mode"
+                        ],
                         "properties": {
                           "mode": {
                             "const": "no_viewport",
@@ -14193,7 +15108,9 @@
                       {
                         "additionalProperties": false,
                         "type": "object",
-                        "required": ["mode"],
+                        "required": [
+                          "mode"
+                        ],
                         "properties": {
                           "mode": {
                             "const": "unknown",
@@ -14226,7 +15143,12 @@
           "lease": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["sampledAt", "expiresAt", "lastActivityAt", "idleExpiresAt"],
+            "required": [
+              "sampledAt",
+              "expiresAt",
+              "lastActivityAt",
+              "idleExpiresAt"
+            ],
             "properties": {
               "sampledAt": {
                 "minimum": 0,
@@ -14297,7 +15219,13 @@
           },
           "actionLease": {
             "type": "object",
-            "required": ["hosts", "grantedAt", "expiresAt", "maxActions", "remainingActions"],
+            "required": [
+              "hosts",
+              "grantedAt",
+              "expiresAt",
+              "maxActions",
+              "remainingActions"
+            ],
             "properties": {
               "hosts": {
                 "minItems": 1,
@@ -14469,7 +15397,11 @@
           "context": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["isolation", "viewport", "initScript"],
+            "required": [
+              "isolation",
+              "viewport",
+              "initScript"
+            ],
             "properties": {
               "isolation": {
                 "anyOf": [
@@ -14492,7 +15424,11 @@
                   {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["mode", "width", "height"],
+                    "required": [
+                      "mode",
+                      "width",
+                      "height"
+                    ],
                     "properties": {
                       "mode": {
                         "const": "fixed",
@@ -14513,7 +15449,9 @@
                   {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["mode"],
+                    "required": [
+                      "mode"
+                    ],
                     "properties": {
                       "mode": {
                         "const": "no_viewport",
@@ -14524,7 +15462,9 @@
                   {
                     "additionalProperties": false,
                     "type": "object",
-                    "required": ["mode"],
+                    "required": [
+                      "mode"
+                    ],
                     "properties": {
                       "mode": {
                         "const": "unknown",
@@ -14556,7 +15496,11 @@
       },
       "PageSummary": {
         "type": "object",
-        "required": ["pageId", "sessionId", "status"],
+        "required": [
+          "pageId",
+          "sessionId",
+          "status"
+        ],
         "properties": {
           "pageId": {
             "type": "string"
@@ -14566,7 +15510,10 @@
           },
           "status": {
             "type": "string",
-            "examples": ["ready", "closed"]
+            "examples": [
+              "ready",
+              "closed"
+            ]
           },
           "url": {
             "type": "string"
@@ -14578,12 +15525,19 @@
       },
       "ActionOutcome": {
         "type": "object",
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "navigationObservation": {
             "additionalProperties": false,
             "type": "object",
-            "required": ["status", "reason", "scope", "observedDuring"],
+            "required": [
+              "status",
+              "reason",
+              "scope",
+              "observedDuring"
+            ],
             "properties": {
               "status": {
                 "const": "blocked",
@@ -14637,7 +15591,9 @@
           },
           "status": {
             "type": "string",
-            "examples": ["success"]
+            "examples": [
+              "success"
+            ]
           },
           "actionId": {
             "type": "string"

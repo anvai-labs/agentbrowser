@@ -308,6 +308,7 @@ describe('JUnit is well-formed for any file name', { skip: !posix }, () => {
     const odd = join(work, 'b\x01.json');
     writeFileSync(odd, readFileSync(passed));
     const { junit } = await runMain(stubCli(), odd);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence.
     assert.doesNotMatch(junit, /[\x00-\x08\x0B\x0C\x0E-\x1F]/);
   });
 

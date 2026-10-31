@@ -5,28 +5,29 @@
  */
 (function () {
   function initMermaid() {
-    if (typeof mermaid === 'undefined') {
+    if (typeof mermaid === "undefined") {
       return;
     }
-    var dark = document.body && document.body.getAttribute('data-md-color-scheme') === 'slate';
+    var dark = document.body &&
+      document.body.getAttribute("data-md-color-scheme") === "slate";
     mermaid.initialize({
       startOnLoad: false,
-      theme: dark ? 'dark' : 'default',
-      securityLevel: 'loose',
-      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+      theme: dark ? "dark" : "default",
+      securityLevel: "loose",
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: "basis" },
       sequence: { useMaxWidth: true },
-      gantt: { useMaxWidth: true },
+      gantt: { useMaxWidth: true }
     });
-    mermaid.run({ querySelector: '.mermaid' });
+    mermaid.run({ querySelector: ".mermaid" });
   }
 
-  document.addEventListener('DOMContentLoaded', initMermaid);
-  document.addEventListener('click', function (event) {
-    if (event.target.closest && event.target.closest('.md-header__button')) {
+  document.addEventListener("DOMContentLoaded", initMermaid);
+  document.addEventListener("click", function (event) {
+    if (event.target.closest && event.target.closest(".md-header__button")) {
       setTimeout(initMermaid, 150);
     }
   });
-  if (typeof document$ !== 'undefined') {
+  if (typeof document$ !== "undefined") {
     document$.subscribe(initMermaid);
   }
 })();

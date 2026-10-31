@@ -48,12 +48,7 @@ test('packaged session parity requires bounded real launch facts and exact cross
     { engine: created.engine, diagnostics }
   );
   assert.throws(
-    () =>
-      validatePackagedSessionParity(
-        created,
-        [sessionView({ engine: { name: 'other', version: '1.11.0' } })],
-        capture
-      ),
+    () => validatePackagedSessionParity(created, [sessionView({ engine: { name: 'other', version: '1.11.0' } })], capture),
     /Chromium|identity/
   );
   assert.throws(
@@ -61,12 +56,7 @@ test('packaged session parity requires bounded real launch facts and exact cross
     /diagnostics/
   );
   assert.throws(
-    () =>
-      validatePackagedSessionParity(
-        { ...created, engine: { ...created.engine, capabilities: {} } },
-        [],
-        capture
-      ),
+    () => validatePackagedSessionParity({ ...created, engine: { ...created.engine, capabilities: {} } }, [], capture),
     /capabilities/
   );
 });
@@ -78,10 +68,7 @@ test('complete extraction qualification crosses the former 4KB cut and retains i
     evidence: [{ url: 'https://fixture.invalid/large', revision: 1, hash: '1234abcd' }],
   };
   assert.ok(validateCompleteExtraction(result, marker) > 4096);
-  assert.throws(
-    () => validateCompleteExtraction({ ...result, data: { text: 'short' } }, marker),
-    /4KB/
-  );
+  assert.throws(() => validateCompleteExtraction({ ...result, data: { text: 'short' } }, marker), /4KB/);
   assert.throws(
     () => validateCompleteExtraction({ ...result, data: { text: 'x'.repeat(5000) } }, marker),
     /marker/
@@ -177,11 +164,7 @@ test('buffered evaluation publishes no partial result when evaluator N fails', a
   let evaluations = 0;
   let published;
   const runner = async (command, options) => {
-    assert.equal(
-      Object.hasOwn(options, 'token'),
-      false,
-      'Offline evaluation must receive no token'
-    );
+    assert.equal(Object.hasOwn(options, 'token'), false, 'Offline evaluation must receive no token');
     if (command.includes('describe')) {
       return { stdout: JSON.stringify(evaluationDiscovery()), stderr: '', code: 0 };
     }
@@ -261,11 +244,7 @@ test('buffered evaluation records bounded byte costs without publishing private 
   });
   const exitCodes = [];
   const runner = async (command, options) => {
-    assert.equal(
-      Object.hasOwn(options, 'token'),
-      false,
-      'Offline evaluation must receive no token'
-    );
+    assert.equal(Object.hasOwn(options, 'token'), false, 'Offline evaluation must receive no token');
     if (command.includes('describe')) {
       return { stdout: JSON.stringify(evaluationDiscovery()), stderr: '', code: 0 };
     }
@@ -304,17 +283,11 @@ test('buffered evaluation records bounded byte costs without publishing private 
     { runner: guardedRunner }
   );
   assert.deepEqual(exitCodes, [0, 1]);
-  assert.deepEqual(
-    result.cases.map((entry) => entry.passing),
-    [true, false]
-  );
+  assert.deepEqual(result.cases.map((entry) => entry.passing), [true, false]);
   assert.equal(result.cliEvaluationCalls, 2);
   assert.equal(result.cliEvaluationDiscoveryCalls, 1);
   assert.equal(result.discoveryBytes, Buffer.byteLength(JSON.stringify(evaluationDiscovery())));
-  assert.equal(
-    result.maxReportBytes,
-    Math.max(...bundles.map((entry) => Buffer.byteLength(JSON.stringify(entry.bundle.report))))
-  );
+  assert.equal(result.maxReportBytes, Math.max(...bundles.map((entry) => Buffer.byteLength(JSON.stringify(entry.bundle.report)))));
   assert.ok(Number.isInteger(result.elapsedMs) && result.elapsedMs >= 0);
   assert.equal(
     result.maxBundleBytes,
@@ -357,17 +330,11 @@ test('outer finalizer failure after workflow settlement causes zero evaluator ca
 });
 
 test('artifact validation rejects empty, truncated and mismatched captures', () => {
-  const capture = (bytes) => ({
-    metadata: { sizeBytes: bytes.length },
-    contentBase64: bytes.toString('base64'),
-  });
+  const capture = (bytes) => ({ metadata: { sizeBytes: bytes.length }, contentBase64: bytes.toString('base64') });
   assert.throws(() => validateArtifact(capture(Buffer.alloc(0)), 'png'), /empty/);
   assert.throws(() => validateArtifact(capture(Buffer.from('not a png')), 'png'), /PNG/);
   assert.throws(() => validateArtifact(capture(Buffer.from('%PDF-1.7')), 'pdf'), /PDF/);
-  assert.throws(
-    () => validateArtifact({ metadata: { sizeBytes: 99 }, contentBase64: 'eA==' }, 'bytes'),
-    /size/
-  );
+  assert.throws(() => validateArtifact({ metadata: { sizeBytes: 99 }, contentBase64: 'eA==' }, 'bytes'), /size/);
   assert.equal(validateArtifact(capture(Buffer.from('payload')), 'bytes').toString(), 'payload');
 });
 
@@ -379,10 +346,7 @@ test('package resolution checks expected version before dependency loading', asy
   const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-package-negative-'));
   try {
     await mkdir(join(directory, 'dist'));
-    await writeFile(
-      join(directory, 'package.json'),
-      JSON.stringify({ name: '@agentbrowser/api', version: '0.0.0' })
-    );
+    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: '@agentbrowser/api', version: '0.0.0' }));
     await assert.rejects(resolvePackagedModules(directory, '1.8.5'), /version/);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -395,29 +359,14 @@ test('package resolution rejects an escaped core dependency and dirty/mismatched
   try {
     await mkdir(join(root, 'node_modules/@agentbrowser'), { recursive: true });
     await mkdir(join(directory, 'outside-core'));
-    await writeFile(
-      join(root, 'package.json'),
-      JSON.stringify({ name: '@agentbrowser/api', version: '1.8.5' })
-    );
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: '@agentbrowser/api', version: '1.8.5' }));
     const stamp = { version: '1.8.5', commit: 'a'.repeat(40), dirty: true };
     await writeFile(join(root, 'VERSION.json'), JSON.stringify(stamp));
     await assert.rejects(resolvePackagedModules(root, '1.8.5'), /Dirty package/);
-    await assert.rejects(
-      resolvePackagedModules(root, '1.8.5', { expectedCommit: 'b'.repeat(40), allowDirty: true }),
-      /commit mismatch/
-    );
-    await symlink(
-      join(directory, 'outside-core'),
-      join(root, 'node_modules/@agentbrowser/core'),
-      'dir'
-    );
-    await assert.rejects(
-      resolvePackagedModules(root, '1.8.5', { allowDirty: true }),
-      /escapes extracted/
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+    await assert.rejects(resolvePackagedModules(root, '1.8.5', { expectedCommit: 'b'.repeat(40), allowDirty: true }), /commit mismatch/);
+    await symlink(join(directory, 'outside-core'), join(root, 'node_modules/@agentbrowser/core'), 'dir');
+    await assert.rejects(resolvePackagedModules(root, '1.8.5', { allowDirty: true }), /escapes extracted/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('dependency closure rejects ancestor transitive fallback and allows contained types-only dependencies', async () => {
@@ -430,14 +379,7 @@ test('dependency closure rejects ancestor transitive fallback and allows contain
   };
   try {
     await put(root, { name: 'server', dependencies: { parent: '1' } });
-    await put(join(root, 'node_modules/parent'), {
-      name: 'parent',
-      main: 'index.cjs',
-      dependencies: { nested: '1' },
-      optionalDependencies: { absent: '1' },
-      peerDependencies: { optionalPeer: '*' },
-      peerDependenciesMeta: { optionalPeer: { optional: true } },
-    });
+    await put(join(root, 'node_modules/parent'), { name: 'parent', main: 'index.cjs', dependencies: { nested: '1' }, optionalDependencies: { absent: '1' }, peerDependencies: { optionalPeer: '*' }, peerDependenciesMeta: { optionalPeer: { optional: true } } });
     await put(join(directory, 'node_modules/nested'), { name: 'nested', main: 'index.cjs' });
     await assert.rejects(auditDependencyClosure(root), /escapes extracted/);
     await put(join(root, 'node_modules/nested'), { name: 'nested', types: 'index.d.ts' });
@@ -445,85 +387,50 @@ test('dependency closure rejects ancestor transitive fallback and allows contain
     assert.equal((await auditDependencyClosure(root)).packages, 3);
     await put(join(directory, 'node_modules/absent'), { name: 'absent', main: 'index.cjs' });
     await assert.rejects(auditDependencyClosure(root), /escapes extracted/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('HTTP helper rejects error responses and malformed JSON', async () => {
-  await assert.rejects(
-    apiRequest('https://fixture.invalid', '/path', {
-      fetch: async () =>
-        new Response(JSON.stringify({ error: { code: 'INTERNAL' } }), { status: 500 }),
-    }),
-    /500/
-  );
-  await assert.rejects(
-    apiRequest('https://fixture.invalid', '/path', {
-      fetch: async () => new Response('not json'),
-    }),
-    /JSON/
-  );
+  await assert.rejects(apiRequest('https://fixture.invalid', '/path', {
+    fetch: async () => new Response(JSON.stringify({ error: { code: 'INTERNAL' } }), { status: 500 }),
+  }), /500/);
+  await assert.rejects(apiRequest('https://fixture.invalid', '/path', {
+    fetch: async () => new Response('not json'),
+  }), /JSON/);
 });
 
 test('HTTP helper rejects oversized bodies', async () => {
-  await assert.rejects(
-    apiRequest('https://fixture.invalid', '/path', {
-      maxBytes: 8,
-      fetch: async () => new Response('123456789'),
-    }),
-    /limit/
-  );
+  await assert.rejects(apiRequest('https://fixture.invalid', '/path', {
+    maxBytes: 8, fetch: async () => new Response('123456789'),
+  }), /limit/);
 });
 
 test('HTTP helper forwards an explicit operation ID without replaying a refused write', async () => {
   let calls = 0;
-  await assert.rejects(
-    apiRequest('https://fixture.invalid', '/pages', {
-      method: 'POST',
-      body: {},
-      operationId: 'create-packaged-page',
-      fetch: async (_url, init) => {
-        calls++;
-        assert.equal(init.headers['x-agentbrowser-operation-id'], 'create-packaged-page');
-        return new Response(JSON.stringify({ error: { code: 'OPERATION_RECORDED' } }), {
-          status: 409,
-        });
-      },
-    }),
-    /OPERATION_RECORDED/
-  );
+  await assert.rejects(apiRequest('https://fixture.invalid', '/pages', {
+    method: 'POST', body: {}, operationId: 'create-packaged-page',
+    fetch: async (_url, init) => {
+      calls++;
+      assert.equal(init.headers['x-agentbrowser-operation-id'], 'create-packaged-page');
+      return new Response(JSON.stringify({ error: { code: 'OPERATION_RECORDED' } }), { status: 409 });
+    },
+  }), /OPERATION_RECORDED/);
   assert.equal(calls, 1);
 });
 
 test('HTTP deadline cancels stalled body consumption', async () => {
   let cancelled = false;
-  const stream = new ReadableStream({
-    cancel() {
-      cancelled = true;
-    },
-  });
-  await assert.rejects(
-    apiRequest('https://fixture.invalid', '/path', {
-      timeoutMs: 30,
-      fetch: async () => new Response(stream),
-    }),
-    /deadline/
-  );
+  const stream = new ReadableStream({ cancel() { cancelled = true; } });
+  await assert.rejects(apiRequest('https://fixture.invalid', '/path', {
+    timeoutMs: 30, fetch: async () => new Response(stream),
+  }), /deadline/);
   assert.equal(cancelled, true);
 });
 
 test('managed child validates graceful shutdown and rejects late output/nonzero shutdown', async () => {
   for (const mode of ['clean', 'flood', 'nonzero']) {
-    const command = [
-      process.execPath,
-      '-e',
-      `process.on('SIGTERM',()=>{${mode === 'flood' ? 'process.stdout.write("x".repeat(4096));' : ''}process.exit(${mode === 'nonzero' ? 7 : 0});});process.send({ready:true});setInterval(()=>{},1000)`,
-    ];
-    const result = withManagedChild(command, { maxOutputBytes: 1024 }, async ({ message }) => {
-      await message();
-      return 'done';
-    });
+    const command = [process.execPath, '-e', `process.on('SIGTERM',()=>{${mode === 'flood' ? 'process.stdout.write("x".repeat(4096));' : ''}process.exit(${mode === 'nonzero' ? 7 : 0});});process.send({ready:true});setInterval(()=>{},1000)`];
+    const result = withManagedChild(command, { maxOutputBytes: 1024 }, async ({ message }) => { await message(); return 'done'; });
     if (mode === 'clean') assert.equal(await result, 'done');
     else await assert.rejects(result, mode === 'flood' ? /output/ : /cleanup.*unsuccessfully/);
   }
@@ -531,74 +438,35 @@ test('managed child validates graceful shutdown and rejects late output/nonzero 
 
 test('managed child deadline aborts waiting work and closes a never-ready child', async () => {
   let pid;
-  await assert.rejects(
-    withManagedChild(
-      [process.execPath, '-e', 'setInterval(()=>{},1000)'],
-      {
-        timeoutMs: 50,
-      },
-      async ({ child, message }) => {
-        pid = child.pid;
-        await message();
-      }
-    ),
-    /deadline/
-  );
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'setInterval(()=>{},1000)'], {
+    timeoutMs: 50,
+  }, async ({ child, message }) => { pid = child.pid; await message(); }), /deadline/);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });
 
 test('managed child detects early exit and cleans an assertion failure', async () => {
-  await assert.rejects(
-    withManagedChild([process.execPath, '-e', 'process.exit(7)'], {}, async ({ guard }) => {
-      await guard(new Promise(() => {}));
-    }),
-    /exited/
-  );
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'process.exit(7)'], {}, async ({ guard }) => {
+    await guard(new Promise(() => {}));
+  }), /exited/);
   let pid;
-  await assert.rejects(
-    withManagedChild(
-      [process.execPath, '-e', 'setInterval(()=>{},1000)'],
-      {},
-      async ({ child }) => {
-        pid = child.pid;
-        throw new Error('injected assertion');
-      }
-    ),
-    /injected assertion/
-  );
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'setInterval(()=>{},1000)'], {}, async ({ child }) => {
+    pid = child.pid;
+    throw new Error('injected assertion');
+  }), /injected assertion/);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });
 
 test('managed child rejects output flood and forced shutdown cannot pass cleanup', async () => {
-  await assert.rejects(
-    withManagedChild(
-      [process.execPath, '-e', 'process.stdout.write("x".repeat(4096));setInterval(()=>{},1000)'],
-      {
-        maxOutputBytes: 1024,
-      },
-      async ({ guard }) => guard(new Promise(() => {}))
-    ),
-    /output/
-  );
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'process.stdout.write("x".repeat(4096));setInterval(()=>{},1000)'], {
+    maxOutputBytes: 1024,
+  }, async ({ guard }) => guard(new Promise(() => {}))), /output/);
   let pid;
-  await assert.rejects(
-    withManagedChild(
-      [
-        process.execPath,
-        '-e',
-        'process.on("SIGTERM",()=>{});process.send({ready:true});setInterval(()=>{},1000)',
-      ],
-      {
-        shutdownMs: 50,
-        timeoutMs: 1000,
-      },
-      async ({ child, message }) => {
-        pid = child.pid;
-        await message();
-      }
-    ),
-    /forced|cleanup/
-  );
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>{});process.send({ready:true});setInterval(()=>{},1000)'], {
+    shutdownMs: 50, timeoutMs: 1000,
+  }, async ({ child, message }) => {
+    pid = child.pid;
+    await message();
+  }), /forced|cleanup/);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });
 
@@ -635,10 +503,7 @@ test('node runner qualification rejects missing, extra, skipped and wrong native
     ],
   };
   const junit = nodeOutcomeJunit;
-  assert.equal(
-    validateNodeOutcomeArtifacts({ sidecar, junit, expectedVersion: '1.9.0' }).failed,
-    2
-  );
+  assert.equal(validateNodeOutcomeArtifacts({ sidecar, junit, expectedVersion: '1.9.0' }).failed, 2);
   for (const changed of [
     junit.replace('<!-- cancelled 0 -->', '<!-- cancelled 1 -->'),
     junit.replace('<!-- skipped 0 -->', '<!-- skipped 1 -->'),
@@ -705,13 +570,7 @@ test('node runner qualification invokes one process and always removes private t
     );
     assert.equal(calls, 1);
     assert.equal(result.cases.length, 13);
-    assert.deepEqual(result.conventionalRunner.counts, {
-      tests: 3,
-      passed: 1,
-      failed: 2,
-      cancelled: 0,
-      skipped: 0,
-    });
+    assert.deepEqual(result.conventionalRunner.counts, { tests: 3, passed: 1, failed: 2, cancelled: 0, skipped: 0 });
     assert.equal(result.conventionalRunner.exitCode, 1);
     assert.ok(!JSON.stringify(result.conventionalRunner).includes('PRIVATE-REPORT-SENTINEL'));
     await assert.rejects(stat(privateDirectory), { code: 'ENOENT' });
@@ -739,11 +598,7 @@ test('node runner qualification rejects missing sidecars and private runner fail
       qualifyCliOutcomeWithNodeTest(
         nodeOutcomeResult(),
         { directory, env: { PATH: process.env.PATH }, expectedVersion: '1.9.0' },
-        {
-          runner: async () => {
-            throw new Error('PRIVATE-RUNNER-SENTINEL');
-          },
-        }
+        { runner: async () => { throw new Error('PRIVATE-RUNNER-SENTINEL'); } }
       ),
       (error) => {
         failure = error;
@@ -771,11 +626,10 @@ test('node runner qualification exercises the native JUnit reporter without priv
     assert.match(result.conventionalRunner.runtime, /^v\d+\./);
     assert.ok(result.conventionalRunner.artifact.sizeBytes > 0);
     assert.ok(result.conventionalRunner.artifact.sizeBytes <= 64 * 1024);
-    assert.deepEqual(Object.keys(result.conventionalRunner.artifact).sort(), [
-      'mediaType',
-      'sha256',
-      'sizeBytes',
-    ]);
+    assert.deepEqual(
+      Object.keys(result.conventionalRunner.artifact).sort(),
+      ['mediaType', 'sha256', 'sizeBytes']
+    );
     assert.equal(result.conventionalRunner.artifact.mediaType, 'application/xml');
     assert.match(result.conventionalRunner.artifact.sha256, /^[a-f0-9]{64}$/);
     assert.ok(!JSON.stringify(result.conventionalRunner).includes('PRIVATE-REPORT-SENTINEL'));
@@ -795,11 +649,7 @@ test('shared native JUnit checker preserves fixed case identities and exact dige
 <!-- cancelled 0 --><!-- skipped 0 --><!-- todo 0 --></testsuites>`;
   const expected = { cases, failureMessage: 'Recipe failed', diagnostic };
   assert.deepEqual(validateNativeNodeReport(junit, expected), {
-    tests: 1,
-    passed: 0,
-    failed: 1,
-    cancelled: 0,
-    skipped: 0,
+    tests: 1, passed: 0, failed: 1, cancelled: 0, skipped: 0,
   });
   for (const changed of [
     junit.replace('name="live recipe"', 'name="wrong recipe"'),
@@ -817,27 +667,19 @@ test('shared native JUnit checker preserves fixed case identities and exact dige
     junit.replace(`<!-- ${diagnostic} -->`, ''),
     junit.replace(`<!-- ${diagnostic} -->`, `<!-- ${diagnostic} EXTRA -->`),
     junit.replace(`<!-- ${diagnostic} -->`, `<!-- ${diagnostic} --><!-- ${diagnostic} -->`),
-    junit
-      .replace(`<!-- ${diagnostic} -->`, '')
-      .replace('>fixed</failure>', `>${diagnostic}</failure>`),
+    junit.replace(`<!-- ${diagnostic} -->`, '').replace('>fixed</failure>', `>${diagnostic}</failure>`),
     junit.replace('</testsuites>', ''),
     junit + 'x'.repeat(65537),
-  ])
-    assert.throws(() => validateNativeNodeReport(changed, expected), {
-      message: 'Node test qualification failed',
-    });
-  assert.throws(() =>
-    validateNativeNodeReport(junit, {
-      ...expected,
-      cases: [{ name: 'live recipe', passing: true }],
-    })
-  );
+  ]) assert.throws(() => validateNativeNodeReport(changed, expected), {
+    message: 'Node test qualification failed',
+  });
+  assert.throws(() => validateNativeNodeReport(junit, {
+    ...expected, cases: [{ name: 'live recipe', passing: true }],
+  }));
 });
 
 test('shared checker qualifies actual native JUnit and fixed digest comments for each recipe case', async () => {
-  const { validateNativeNodeReport, summarizeNativeNodeReport } = await import(
-    './node-junit-report.mjs'
-  );
+  const { validateNativeNodeReport, summarizeNativeNodeReport } = await import('./node-junit-report.mjs');
   const { APPLICATION_RECIPE_FAILURE, applicationRecipeTestName, createCliEnvironment } =
     await import('../examples/node-test/application-outcome.mjs');
   const { runExecutable } = await import('./release-smoke.mjs');
@@ -851,35 +693,19 @@ test('shared checker qualifies actual native JUnit and fixed digest comments for
       if(!${passing})throw Error(${JSON.stringify(APPLICATION_RECIPE_FAILURE)});
     });`;
     const output = await runExecutable([process.execPath, '--test-reporter=junit', '-e', source], {
-      env: createCliEnvironment(process.env),
-      expectedExitCode: passing ? 0 : 1,
-      timeoutMs: 5000,
-      maxOutputBytes: 65536,
+      env: createCliEnvironment(process.env), expectedExitCode: passing ? 0 : 1,
+      timeoutMs: 5000, maxOutputBytes: 65536,
     });
     assert.equal(output.stderr, '');
-    assert.deepEqual(
-      validateNativeNodeReport(output.stdout, {
-        cases: [{ name: testName, passing }],
-        failureMessage: APPLICATION_RECIPE_FAILURE,
-        diagnostic,
-      }),
-      { tests: 1, passed: passing ? 1 : 0, failed: passing ? 0 : 1, cancelled: 0, skipped: 0 }
-    );
-    const { validateApplicationRecipeNativeReport } = await import(
-      './application-recipe-acceptance.mjs'
-    );
-    assert.equal(
-      validateApplicationRecipeNativeReport({
-        name,
-        stdout: output.stdout,
-        stderr: '',
-        digest: 'b'.repeat(64),
-      }).counts.failed,
-      passing ? 0 : 1
-    );
+    assert.deepEqual(validateNativeNodeReport(output.stdout, {
+      cases: [{ name: testName, passing }], failureMessage: APPLICATION_RECIPE_FAILURE, diagnostic,
+    }), { tests: 1, passed: passing ? 1 : 0, failed: passing ? 0 : 1, cancelled: 0, skipped: 0 });
+    const { validateApplicationRecipeNativeReport } = await import('./application-recipe-acceptance.mjs');
+    assert.equal(validateApplicationRecipeNativeReport({
+      name, stdout: output.stdout, stderr: '', digest: 'b'.repeat(64),
+    }).counts.failed, passing ? 0 : 1);
     assert.deepEqual(summarizeNativeNodeReport(output.stdout), {
-      mediaType: 'application/xml',
-      sizeBytes: Buffer.byteLength(output.stdout),
+      mediaType: 'application/xml', sizeBytes: Buffer.byteLength(output.stdout),
       sha256: createHash('sha256').update(output.stdout).digest('hex'),
     });
   }
@@ -888,65 +714,38 @@ test('shared checker qualifies actual native JUnit and fixed digest comments for
 
 test('managed child records bounded named phases through graceful cleanup without process inputs', async () => {
   const timings = [];
-  const command = [
-    process.execPath,
-    '-e',
-    'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)',
-    'PRIVATE-ARG',
-  ];
-  const result = await withManagedChild(
-    command,
-    { label: 'outcome', timings, env: { ...process.env, PRIVATE_ENV: 'PRIVATE-ENV' } },
-    async ({ message, phase }) => {
-      await message();
-      phase('case-pass');
-      return 'done';
-    }
-  );
+  const command = [process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)', 'PRIVATE-ARG'];
+  const result = await withManagedChild(command, { label: 'outcome', timings, env: { ...process.env, PRIVATE_ENV: 'PRIVATE-ENV' } }, async ({ message, phase }) => {
+    await message();
+    phase('case-pass');
+    return 'done';
+  });
   assert.equal(result, 'done');
   assert.equal(timings.length, 1);
   assert.equal(timings[0].label, 'outcome');
   assert.equal(timings[0].status, 'passed');
-  assert.deepEqual(
-    timings[0].phases.map(({ phase }) => phase),
-    ['startup', 'case-pass', 'workflow-drain', 'shutdown']
-  );
-  assert.ok(
-    timings[0].phases.every(({ elapsedMs }) => Number.isFinite(elapsedMs) && elapsedMs >= 0)
-  );
+  assert.deepEqual(timings[0].phases.map(({ phase }) => phase), ['startup', 'case-pass', 'workflow-drain', 'shutdown']);
+  assert.ok(timings[0].phases.every(({ elapsedMs }) => Number.isFinite(elapsedMs) && elapsedMs >= 0));
   assert.doesNotMatch(JSON.stringify(timings), /PRIVATE|process\.on|node/);
 });
 
 test('managed deadline identifies the active phase and records failure only after child exit', async () => {
   const timings = [];
   let pid;
-  await assert.rejects(
-    withManagedChild(
-      [
-        process.execPath,
-        '-e',
-        'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)',
-      ],
-      {
-        label: 'outcome',
-        timings,
-        timeoutMs: 500,
-      },
-      async ({ child, message, phase, guard }) => {
-        pid = child.pid;
-        await message();
-        phase('case-navigation-reset');
-        await guard(new Promise(() => {}));
-      }
-    ),
-    (error) => {
-      assert.match(error.message, /outcome\/case-navigation-reset.*deadline exceeded/);
-      assert.equal(error.acceptanceTiming.status, 'failed');
-      assert.equal(error.acceptanceTiming.failurePhase, 'case-navigation-reset');
-      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-      return true;
-    }
-  );
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)'], {
+    label: 'outcome', timings, timeoutMs: 500,
+  }, async ({ child, message, phase, guard }) => {
+    pid = child.pid;
+    await message();
+    phase('case-navigation-reset');
+    await guard(new Promise(() => {}));
+  }), (error) => {
+    assert.match(error.message, /outcome\/case-navigation-reset.*deadline exceeded/);
+    assert.equal(error.acceptanceTiming.status, 'failed');
+    assert.equal(error.acceptanceTiming.failurePhase, 'case-navigation-reset');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    return true;
+  });
   assert.equal(timings.length, 1);
   assert.equal(timings[0].status, 'failed');
 });
@@ -954,74 +753,32 @@ test('managed deadline identifies the active phase and records failure only afte
 test('invalid or excessive phase labels fail without leaving child ownership behind', async () => {
   for (const bad of ['private/path', 'x'.repeat(65), 'excessive']) {
     let pid;
-    await assert.rejects(
-      withManagedChild(
-        [
-          process.execPath,
-          '-e',
-          'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)',
-        ],
-        {},
-        async ({ child, message, phase }) => {
-          pid = child.pid;
-          await message();
-          if (bad === 'excessive') for (let i = 0; i < 65; i++) phase('case-pass');
-          else phase(bad);
-        }
-      ),
-      /phase/
-    );
+    await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)'], {}, async ({ child, message, phase }) => {
+      pid = child.pid; await message();
+      if (bad === 'excessive') for (let i = 0; i < 65; i++) phase('case-pass');
+      else phase(bad);
+    }), /phase/);
     assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
   }
 });
 
 test('managed child rejects every falsy or non-Error callback failure after cleanup', async () => {
-  for (const reason of [
-    undefined,
-    null,
-    false,
-    0,
-    '',
-    'PRIVATE-REJECTION',
-    { secret: 'PRIVATE-REJECTION' },
-    new Proxy(
-      {},
-      {
-        getPrototypeOf() {
-          throw new Error('PRIVATE-REJECTION');
-        },
-      }
-    ),
-  ]) {
+  for (const reason of [undefined, null, false, 0, '', 'PRIVATE-REJECTION', { secret: 'PRIVATE-REJECTION' }, new Proxy({}, { getPrototypeOf() { throw new Error('PRIVATE-REJECTION'); } })]) {
     const timings = [];
     let pid;
     let ownedChild;
     try {
-      await assert.rejects(
-        withManagedChild(
-          [
-            process.execPath,
-            '-e',
-            'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)',
-          ],
-          { timings },
-          async ({ child, message, phase }) => {
-            ownedChild = child;
-            pid = child.pid;
-            await message();
-            phase('case-reject');
-            throw reason;
-          }
-        ),
-        (error) => {
-          assert.match(error.message, /Non-Error acceptance failure/);
-          assert.doesNotMatch(error.message, /PRIVATE-REJECTION/);
-          assert.equal(error.acceptanceTiming.status, 'failed');
-          assert.equal(error.acceptanceTiming.failurePhase, 'case-reject');
-          assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-          return true;
-        }
-      );
+      await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)'], { timings }, async ({ child, message, phase }) => {
+        ownedChild = child; pid = child.pid; await message(); phase('case-reject');
+        throw reason;
+      }), (error) => {
+        assert.match(error.message, /Non-Error acceptance failure/);
+        assert.doesNotMatch(error.message, /PRIVATE-REJECTION/);
+        assert.equal(error.acceptanceTiming.status, 'failed');
+        assert.equal(error.acceptanceTiming.failurePhase, 'case-reject');
+        assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+        return true;
+      });
       assert.equal(timings.length, 1);
       assert.equal(timings[0].status, 'failed');
     } finally {
@@ -1040,11 +797,7 @@ test('managed child rejects every falsy or non-Error callback failure after clea
 
 test('gracefulStop: SIGTERM on POSIX; stdin EOF or IPC disconnect on Windows', () => {
   const calls = [];
-  const child = {
-    kill: (s) => calls.push(`kill:${s}`),
-    stdin: { end: () => calls.push('stdin-end') },
-    disconnect: () => calls.push('disconnect'),
-  };
+  const child = { kill: (s) => calls.push(`kill:${s}`), stdin: { end: () => calls.push('stdin-end') }, disconnect: () => calls.push('disconnect') };
   gracefulStop(child, { platform: 'linux', stop: 'stdin' });
   gracefulStop(child, { platform: 'win32', stop: 'stdin' });
   gracefulStop(child, { platform: 'win32', stop: 'ipc' });
@@ -1052,80 +805,42 @@ test('gracefulStop: SIGTERM on POSIX; stdin EOF or IPC disconnect on Windows', (
 });
 
 test('managed child stops gracefully through the stdin lifeline in Windows mode (never a signal)', async () => {
-  const command = [
-    process.execPath,
-    '-e',
-    "process.on('SIGTERM',()=>{});process.stdin.on('end',()=>process.exit(0));process.stdin.resume();process.send({ready:true});",
-  ];
-  const result = await withManagedChild(
-    command,
-    { platform: 'win32', stop: 'stdin', shutdownMs: 5000 },
-    async ({ child, message }) => {
-      await message();
-      // Still running until the harness closes the lifeline: the stop, not an
-      // early EOF, ended it.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      assert.equal(child.exitCode, null, 'child exited before the graceful stop');
-      return 'done';
-    }
-  );
+  const command = [process.execPath, '-e', "process.on('SIGTERM',()=>{});process.stdin.on('end',()=>process.exit(0));process.stdin.resume();process.send({ready:true});"];
+  const result = await withManagedChild(command, { platform: 'win32', stop: 'stdin', shutdownMs: 5000 }, async ({ child, message }) => {
+    await message();
+    // Still running until the harness closes the lifeline: the stop, not an
+    // early EOF, ended it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(child.exitCode, null, 'child exited before the graceful stop');
+    return 'done';
+  });
   assert.equal(result, 'done');
 });
 
 test('a child that cannot be spawned fails fast with its spawn error', async () => {
   const started = Date.now();
-  await assert.rejects(
-    withManagedChild([join(tmpdir(), 'agentbrowser-missing-binary-xyz')], {}, async ({ guard }) =>
-      guard(new Promise(() => {}))
-    ),
-    /ENOENT/
-  );
+  await assert.rejects(withManagedChild([join(tmpdir(), 'agentbrowser-missing-binary-xyz')], {}, async ({ guard }) => guard(new Promise(() => {}))), /ENOENT/);
   assert.ok(Date.now() - started < 3000, `took ${Date.now() - started}ms`);
 });
 
 test('withPath prepends into the platform PATH key without duplicating it', () => {
   const win = withPath({ Path: 'C:\\Windows\\System32', OTHER: '1' }, 'C:\\node', 'win32');
-  assert.deepEqual(
-    Object.keys(win).filter((k) => /^path$/i.test(k)),
-    ['Path']
-  );
+  assert.deepEqual(Object.keys(win).filter((k) => /^path$/i.test(k)), ['Path']);
   assert.equal(win.Path, 'C:\\node;C:\\Windows\\System32');
-  assert.equal(
-    withPath({ PATH: '/usr/bin' }, '/opt/node/bin', 'linux').PATH,
-    '/opt/node/bin:/usr/bin'
-  );
+  assert.equal(withPath({ PATH: '/usr/bin' }, '/opt/node/bin', 'linux').PATH, '/opt/node/bin:/usr/bin');
   assert.equal(withPath({}, '/opt/node/bin', 'linux').PATH, '/opt/node/bin');
 });
 
 test('managed child stops gracefully through IPC disconnect in Windows mode (never a signal)', async () => {
-  const command = [
-    process.execPath,
-    '-e',
-    "process.on('SIGTERM',()=>{});process.on('disconnect',()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)",
-  ];
-  const result = await withManagedChild(
-    command,
-    { platform: 'win32', stop: 'ipc', shutdownMs: 5000 },
-    async ({ message }) => {
-      await message();
-      return 'done';
-    }
-  );
+  const command = [process.execPath, '-e', "process.on('SIGTERM',()=>{});process.on('disconnect',()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)"];
+  const result = await withManagedChild(command, { platform: 'win32', stop: 'ipc', shutdownMs: 5000 }, async ({ message }) => { await message(); return 'done'; });
   assert.equal(result, 'done');
 });
 
 test('serverCommand runs the POSIX launcher, or the server entry on Node on Windows, unless overridden', () => {
-  assert.deepEqual(serverCommand('/srv', { platform: 'linux' }), [
-    join('/srv', 'agentbrowser-server'),
-  ]);
-  assert.deepEqual(serverCommand('C:/srv', { platform: 'win32' }), [
-    process.execPath,
-    join('C:/srv', 'dist', 'bin.js'),
-  ]);
-  assert.deepEqual(
-    serverCommand('/srv', { platform: 'win32', override: 'C:/b/agentbrowser-server.exe' }),
-    ['C:/b/agentbrowser-server.exe']
-  );
+  assert.deepEqual(serverCommand('/srv', { platform: 'linux' }), [join('/srv', 'agentbrowser-server')]);
+  assert.deepEqual(serverCommand('C:/srv', { platform: 'win32' }), [process.execPath, join('C:/srv', 'dist', 'bin.js')]);
+  assert.deepEqual(serverCommand('/srv', { platform: 'win32', override: 'C:/b/agentbrowser-server.exe' }), ['C:/b/agentbrowser-server.exe']);
 });
 
 test('assertOwnerOnly: exactly a protected single-ACE DACL for the current user on Windows', async () => {
@@ -1134,8 +849,7 @@ test('assertOwnerOnly: exactly a protected single-ACE DACL for the current user 
     run: async (args) => ({ stdout: args[0].endsWith('whoami.exe') ? `"pc\\u","${sid}"\r\n` : '' }),
     readText: async () => `\uFEFFc.json\r\n${dacl}\r\n`,
   });
-  const check = (dacl) =>
-    assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', ...fake(dacl) });
+  const check = (dacl) => assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', ...fake(dacl) });
   await check(`D:P(A;;FA;;;${sid})`);
   await check(`D:P(A;;FA;;;${sid})S:(ML;;NW;;;ME)`); // an integrity label is not access
   for (const bad of [

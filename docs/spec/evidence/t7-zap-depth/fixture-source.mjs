@@ -58,8 +58,7 @@ async function zap(path, parameters = {}) {
   const query = new URLSearchParams({ zapapiformat: 'JSON', ...parameters });
   const response = await fetch(`${zapUrl}${path}?${query}`);
   const text = await response.text();
-  if (!response.ok)
-    throw new Error(`ZAP ${path} failed (${response.status}): ${text.slice(0, 300)}`);
+  if (!response.ok) throw new Error(`ZAP ${path} failed (${response.status}): ${text.slice(0, 300)}`);
   return JSON.parse(text);
 }
 
@@ -137,13 +136,9 @@ try {
   writeFileSync(join(outDir, 'raw-alerts.json'), `${JSON.stringify(sanitized, null, 2)}\n`);
   copyFileSync(fileURLToPath(import.meta.url), join(outDir, 'fixture-source.mjs'));
 
-  console.log(
-    `${result.findings.length} findings, ${result.droppedOutOfScope} dropped; verdict ${verdict}`
-  );
+  console.log(`${result.findings.length} findings, ${result.droppedOutOfScope} dropped; verdict ${verdict}`);
   for (const finding of result.findings)
-    console.log(
-      `  ${finding.risk.padEnd(13)} ${finding.pluginId} ${finding.name} [${finding.parameter ?? ''}] ${finding.status}`
-    );
+    console.log(`  ${finding.risk.padEnd(13)} ${finding.pluginId} ${finding.name} [${finding.parameter ?? ''}] ${finding.status}`);
 } finally {
   fixture.close();
 }

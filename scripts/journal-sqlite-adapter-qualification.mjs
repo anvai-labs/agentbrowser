@@ -358,10 +358,7 @@ test('caller timeout alone neither kills the child nor grants new ownership', as
   try {
     const opened = await openOperationJournal(
       first,
-      {
-        ...namespaceConfiguration('timeout-a'),
-        bounds: { ...namespaceConfiguration('timeout-a').bounds, timeoutMs: 1_000 },
-      },
+      { ...namespaceConfiguration('timeout-a'), bounds: { ...namespaceConfiguration('timeout-a').bounds, timeoutMs: 1_000 } },
       Buffer.alloc(32, 7)
     );
     assertOpened(opened);
@@ -392,15 +389,14 @@ test('a late reply settles from the bounded map and the mutation is historical f
     restoreGeneration: 'generation-1',
     initialize: true,
     childModulePath: CRASH_CHILD_MODULE,
-    childArgv: [JSON.stringify({ method: 'reserveIntent', point: 'late_reply', delayMs: 4_000 })],
+    childArgv: [
+      JSON.stringify({ method: 'reserveIntent', point: 'late_reply', delayMs: 4_000 }),
+    ],
   });
   try {
     const opened = await openOperationJournal(
       first,
-      {
-        ...namespaceConfiguration('late-a'),
-        bounds: { ...namespaceConfiguration('late-a').bounds, timeoutMs: 1_000 },
-      },
+      { ...namespaceConfiguration('late-a'), bounds: { ...namespaceConfiguration('late-a').bounds, timeoutMs: 1_000 } },
       Buffer.alloc(32, 7)
     );
     assertOpened(opened);
@@ -692,10 +688,7 @@ test('dispose with outstanding I/O drains the call as uncertain', async () => {
   });
   const opened = await openOperationJournal(
     first,
-    {
-      ...namespaceConfiguration('io-a'),
-      bounds: { ...namespaceConfiguration('io-a').bounds, timeoutMs: 60_000 },
-    },
+    { ...namespaceConfiguration('io-a'), bounds: { ...namespaceConfiguration('io-a').bounds, timeoutMs: 60_000 } },
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
@@ -715,10 +708,7 @@ test('sustained writes stay within bounded file sizes; the anchor never grows', 
   const adapter = await startAdapter({ ...paths }, true);
   const opened = await openOperationJournal(
     adapter,
-    {
-      ...namespaceConfiguration('bounds-a'),
-      bounds: { ...namespaceConfiguration('bounds-a').bounds, maxRecords: 64 },
-    },
+    { ...namespaceConfiguration('bounds-a'), bounds: { ...namespaceConfiguration('bounds-a').bounds, maxRecords: 64 } },
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
@@ -893,11 +883,7 @@ test('store directory permission drift refuses reopen', async () => {
   for (const mode of [0o750, 0o500]) {
     chmodSync(paths.directory, mode);
     try {
-      await assert.rejects(
-        startAdapter({ ...paths }, false),
-        undefined,
-        `mode ${mode.toString(8)} accepted`
-      );
+      await assert.rejects(startAdapter({ ...paths }, false), undefined, `mode ${mode.toString(8)} accepted`);
     } finally {
       chmodSync(paths.directory, 0o700);
     }
@@ -973,20 +959,8 @@ test('admission ceilings refuse capacity without evicting accepted identities', 
 
   const key1 = intentKey('op-exhaust-1');
   const key2 = intentKey('op-exhaust-2');
-  assertAcknowledged(
-    await opened.journal.reserveIntent({
-      key: key1,
-      actor: 'operator-a',
-      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-1' },
-    })
-  );
-  assertAcknowledged(
-    await opened.journal.reserveIntent({
-      key: key2,
-      actor: 'operator-a',
-      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-2' },
-    })
-  );
+  assertAcknowledged(await opened.journal.reserveIntent({ key: key1, actor: 'operator-a', liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-1' } }));
+  assertAcknowledged(await opened.journal.reserveIntent({ key: key2, actor: 'operator-a', liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-2' } }));
   const third = await opened.journal.reserveIntent({
     key: intentKey('op-exhaust-3'),
     actor: 'operator-a',
@@ -1002,7 +976,10 @@ test('admission ceilings refuse capacity without evicting accepted identities', 
     liveFingerprint: { algorithm: 'rest-json-v1', digest: 'x'.repeat(16384) },
   });
   assert.equal(oversize.kind, 'definitely_not_written');
-  assert.equal((await opened.journal.lookup(intentKey('op-exhaust-big'))).kind, 'scoped_absent');
+  assert.equal(
+    (await opened.journal.lookup(intentKey('op-exhaust-big'))).kind,
+    'scoped_absent'
+  );
 
   // Accepted identities survive the refusals: no eviction to admit newcomers.
   assert.equal((await opened.journal.lookup(key1)).kind, 'found');
@@ -1015,7 +992,11 @@ test('raw fingerprint key material never persists in storage or anchor', async (
   const paths = freshPaths('journal-atv-sentinel-');
   const adapter = await startAdapter({ ...paths }, true);
   const rawKey = Buffer.alloc(32, 0xab);
-  const opened = await openOperationJournal(adapter, namespaceConfiguration('sentinel-a'), rawKey);
+  const opened = await openOperationJournal(
+    adapter,
+    namespaceConfiguration('sentinel-a'),
+    rawKey
+  );
   assertOpened(opened);
   assertAcknowledged(
     await opened.journal.reserveIntent({
@@ -1060,7 +1041,10 @@ test('CLI and MCP source trees carry no journal storage code', async () => {
         if (entry.isDirectory()) scan(child);
         else if (entry.name.endsWith('.ts') || entry.name.endsWith('.mjs')) {
           const source = readFileSync(child, 'utf8');
-          assert.ok(!source.includes('journal-sqlite'), `${child} references journal storage code`);
+          assert.ok(
+            !source.includes('journal-sqlite'),
+            `${child} references journal storage code`
+          );
         }
       }
     };
@@ -1208,7 +1192,11 @@ test('a capped database fails writes typed, serves reads, and reopens clean', as
   // the denied attempt wrote nothing ('applied', not 'existing'), the
   // pre-fault record and the pre-cap acknowledgements survived.
   const third = await startAdapter({ ...paths }, false);
-  const recoveryOpen = await openOperationJournal(third, wideConfiguration, Buffer.alloc(32, 7));
+  const recoveryOpen = await openOperationJournal(
+    third,
+    wideConfiguration,
+    Buffer.alloc(32, 7)
+  );
   assertOpened(recoveryOpen);
   const survived = await recoveryOpen.journal.lookup(seeded.key);
   assert.equal(survived.kind, 'found');

@@ -14,7 +14,14 @@
 // extraction without the source checkout.")
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readlinkSync, realpathSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
@@ -51,15 +58,9 @@ test.afterEach(() => {
 
 test('the packaged candidate carries the storage child and resolves it after extraction', () => {
   // Test-only crash-barrier support must never ship in the candidate.
-  const listed = execFileSync('tar', ['-tzf', tarball], {
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const listed = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   assert.ok(!listed.includes('crash-child'), 'test-only crash child leaked into the candidate');
-  assert.ok(
-    listed.includes('control/dist/journal-sqlite-child.js'),
-    'storage child missing from the candidate'
-  );
+  assert.ok(listed.includes('control/dist/journal-sqlite-child.js'), 'storage child missing from the candidate');
 
   mkdirSync(extracted, { recursive: true });
   execFileSync('tar', ['-xzf', tarball, '-C', extracted], { stdio: 'pipe' });
@@ -89,7 +90,9 @@ test('the packaged candidate carries the storage child and resolves it after ext
   process.chdir(unrelatedCwd);
   const controlRoot = join(extracted, 'server', CONTROL_DIST.replace(/\/dist$/, ''));
   return (async () => {
-    const { openOperationJournal } = await import(`${controlRoot}/dist/operation-journal.js`);
+    const { openOperationJournal } = await import(
+      `${controlRoot}/dist/operation-journal.js`
+    );
     const { openJournalSqliteOperationJournalAdapter } = await import(
       `${controlRoot}/dist/journal-sqlite-adapter.js`
     );
@@ -122,14 +125,8 @@ test('the packaged candidate carries the storage child and resolves it after ext
         'dist',
         'journal-sqlite-child.js'
       );
-      assert.ok(
-        command.includes(serverRoot),
-        `storage child resolved outside the extraction: ${command}`
-      );
-      assert.ok(
-        command.includes(deployedChild),
-        `child is not the deployed control package: ${command}`
-      );
+      assert.ok(command.includes(serverRoot), `storage child resolved outside the extraction: ${command}`);
+      assert.ok(command.includes(deployedChild), `child is not the deployed control package: ${command}`);
 
       const namespaceConfiguration = {
         schemaVersion: 1,
