@@ -329,10 +329,9 @@ describe('redirects after body-bearing requests are checked (T10 M1, real Chromi
         await page.navigate({
           url: fixture.url(`/framed?action=${encodeURIComponent(hopTo(307, 'out'))}`),
         });
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-        expect(fixture.hits.some((hit) => hit.method === 'POST' && hit.path === '/hop/307')).toBe(
-          true
-        );
+        await expect
+          .poll(() => fixture.hits.some((hit) => hit.method === 'POST' && hit.path === '/hop/307'))
+          .toBe(true);
         expect(fixture.leaked()).toEqual([]);
       });
     } finally {
@@ -340,17 +339,18 @@ describe('redirects after body-bearing requests are checked (T10 M1, real Chromi
     }
   }, 60_000);
 
-  it('a dedicated worker POST redirected out of scope is blocked too', async () => {
+  it('a scoped document refuses the dedicated worker before it can POST or redirect', async () => {
     const fixture = await startFixture();
     try {
       await withPage(scoped(), async (page) => {
         await page.navigate({
           url: fixture.url(`/worker-page?action=${encodeURIComponent(hopTo(307, 'out'))}`),
         });
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-        expect(fixture.hits.some((hit) => hit.method === 'POST' && hit.path === '/hop/307')).toBe(
-          true
-        );
+        // The browser-enforced scoped worker floor blocks creation, so neither
+        // the worker bootstrap nor its native POST is sent.
+        expect(
+          fixture.hits.some((hit) => hit.path === '/worker.js' || hit.path === '/hop/307')
+        ).toBe(false);
         expect(fixture.leaked()).toEqual([]);
       });
     } finally {

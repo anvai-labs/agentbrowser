@@ -1849,6 +1849,543 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/scope/traffic": {
+      "get": {
+        "operationId": "getSessionScopeTraffic",
+        "summary": "Observed method × destination-class fingerprint, including denied methods",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded advisory counts; never grants authority",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeTrafficSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Session authority required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Engine request recording unsupported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/sessions/{sessionId}/scope/budget": {
+      "post": {
+        "operationId": "topUpSessionScopeBudget",
+        "summary": "Human-operator-approved finite live budget increase",
+        "description": "ADR-029. Same tenant and revision, open engagement ledger, critical authorization before grant. Preserves spending, pacing and pages; stopped/expired sessions cannot be revived. No automatic request replay.",
+        "tags": [
+          "operator"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeBudgetTopup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scope with new absolute budget limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngagementScopeStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit or stale revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/scope/trace": {
+      "get": {
+        "operationId": "traceSessionScopeDenials",
+        "summary": "Follow live scope denials and advisory dependency starvation hints",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "T10 P0-3. Authenticated page.observe stream; defaults on for bounty scopes. SSE data frames use ScopeTraceEvent; event:end uses ScopeTraceEnd. URL credentials, query and fragment omitted. Bounded observers/backpressure; no replay. Cancellation detaches only the observer. Paused sessions publish no private events. Authorization is rechecked on every frame and heartbeat.",
+        "responses": {
+          "200": {
+            "description": "SSE denial events and explicit completion marker",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Tracing disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Session authority required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Observer capacity exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/scope/denied": {
+      "get": {
+        "operationId": "getSessionScopeDenied",
+        "summary": "Summarize actual hosts denied by the scope",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "T10 B3. Bounded request-recorder summary, including redirected destinations; no marker values. Unsupported engines refuse.",
+        "responses": {
+          "200": {
+            "description": "Host counts, codes and resource types, plus truncation status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeDeniedSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Session authority required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Engine request recording unsupported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/sessions/{sourceId}/evidence": {
+      "post": {
+        "operationId": "createEvidenceSession",
+        "summary": "Transfer selected operator state into a fresh scoped evidence session",
+        "tags": [
+          "operator"
+        ],
+        "description": "T10 B2 / ADR-027. Human-operator key only, same tenant and unscoped source. Exact program origins; cookies and localStorage only. Requires cookie.seed and per-domain cookie.handoff authorization. Ledger required; hash/count metadata only. No automatic action lease or credential export.",
+        "parameters": [
+          {
+            "name": "sourceId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidencePassRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Fresh evidence session; create its page separately.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator credential required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human operator, tenant and transfer policy requirements must hold.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The engine cannot honor the requested capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Evidence initialization timed out or was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/sessions/{sessionId}/scope/assets": {
+      "post": {
+        "operationId": "amendSessionScopeAssets",
+        "summary": "Append operator-approved static asset hosts without replacing page state",
+        "tags": [
+          "operator"
+        ],
+        "description": "T10 B4 / ADR-028. Human-operator key, same tenant, classified engine, live ledger and exact revision required. Program hosts and all other constraints remain fixed. Critical ledger failure stops the scope.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeAssetAmendment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated scope revision and counters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngagementScopeStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator credential required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator, scope or amendment admission refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The engine cannot honor the requested capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Evidence initialization timed out or was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/scope/check": {
       "get": {
         "operationId": "checkSessionScope",
@@ -6837,6 +7374,10 @@
           "denials"
         ],
         "properties": {
+          "revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "requestHeaders": {
             "type": "array",
             "items": {
@@ -6863,6 +7404,49 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "assetHosts": {
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "host",
+                "class"
+              ],
+              "properties": {
+                "host": {
+                  "minLength": 1,
+                  "maxLength": 253,
+                  "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                  "type": "string"
+                },
+                "class": {
+                  "const": "asset",
+                  "type": "string"
+                },
+                "category": {
+                  "anyOf": [
+                    {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    {
+                      "const": "consent",
+                      "type": "string"
+                    },
+                    {
+                      "const": "captcha",
+                      "type": "string"
+                    },
+                    {
+                      "const": "sso",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
             }
           },
           "pathRules": {
@@ -8670,6 +9254,22 @@
         "additionalProperties": false,
         "type": "object",
         "properties": {
+          "mode": {
+            "const": "bounty",
+            "type": "string"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
           "cdpAttach": {
             "type": "boolean"
           },
@@ -8876,6 +9476,51 @@
                   "allowedHosts"
                 ],
                 "properties": {
+                  "assetHosts": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "host",
+                        "class"
+                      ],
+                      "properties": {
+                        "host": {
+                          "minLength": 1,
+                          "maxLength": 253,
+                          "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                          "type": "string"
+                        },
+                        "class": {
+                          "const": "asset",
+                          "type": "string"
+                        },
+                        "category": {
+                          "anyOf": [
+                            {
+                              "const": "asset",
+                              "type": "string"
+                            },
+                            {
+                              "const": "consent",
+                              "type": "string"
+                            },
+                            {
+                              "const": "captcha",
+                              "type": "string"
+                            },
+                            {
+                              "const": "sso",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
                   "allowedHosts": {
                     "minItems": 1,
                     "type": "array",
@@ -9100,6 +9745,706 @@
           }
         }
       },
+      "EvidencePassRequest": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "allowedHosts"
+            ],
+            "properties": {
+              "assetHosts": {
+                "minItems": 1,
+                "maxItems": 128,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "host",
+                    "class"
+                  ],
+                  "properties": {
+                    "host": {
+                      "minLength": 1,
+                      "maxLength": 253,
+                      "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                      "type": "string"
+                    },
+                    "class": {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    "category": {
+                      "anyOf": [
+                        {
+                          "const": "asset",
+                          "type": "string"
+                        },
+                        {
+                          "const": "consent",
+                          "type": "string"
+                        },
+                        {
+                          "const": "captcha",
+                          "type": "string"
+                        },
+                        {
+                          "const": "sso",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "allowedHosts": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "pathRules": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "prefix"
+                  ],
+                  "properties": {
+                    "hostSuffix": {
+                      "minLength": 2,
+                      "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "minLength": 1,
+                      "pattern": "^/",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "allowedMethods": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "expiresAt": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "requestBudget": {
+                "minimum": 1,
+                "type": "number"
+              },
+              "identityBindings": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "header",
+                    "value",
+                    "allowedHosts"
+                  ],
+                  "properties": {
+                    "header": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "value": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "allowedHosts": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "requestHeaders": {
+                "minItems": 1,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "header",
+                    "value"
+                  ],
+                  "properties": {
+                    "header": {
+                      "minLength": 3,
+                      "maxLength": 64,
+                      "pattern": "^[xX]-[A-Za-z0-9][A-Za-z0-9-]*$",
+                      "type": "string"
+                    },
+                    "value": {
+                      "minLength": 1,
+                      "maxLength": 1024,
+                      "pattern": "^[\\x20-\\x7e]+$",
+                      "type": "string"
+                    },
+                    "hostSuffix": {
+                      "minLength": 2,
+                      "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "ledger": {
+                "type": "boolean"
+              },
+              "excludeHosts": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                  "type": "string"
+                }
+              },
+              "excludePaths": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "prefix"
+                  ],
+                  "properties": {
+                    "hostSuffix": {
+                      "minLength": 2,
+                      "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "minLength": 1,
+                      "pattern": "^/",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "allowedSchemes": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "pattern": "^[A-Za-z][A-Za-z0-9+.-]*$",
+                  "type": "string"
+                }
+              },
+              "allowedPorts": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "type": "integer"
+                }
+              },
+              "program": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "authorizedBy",
+                  "authorizedAt"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "authorizedBy": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "authorizedAt": {
+                    "maxLength": 64,
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$",
+                    "type": "string"
+                  }
+                }
+              },
+              "rateLimit": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "requests",
+                  "perSeconds"
+                ],
+                "properties": {
+                  "requests": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "perSeconds": {
+                    "minimum": 1,
+                    "maximum": 3600,
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "tenantId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "origins": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "maxLength": 2048,
+              "type": "string"
+            }
+          },
+          "headless": {
+            "type": "boolean"
+          },
+          "userAgent": {
+            "minLength": 1,
+            "maxLength": 512,
+            "pattern": "^[\\x20-\\x7e]+$",
+            "type": "string"
+          },
+          "ttlMs": {
+            "minimum": 1000,
+            "maximum": 86400000,
+            "type": "integer"
+          },
+          "idleTimeoutMs": {
+            "minimum": 1000,
+            "maximum": 3600000,
+            "type": "integer"
+          }
+        }
+      },
+      "ScopeAssetAmendment": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "assetHosts"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "assetHosts": {
+            "minItems": 1,
+            "maxItems": 128,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "host",
+                "class"
+              ],
+              "properties": {
+                "host": {
+                  "minLength": 1,
+                  "maxLength": 253,
+                  "pattern": "^(\\.?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.?|\\[[0-9A-Fa-f:.]+\\])$",
+                  "type": "string"
+                },
+                "class": {
+                  "const": "asset",
+                  "type": "string"
+                },
+                "category": {
+                  "anyOf": [
+                    {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    {
+                      "const": "consent",
+                      "type": "string"
+                    },
+                    {
+                      "const": "captcha",
+                      "type": "string"
+                    },
+                    {
+                      "const": "sso",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "ScopeDeniedSummary": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "hosts",
+          "truncated"
+        ],
+        "properties": {
+          "hosts": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "hostname",
+                "count",
+                "codes",
+                "resourceTypes"
+              ],
+              "properties": {
+                "hostname": {
+                  "type": "string"
+                },
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "codes": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                },
+                "resourceTypes": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ScopeTraceEvent": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "type",
+              "timestamp",
+              "sessionId",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "const": "scope.denied",
+                "type": "string"
+              },
+              "timestamp": {
+                "maxLength": 64,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "sessionId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "pageId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "data": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "scope",
+                  "method",
+                  "url",
+                  "hostname"
+                ],
+                "properties": {
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "const": "SCOPE_HOST_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_PATH_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_METHOD_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_IDENTITY_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_EXPIRED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_BUDGET_EXHAUSTED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_LEDGER_UNAVAILABLE",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_RATE_LIMITED",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "method": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "pattern": "^(?:[A-Z][A-Z0-9-]{0,31}|\\?)$",
+                    "type": "string"
+                  },
+                  "url": {
+                    "maxLength": 2048,
+                    "pattern": "^https?://[^\\s\\x00-\\x1f]*$",
+                    "type": "string"
+                  },
+                  "hostname": {
+                    "maxLength": 253,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "type",
+              "timestamp",
+              "sessionId",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "const": "scope.dependency-starved",
+                "type": "string"
+              },
+              "timestamp": {
+                "maxLength": 64,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "sessionId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "pageId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "data": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "hostname",
+                  "count",
+                  "message"
+                ],
+                "properties": {
+                  "hostname": {
+                    "maxLength": 253,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 3,
+                    "type": "integer"
+                  },
+                  "message": {
+                    "maxLength": 512,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ScopeTraceEnd": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "const": "session-ended",
+                "type": "string"
+              },
+              {
+                "const": "server-shutdown",
+                "type": "string"
+              },
+              {
+                "const": "revoked",
+                "type": "string"
+              },
+              {
+                "const": "backpressure",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "ScopeBudgetTopup": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "requestBudget"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requestBudget": {
+            "minimum": 1,
+            "maximum": 10000000,
+            "type": "integer"
+          }
+        }
+      },
+      "ScopeTrafficSummary": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rows",
+          "truncated"
+        ],
+        "properties": {
+          "rows": {
+            "maxItems": 128,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "method",
+                "hostClass",
+                "requests",
+                "denied"
+              ],
+              "properties": {
+                "method": {
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "pattern": "^[A-Z][A-Z0-9-]*$",
+                  "type": "string"
+                },
+                "hostClass": {
+                  "anyOf": [
+                    {
+                      "const": "program",
+                      "type": "string"
+                    },
+                    {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    {
+                      "const": "resource",
+                      "type": "string"
+                    },
+                    {
+                      "const": "other",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "requests": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "denied": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
       "SessionResponse": {
         "type": "object",
         "required": [
@@ -9110,6 +10455,22 @@
           "idleTimeoutMs"
         ],
         "properties": {
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
+          "traceDropped": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "policyVersion": {
             "type": "string"
           },
@@ -9187,6 +10548,9 @@
                     "type": "boolean"
                   },
                   "requestRecording": {
+                    "type": "boolean"
+                  },
+                  "assetRequestClassification": {
                     "type": "boolean"
                   },
                   "requestHeaderInjection": {
@@ -9398,6 +10762,9 @@
               "requestRecording": {
                 "type": "boolean"
               },
+              "assetRequestClassification": {
+                "type": "boolean"
+              },
               "requestHeaderInjection": {
                 "type": "boolean"
               },
@@ -9579,6 +10946,9 @@
             "type": "boolean"
           },
           "requestRecording": {
+            "type": "boolean"
+          },
+          "assetRequestClassification": {
             "type": "boolean"
           },
           "requestHeaderInjection": {
@@ -13416,6 +14786,22 @@
           "pages"
         ],
         "properties": {
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
+          "traceDropped": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "userAgent": {
             "type": "string"
           },

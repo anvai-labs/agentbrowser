@@ -1,4 +1,7 @@
+import { STATUS_CODES } from 'node:http';
 import type { BrowserContext, CDPSession, Frame, Page, Request } from 'playwright';
+import { scopedResponseBody } from './scoped-response-body.js';
+import { WORKER_DENIAL_CSP } from './worker-document-policy.js';
 
 /**
  * Redirects that follow a body-bearing request (POST/PUT/PATCH) are checked
@@ -36,6 +39,8 @@ export interface RedirectVerdict {
 }
 
 export interface BodyRedirectGuardOptions {
+  /** Scoped contexts disallow workers, including native POST document commits. */
+  blockDocumentWorkers?: boolean;
   headersForRequest?(url: string, headers: Record<string, string>): Record<string, string>;
   onInjection?(url: string): void;
   verdictOf(
@@ -91,6 +96,7 @@ type PausedEvent = {
   resourceType?: string;
   request: { url: string; method: string; headers?: Record<string, string> };
   responseStatusCode?: number;
+  responseStatusText?: string;
   responseErrorReason?: string;
   responseHeaders?: Array<{ name: string; value: string }>;
 };
@@ -370,14 +376,82 @@ export class BodyRedirectGuard {
       }
       return;
     }
-    const proceed = () =>
-      (event.responseErrorReason !== undefined
-        ? cdp.send('Fetch.continueRequest', { requestId: event.requestId })
-        : cdp.send('Fetch.continueResponse', { requestId: event.requestId })
-      ).catch(() => {});
+    const responseStatus = event.responseStatusCode ?? 0;
+    const responseLocation = event.responseHeaders?.find(
+      (header) => header.name.toLowerCase() === 'location'
+    )?.value;
+    const browserRedirect =
+      [301, 302, 303, 307, 308].includes(responseStatus) && responseLocation !== undefined;
+    const proceed = async () => {
+      try {
+        if (event.responseErrorReason !== undefined) {
+          await cdp.send('Fetch.continueRequest', { requestId: event.requestId });
+        } else if (
+          this.options.blockDocumentWorkers &&
+          !browserRedirect &&
+          ![204, 205, 304].includes(event.responseStatusCode ?? 0)
+        ) {
+          const body = await scopedResponseBody(cdp, event.requestId);
+          await cdp.send('Fetch.fulfillRequest', {
+            requestId: event.requestId,
+            // Explicit decoded response bytes make Chromium apply the CSP override.
+            // The original upload request was continued byte-exactly.
+            body: body.toString('base64'),
+            responseCode: event.responseStatusCode ?? 200,
+            responsePhrase:
+              event.responseStatusText ?? STATUS_CODES[event.responseStatusCode ?? 200] ?? '',
+            responseHeaders: [
+              ...(event.responseHeaders ?? []).filter(
+                (header) =>
+                  ![
+                    'content-security-policy',
+                    'content-length',
+                    'content-encoding',
+                    'transfer-encoding',
+                  ].includes(header.name.toLowerCase())
+              ),
+              { name: 'Content-Length', value: String(body.length) },
+              {
+                name: 'Content-Security-Policy',
+                value: [
+                  ...(event.responseHeaders ?? [])
+                    .filter((header) => header.name.toLowerCase() === 'content-security-policy')
+                    .map((header) => header.value),
+                  WORKER_DENIAL_CSP,
+                ].join(', '),
+              },
+            ],
+          });
+        } else {
+          await cdp.send('Fetch.continueResponse', { requestId: event.requestId });
+        }
+      } catch {
+        throw new Error('POLICY_HEADERS_UNCHECKABLE');
+      }
+    };
     const chain = networkId === undefined ? undefined : target.chains.get(networkId);
     if (chain === undefined) {
-      await proceed();
+      try {
+        await proceed();
+      } catch {
+        const at = new URL(event.request.url);
+        try {
+          this.options.onOutcome?.({
+            type: 'request.failed',
+            data: {
+              url: at.origin + at.pathname,
+              hostname: at.hostname,
+              method: event.request.method,
+              blocked: true,
+              reason: 'egress_policy',
+              detail: 'POLICY_HEADERS_UNCHECKABLE',
+            },
+          });
+        } catch {}
+        await cdp
+          .send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' })
+          .catch(() => {});
+      }
       return;
     }
     const at = new URL(event.request.url);
@@ -413,20 +487,18 @@ export class BodyRedirectGuard {
         .catch(() => {});
     };
     try {
-      const status = event.responseStatusCode ?? 0;
-      const location = event.responseHeaders?.find(
-        (header) => header.name.toLowerCase() === 'location'
-      )?.value;
+      const status = responseStatus;
+      const location = responseLocation;
       if (event.responseErrorReason !== undefined) {
         outcome('request.failed', { reason: 'engine_error', detail: event.responseErrorReason });
         this.close(target, chain);
         await proceed();
         return;
       }
-      if (!(status >= 300 && status < 400 && location !== undefined)) {
+      if (!browserRedirect || location === undefined) {
+        await proceed();
         outcome('request.finished', { status });
         this.close(target, chain);
-        await proceed();
         return;
       }
       const next = new URL(location, event.request.url);
@@ -458,12 +530,18 @@ export class BodyRedirectGuard {
         });
         return;
       }
-      outcome('request.finished', { status, redirect });
       chain.current = { method: followMethod(status, event.request.method), url: next.href };
       await proceed();
-    } catch {
+      outcome('request.finished', { status, redirect });
+    } catch (error) {
       // Fail closed: a hop the guard could not judge is not followed.
-      await fail({ reason: 'egress_policy', detail: 'REDIRECT_UNCHECKABLE' });
+      await fail({
+        reason: 'egress_policy',
+        detail:
+          error instanceof Error && error.message === 'POLICY_HEADERS_UNCHECKABLE'
+            ? 'POLICY_HEADERS_UNCHECKABLE'
+            : 'REDIRECT_UNCHECKABLE',
+      });
     }
   }
 }

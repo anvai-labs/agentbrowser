@@ -1,5 +1,10 @@
 import { createReadStream } from 'node:fs';
 import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
+import {
+  parseScopeBudgetTopup,
+  validateEvidencePassRequest,
+  validateScopeAssetAmendment,
+} from '@agentbrowser/protocol';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
   cdpAttachAdmission,
@@ -20,6 +25,7 @@ import {
   searchJournalNamespaces,
 } from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
+import { registerScopeTraceStream } from './scope-trace-stream.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
  * AgentBrowser REST API Server
@@ -192,6 +198,7 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /** Structured operation log; when absent, no operation logging. */
   logger?: StructuredLogger;
   /** Session-default overrides plumbed to the coordinator (see ServiceDependencies). */
+  defaultMode?: 'bounty';
   defaultTtlMs?: number;
   defaultIdleTimeoutMs?: number;
   /**
@@ -672,6 +679,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       ...(options.secretManager ? { secretManager: options.secretManager } : {}),
       ...(options.logger ? { logger: options.logger } : {}),
       ...(options.downloader ? { downloader: options.downloader } : {}),
+      ...((options.defaultMode ?? process.env.AGENTBROWSER_MODE) === 'bounty'
+        ? { defaultMode: 'bounty' as const }
+        : {}),
       ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
       ...(options.defaultIdleTimeoutMs !== undefined
         ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
@@ -1771,7 +1781,70 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           { ...meta, publication: 'when-controlled' }
         );
 
+      onTransport(
+        'POST',
+        '/operator/sessions/:sessionId/scope/budget',
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          let input: import('@agentbrowser/protocol').ScopeBudgetTopup;
+          try {
+            input = parseScopeBudgetTopup(request.body);
+          } catch {
+            throw new ServiceError('INVALID_REQUEST', 'Invalid scope budget top-up');
+          }
+          const { sessionId } = request.params as { sessionId: string };
+          return reply.send(await service.topUpScopeBudget(sessionId, input, principal));
+        },
+        { operatorRoute: true }
+      );
+      on(
+        'GET',
+        '/sessions/:sessionId/scope/traffic',
+        async (request) => {
+          const { sessionId } = request.params as { sessionId: string };
+          requireOwnership(sessionId, tenantOf(request));
+          return responseDraft(service.getScopeTraffic(sessionId));
+        },
+        { capability: 'session.control' }
+      );
+
       // Session management endpoints
+      onTransport(
+        'POST',
+        '/operator/sessions/:sessionId/scope/assets',
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          const checked = validateScopeAssetAmendment(request.body);
+          if (!checked.ok)
+            throw new ServiceError('INVALID_REQUEST', 'Invalid scope asset amendment');
+          const { sessionId } = request.params as { sessionId: string };
+          return reply.send(await service.amendScopeAssets(sessionId, checked.value, principal));
+        },
+        { operatorRoute: true }
+      );
+
+      onTransport(
+        'POST',
+        '/operator/sessions/:sourceId/evidence',
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          const checked = validateEvidencePassRequest(request.body);
+          if (!checked.ok)
+            throw new ServiceError('INVALID_REQUEST', 'Invalid evidence-pass request');
+          const { sourceId } = request.params as { sourceId: string };
+          return reply
+            .status(201)
+            .send(await service.createEvidenceSession(sourceId, checked.value, principal));
+        },
+        { operatorRoute: true }
+      );
+
       onTransport('POST', '/sessions', async (request, reply) => {
         const body = request.body;
         requireBody(body);
@@ -2188,6 +2261,22 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'application.discover', publication: 'guarded' }
       );
 
+      registerScopeTraceStream(v1, service, route, (request, id) => {
+        requireOwnership(id, tenantOf(request));
+        const principal = principals.get(request);
+        if (principal?.actor === 'agent') {
+          const token = /^Bearer\s+(.+)$/i.exec(request.headers.authorization ?? '')?.[1];
+          const current = token ? service.authority.authenticate(token) : undefined;
+          if (
+            !current ||
+            current.sessionId !== id ||
+            current.epoch !== principal.epoch ||
+            current.bindingGeneration !== principal.bindingGeneration
+          )
+            throw new ServiceError('CONTROL_REVOKED', 'Trace authority was revoked');
+        }
+      });
+
       // Session event stream: WebSocket upgrade, JSON per frame.
       v1.get(
         '/sessions/:sessionId/events',
@@ -2244,6 +2333,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
       // T10 M2: the engagement scope in effect, and a dry-run check that
       // spends no budget and records no denial.
+      on(
+        'GET',
+        '/sessions/:sessionId/scope/denied',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          requireOwnership(sessionId, tenantOf(request));
+          return responseDraft(service.getScopeDenied(sessionId));
+        },
+        { capability: 'session.control' }
+      );
+
       on(
         'GET',
         '/sessions/:sessionId/scope',

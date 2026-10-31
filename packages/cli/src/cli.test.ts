@@ -33,6 +33,11 @@ describe('AgentBrowser CLI', () => {
     expect(sessions.create).toHaveBeenCalledWith({ tenantId: 'tenant_1', cdpAttach: true });
   });
 
+  it('passes the explicit bounty preset to the service', async () => {
+    expect(await run('session', 'create', '--tenant', 'tenant_1', '--mode', 'bounty')).toBe(0);
+    expect(sessions.create).toHaveBeenCalledWith({ tenantId: 'tenant_1', mode: 'bounty' });
+  });
+
   it('reports the product version without constructing a service client', async () => {
     expect(await run('--version')).toBe(0);
     expect(out).toEqual([PRODUCT_VERSION]);

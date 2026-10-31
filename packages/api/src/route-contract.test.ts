@@ -58,6 +58,9 @@ const EXPECTED: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string, AgentCapabilit
   ['GET', '/v1/sessions/:sessionId', 'session.control'],
   ['GET', '/v1/sessions/:sessionId/scope', 'session.control'],
   ['GET', '/v1/sessions/:sessionId/scope/check', 'session.control'],
+  ['GET', '/v1/sessions/:sessionId/scope/denied', 'session.control'],
+  ['GET', '/v1/sessions/:sessionId/scope/traffic', 'session.control'],
+  ['GET', '/v1/sessions/:sessionId/scope/trace', 'page.observe'],
 ];
 
 /** Observation-class POSTs: admitted but never dispatched, no operation identity. */
@@ -128,6 +131,11 @@ describe('route contract metadata', () => {
       ['GET /v1/journal/operations/:operationId', 'lifecycle'],
       // TD-16 phase 4: the login browser's operator routes — server-level,
       // human-operator-only, not session-scoped.
+      // T10 B2/B4 are human-operator lifecycle writes, outside delegated envelopes.
+      ['POST /v1/operator/sessions/:sourceId/evidence', 'lifecycle'],
+      ['POST /v1/operator/sessions/:sessionId/scope/assets', 'lifecycle'],
+      ['POST /v1/operator/sessions/:sessionId/scope/budget', 'lifecycle'],
+      ['GET /v1/sessions/:sessionId/scope/trace', 'stream'],
       ['POST /v1/operator/login/open', 'lifecycle'],
       ['POST /v1/operator/login/close', 'lifecycle'],
       ['POST /v1/operator/login/reset', 'lifecycle'],

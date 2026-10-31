@@ -19,8 +19,10 @@ import {
   CookieHandoffRequestSchema,
   DeliveredWaitConditionSchema,
   EngagementScopeSchema,
+  EvidencePassRequestSchema,
   ObservationRequestSchema,
   PlanStepSchema,
+  ScopeAssetAmendmentSchema,
   ScreenshotRequestSchema,
   SessionRequestSchema,
 } from './schemas.js';
@@ -46,6 +48,34 @@ export type Validated<T> =
   | { ok: false; issues: ValidationIssue[] };
 
 const sessionRequest = TypeCompiler.Compile(SessionRequestSchema);
+const scopeAmendment = TypeCompiler.Compile(ScopeAssetAmendmentSchema);
+export function validateScopeAssetAmendment(
+  body: unknown
+): Validated<Static<typeof ScopeAssetAmendmentSchema>> {
+  if (scopeAmendment.Check(body))
+    return { ok: true, value: body as Static<typeof ScopeAssetAmendmentSchema> };
+  return {
+    ok: false,
+    issues: [...scopeAmendment.Errors(body)].map((error) => ({
+      path: error.path,
+      message: error.message,
+    })),
+  };
+}
+const evidencePass = TypeCompiler.Compile(EvidencePassRequestSchema);
+export function validateEvidencePassRequest(
+  body: unknown
+): Validated<Static<typeof EvidencePassRequestSchema>> {
+  if (evidencePass.Check(body))
+    return { ok: true, value: body as Static<typeof EvidencePassRequestSchema> };
+  return {
+    ok: false,
+    issues: [...evidencePass.Errors(body)].map((error) => ({
+      path: error.path,
+      message: error.message,
+    })),
+  };
+}
 
 const cookieHandoffRequest = TypeCompiler.Compile(CookieHandoffRequestSchema);
 

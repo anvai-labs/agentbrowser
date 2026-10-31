@@ -119,6 +119,8 @@ export interface RequestPolicy {
   checkRequest(request: {
     hostname: string;
     url: string;
+    resourceType?: string;
+    initiatorHost?: string;
     method?: string;
     headers?: Record<string, string>;
   }): Promise<void>;
@@ -372,6 +374,8 @@ export interface ExtractionEvidence {
  * Engine event types
  */
 export type EngineEventType =
+  | 'scope.denied'
+  | 'scope.dependency-starved'
   | 'page.created'
   | 'page.destroyed'
   | 'page.navigated'
@@ -450,7 +454,16 @@ export interface BrowserEngine {
 /**
  * Engine session interface
  */
+export interface EvidenceState {
+  cookies: NormalizedCookie[];
+  origins: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }>;
+}
+
 export interface EngineSession {
+  /** ADR-027: server-internal, operator-authorized exact-origin capture; never a wire export. */
+  captureEvidenceState?(origins: string[]): Promise<EvidenceState>;
+  /** Only a fresh contained context may receive this state. */
+  seedEvidenceState?(state: EvidenceState): Promise<void>;
   /**
    * One-shot evidence that this session's backing browser or context became
    * unusable outside its intentional close path. Consumers must not inspect

@@ -434,7 +434,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 4.375-hour default. |
 | `AGENTBROWSER_EXTRACT_MAX_BYTES` | service | Hard ceiling for complete compact JSON extraction responses, including evidence, in UTF-8 bytes. Default 1048576 (1 MiB). A positive decimal safe integer; invalid/empty values abort startup. Per-request `maxBytes` may only lower this ceiling. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
-| `AGENTBROWSER_MODE` | MCP server | Fixed tool profile for this MCP connection: `qa` (default), `operations`, `audit`, `appsec`, `bounty`, `forms` or `application`. An invalid value aborts startup. See the [MCP server README](https://github.com/anvai-labs/agentbrowser/blob/main/packages/mcp-server/README.md). |
+| `AGENTBROWSER_MODE` | service and MCP server | Service value `bounty` selects bounty session defaults (headed, idle 1h, TTL 4h, contained pacing 5/s). MCP: fixed tool profile for this MCP connection: `qa` (default), `operations`, `audit`, `appsec`, `bounty`, `forms` or `application`. An invalid value aborts startup. See the [MCP server README](https://github.com/anvai-labs/agentbrowser/blob/main/packages/mcp-server/README.md). |
 | `AGENTBROWSER_SESSION_ID` | MCP server | Operator-configured delegated-session binding: the MCP server drives that one session with its current delegated credential ([delegated sessions](delegated-sessions.md)). Unrelated to the CLI. |
 | `AGENTBROWSER_HOSTED` | service entrypoint | `true`/`1` declares a hosted deployment (default `false`/`0`); hosted mode refuses operator CDP attachment. Any other value aborts startup. |
 | `AGENTBROWSER_APPROVAL_POLICY` | service entrypoint | Operator approval policy as a JSON object; see [operator approval policy](#operator-approval-policy). |
@@ -702,13 +702,19 @@ caveats (page-routing coverage only, no worker guarantee, explicit
 
 ### Engagements (authorized testing)
 
-Program directories and authentication surfaces may fingerprint headless
-contexts. In the first bounty run, HackerOne's directory showed a
-JavaScript-disabled wall headless and rendered headed with the same engine.
-Use `session create --tenant TENANT --no-headless` for directory/policy
-browsing, then a separate scoped headless session for the authorized pass.
-The CLI creates a session with `pages: 0`: follow with
-`page create SESSION --url URL`. MCP create returns an initial `pageId`.
+Bounty research uses two windows: a dedicated persistent operator Chrome for
+identity and exploration, then a fresh scoped, marked, ledgered evidence pass.
+The operator CDP lane is explicitly **unenforced** (navigation preflight only):
+human discipline must enforce program scope and traffic caps. Headed launched
+contexts can also be fingerprinted. See the [three-command workflow and transfer
+prerequisites](spec/modes/bounty.md#three-command-workflow).
+
+`session create --mode bounty` defaults contained sessions to headed, idle 1h,
+TTL 4h and 5 requests/s; explicit request settings and configured service timeout
+defaults win. An existing scope rate cap is preserved. Set a lower program cap
+explicitly. CDP sessions get no enforced pacing. CLI creation returns `pages: 0`:
+use `page create SESSION --url URL` for the evidence reproduction; MCP ordinary
+create includes an initial page id.
 
 **Engagement scope for authorized testing (`policy.scope` /
 `--scope-file`).** Sessions can pin an engagement — exhaustive
@@ -833,6 +839,20 @@ navigations include `scopeDenials` keyed by `SCOPE_*` for that page during
 the navigation call (under `details` on errors). Counts explain scope
 starvation without changing the original reason or policy verdict.
 
+**Canonical scope files (T10 handoff P0-1).** `scope export scope.json --out portable.json`
+validates and writes an exclusive 0600 canonical configuration; `scope import portable.json
+--from agentbrowser --out restored.json` preserves markers, bindings and restrictions.
+Canonical import refuses sizing/program overrides and unknown keys. This is the
+operator's configuration file, including public research marker values; runtime
+scope status and ledger exports remain redacted and cannot recreate marker values.
+A binding without matching injection emits a validate-only hint at session creation.
+
+Research headers and session UA configuration require service **1.28.0 or newer**.
+Check `/health` when `requestHeaders` is rejected as an unexpected property: a new
+CLI does not upgrade an already-running service. In the 2026-10-30 handoff follow-up,
+both local services still reported 1.27.4. Upgrade the service deliberately after
+preserving active engagements, then perform the program's live compliance check.
+
 **Research traffic identity (T10 M5).** A scope can explicitly inject public
 research markers, separately from `identityBindings`, which continues to
 validate marked traffic. For example:
@@ -867,6 +887,41 @@ SHA-256 hashes, never raw marker values. The ledger also records
 does not prove remote receipt. UA text is recorded verbatim, so use only
 the public research identity you intend to disclose. See the
 [design note](spec/design/t10-research-traffic-identity.md).
+
+**Operator workflow (T10 B2–B5).** Human-operator credentials, same-tenant source
+ownership and current `cookie.seed`/`cookie.handoff` policy grants are required.
+Ordinary API credentials and agent approval booleans cannot authorize these writes.
+
+| Operation | Surface and behavior |
+| --- | --- |
+| Fresh evidence context | CLI `session create --evidence --from SOURCE --origins https://app.example.com --scope-file scope.json`; operator `POST /v1/operator/sessions/{sourceId}/evidence`; SDK `sessions.createEvidence` |
+| Denied destinations | CLI `session scope-denied SESSION`; `GET /v1/sessions/{sessionId}/scope/denied`; SDK `sessions.scopeDenied`. Bounded host/code/resource-type counts, including redirect destinations; truncation is explicit |
+| Offline asset adoption | `scope adopt-assets scope.json --from ledger.jsonl` previews; `--approve-hosts HOST,...` applies selected static candidates with a private amendment log beside the scope. A valid ledger chain is not proof of external authenticity |
+| Live asset append | CLI `session scope-amend SESSION --add-assets HOST,... --expected-revision N`; operator `POST /v1/operator/sessions/{sessionId}/scope/assets`; SDK `sessions.amendScopeAssets`. Requires open ledger and matching revision; retains page state and budget/pacing counters |
+| Suggested support hosts | `scope import brief.json --from h1 --asset-bundle retail,consent`. Available bundles: `retail`, `saas`, `consent`, `captcha`, `assets`, `sso`. Opt-in suggestions, never testing authorization |
+
+For operator writes, pass `--operator-key-file FILE` or use the no-echo terminal
+prompt. Exact program origins select cookies and localStorage only; asset hosts
+never receive transferred state. Cookie attributes are retained; broad parent-domain
+cookies cannot be copied into narrower grants. Partitioned cookies refuse transfer.
+The hidden target has a 30-second initialization bound; failures close it. Prepared
+and completed ledger records contain hashes/counts, never state values or keys.
+
+Asset entries do not extend `allowedHosts`. They permit trusted engine-classified
+static GET/HEAD subresources initiated by program pages. Program exclusions and
+all base/tenant/floor, method, scheme, port, expiry, budget and rate checks still
+apply. Fetch/XHR, documents, frames and interactive SSO/captcha refuse asset authority.
+All scoped Playwright contexts append enforced `worker-src 'none'` from creation,
+including before a live asset grant. Worker/SharedWorker creation is disabled;
+service workers remain separately refused. Existing site CSP is retained, including
+through native POST redirects. Worker-dependent UI may remain unavailable. Scoped native responses are buffered
+within an 8 MiB / 15-second bound for reliable CSP delivery; oversized/stalled
+responses refuse while upload request bytes remain native. Worklets
+are outside this qualified containment claim.
+Markers, cookies and authorization are removed on asset hops. Live amendments
+require the human-operator plane and durable ledger acknowledgments; a critical
+ledger failure stops the scope. See [ADR-027](adr/027-evidence-pass-state-transfer.md)
+and [ADR-028](adr/028-operator-asset-scope-amendments.md).
 
 **Findings bound to an engagement (T10 M3).** Findings are a researcher-owned JSON array
 (`id`, `title`, `severity`, `status: suspected|confirmed`, `url`, `description`, optional `method`,
@@ -1256,3 +1311,55 @@ Expect `diagnostics.attachment=cdp_attach`, `endpointClass=loopback_http`, and
 tabs appear in page inventory. Closing the session closes those tabs and disconnects;
 Chrome and pre-existing tabs remain. One attached session per service engine is admitted at a time.
 See the [design and qualification contract](spec/design/operator-cdp-attach.md).
+
+### Live scope denials (T10 handoff P0-3)
+
+Bounty-mode scopes and scopes with program metadata default to `trace: denials`.
+`session create --trace denials` explicitly enables it; `--trace off` suppresses
+live diagnostics while enforcement and ledger recording continue. Unsupported
+request-recording engines refuse an enabled trace.
+
+The service immediately prints timestamp, SCOPE reason, method and URL to stderr.
+For a remote CLI, run `session trace <sid> --denials`; Ctrl-C detaches the observer
+and leaves the session alive. Without that flag, `session trace` still exports span
+artifacts. SDK callers can iterate `sessions.traceDenials`; MCP stdio connections
+receive standard `notifications/message` logging notifications. A bound bounty MCP
+connection attaches before its first session tool dispatch. Logging level controls
+notifications only, never enforcement or retained evidence.
+
+URLs omit userinfo, query and fragment; registered session secrets are redacted.
+Three recent related-host/vendor denials followed by a failed interaction produce
+an advisory functional-dependency warning. Review program authorization before
+adding a resource host: suggestions grant nothing. The five-second window and
+bounded host/event caches may miss older or evicted correlations.
+
+Streams recheck authority per frame and heartbeat, isolate paused-session events,
+and bound observers/output buffers. Unexpected disconnects are reported; reconnects
+have no replay, so inspect retained events/ledger for gaps. `session status` reports
+service diagnostic-output drops when present. A failed stderr sink cannot bypass a
+denial or suppress its ledger record.
+
+### Fingerprinting and live budget recovery (T10 handoff P1-4)
+
+Run `session scope-traffic <sid>` before closing to read the observed method ×
+program/asset/resource/other matrix. Denied attempts count, so a refused PUT remains
+visible. This is an observation to review against policy, never an automatic method
+grant. Bounded samples from successful page-local navigation windows inform a
+create/status warning below five times the same tenant/program host's median cost.
+History is process-local and may underestimate deferred requests; it expires through
+bounded eviction and never crosses tenants.
+
+For an exhausted finite budget, review `session scope <sid>` then use
+`--operator-key-file <private-key-file> session scope-topup <sid>
+--expected-revision <revision> --request-budget <absolute-new-limit>`.
+This requires the owning human operator and an open engagement ledger. Counters,
+pages and pacing remain intact. Limits must increase and cannot exceed ten million;
+expired/stopped sessions refuse. Authorization and completion are ledgered. A failure
+to persist stops the scope; retrying failed page mutations remains an operator decision.
+
+Explicit import presets `--preset h1-spa` (5/s) and `--preset bugcrowd-spa` (2/s)
+start with five navigations × 180 subrequests = 900 requests. `--pages-planned`
+uses 180/page with a preset, 120/page otherwise. These are sizing suggestions, not
+platform-wide permission: verify each program's rules and supply its published
+`--rate-limit requests/seconds`. The lower of that cap and the preset is selected.
+Canonical `--from agentbrowser` import refuses preset/limit overrides.

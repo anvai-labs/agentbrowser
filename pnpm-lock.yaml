@@ -66,6 +66,9 @@ importers:
         specifier: ^5.12.7
         version: 5.12.7
     devDependencies:
+      '@agentbrowser/sdk-typescript':
+        specifier: workspace:*
+        version: link:../sdk-typescript
       '@agentbrowser/testkit':
         specifier: workspace:^
         version: link:../testkit
@@ -185,6 +188,9 @@ importers:
       '@agentbrowser/engagement':
         specifier: workspace:*
         version: link:../engagement
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript

@@ -523,6 +523,12 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
       // Declared marked-session behaviour for every route that can write to
       // a page. A future write path fails here until it declares one.
       const declared: Record<string, string> = {
+        'POST /v1/operator/sessions/:sourceId/evidence':
+          'human operator only; fresh hidden context, domain policy and scoped state filtering; marks target before seed; grants no action lease',
+        'POST /v1/operator/sessions/:sessionId/scope/budget':
+          'human operator only; finite increasing limit, exact revision and durable ledger; retains credential marking/action floors and grants no lease',
+        'POST /v1/operator/sessions/:sessionId/scope/assets':
+          'human operator only; exact revision, static asset hosts only, ledger required; retains credential marking and action floors',
         'POST /v1/sessions/:sessionId/pages/:pageId/act':
           'high-risk and unknown need act.reviewed; a live lease admits unknown on its hosts',
         'POST /v1/sessions/:sessionId/pages/:pageId/plan':

@@ -7,6 +7,49 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.29.0] — 2026-10-31
+
+Minor release: operator evidence sessions and bounty foundation diagnostics.
+The remaining handoff capabilities are delivered in subsequent increments.
+
+### Added — live engagement diagnostics and recovery
+
+- Default live denial tracing for bounty/program scopes, with bounded authenticated
+  streams for SDK, CLI and MCP clients. URL credentials/query/fragment and registered
+  session secrets are withheld. Dependency-starvation hints never authorize traffic.
+- Observed method × destination-class fingerprints include scope-denied methods.
+  Tenant-local page-load history warns about undersized budgets; explicit import
+  presets size subrequests while respecting supplied lower published rate caps.
+- Human-operator live finite budget increases (ADR-029), durably authorized before
+  activation, retain pages, spending, pacing and all existing policy restrictions.
+- Canonical private scope export/import preserves research header configuration;
+  identity-binding-only configurations receive a validate-only hint.
+
+
+### Added — operator-first bounty workflow (T10 B1–B6)
+
+- Bounty defaults: headed sessions, one-hour idle timeout, four-hour TTL and 5/s
+  contained pacing, with explicit overrides and preserved program caps.
+- Human-operator evidence passes transfer selected program-origin cookies and
+  localStorage into a fresh scoped, ledgered context (ADR-027). Initialization is
+  bounded, unpublished until complete, and records hashes/counts only.
+- Denied-host summaries, offline asset adoption, opt-in site bundles and audited
+  live asset appends (ADR-028). Program targets stay fixed; assets permit classified
+  static subresources only and receive no program markers or credentials.
+- Scoped Playwright contexts add an independent enforced `worker-src 'none'` CSP
+  from creation, including native POST redirects, preserving the site's policies.
+  Worker/SharedWorker UI can be unavailable; worklet containment remains unqualified.
+  Scoped native responses use bounded (8 MiB / 15 s) explicit body delivery to
+  reliably install that policy while preserving native upload bytes.
+- Two-window operator/evidence guide with a three-command entry workflow.
+
+### Fixed
+
+- Chromium disclosure cap coverage is deterministic; a smaller browser fixture
+  checks rendered visibility without racing hundreds of CDP reads against the
+  production deadline. Autofill's pending-frame fixture remains explicitly pending
+  throughout verification under parallel suite load.
+
 ## [1.28.0] — 2026-10-30
 
 Minor release: explicit research traffic identity and engagement diagnostics, plus the

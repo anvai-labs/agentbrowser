@@ -37,6 +37,25 @@ describe('bounded observation reads', () => {
     }
   });
 
+  it('keeps the disclosure read deadline at 500ms under a stalled browser', async () => {
+    vi.useFakeTimers();
+    try {
+      const task = new ObservationReads().read(
+        'disclosures',
+        () => new Promise<never>(() => {}),
+        500
+      );
+      const assertion = expect(task).rejects.toMatchObject({
+        code: 'ACTION_TIMEOUT',
+        details: { stage: 'disclosures', reason: 'read_timeout' },
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('normalizes a driver timeout rejection to the typed read-timeout contract', async () => {
     // A raw "Timeout …ms exceeded" that wins the race still surfaces as
     // ACTION_TIMEOUT {reason: read_timeout}; anything else rethrows as-is.

@@ -19,6 +19,11 @@ if (configuredMode !== undefined && !isAgentMode(configuredMode)) {
 }
 
 const server = buildMcpServer({
+  notificationSink: (line) => {
+    if (process.stdout.destroyed || process.stdout.writableLength > 64 * 1024)
+      throw new Error('MCP notification output unavailable');
+    process.stdout.write(`${line}\n`);
+  },
   createClient: (options) =>
     new AgentBrowserClient({
       ...options,
@@ -56,5 +61,5 @@ rl.on('line', (line) => {
 });
 
 rl.on('close', () => {
-  process.exit(0);
+  void server.close().finally(() => process.exit(0));
 });

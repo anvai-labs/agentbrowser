@@ -30,6 +30,7 @@ import {
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   EVENT_REPLAY_MIN_SINCE,
+  EvidencePassRequestSchema,
   ExecutionRequirementSchema,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
@@ -47,7 +48,13 @@ import {
   PlanReportSchema,
   PlanRequestSchema,
   PlanStepSchema,
+  ScopeAssetAmendmentSchema,
+  ScopeBudgetTopupSchema,
   ScopeCheckResultSchema,
+  ScopeDeniedSummarySchema,
+  ScopeTraceEndSchema,
+  ScopeTraceEventSchema,
+  ScopeTrafficSummarySchema,
   ScreenshotRequestSchema,
   SessionDiagnosticsSchema,
   SessionEventsPageSchema,
@@ -758,6 +765,136 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               content: json(ref('EngagementScopeStatus')),
             },
             '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/scope/traffic': {
+        get: {
+          operationId: 'getSessionScopeTraffic',
+          summary: 'Observed method × destination-class fingerprint, including denied methods',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          responses: {
+            '200': {
+              description: 'Bounded advisory counts; never grants authority',
+              content: json(ref('ScopeTrafficSummary')),
+            },
+            '403': errorResponse('Session authority required.'),
+            '404': NOT_FOUND,
+            '422': errorResponse('Engine request recording unsupported.'),
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/operator/sessions/{sessionId}/scope/budget': {
+        post: {
+          operationId: 'topUpSessionScopeBudget',
+          summary: 'Human-operator-approved finite live budget increase',
+          description:
+            'ADR-029. Same tenant and revision, open engagement ledger, critical authorization before grant. Preserves spending, pacing and pages; stopped/expired sessions cannot be revived. No automatic request replay.',
+          tags: ['operator'],
+          parameters: [sessionIdParam],
+          requestBody: { required: true, content: json(ref('ScopeBudgetTopup')) },
+          responses: {
+            '200': {
+              description: 'Scope with new absolute budget limit',
+              content: json(ref('EngagementScopeStatus')),
+            },
+            '400': errorResponse('Invalid limit or stale revision.'),
+            '403': errorResponse('Human operator required.'),
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/scope/trace': {
+        get: {
+          operationId: 'traceSessionScopeDenials',
+          summary: 'Follow live scope denials and advisory dependency starvation hints',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          description:
+            'T10 P0-3. Authenticated page.observe stream; defaults on for bounty scopes. SSE data frames use ScopeTraceEvent; event:end uses ScopeTraceEnd. URL credentials, query and fragment omitted. Bounded observers/backpressure; no replay. Cancellation detaches only the observer. Paused sessions publish no private events. Authorization is rechecked on every frame and heartbeat.',
+          responses: {
+            '200': {
+              description: 'SSE denial events and explicit completion marker',
+              content: { 'text/event-stream': { schema: { type: 'string' } } },
+            },
+            '400': errorResponse('Tracing disabled.'),
+            '403': errorResponse('Session authority required.'),
+            '404': NOT_FOUND,
+            '429': errorResponse('Observer capacity exceeded.'),
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/sessions/{sessionId}/scope/denied': {
+        get: {
+          operationId: 'getSessionScopeDenied',
+          summary: 'Summarize actual hosts denied by the scope',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          description:
+            'T10 B3. Bounded request-recorder summary, including redirected destinations; no marker values. Unsupported engines refuse.',
+          responses: {
+            '200': {
+              description: 'Host counts, codes and resource types, plus truncation status.',
+              content: json(ref('ScopeDeniedSummary')),
+            },
+            '403': errorResponse('Session authority required.'),
+            '404': NOT_FOUND,
+            '422': errorResponse('Engine request recording unsupported.'),
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/operator/sessions/{sourceId}/evidence': {
+        post: {
+          operationId: 'createEvidenceSession',
+          summary: 'Transfer selected operator state into a fresh scoped evidence session',
+          tags: ['operator'],
+          description:
+            'T10 B2 / ADR-027. Human-operator key only, same tenant and unscoped source. Exact program origins; cookies and localStorage only. Requires cookie.seed and per-domain cookie.handoff authorization. Ledger required; hash/count metadata only. No automatic action lease or credential export.',
+          parameters: [{ ...sessionIdParam, name: 'sourceId' }],
+          requestBody: { required: true, content: json(ref('EvidencePassRequest')) },
+          responses: {
+            '201': {
+              description: 'Fresh evidence session; create its page separately.',
+              content: json(ref('SessionSummary')),
+            },
+            '400': INVALID_REQUEST,
+            '401': errorResponse('Operator credential required.'),
+            '403': errorResponse(
+              'Human operator, tenant and transfer policy requirements must hold.'
+            ),
+            '404': NOT_FOUND,
+            '422': errorResponse('The engine cannot honor the requested capability.'),
+            '504': errorResponse('Evidence initialization timed out or was cancelled.'),
+            '500': INTERNAL,
+          },
+        },
+      },
+      '/v1/operator/sessions/{sessionId}/scope/assets': {
+        post: {
+          operationId: 'amendSessionScopeAssets',
+          summary: 'Append operator-approved static asset hosts without replacing page state',
+          tags: ['operator'],
+          description:
+            'T10 B4 / ADR-028. Human-operator key, same tenant, classified engine, live ledger and exact revision required. Program hosts and all other constraints remain fixed. Critical ledger failure stops the scope.',
+          parameters: [sessionIdParam],
+          requestBody: { required: true, content: json(ref('ScopeAssetAmendment')) },
+          responses: {
+            '200': {
+              description: 'Updated scope revision and counters.',
+              content: json(ref('EngagementScopeStatus')),
+            },
+            '400': INVALID_REQUEST,
+            '401': errorResponse('Operator credential required.'),
+            '403': errorResponse('Operator, scope or amendment admission refused.'),
+            '404': NOT_FOUND,
+            '422': errorResponse('The engine cannot honor the requested capability.'),
+            '504': errorResponse('Evidence initialization timed out or was cancelled.'),
             '500': INTERNAL,
           },
         },
@@ -2148,6 +2285,13 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ApiErrorDetail: ApiErrorDetailSchema,
         Viewport: ViewportSchema,
         SessionRequest: SessionRequestSchema,
+        EvidencePassRequest: EvidencePassRequestSchema,
+        ScopeAssetAmendment: ScopeAssetAmendmentSchema,
+        ScopeDeniedSummary: ScopeDeniedSummarySchema,
+        ScopeTraceEvent: ScopeTraceEventSchema,
+        ScopeTraceEnd: ScopeTraceEndSchema,
+        ScopeBudgetTopup: ScopeBudgetTopupSchema,
+        ScopeTrafficSummary: ScopeTrafficSummarySchema,
         SessionResponse: SessionResponseSchema,
         EngineInfo: EngineInfoSchema,
         EngineCapabilities: EngineCapabilitiesSchema,

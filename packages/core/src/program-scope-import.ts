@@ -4,6 +4,9 @@ import {
   type ScopePathRule,
   validateEngagementScope,
 } from '@agentbrowser/protocol';
+import { hostPatternsOverlap } from './domain-matcher.js';
+import { scopeBundleHosts } from './scope-bundles.js';
+import { parseScopeConfiguration, scopeIdentityHints } from './scope-configuration.js';
 import { tldts } from './tldts-lazy.js';
 
 /**
@@ -24,7 +27,7 @@ import { tldts } from './tldts-lazy.js';
  * the caller or the scope carries no program.
  */
 
-export type ProgramScopeFormat = 'h1' | 'bugcrowd' | 'text';
+export type ProgramScopeFormat = 'h1' | 'bugcrowd' | 'text' | 'agentbrowser';
 
 export interface ProgramScopeEntry {
   entry: string;
@@ -40,6 +43,8 @@ export type ProgramScopeImport =
   | { ok: false; error: string; report: ProgramScopeEntry[] };
 
 export interface ProgramScopeMeta {
+  preset?: 'h1-spa' | 'bugcrowd-spa';
+  assetBundles?: string[];
   requestBudget?: number;
   pagesPlanned?: number;
   rateLimit?: { requests: number; perSeconds: number };
@@ -197,14 +202,6 @@ function classify(raw: string): Classified {
 const covered = (p: string, full: string[]): boolean =>
   full.some((f) => f === p || (f.startsWith('.') && p.endsWith(f)));
 
-/** Do two host patterns admit at least one common host? */
-const overlaps = (a: string, b: string): boolean => {
-  if (!a.startsWith('.') && !b.startsWith('.')) return a === b;
-  if (!a.startsWith('.')) return a.endsWith(b);
-  if (!b.startsWith('.')) return b.endsWith(a);
-  return a.endsWith(b) || b.endsWith(a);
-};
-
 export function importProgramScope(
   input: string,
   format: ProgramScopeFormat,
@@ -214,6 +211,42 @@ export function importProgramScope(
     throw new Error('Program authorization needs both authorizedBy and authorizedAt.');
   if (meta.authorizedBy !== undefined && meta.programId === undefined)
     throw new Error('Program authorization needs a programId.');
+  if (format === 'agentbrowser') {
+    if (Object.values(meta).some((value) => value !== undefined))
+      throw new Error(
+        'Canonical scope import refuses overrides; edit the operator configuration explicitly.'
+      );
+    try {
+      const scope = parseScopeConfiguration(input);
+      return { ok: true, scope, report: [], warnings: scopeIdentityHints(scope) };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Invalid AgentBrowser scope',
+        report: [],
+      };
+    }
+  }
+  if (
+    meta.rateLimit !== undefined &&
+    !validateEngagementScope({ allowedHosts: ['scope.invalid'], rateLimit: meta.rateLimit }).ok
+  )
+    return { ok: false, error: 'Invalid published rate limit', report: [] };
+  const preset =
+    meta.preset === undefined
+      ? undefined
+      : meta.preset === 'h1-spa'
+        ? { requests: 5, perSeconds: 1 }
+        : meta.preset === 'bugcrowd-spa'
+          ? { requests: 2, perSeconds: 1 }
+          : undefined;
+  if (meta.preset !== undefined && !preset) throw new Error('Unknown scope preset');
+  const rateLimit =
+    preset &&
+    (!meta.rateLimit ||
+      preset.requests / preset.perSeconds < meta.rateLimit.requests / meta.rateLimit.perSeconds)
+      ? preset
+      : meta.rateLimit;
   if (meta.requestBudget !== undefined && meta.pagesPlanned !== undefined)
     throw new Error('Choose requestBudget or pagesPlanned, not both.');
   for (const value of [meta.requestBudget, meta.pagesPlanned])
@@ -221,7 +254,11 @@ export function importProgramScope(
       throw new Error('Budget and planned pages must be positive safe integers.');
   const requestBudget =
     meta.requestBudget ??
-    (meta.pagesPlanned !== undefined ? Math.max(150, meta.pagesPlanned * 120) : undefined);
+    (meta.pagesPlanned !== undefined
+      ? Math.max(150, meta.pagesPlanned * (preset ? 180 : 120))
+      : preset
+        ? 900
+        : undefined);
   if (requestBudget !== undefined && !Number.isSafeInteger(requestBudget))
     throw new Error('Planned budget is too large.');
   const raw =
@@ -269,6 +306,13 @@ export function importProgramScope(
       allowedHosts.push(item.pattern);
   if (allowedHosts.length === 0)
     return { ok: false, error: 'nothing in scope can be expressed', report };
+  const assetHosts = scopeBundleHosts(meta.assetBundles ?? []).filter(
+    (asset) =>
+      !allowedHosts.some((host) => hostPatternsOverlap(host, asset.host)) &&
+      !exclusions.some(
+        (entry) => entry.path === undefined && hostPatternsOverlap(entry.pattern, asset.host)
+      )
+  );
   const pathRules: ScopePathRule[] = [];
   for (const item of accepted) {
     const entry = report[item.index] as ProgramScopeEntry;
@@ -295,7 +339,11 @@ export function importProgramScope(
   const excludePaths: ScopePathRule[] = [];
   for (const item of exclusions) {
     const entry = report[item.index] as ProgramScopeEntry;
-    if (!allowedHosts.some((allowed) => overlaps(item.pattern, allowed))) {
+    if (
+      ![...allowedHosts, ...assetHosts.map((a) => a.host)].some((allowed) =>
+        hostPatternsOverlap(item.pattern, allowed)
+      )
+    ) {
       entry.decision = 'ignored';
       entry.note = 'already outside the scope';
       continue;
@@ -320,8 +368,9 @@ export function importProgramScope(
     }
   const scope: EngagementScope = {
     ...(requestBudget !== undefined ? { requestBudget } : {}),
-    ...(meta.rateLimit !== undefined ? { rateLimit: { ...meta.rateLimit } } : {}),
+    ...(rateLimit !== undefined ? { rateLimit: { ...rateLimit } } : {}),
     allowedHosts,
+    ...(assetHosts.length ? { assetHosts } : {}),
     ...(pathRules.length > 0 ? { pathRules } : {}),
     allowedSchemes: schemes,
     // Every accepted entry is on its scheme's default port (per-host ports are refused).
@@ -354,11 +403,17 @@ export function importProgramScope(
     ok: true,
     scope,
     report,
-    warnings:
-      requestBudget !== undefined && requestBudget < 150
+    warnings: [
+      ...(requestBudget !== undefined && requestBudget < 150
         ? [
             'A single JS-heavy page load consumes 50–120 requests; budget counts every subrequest and redirect hop. Plan about pages × 120 requests, with at least 150 for one page.',
           ]
-        : [],
+        : []),
+      ...(meta.assetBundles?.length
+        ? [
+            'Asset bundles are optional support-host suggestions, not testing authorization. Only static GET/HEAD resources are admitted; navigation, fetch/XHR and interactive SSO/captcha remain operator-browser work.',
+          ]
+        : []),
+    ],
   };
 }

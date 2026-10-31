@@ -1,3 +1,4 @@
+import { ScopeTraceModeSchema } from './scope-trace.js';
 /**
  * JSON Schema definitions for AgentBrowser v1 API
  *
@@ -177,8 +178,25 @@ export const ScopeProgramSchema = Type.Object(
 // T7 slice 2: engagement scope (authorized security testing). Enforced
 // per request and per redirect hop by EngagementScopePolicy over the
 // session's base policy; restrict-only — the base always runs.
+export const ScopeAssetHostSchema = Type.Object(
+  {
+    host: Type.String({ minLength: 1, maxLength: 253, pattern: SCOPE_HOST_PATTERN }),
+    class: Type.Literal('asset'),
+    category: Type.Optional(
+      Type.Union([
+        Type.Literal('asset'),
+        Type.Literal('consent'),
+        Type.Literal('captcha'),
+        Type.Literal('sso'),
+      ])
+    ),
+  },
+  { additionalProperties: false }
+);
+
 export const EngagementScopeSchema = Type.Object(
   {
+    assetHosts: Type.Optional(Type.Array(ScopeAssetHostSchema, { minItems: 1, maxItems: 128 })),
     // Exhaustive when set: exact hosts and ".suffix" entries in scope.
     allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
     pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
@@ -227,6 +245,7 @@ export const EngagementScopeSchema = Type.Object(
 // credential the binding protects and is never returned.
 export const EngagementScopeStatusSchema = Type.Object(
   {
+    revision: Type.Optional(Type.Integer({ minimum: 0 })),
     requestHeaders: Type.Optional(
       Type.Array(
         Type.Object(
@@ -240,6 +259,7 @@ export const EngagementScopeStatusSchema = Type.Object(
       )
     ),
     allowedHosts: Type.Array(Type.String()),
+    assetHosts: Type.Optional(Type.Array(ScopeAssetHostSchema)),
     pathRules: Type.Array(ScopePathRuleSchema),
     allowedMethods: Type.Optional(Type.Array(Type.String())),
     identityBindings: Type.Array(
@@ -336,6 +356,8 @@ export const SessionCookieSchema = Type.Object({
 
 export const SessionRequestSchema = Type.Object(
   {
+    mode: Type.Optional(Type.Literal('bounty')),
+    trace: Type.Optional(ScopeTraceModeSchema),
     cdpAttach: Type.Optional(Type.Boolean()),
     controlMode: Type.Optional(Type.Literal('delegated')),
     tenantId: Type.Optional(Type.String({ minLength: 1 })),
@@ -359,6 +381,57 @@ export const SessionRequestSchema = Type.Object(
   },
   { additionalProperties: false }
 );
+
+/** T10 B3: bounded actual-destination denial summary. */
+export const ScopeDeniedSummarySchema = Type.Object(
+  {
+    hosts: Type.Array(
+      Type.Object(
+        {
+          hostname: Type.String(),
+          count: Type.Integer({ minimum: 0 }),
+          codes: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+          resourceTypes: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+        },
+        { additionalProperties: false }
+      ),
+      { maxItems: 256 }
+    ),
+    truncated: Type.Boolean(),
+  },
+  { additionalProperties: false }
+);
+export type ScopeDeniedSummary = Static<typeof ScopeDeniedSummarySchema>;
+
+/** ADR-028: program targets and all other scope fields are immutable. */
+export const ScopeAssetAmendmentSchema = Type.Object(
+  {
+    expectedRevision: Type.Integer({ minimum: 0 }),
+    assetHosts: Type.Array(ScopeAssetHostSchema, { minItems: 1, maxItems: 128 }),
+  },
+  { additionalProperties: false }
+);
+export type ScopeAssetAmendment = Static<typeof ScopeAssetAmendmentSchema>;
+
+/** ADR-027: authenticated operator input; raw browser state is never a wire field. */
+export const EvidencePassRequestSchema = Type.Object(
+  {
+    trace: Type.Optional(ScopeTraceModeSchema),
+    scope: EngagementScopeSchema,
+    tenantId: Type.Optional(Type.String({ minLength: 1 })),
+    origins: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { minItems: 1, maxItems: 16 })
+    ),
+    headless: Type.Optional(Type.Boolean()),
+    userAgent: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 512, pattern: '^[\\x20-\\x7e]+$' })
+    ),
+    ttlMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 86400000 })),
+    idleTimeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000 })),
+  },
+  { additionalProperties: false }
+);
+export type EvidencePassRequest = Static<typeof EvidencePassRequestSchema>;
 
 /**
  * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request. Domains are
@@ -431,6 +504,7 @@ export const EngineCapabilitiesSchema = Type.Object({
   supportsCdp: Type.Boolean(),
   supportsCdpAttach: Type.Optional(Type.Boolean()),
   requestRecording: Type.Optional(Type.Boolean()),
+  assetRequestClassification: Type.Optional(Type.Boolean()),
   requestHeaderInjection: Type.Optional(Type.Boolean()),
   userAgentOverride: Type.Optional(Type.Boolean()),
   supportedObservationModes: Type.Array(ObservationModeSchema, { minItems: 1 }),
@@ -450,6 +524,8 @@ export const EngineInfoSchema = Type.Object({
 // ============================================================================
 
 export const SessionResponseSchema = Type.Object({
+  trace: Type.Optional(ScopeTraceModeSchema),
+  traceDropped: Type.Optional(Type.Integer({ minimum: 0 })),
   policyVersion: Type.Optional(Type.String()),
   warnings: Type.Optional(Type.Array(Type.String())),
   sessionId: Type.String({ pattern: '^ses_[a-zA-Z0-9_]+$' }),

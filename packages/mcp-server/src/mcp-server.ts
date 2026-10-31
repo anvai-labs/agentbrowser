@@ -1,3 +1,5 @@
+import { EngagementScopeSchema } from '@agentbrowser/protocol';
+import { ScopeTraceMonitor } from './scope-trace-monitor.js';
 /**
  * AgentBrowser MCP server (ADR-009)
  *
@@ -52,7 +54,6 @@ import {
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
-  SCOPE_HOST_PATTERN,
   ScopeToolResultSchema,
   ScreenshotRequestSchema,
   SessionClosedResultSchema,
@@ -109,11 +110,14 @@ export interface McpClient {
         | 'operation'
         | 'scopeStatus'
         | 'checkScope'
+        | 'traceDenials'
       >
     >;
 }
 
 export interface McpDependencies {
+  /** Whole JSON-RPC notification lines on the connection transport. */
+  notificationSink?: (line: string) => void;
   /** Explicit operator opt-in: this MCP host shares files with its consumer. */
   artifactDirectory?: string | undefined;
   /** Operator-configured binding. Never supplied by model tool arguments. */
@@ -127,6 +131,7 @@ export interface McpDependencies {
 }
 
 export interface McpServer {
+  close(): Promise<void>;
   /** Handle one JSON-RPC message. Returns null for notifications. */
   handle(line: string): Promise<string | null>;
 }
@@ -228,18 +233,6 @@ const FINDING_INPUT_PROPERTIES: Record<string, unknown> = {
   },
 };
 
-/** One path rule, shared by the scope schema's pathRules and excludePaths arrays:
- * a segment-boundary prefix, optionally narrowed to one host subtree. */
-const PATH_RULE_ITEM: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    hostSuffix: { type: 'string', minLength: 2, pattern: SCOPE_HOST_PATTERN },
-    prefix: { type: 'string', minLength: 1, pattern: '^/' },
-  },
-  required: ['prefix'],
-  additionalProperties: false,
-};
-
 /** The ok:false + issues branch both finding tools advertise — the output-schema twin of
  * readCheckedFindings' failure value, so schema and handler cannot drift apart. */
 const FINDING_FAILURE_SCHEMA: Record<string, unknown> = {
@@ -292,7 +285,9 @@ async function readCheckedFindings(args: Record<string, unknown>) {
 export function buildTools(
   client: McpClient,
   boundSessionId?: string,
-  artifactDirectory?: string
+  artifactDirectory?: string,
+  mode?: AgentMode,
+  traceMonitor?: ScopeTraceMonitor
 ): ToolDefinition[] {
   const captureResult = async (sessionId: string, artifact: ArtifactRef, inline: unknown) => {
     if (inline !== undefined && typeof inline !== 'boolean')
@@ -320,6 +315,16 @@ export function buildTools(
       inputSchema: {
         type: 'object',
         properties: {
+          mode: {
+            type: 'string',
+            enum: ['bounty'],
+            description: 'Contained bounty defaults; CDP remains unenforced.',
+          },
+          trace: {
+            type: 'string',
+            enum: ['denials', 'off'],
+            description: 'Live denial tracing; defaults to denials for bounty scopes.',
+          },
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           userAgent: {
@@ -390,106 +395,7 @@ export function buildTools(
               'response marks this with degraded: true when it happens. Raise this for a ' +
               'session known to navigate large/complex forms (many fields, custom comboboxes).',
           },
-          scope: {
-            type: 'object',
-            description:
-              'T7 engagement scope for authorized security testing: the outermost restrict-only ' +
-              'layer of the session policy chain, enforced per request and per redirect hop. ' +
-              'Fields: allowedHosts (required, exhaustive entries — a bare bounded domain like ' +
-              'example.com covers itself and its subdomains; .example.com is subdomains-only), pathRules ' +
-              '[{hostSuffix?, prefix}] (segment-boundary prefixes), allowedMethods, expiresAt ' +
-              '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
-              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts), ledger ' +
-              '(operator-configured engagement ledger). Narrowing only: excludeHosts, ' +
-              'excludePaths [{hostSuffix?, prefix}], allowedSchemes, allowedPorts, rateLimit ' +
-              '{requests, perSeconds} (paces up to 15 s, then SCOPE_RATE_LIMITED); program ' +
-              '{id, version?, authorizedBy, authorizedAt} is recorded, never enforced. Unknown ' +
-              'fields are refused. Refused together with allowServiceWorkers: true, a lane the ' +
-              'scope cannot check.',
-            properties: {
-              allowedHosts: {
-                type: 'array',
-                items: { type: 'string', minLength: 1 },
-                minItems: 1,
-              },
-              pathRules: {
-                type: 'array',
-                items: { ...PATH_RULE_ITEM },
-                minItems: 1,
-              },
-              allowedMethods: {
-                type: 'array',
-                items: { type: 'string', minLength: 1 },
-                minItems: 1,
-              },
-              expiresAt: { type: 'number', minimum: 0 },
-              requestBudget: { type: 'number', minimum: 1 },
-              identityBindings: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    header: { type: 'string', minLength: 1 },
-                    value: { type: 'string', minLength: 1 },
-                    allowedHosts: {
-                      type: 'array',
-                      items: { type: 'string', minLength: 1 },
-                      minItems: 1,
-                    },
-                  },
-                  required: ['header', 'value', 'allowedHosts'],
-                },
-                minItems: 1,
-              },
-              ledger: { type: 'boolean' },
-              excludeHosts: {
-                type: 'array',
-                items: { type: 'string', minLength: 1, pattern: SCOPE_HOST_PATTERN },
-                minItems: 1,
-              },
-              excludePaths: {
-                type: 'array',
-                items: { ...PATH_RULE_ITEM },
-                minItems: 1,
-              },
-              allowedSchemes: {
-                type: 'array',
-                items: { type: 'string', pattern: '^[A-Za-z][A-Za-z0-9+.-]*$' },
-                minItems: 1,
-              },
-              allowedPorts: {
-                type: 'array',
-                items: { type: 'integer', minimum: 1, maximum: 65535 },
-                minItems: 1,
-              },
-              rateLimit: {
-                type: 'object',
-                properties: {
-                  requests: { type: 'integer', minimum: 1, maximum: 10000 },
-                  perSeconds: { type: 'integer', minimum: 1, maximum: 3600 },
-                },
-                required: ['requests', 'perSeconds'],
-                additionalProperties: false,
-              },
-              program: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string', minLength: 1, maxLength: 200 },
-                  version: { type: 'string', minLength: 1, maxLength: 200 },
-                  authorizedBy: { type: 'string', minLength: 1, maxLength: 200 },
-                  authorizedAt: {
-                    type: 'string',
-                    maxLength: 64,
-                    pattern:
-                      '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
-                  },
-                },
-                required: ['id', 'authorizedBy', 'authorizedAt'],
-                additionalProperties: false,
-              },
-            },
-            required: ['allowedHosts'],
-          },
+          scope: EngagementScopeSchema,
         },
         required: ['tenantId'],
       },
@@ -499,6 +405,7 @@ export function buildTools(
           throw new UsageError('tenantId is required and must be a non-empty string.');
         }
         const request: SessionRequest = { tenantId: args.tenantId };
+        if (args.mode === 'bounty' || mode === 'bounty') request.mode = 'bounty';
         if (typeof args.cdpAttach === 'boolean') request.cdpAttach = args.cdpAttach;
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.userAgent === 'string') request.userAgent = args.userAgent;
@@ -526,11 +433,17 @@ export function buildTools(
           request.snapshotTimeoutMs = args.snapshotTimeoutMs;
         }
 
+        if (args.trace !== undefined) {
+          if (args.trace !== 'denials' && args.trace !== 'off')
+            throw new UsageError('trace must be denials or off');
+          request.trace = args.trace;
+        }
         const session = await client.sessions.create(request);
 
         // Observing requires a page; create one up front so the caller's very
         // next tool call can be navigate or observe.
         try {
+          await requestScope.exit(() => traceMonitor?.created(session));
           const page = await client.sessions.createPage(session.sessionId);
           return { ...session, pageId: page.pageId };
         } catch (error) {
@@ -538,6 +451,7 @@ export function buildTools(
           // the exclusive operator attachment) when the first page fails — including when the
           // call was cancelled: the close runs outside the cancelled call's abort scope.
           await requestScope.exit(() => client.sessions.close(session.sessionId)).catch(() => {});
+          traceMonitor?.closed(session.sessionId);
           throw error;
         }
       },
@@ -843,6 +757,7 @@ export function buildTools(
           throw new UsageError('sessionId is required and must be a non-empty string.');
         }
         await client.sessions.close(args.sessionId);
+        traceMonitor?.closed(args.sessionId);
         return { sessionId: args.sessionId, closed: true };
       },
       annotations: { readOnlyHint: false, idempotentHint: false },
@@ -1523,8 +1438,44 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   });
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
+  const loggingLevels = [
+    'debug',
+    'info',
+    'notice',
+    'warning',
+    'error',
+    'critical',
+    'alert',
+    'emergency',
+  ];
+  let minimumLevel = 3;
+  let connectionClosed = false;
+  const traceMonitor = deps.notificationSink
+    ? new ScopeTraceMonitor(client.sessions, (level, data) => {
+        if (connectionClosed) return false;
+        if (loggingLevels.indexOf(level) < minimumLevel) return true;
+        try {
+          deps.notificationSink?.(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'notifications/message',
+              params: { level, logger: 'scope-denials', data },
+            })
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      })
+    : undefined;
   const mode = deps.mode ?? DEFAULT_AGENT_MODE;
-  const tools = buildTools(client, deps.sessionId || undefined, deps.artifactDirectory).filter(
+  const tools = buildTools(
+    client,
+    deps.sessionId || undefined,
+    deps.artifactDirectory,
+    mode,
+    traceMonitor
+  ).filter(
     (tool) =>
       toolAvailable(mode, tool) &&
       // cookie_handoff is dropped when bound for the same reason as
@@ -1594,8 +1545,14 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   let protocolVersion: string | undefined;
 
   const server = {
+    async close(): Promise<void> {
+      connectionClosed = true;
+      for (const controller of inflight.values()) controller.abort();
+      await traceMonitor?.close();
+    },
     [INFLIGHT_COUNT]: () => inflight.size,
     async handle(line: string): Promise<string | null> {
+      if (connectionClosed) return error(null, -32600, 'Connection is closed');
       let message: {
         id?: string | number | null;
         method?: string;
@@ -1659,10 +1616,17 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
               : STRUCTURED_PROTOCOL_VERSION;
           return ok(message.id, {
             protocolVersion,
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, ...(deps.notificationSink ? { logging: {} } : {}) },
             serverInfo,
           });
 
+        case 'logging/setLevel': {
+          const level = message.params?.level;
+          if (!deps.notificationSink || typeof level !== 'string' || !loggingLevels.includes(level))
+            return error(message.id, -32602, 'Invalid logging level');
+          minimumLevel = loggingLevels.indexOf(level);
+          return ok(message.id, {});
+        }
         case 'ping':
           return ok(message.id, {});
 
@@ -1702,6 +1666,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
               );
             const structured =
               protocolVersion === STRUCTURED_PROTOCOL_VERSION && !!tool.outputSchema;
+            const observedSessionId = deps.sessionId ?? args.sessionId;
+            if (mode === 'bounty' && traceMonitor && typeof observedSessionId === 'string')
+              await requestScope.exit(() => traceMonitor.ensure(observedSessionId));
             const result = await tool.handler(
               deps.sessionId ? { ...args, sessionId: deps.sessionId } : args
             );
