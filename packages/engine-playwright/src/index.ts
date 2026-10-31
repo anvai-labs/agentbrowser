@@ -67,7 +67,7 @@ import {
   type Locator,
   type Page,
 } from 'playwright';
-import { BodyRedirectGuard } from './body-redirect-guard.js';
+import { BodyRedirectGuard, BODY_METHODS } from './body-redirect-guard.js';
 
 /** Each scoped context's redirect guard, so new pages wait until it is armed. */
 const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
@@ -2076,10 +2076,15 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       };
       const continueRequest = (headers: Record<string, string>) => {
         terminalStarted = true;
-        // Native scoped bodies were transformed by their target's CDP guard.
-        // route.continue({headers}) would persist that override across redirects
-        // and overwrite the guard's destination-specific headers on a later hop.
-        return route.continue(egress.headersForRequest && !redirectGuard ? { headers } : undefined);
+        // Body-bearing requests (POST/PUT/PATCH) are handled by the CDP guard's
+        // per-hop header overrides; route.continue({headers}) would persist the
+        // override across redirects and overwrite destination-specific headers.
+        // Bodyless requests (GET/HEAD) have no redirect chain tracking, so the
+        // Playwright route handler is the correct place to inject headers for them.
+        const isBodyless = !BODY_METHODS.has(request.method().toUpperCase());
+        return route.continue(
+          egress.headersForRequest && (!redirectGuard || isBodyless) ? { headers } : undefined
+        );
       };
 
       const deny = async (reason: NavigationFailureReason, scope?: ScopeDenialCode) => {

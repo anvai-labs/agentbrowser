@@ -39,6 +39,7 @@ it('publishes navigation reasons without changing success or exposing engine top
       'dns_timeout',
       'dns_refused',
       'tls_refused',
+      'http_error_response',
       'browser_error_document',
       'engine_error',
     ]) {

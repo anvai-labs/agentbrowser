@@ -13728,6 +13728,10 @@
                     "type": "string"
                   },
                   {
+                    "const": "http_error_response",
+                    "type": "string"
+                  },
+                  {
                     "const": "egress_policy",
                     "type": "string"
                   },
@@ -14612,6 +14616,10 @@
               },
               {
                 "const": "tls_refused",
+                "type": "string"
+              },
+              {
+                "const": "http_error_response",
                 "type": "string"
               },
               {
