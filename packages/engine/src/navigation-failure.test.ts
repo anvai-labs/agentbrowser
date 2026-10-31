@@ -19,6 +19,7 @@ describe('bounded navigation failure classification', () => {
     ['page.goto: net::ERR_DNS_TIMED_OUT at https://private/', 'dns_timeout'],
     ['page.goto: net::ERR_DNS_SERVER_FAILED at https://private/', 'engine_error'],
     ['page.goto: net::ERR_CONNECTION_REFUSED at https://private/', 'connection_refused'],
+    ['page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://private/', 'http_error_response'],
     ['page.goto: net::ERR_CERT_AUTHORITY_INVALID at https://private/', 'tls_refused'],
     ['page.goto: net::ERR_SSL_PROTOCOL_ERROR at https://private/', 'tls_refused'],
     ['route.fetch: getaddrinfo ENOTFOUND private', 'dns_unresolved'],
@@ -33,6 +34,16 @@ describe('bounded navigation failure classification', () => {
   ])('classifies only transport-owned codes: %s', (message, reason) => {
     expect(classifyNavigationFailure(new Error(message), 'transport')).toBe(reason);
   });
+});
+
+it('reports a server HTTP error response as http_error_response, not engine death', async () => {
+  const { normalizeNavigationFailure } = await import('./navigation-failure.js');
+  const detail = normalizeNavigationFailure(
+    new Error('page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://private/')
+  );
+  expect(detail.code).toBe('INTERNAL');
+  expect(detail.message).toBe('Navigation failed: http_error_response');
+  expect(detail.details).toEqual({ reason: 'http_error_response' });
 });
 
 it('does not turn URL or call-log prose into a browser crash and preserves safe codes', async () => {

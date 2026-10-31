@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed
+
+- `net::ERR_HTTP_RESPONSE_CODE_FAILURE` — a non-2xx HTTP response Chromium aborts
+  instead of committing (classically an empty-body 404/500) — now classifies as the
+  new bounded navigation reason `http_error_response` instead of the misleading
+  `engine_error`. The origin answered; the browser did not crash.
+
+- Scope `requestHeaders` now honors `hostSuffix` for enforcement, not just injection.
+  Cross-origin requests to non-matching hosts (hCaptcha challenge API, OAuth providers,
+  payment iframes) pass through with zero header-policy interaction — no more
+  `POLICY_HEADERS_UNCHECKABLE` blocking. Carried markers are still stripped
+  leak-prevention-safe; CORS preflights are never injected.
+
 ## [1.29.0] — 2026-10-31
 
 Minor release: operator evidence sessions and bounty foundation diagnostics.
