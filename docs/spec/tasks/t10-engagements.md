@@ -75,7 +75,7 @@ automatic submission or outside communication of findings.
 | M5: first bounty run polish | explicit import sizing and low-budget warnings; page-local scope denial counts on navigation failure; scope pacing/budget counters in session views; `engagement export --force`; headed-directory and CLI page cadence guidance |
 | M5: research traffic identity | [design](../design/t10-research-traffic-identity.md); custom scope `requestHeaders`, per-hop injection/stripping and hashed ledger configuration; session `userAgent`; unsupported lanes refused. Colocated policy, API and real-Chromium fixture tests cover validation, wire behavior and evidence |
 
-## B1–B6: operator-first bounty workflow (unreleased)
+## B1–B6: operator-first bounty workflow (1.29.0, [record](../evidence/release-1.29.0.md))
 
 Implementation follows the [operator workflow design](../design/t10-bounty-operator-workflow.md)
 in order: bounty defaults; operator-only evidence state transfer (ADR-027);
