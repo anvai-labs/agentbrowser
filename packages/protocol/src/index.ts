@@ -26,6 +26,8 @@ export * from './plan.js';
 export * from './policy-document.js';
 // Re-export all schemas and types
 export * from './schemas.js';
+export * from './scope-trace.js';
+export * from './scope-traffic.js';
 export * from './session-diagnostics.js';
 export * from './test-run.js';
 export * from './tool-results.js';

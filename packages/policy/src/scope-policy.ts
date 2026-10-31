@@ -302,7 +302,7 @@ export class EngagementScopePolicy {
   private readonly identities: ScopeIdentityBinding[];
   private readonly expiresAt: number | undefined;
   private readonly now: () => number;
-  private readonly budget: number | undefined;
+  private budget: number | undefined;
   private readonly excludedHosts: string[];
   private readonly excludedPaths: ScopePathRule[];
   private readonly schemes: Set<string> | undefined;
@@ -540,9 +540,9 @@ export class EngagementScopePolicy {
   }
 
   /** Stable authority identity, including secret bindings inside the digest only. */
-  configurationSha256(assets = this.assetHosts): string {
+  configurationSha256(assets = this.assetHosts, budgetLimit = this.budget): string {
     const {
-      budget,
+      budget: _budget,
       denials: _denials,
       expired: _expired,
       rateLimit,
@@ -555,7 +555,7 @@ export class EngagementScopePolicy {
         JSON.stringify({
           ...config,
           assetHosts: assets,
-          budget: budget?.limit,
+          budget: budgetLimit,
           rateLimit: rateLimit
             ? { requests: rateLimit.requests, perSeconds: rateLimit.perSeconds }
             : undefined,
@@ -623,6 +623,52 @@ export class EngagementScopePolicy {
     active();
     this.assetHosts.push(...additions);
     this.revision += 1;
+    return this.status();
+  }
+
+  /** ADR-029: absolute finite increase, persisted before grant; no counter reset. */
+  async topUpBudget(
+    limit: number,
+    expectedRevision: number,
+    persist: (next: {
+      revision: number;
+      beforeLimit: number;
+      afterLimit: number;
+      spent: number;
+      beforeSha256: string;
+      afterSha256: string;
+    }) => Promise<void>
+  ): Promise<EngagementScopeStatus> {
+    const active = () => {
+      if (this.revision !== expectedRevision)
+        throw scopeDenial('SCOPE_HOST_DENIED', 'scope amendment revision changed');
+      if (this.stopped !== undefined)
+        throw scopeDenial('SCOPE_LEDGER_UNAVAILABLE', 'scope is stopped');
+      if (this.expiresAt !== undefined && this.now() >= this.expiresAt)
+        throw scopeDenial('SCOPE_EXPIRED', 'scope expired');
+      if (
+        this.budget === undefined ||
+        !Number.isSafeInteger(limit) ||
+        limit <= this.budget ||
+        limit > 10000000
+      )
+        throw scopeDenial(
+          'SCOPE_BUDGET_EXHAUSTED',
+          'top-up requires a larger finite budget at most 10000000'
+        );
+    };
+    active();
+    await persist({
+      revision: expectedRevision + 1,
+      beforeLimit: this.budget as number,
+      afterLimit: limit,
+      spent: this.spent,
+      beforeSha256: this.configurationSha256(),
+      afterSha256: this.configurationSha256(this.assetHosts, limit),
+    });
+    active();
+    this.budget = limit;
+    this.revision++;
     return this.status();
   }
 

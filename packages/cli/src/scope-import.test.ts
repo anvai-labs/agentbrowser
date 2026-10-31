@@ -144,3 +144,25 @@ it('imports explicit asset bundles without extending program targets or restorin
     (await runCli(['scope', 'import', input, '--from', 'text', '--asset-bundle', 'unknown'])).code
   ).not.toBe(0);
 });
+
+it('exports and imports canonical scope configuration with markers and refuses unknown keys', async () => {
+  const scope = {
+    allowedHosts: ['wolt.com'],
+    requestHeaders: [{ header: 'X-HackerOne-Research', value: 'test', hostSuffix: 'wolt.com' }],
+    allowedMethods: ['GET', 'POST'],
+    requestBudget: 400,
+  };
+  const input = file('canonical.json', JSON.stringify(scope));
+  const exported = join(dir, 'canonical-export.json');
+  expect((await runCli(['scope', 'export', input, '--out', exported])).code).toBe(0);
+  expect(JSON.parse(readFileSync(exported, 'utf8'))).toEqual(scope);
+  expect(statSync(exported).mode & 0o777).toBe(0o600);
+  expect((await runCli(['scope', 'export', input, '--out', exported])).code).not.toBe(0);
+  expect(JSON.parse(readFileSync(exported, 'utf8'))).toEqual(scope);
+  const imported = await runCli(['--json', 'scope', 'import', exported, '--from', 'agentbrowser']);
+  expect(imported.code).toBe(0);
+  expect(JSON.parse(imported.out).scope).toEqual(scope);
+  const invalid = file('canonical-invalid.json', JSON.stringify({ ...scope, typo: true }));
+  expect((await runCli(['scope', 'export', invalid])).code).not.toBe(0);
+  expect((await runCli(['scope', 'import', invalid, '--from', 'agentbrowser'])).code).not.toBe(0);
+});

@@ -525,6 +525,8 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
       const declared: Record<string, string> = {
         'POST /v1/operator/sessions/:sourceId/evidence':
           'human operator only; fresh hidden context, domain policy and scoped state filtering; marks target before seed; grants no action lease',
+        'POST /v1/operator/sessions/:sessionId/scope/budget':
+          'human operator only; finite increasing limit, exact revision and durable ledger; retains credential marking/action floors and grants no lease',
         'POST /v1/operator/sessions/:sessionId/scope/assets':
           'human operator only; exact revision, static asset hosts only, ledger required; retains credential marking and action floors',
         'POST /v1/sessions/:sessionId/pages/:pageId/act':

@@ -49,3 +49,35 @@ it('applies the environment preset on REST and refuses unknown request modes', a
     await server.close();
   }
 });
+
+it('surfaces the validate-only binding hint at creation and status without leaking values', async () => {
+  const engine = new FakeEngine();
+  vi.spyOn(engine, 'capabilities').mockResolvedValue({
+    ...(await engine.capabilities()),
+    requestHeaderInjection: true,
+  });
+  const service = new AgentBrowserService({ engine });
+  try {
+    const identityBindings = [
+      { header: 'X-HackerOne-Research', value: 'private-marker', allowedHosts: ['wolt.com'] },
+    ];
+    const session = await service.createSession({
+      scope: { allowedHosts: ['wolt.com'], identityBindings },
+    });
+    expect(session.warnings?.join(' ')).toContain('does not inject');
+    expect(service.getSession(session.sessionId)?.warnings).toEqual(session.warnings);
+    expect(JSON.stringify(session)).not.toContain('private-marker');
+    const injected = await service.createSession({
+      scope: {
+        allowedHosts: ['wolt.com'],
+        identityBindings,
+        requestHeaders: [{ header: 'X-HackerOne-Research', value: 'private-marker' }],
+      },
+    });
+    expect(injected.warnings ?? []).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('does not inject')])
+    );
+  } finally {
+    await service.shutdown();
+  }
+});

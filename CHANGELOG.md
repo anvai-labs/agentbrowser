@@ -7,6 +7,25 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.29.0] — 2026-10-31
+
+Minor release: operator evidence sessions and bounty foundation diagnostics.
+The remaining handoff capabilities are delivered in subsequent increments.
+
+### Added — live engagement diagnostics and recovery
+
+- Default live denial tracing for bounty/program scopes, with bounded authenticated
+  streams for SDK, CLI and MCP clients. URL credentials/query/fragment and registered
+  session secrets are withheld. Dependency-starvation hints never authorize traffic.
+- Observed method × destination-class fingerprints include scope-denied methods.
+  Tenant-local page-load history warns about undersized budgets; explicit import
+  presets size subrequests while respecting supplied lower published rate caps.
+- Human-operator live finite budget increases (ADR-029), durably authorized before
+  activation, retain pages, spending, pacing and all existing policy restrictions.
+- Canonical private scope export/import preserves research header configuration;
+  identity-binding-only configurations receive a validate-only hint.
+
+
 ### Added — operator-first bounty workflow (T10 B1–B6)
 
 - Bounty defaults: headed sessions, one-hour idle timeout, four-hour TTL and 5/s

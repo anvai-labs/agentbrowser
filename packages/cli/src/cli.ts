@@ -10,9 +10,11 @@ import { adoptScopeAssets } from './scope-assets-file.js';
 import { isAbsolute } from 'node:path';
 import {
   assertCookieRequestSize,
+  denialTraceLine,
   importProgramScope,
   loadTldts,
   type ProgramScopeFormat,
+  parseScopeConfiguration,
   verifyEngagementLedger,
 } from '@agentbrowser/core';
 import {
@@ -155,6 +157,12 @@ function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionRespon
   const facts = view.diagnostics;
   const lease = view.lease;
   return [
+    ...(view.trace ? [`  denial trace: ${view.trace}`] : []),
+    ...(view.traceDropped
+      ? [
+          `  trace output lost: ${view.traceDropped} diagnostic lines; inspect retained events/ledger`,
+        ]
+      : []),
     ...(view.userAgent ? [`  user-agent: ${view.userAgent}`] : []),
     ...(view.scope?.rateLimit ? [`  paced:   ${view.scope.rateLimit.paced} requests`] : []),
     ...(view.scope?.budget
@@ -254,6 +262,8 @@ export interface CliClient
       Pick<
         AgentBrowserClient['sessions'],
         | 'scopeDenied'
+        | 'traceDenials'
+        | 'scopeTraffic'
         | 'control'
         | 'takeover'
         | 'prepareResume'
@@ -647,6 +657,70 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
       session
+        .command('scope-traffic <sessionId>')
+        .description(
+          'Observed method × host-class matrix, including scope-denied methods; grants nothing'
+        )
+        .action(
+          action(async (ctx, sessionId: string) => {
+            if (!ctx.client.sessions.scopeTraffic)
+              throw new UsageError('Client cannot read scope traffic');
+            const report = await ctx.client.sessions.scopeTraffic(sessionId);
+            ctx.emit(report, () => [
+              ...report.rows.map(
+                (row) =>
+                  `${row.method} ${row.hostClass}: ${row.requests} requests, ${row.denied} denied`
+              ),
+              ...(report.truncated ? ['Fingerprint truncated'] : []),
+            ]);
+          })
+        );
+      session
+        .command('scope-topup <sessionId>')
+        .description('Human operator: increase the absolute live budget without resetting spending')
+        .requiredOption(
+          '--request-budget <requests>',
+          'approved new absolute limit (at most 10000000)'
+        )
+        .requiredOption('--expected-revision <revision>', 'reviewed current scope revision')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: { requestBudget: string; expectedRevision: string }
+            ) => {
+              const limit = Number(options.requestBudget);
+              const revision = Number(options.expectedRevision);
+              if (
+                !Number.isSafeInteger(limit) ||
+                limit < 1 ||
+                limit > 10000000 ||
+                !Number.isSafeInteger(revision) ||
+                revision < 0
+              )
+                throw new UsageError('Valid absolute budget and expected revision required');
+              const key = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+              if (!key) throw new UsageError('Budget top-up requires a human operator key');
+              const response = await fetchOrUsageError(
+                'scope budget top-up',
+                `${ctx.baseUrl}/v1/operator/sessions/${encodeURIComponent(sessionId)}/scope/budget`,
+                30000,
+                {
+                  method: 'POST',
+                  headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+                  body: JSON.stringify({ expectedRevision: revision, requestBudget: limit }),
+                }
+              );
+              const status =
+                (await response.json()) as import('@agentbrowser/protocol').EngagementScopeStatus;
+              ctx.emit(status, () => [
+                `Scope revision ${status.revision}: budget ${status.budget?.limit}, spent ${status.budget?.spent}, remaining ${status.budget?.remaining}`,
+              ]);
+            }
+          )
+        );
+      session
         .command('scope-amend <sessionId>')
         .description(
           'Operator-only: append static asset hosts to the live scope without replacing program targets or limits'
@@ -902,6 +976,10 @@ export function buildCli(deps: CliDependencies): Cli {
           '--mode <mode>',
           'session preset: bounty (headed, 4h TTL, 1h idle, 5 requests/s for contained traffic)'
         )
+        .option(
+          '--trace <mode>',
+          'denials | off; bounty scopes default to live denials in service stderr'
+        )
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
           '--no-headless',
@@ -975,6 +1053,11 @@ export function buildCli(deps: CliDependencies): Cli {
               throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
 
+            if (options.trace !== undefined) {
+              if (options.trace !== 'denials' && options.trace !== 'off')
+                throw new UsageError('--trace must be denials or off');
+              request.trace = options.trace;
+            }
             if (options.cdpAttach) request.cdpAttach = true;
             if (options.engine) {
               request.engine = String(options.engine);
@@ -1134,6 +1217,7 @@ export function buildCli(deps: CliDependencies): Cli {
                       : {}),
                     ...(request.headless !== undefined ? { headless: request.headless } : {}),
                     ...(request.userAgent !== undefined ? { userAgent: request.userAgent } : {}),
+                    ...(request.trace !== undefined ? { trace: request.trace } : {}),
                     ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
                     ...(request.idleTimeoutMs !== undefined
                       ? { idleTimeoutMs: request.idleTimeoutMs }
@@ -1303,10 +1387,41 @@ export function buildCli(deps: CliDependencies): Cli {
       // A3 evidence: export the session's completed spans as an artifact.
       session
         .command('trace')
-        .description("export the session's completed (secret-scrubbed) spans as a trace artifact")
+        .description(
+          'Export completed spans, or --denials to stream sanitized scope refusals live to stderr'
+        )
+        .option(
+          '--denials',
+          'follow live scope denials; Ctrl-C detaches without closing the session'
+        )
         .argument('<sessionId>')
         .action(
-          action(async (ctx, sessionId: string) => {
+          action(async (ctx, sessionId: string, options: { denials?: boolean }) => {
+            if (options.denials) {
+              if (!ctx.client.sessions.traceDenials)
+                throw new UsageError('Client does not support live denial tracing');
+              const stop = new AbortController();
+              const cancel = () => stop.abort();
+              process.once('SIGINT', cancel);
+              process.once('SIGTERM', cancel);
+              try {
+                for await (const event of ctx.client.sessions.traceDenials(sessionId, {
+                  signal: stop.signal,
+                })) {
+                  deps.err(
+                    event.type === 'scope.denied'
+                      ? denialTraceLine({ ...event.data, timestamp: event.timestamp })
+                      : `${event.timestamp} ${event.data.message}`
+                  );
+                }
+              } catch (error) {
+                if (!stop.signal.aborted) throw error;
+              } finally {
+                process.removeListener('SIGINT', cancel);
+                process.removeListener('SIGTERM', cancel);
+              }
+              return;
+            }
             const artifact = await ctx.client.sessions.trace(sessionId);
             ctx.emit(artifactReference(artifact), () => [
               `Trace artifact ${artifact.artifactId}`,
@@ -3232,6 +3347,32 @@ export function buildCli(deps: CliDependencies): Cli {
         .command('scope')
         .description('T10 engagement scopes: convert a published program scope (offline)');
       scopeCommand
+        .command('export <file>')
+        .description(
+          'Export a validated canonical scope configuration (not redacted session status); research marker values are retained'
+        )
+        .option('--out <file>', 'private output file, created exclusively with mode 0600')
+        .action(
+          action(async (ctx, file: string, options: { out?: string }) => {
+            const input = await createTextArgumentReader({ noFollow: true })(
+              `@${file}`,
+              'scope configuration'
+            );
+            let scope: ReturnType<typeof parseScopeConfiguration>;
+            try {
+              scope = parseScopeConfiguration(input);
+            } catch (error) {
+              throw new UsageError((error as Error).message);
+            }
+            const json = `${JSON.stringify(scope, null, 2)}\n`;
+            if (options.out) {
+              const { writeFile } = await import('node:fs/promises');
+              await writeFile(options.out, json, { flag: 'wx', mode: 0o600 });
+            }
+            ctx.emit(scope, () => (options.out ? [`wrote ${options.out}`] : [json.trimEnd()]));
+          })
+        );
+      scopeCommand
         .command('adopt-assets <file>')
         .description(
           'Preview denied static asset hosts; --approve-hosts explicitly commits selected candidates with a private amendment log'
@@ -3267,7 +3408,11 @@ export function buildCli(deps: CliDependencies): Cli {
           'convert a HackerOne, Bugcrowd or text program scope into an engagement scope; ' +
             'inexpressible entries are refused, never guessed (an inexpressible exclusion fails the import)'
         )
-        .requiredOption('--from <format>', 'h1 | bugcrowd | text')
+        .requiredOption('--from <format>', 'h1 | bugcrowd | text | agentbrowser')
+        .option(
+          '--preset <name>',
+          'explicit h1-spa or bugcrowd-spa sizing; review program cap first'
+        )
         .option(
           '--request-budget <requests>',
           'total subrequests and redirect hops (warns below 150)'
@@ -3296,6 +3441,7 @@ export function buildCli(deps: CliDependencies): Cli {
               file: string,
               options: {
                 from: string;
+                preset?: string;
                 requestBudget?: string;
                 pagesPlanned?: string;
                 rateLimit?: string;
@@ -3307,14 +3453,19 @@ export function buildCli(deps: CliDependencies): Cli {
                 out?: string;
               }
             ) => {
-              if (!['h1', 'bugcrowd', 'text'].includes(options.from))
-                throw new UsageError('--from must be h1, bugcrowd or text.');
+              if (!['h1', 'bugcrowd', 'text', 'agentbrowser'].includes(options.from))
+                throw new UsageError('--from must be h1, bugcrowd, text or agentbrowser.');
               const positive = (value: string | undefined) => {
                 if (value === undefined) return undefined;
                 if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))
                   throw new UsageError('Sizing options require positive safe integers.');
                 return Number(value);
               };
+              if (
+                options.preset !== undefined &&
+                !['h1-spa', 'bugcrowd-spa'].includes(options.preset)
+              )
+                throw new UsageError('Unknown scope preset');
               const requestBudget = positive(options.requestBudget);
               const pagesPlanned = positive(options.pagesPlanned);
               const rate = options.rateLimit?.match(/^([1-9]\d*)\/([1-9]\d*)$/);
@@ -3329,6 +3480,9 @@ export function buildCli(deps: CliDependencies): Cli {
               let result: ReturnType<typeof importProgramScope>;
               try {
                 result = importProgramScope(input, options.from as ProgramScopeFormat, {
+                  ...(options.preset
+                    ? { preset: options.preset as 'h1-spa' | 'bugcrowd-spa' }
+                    : {}),
                   ...(options.assetBundle
                     ? { assetBundles: options.assetBundle.split(',').map((name) => name.trim()) }
                     : {}),

@@ -839,6 +839,20 @@ navigations include `scopeDenials` keyed by `SCOPE_*` for that page during
 the navigation call (under `details` on errors). Counts explain scope
 starvation without changing the original reason or policy verdict.
 
+**Canonical scope files (T10 handoff P0-1).** `scope export scope.json --out portable.json`
+validates and writes an exclusive 0600 canonical configuration; `scope import portable.json
+--from agentbrowser --out restored.json` preserves markers, bindings and restrictions.
+Canonical import refuses sizing/program overrides and unknown keys. This is the
+operator's configuration file, including public research marker values; runtime
+scope status and ledger exports remain redacted and cannot recreate marker values.
+A binding without matching injection emits a validate-only hint at session creation.
+
+Research headers and session UA configuration require service **1.28.0 or newer**.
+Check `/health` when `requestHeaders` is rejected as an unexpected property: a new
+CLI does not upgrade an already-running service. In the 2026-10-30 handoff follow-up,
+both local services still reported 1.27.4. Upgrade the service deliberately after
+preserving active engagements, then perform the program's live compliance check.
+
 **Research traffic identity (T10 M5).** A scope can explicitly inject public
 research markers, separately from `identityBindings`, which continues to
 validate marked traffic. For example:
@@ -1297,3 +1311,55 @@ Expect `diagnostics.attachment=cdp_attach`, `endpointClass=loopback_http`, and
 tabs appear in page inventory. Closing the session closes those tabs and disconnects;
 Chrome and pre-existing tabs remain. One attached session per service engine is admitted at a time.
 See the [design and qualification contract](spec/design/operator-cdp-attach.md).
+
+### Live scope denials (T10 handoff P0-3)
+
+Bounty-mode scopes and scopes with program metadata default to `trace: denials`.
+`session create --trace denials` explicitly enables it; `--trace off` suppresses
+live diagnostics while enforcement and ledger recording continue. Unsupported
+request-recording engines refuse an enabled trace.
+
+The service immediately prints timestamp, SCOPE reason, method and URL to stderr.
+For a remote CLI, run `session trace <sid> --denials`; Ctrl-C detaches the observer
+and leaves the session alive. Without that flag, `session trace` still exports span
+artifacts. SDK callers can iterate `sessions.traceDenials`; MCP stdio connections
+receive standard `notifications/message` logging notifications. A bound bounty MCP
+connection attaches before its first session tool dispatch. Logging level controls
+notifications only, never enforcement or retained evidence.
+
+URLs omit userinfo, query and fragment; registered session secrets are redacted.
+Three recent related-host/vendor denials followed by a failed interaction produce
+an advisory functional-dependency warning. Review program authorization before
+adding a resource host: suggestions grant nothing. The five-second window and
+bounded host/event caches may miss older or evicted correlations.
+
+Streams recheck authority per frame and heartbeat, isolate paused-session events,
+and bound observers/output buffers. Unexpected disconnects are reported; reconnects
+have no replay, so inspect retained events/ledger for gaps. `session status` reports
+service diagnostic-output drops when present. A failed stderr sink cannot bypass a
+denial or suppress its ledger record.
+
+### Fingerprinting and live budget recovery (T10 handoff P1-4)
+
+Run `session scope-traffic <sid>` before closing to read the observed method ×
+program/asset/resource/other matrix. Denied attempts count, so a refused PUT remains
+visible. This is an observation to review against policy, never an automatic method
+grant. Bounded samples from successful page-local navigation windows inform a
+create/status warning below five times the same tenant/program host's median cost.
+History is process-local and may underestimate deferred requests; it expires through
+bounded eviction and never crosses tenants.
+
+For an exhausted finite budget, review `session scope <sid>` then use
+`--operator-key-file <private-key-file> session scope-topup <sid>
+--expected-revision <revision> --request-budget <absolute-new-limit>`.
+This requires the owning human operator and an open engagement ledger. Counters,
+pages and pacing remain intact. Limits must increase and cannot exceed ten million;
+expired/stopped sessions refuse. Authorization and completion are ledgered. A failure
+to persist stops the scope; retrying failed page mutations remains an operator decision.
+
+Explicit import presets `--preset h1-spa` (5/s) and `--preset bugcrowd-spa` (2/s)
+start with five navigations × 180 subrequests = 900 requests. `--pages-planned`
+uses 180/page with a preset, 120/page otherwise. These are sizing suggestions, not
+platform-wide permission: verify each program's rules and supply its published
+`--rate-limit requests/seconds`. The lower of that cap and the preset is selected.
+Canonical `--from agentbrowser` import refuses preset/limit overrides.

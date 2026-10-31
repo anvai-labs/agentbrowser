@@ -1,4 +1,5 @@
 import { EngagementScopeSchema } from '@agentbrowser/protocol';
+import { ScopeTraceMonitor } from './scope-trace-monitor.js';
 /**
  * AgentBrowser MCP server (ADR-009)
  *
@@ -109,11 +110,14 @@ export interface McpClient {
         | 'operation'
         | 'scopeStatus'
         | 'checkScope'
+        | 'traceDenials'
       >
     >;
 }
 
 export interface McpDependencies {
+  /** Whole JSON-RPC notification lines on the connection transport. */
+  notificationSink?: (line: string) => void;
   /** Explicit operator opt-in: this MCP host shares files with its consumer. */
   artifactDirectory?: string | undefined;
   /** Operator-configured binding. Never supplied by model tool arguments. */
@@ -127,6 +131,7 @@ export interface McpDependencies {
 }
 
 export interface McpServer {
+  close(): Promise<void>;
   /** Handle one JSON-RPC message. Returns null for notifications. */
   handle(line: string): Promise<string | null>;
 }
@@ -281,7 +286,8 @@ export function buildTools(
   client: McpClient,
   boundSessionId?: string,
   artifactDirectory?: string,
-  mode?: AgentMode
+  mode?: AgentMode,
+  traceMonitor?: ScopeTraceMonitor
 ): ToolDefinition[] {
   const captureResult = async (sessionId: string, artifact: ArtifactRef, inline: unknown) => {
     if (inline !== undefined && typeof inline !== 'boolean')
@@ -313,6 +319,11 @@ export function buildTools(
             type: 'string',
             enum: ['bounty'],
             description: 'Contained bounty defaults; CDP remains unenforced.',
+          },
+          trace: {
+            type: 'string',
+            enum: ['denials', 'off'],
+            description: 'Live denial tracing; defaults to denials for bounty scopes.',
           },
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
@@ -422,11 +433,17 @@ export function buildTools(
           request.snapshotTimeoutMs = args.snapshotTimeoutMs;
         }
 
+        if (args.trace !== undefined) {
+          if (args.trace !== 'denials' && args.trace !== 'off')
+            throw new UsageError('trace must be denials or off');
+          request.trace = args.trace;
+        }
         const session = await client.sessions.create(request);
 
         // Observing requires a page; create one up front so the caller's very
         // next tool call can be navigate or observe.
         try {
+          await requestScope.exit(() => traceMonitor?.created(session));
           const page = await client.sessions.createPage(session.sessionId);
           return { ...session, pageId: page.pageId };
         } catch (error) {
@@ -434,6 +451,7 @@ export function buildTools(
           // the exclusive operator attachment) when the first page fails — including when the
           // call was cancelled: the close runs outside the cancelled call's abort scope.
           await requestScope.exit(() => client.sessions.close(session.sessionId)).catch(() => {});
+          traceMonitor?.closed(session.sessionId);
           throw error;
         }
       },
@@ -739,6 +757,7 @@ export function buildTools(
           throw new UsageError('sessionId is required and must be a non-empty string.');
         }
         await client.sessions.close(args.sessionId);
+        traceMonitor?.closed(args.sessionId);
         return { sessionId: args.sessionId, closed: true };
       },
       annotations: { readOnlyHint: false, idempotentHint: false },
@@ -1419,12 +1438,43 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   });
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
+  const loggingLevels = [
+    'debug',
+    'info',
+    'notice',
+    'warning',
+    'error',
+    'critical',
+    'alert',
+    'emergency',
+  ];
+  let minimumLevel = 3;
+  let connectionClosed = false;
+  const traceMonitor = deps.notificationSink
+    ? new ScopeTraceMonitor(client.sessions, (level, data) => {
+        if (connectionClosed) return false;
+        if (loggingLevels.indexOf(level) < minimumLevel) return true;
+        try {
+          deps.notificationSink?.(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'notifications/message',
+              params: { level, logger: 'scope-denials', data },
+            })
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      })
+    : undefined;
   const mode = deps.mode ?? DEFAULT_AGENT_MODE;
   const tools = buildTools(
     client,
     deps.sessionId || undefined,
     deps.artifactDirectory,
-    mode
+    mode,
+    traceMonitor
   ).filter(
     (tool) =>
       toolAvailable(mode, tool) &&
@@ -1495,8 +1545,14 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   let protocolVersion: string | undefined;
 
   const server = {
+    async close(): Promise<void> {
+      connectionClosed = true;
+      for (const controller of inflight.values()) controller.abort();
+      await traceMonitor?.close();
+    },
     [INFLIGHT_COUNT]: () => inflight.size,
     async handle(line: string): Promise<string | null> {
+      if (connectionClosed) return error(null, -32600, 'Connection is closed');
       let message: {
         id?: string | number | null;
         method?: string;
@@ -1560,10 +1616,17 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
               : STRUCTURED_PROTOCOL_VERSION;
           return ok(message.id, {
             protocolVersion,
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, ...(deps.notificationSink ? { logging: {} } : {}) },
             serverInfo,
           });
 
+        case 'logging/setLevel': {
+          const level = message.params?.level;
+          if (!deps.notificationSink || typeof level !== 'string' || !loggingLevels.includes(level))
+            return error(message.id, -32602, 'Invalid logging level');
+          minimumLevel = loggingLevels.indexOf(level);
+          return ok(message.id, {});
+        }
         case 'ping':
           return ok(message.id, {});
 
@@ -1603,6 +1666,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
               );
             const structured =
               protocolVersion === STRUCTURED_PROTOCOL_VERSION && !!tool.outputSchema;
+            const observedSessionId = deps.sessionId ?? args.sessionId;
+            if (mode === 'bounty' && traceMonitor && typeof observedSessionId === 'string')
+              await requestScope.exit(() => traceMonitor.ensure(observedSessionId));
             const result = await tool.handler(
               deps.sessionId ? { ...args, sessionId: deps.sessionId } : args
             );

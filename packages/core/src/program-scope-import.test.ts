@@ -244,3 +244,24 @@ it('sizes subrequests, warns below 150 and leaves an absent budget unbounded', (
     importProgramScope('app.test', 'text', { rateLimit: { requests: 0, perSeconds: 1 } }).ok
   ).toBe(false);
 });
+
+it('explicit SPA presets size subrequests and never exceed a supplied published cap', () => {
+  const preset = importProgramScope('app.test', 'text', { preset: 'h1-spa' });
+  expect(preset.ok && preset.scope).toMatchObject({
+    requestBudget: 900,
+    rateLimit: { requests: 5, perSeconds: 1 },
+  });
+  const lower = importProgramScope('app.test', 'text', {
+    preset: 'h1-spa',
+    rateLimit: { requests: 1, perSeconds: 2 },
+  });
+  expect(lower.ok && lower.scope.rateLimit).toEqual({ requests: 1, perSeconds: 2 });
+  const higher = importProgramScope('app.test', 'text', {
+    preset: 'h1-spa',
+    rateLimit: { requests: 10, perSeconds: 1 },
+  });
+  expect(higher.ok && higher.scope.rateLimit).toEqual({ requests: 5, perSeconds: 1 });
+  expect(() => importProgramScope('app.test', 'text', { preset: 'unknown' as never })).toThrow(
+    'Unknown scope preset'
+  );
+});
