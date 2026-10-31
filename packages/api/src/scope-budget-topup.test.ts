@@ -2,15 +2,12 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { EngagementLedger } from './engagement-ledger.js';
 import { AgentBrowserService } from './service.js';
+import { scopeTestCleanup } from './test-support/scope-test-cleanup.js';
 
-const cleanups: Array<() => Promise<unknown>> = [];
-afterEach(async () => {
-  vi.restoreAllMocks();
-  for (const close of cleanups.splice(0).reverse()) await close();
-});
+const cleanups = scopeTestCleanup();
 const operator = { actor: 'human-operator' as const, tenant: 'one' };
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'topup-'));

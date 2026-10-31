@@ -1858,6 +1858,30 @@ export class AgentBrowserService {
     return this.scopeOf(sessionId).status();
   }
 
+  /** Shared locked preflight; callers retain their own tenant/context and grant checks. */
+  private scopeAmendmentState(
+    sessionId: string,
+    expectedRevision: number
+  ): { scope: EngagementScopePolicy; ledger: EngagementLedger } {
+    const scope = this.scopeOf(sessionId);
+    if ((scope.status().revision ?? 0) !== expectedRevision)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'Scope revision changed; re-read before approving',
+        false,
+        { rule: 'scope.amendment.revision' }
+      );
+    const ledger = this.sessionLedgers.get(sessionId);
+    if (ledger?.state !== 'open')
+      throw new ServiceError(
+        'POLICY_DENIED',
+        'Scope amendment requires an open engagement ledger',
+        false,
+        { scope: 'SCOPE_LEDGER_UNAVAILABLE' }
+      );
+    return { scope, ledger };
+  }
+
   /** ADR-028. The authenticated operator request is the explicit grant for these assets. */
   async amendScopeAssets(
     sessionId: string,
@@ -1882,22 +1906,7 @@ export class AgentBrowserService {
           'ENGINE_UNSUPPORTED',
           'The selected engine cannot classify asset requests'
         );
-      const scope = this.scopeOf(sessionId);
-      if ((scope.status().revision ?? 0) !== request.expectedRevision)
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          'Scope revision changed; re-read before approving',
-          false,
-          { rule: 'scope.amendment.revision' }
-        );
-      const ledger = this.sessionLedgers.get(sessionId);
-      if (ledger?.state !== 'open')
-        throw new ServiceError(
-          'POLICY_DENIED',
-          'Scope amendment requires an open engagement ledger',
-          false,
-          { scope: 'SCOPE_LEDGER_UNAVAILABLE' }
-        );
+      const { scope, ledger } = this.scopeAmendmentState(sessionId, request.expectedRevision);
       let evidence: Record<string, unknown> | undefined;
       try {
         const status = await scope.appendAssets(
@@ -1954,22 +1963,7 @@ export class AgentBrowserService {
           throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during amendment');
       };
       current();
-      const scope = this.scopeOf(sessionId);
-      if ((scope.status().revision ?? 0) !== request.expectedRevision)
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          'Scope revision changed; re-read before approving',
-          false,
-          { rule: 'scope.amendment.revision' }
-        );
-      const ledger = this.sessionLedgers.get(sessionId);
-      if (ledger?.state !== 'open')
-        throw new ServiceError(
-          'POLICY_DENIED',
-          'Scope amendment requires an open engagement ledger',
-          false,
-          { scope: 'SCOPE_LEDGER_UNAVAILABLE' }
-        );
+      const { scope, ledger } = this.scopeAmendmentState(sessionId, request.expectedRevision);
       let evidence: Record<string, unknown> | undefined;
       try {
         const status = await scope.topUpBudget(
