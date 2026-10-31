@@ -61,4 +61,4 @@ hosted containment, complete accessibility tree, frame/shadow-DOM coverage,
 popup event parity, durable application receipt storage or new privileged
 application tool is claimed. Linux CI and packaged product promotion have not
 been run locally. Before service promotion, apply the gates in
-[the design](../firefox-and-application-seams.md).
+the design (removed 2026-10).

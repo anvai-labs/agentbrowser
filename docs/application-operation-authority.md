@@ -7,7 +7,7 @@ receipt permission and controlled G4 qualification (1.9.0), operator binding/dis
 receipts (T5 C4b). Still pending: MCP tools, production/G6 evidence and P0c/P1 production
 qualification (tracked in [t4-application-parity.md](spec/tasks/t4-application-parity.md)).
 Transport, reconnection and durable recovery are specified in the
-[shared infrastructure design](shared-session-infrastructure.md).
+the shared infrastructure design (formerly docs/shared-session-infrastructure.md).
 Historical design baseline: `develop` at `ed8ac67`, after PRs [156](https://github.com/anvai-labs/agentbrowser/pull/156),
 [157](https://github.com/anvai-labs/agentbrowser/pull/157), and
 [159](https://github.com/anvai-labs/agentbrowser/pull/159). See the
@@ -160,7 +160,7 @@ Inputs must contain own JSON data; accessors and sparse arrays are rejected.
 Application-only sessions enforce monotonic TTL at admission, dispatch and output,
 even when the event loop delays cleanup timers. Duplicate registration and stale
 abort/page callbacks cannot replace or act under another owner. See the
-[shared infrastructure refinement](shared-session-infrastructure.md#resource-bounds-and-lifecycle-refinement)
+the shared infrastructure refinement (formerly docs/shared-session-infrastructure.md)
 for the reasoning, continuity qualification and remaining transport boundaries.
 
 ## Delivered HTTP/SDK/CLI surface

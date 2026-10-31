@@ -248,3 +248,9 @@ CLI screenshot, PDF, HTML and artifact retrieval save private files by default i
 image/PDF content requires `inline:true`, and the `artifact` tool supports bounded
 retrieval. Set `AGENTBROWSER_ARTIFACT_DIR` for an explicit cache location. See
 [cache limits, cleanup and inline options](docs/cli-agent-usage.md#consumer-recovery-and-bounded-output).
+
+## Contributing
+
+Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). First-time
+contributors sign a lightweight [CLA](.github/CLA.md) by checking a box in the PR
+template.

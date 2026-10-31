@@ -11,18 +11,8 @@ exclude_docs: |
   # gitignore-style patterns match at any depth and would silently drop
   # spec/evidence/, spec/tasks/README.md and spec/design/consumer-*.
   /README.md
-  /agent-handoffs/
-  /research/
   /evidence/
-  /consumer-*.md
-  /coexistence-*.md
-  /HANDOFF-*.md
-  /phase0-summary.md
-  /phase1-progress.md
-  /hygiene-audit.md
-  # Dated internal handoff/investigation notes, the ADR template and the agent skill file.
-  /AGENTBROWSER_*.md
-  /SESSION_HANDOFF_*.md
+  # The ADR template and the agent skill file.
   /adr/000-template.md
   /skills/
 
@@ -142,22 +132,10 @@ nav:
     - 'Benchmarks': benchmarks.md
     - 'Synthetic input limitations': synthetic-input-limitations.md
     - 'Observation gotchas': observation-gotchas.md
-    - 'Firefox egress gate': firefox-egress-gate.md
-    - 'Firefox session BiDi gate': firefox-session-bidi-gate.md
-    - 'Firefox and application seams': firefox-and-application-seams.md
     - 'Application operations under delegated authority': application-operation-authority.md
   - Security & trust:
     - 'Threat model': threat-model.md
     - 'Policy': policy.md
-    - 'Egress transport design': egress-transport-design.md
-    - 'Egress transport feasibility': egress-transport-feasibility.md
-    - 'Egress transport reassessment': egress-transport-reassessment.md
-    - 'Connection authority design': connection-authority-design.md
-    - 'Snapshot release review': snapshot-release-review.md
-    - 'Engineering review remediation': engineering-review-remediation.md
-    - 'Shared session infrastructure': shared-session-infrastructure.md
-    - 'Transport integration contract': transport-integration-contract.md
-    - 'Session gateway (M2) scope': session-gateway-m2-scope.md
   - Architecture decisions:
     - '001 Typescript Playwright Mvp': adr/001-typescript-playwright-mvp.md
     - '002 Engine Neutral Protocol': adr/002-engine-neutral-protocol.md
@@ -393,11 +371,7 @@ nav:
     - 'T9 Runner Minutes': spec/evidence/t9-runner-minutes.md
     - 'T10 Bounty Workflow': spec/evidence/t10-bounty-workflow.md
   - History:
-    - 'MVP implementation plan (technical design)': technical-design.md
-    - 'Implementation roadmap': implementation-roadmap.md
     - 'Release milestones': release-milestones.md
-    - 'Full audit (2026-08)': audit.md
-    - 'Playwright integration inquiry': playwright-integration-inquiry.md
 
 # Fail the strict build when a page exists but is not in the nav (or the nav names a missing
 # page), so the site cannot silently drift from docs/ again.

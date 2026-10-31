@@ -23,14 +23,9 @@ start with the [root README](../README.md).
 | Understand the security posture and its limits | [Threat model](threat-model.md) |
 | Hand a step of a workflow to a human (credentials, approvals) | [Human handoff](human-handoff.md) |
 | Resume application operations under shared human/agent control | [Next design](application-operation-authority.md) and [promotion/recovery audit](evidence/coexistence-promotion.md) |
-| Choose transports and recover across clients, sessions and pages | [Shared session infrastructure](shared-session-infrastructure.md) |
 | Understand why a synthetic click can be ignored by a page | [Synthetic input limitations](synthetic-input-limitations.md) |
 | See what changed in a release | [Changelog](../CHANGELOG.md) |
 | Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |
-| Review deferred transport work and unresolved limitations | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
-| Understand the completed connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
-| See field findings from an intensive MCP consumer run (tabs, bot walls, session lifecycle) | [Consumer field handoff — 2026-09-24](consumer-field-handoff-2026-09-24.md) |
-| Implement the open consumer findings (paste-ready prompts, TDD + smoke gates) | [Consumer handoff: implementation briefs — 2026-09-25](consumer-field-handoff-2026-09-25-implementation-briefs.md) |
 | Implement the research-workload follow-ups through existing shared owners | [Consumer research intake and acceptance tasks](spec/design/consumer-research-intake.md) |
 
 ## Architecture Decision Records (ADRs)
@@ -67,16 +62,6 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-024](adr/024-server-policy-engine-cedar.md) | Server Policy Engine — Embedded Cedar, Queryable by Agents | Accepted | A fixed TypeScript floor (metadata, loopback and private by default, CDP-attach refusals) plus opt-in embedded Cedar for per-tenant grants and approval decisions; one versioned policy document with a built-in baseline; agents query `GET /v1/policy` and dry-run `check`; fail-closed engine errors |
 | [ADR-025](adr/025-operator-cookie-handoff.md) | Operator Login Browser and Policy-Gated Cookie Handoff | Accepted | An operator-only headed login browser on a persistent profile, driven over `--remote-debugging-pipe` (no readable port); operator-approved, one-time cookie copy into a fresh contained session whose exact-host allowlist lies within the handed-off domains; separate operator credential (key file or no-echo prompt, never env); high-risk and unknown actions operator-reviewed, with operator-granted leases |
 | [ADR-026](adr/026-policy-reload-without-restart.md) | Policy Reload Without Restart | Proposed | Opt-in reload of the Cedar policy file through one admin-key endpoint (no signal); full validation with no fail-open; new sessions get the new policy, live sessions are decided by their pinned policy AND every policy loaded since (limits: minimum), so per-call tightenings apply immediately and loosenings never reach a live session; creation-time grants are reported, not revoked |
-
-## Technical Design
-
-### [Technical Design and Implementation Plan](technical-design.md)
-
-Comprehensive implementation roadmap with:
-- **Task breakdown**: 26 detailed tasks (TD-001 through TD-026)
-- **Dependency ordering**: Critical path and parallel work identified
-- **TDD approach**: Test examples provided for each task
-- **Three phases**: Foundation, Core Functionality, Safety, Operability
 
 #### Quick Reference
 
@@ -150,7 +135,7 @@ These are never compromised:
 ## Task Definitions (post-MVP)
 
 Post-MVP tasks live in [td/](td/). The MVP task series (TD-001..TD-026) is
-complete and remains in [technical-design.md](technical-design.md).
+complete (the historical technical-design.md was removed 2026-10; see git history).
 
 - [TD-BROWSER-5](td/TD-BROWSER-5-single-binary-mcp-distribution.md) - Single-binary
   MCP server distribution (Bun `--compile`) + release CI. **Accepted,
@@ -179,11 +164,8 @@ complete and remains in [technical-design.md](technical-design.md).
   Observation secret redaction: one trusted sensitivity boundary at the
   DOM-binding point withholds password/credential values from observations,
   the ref store, fingerprints and native form evidence; honest boundaries for
-  what value redaction cannot cover. **Implemented** (1.15.2; incident
-  records: the
-  [password observation handoff](AGENTBROWSER_PASSWORD_OBSERVATION_HANDOFF_2026-10-06.md)
-  and the
-  [WebAuthn TLS investigation](AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md)).
+  what value redaction cannot cover. **Implemented** (1.15.2; incident records
+  from 2026-10-06 were removed with the interim-docs cleanup).
 - [TD-BROWSER-14](td/TD-BROWSER-14-compact-identifiers.md) - Compact identifiers
   and explicit CLI context ([ADR-022](adr/022-compact-identifiers-and-cli-context.md)).
   **Planned**, unscheduled.
@@ -197,12 +179,9 @@ complete and remains in [technical-design.md](technical-design.md).
 
 ## Audits
 
-- [audit.md](audit.md) - Vision-vs-implementation / security-and-spec audit
-  (2026-08-26). **Closed** — all P0/P1/P2 landed.
-- [hygiene-audit.md](hygiene-audit.md) - Engineering-hygiene audit (2026-08-31):
-  design patterns, data structures, cross-package contracts, dead code, resource
-  lifecycle. Findings grouped A–G, each grep-verified with an adversarial
-  rationalization; drives [ADR-015] and [TD-BROWSER-9].
+The 2026-08/09 audit records (vision-vs-implementation, engineering hygiene)
+are closed — all findings landed. The dated files were removed with the
+2026-10 interim-docs cleanup; see git history.
 
 ## Template
 

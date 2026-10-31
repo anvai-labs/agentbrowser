@@ -96,7 +96,7 @@ ports. `--allow-hosts` only narrows a session's permissions. Loopback and cloud
 metadata remain denied even with a broad CIDR. A `POLICY_DENIED` result can reflect
 other rules; inspect its bounded reason and operator configuration before acting.
 Do not invent an allow-loopback flag or use CDP attachment as a policy workaround.
-For exact enforcement semantics, see [LAN policy](HANDOFF-LAN-CIDR-ALLOWLIST.md).
+For exact enforcement semantics, see `AGENTBROWSER_ALLOWED_CIDRS` in the operations guide.
 
 ### Explicitly authorized loopback testing
 
@@ -583,7 +583,7 @@ reports. Outcome remains CLI/SDK/REST only unless measured demand justifies an M
 projection; other MCP result contracts remain to be qualified.
 
 For cross-version integration and common-helper reuse, use the on-demand
-[Claude foundation handoff](agent-handoffs/claude-foundation-reuse.md). It separates
+the Claude foundation handoff (formerly docs/agent-handoffs/). It separates
 published capabilities, installed binaries and the T3 candidate.
 
 ## Evaluate a completed case offline
