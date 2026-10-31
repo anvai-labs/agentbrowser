@@ -101,7 +101,7 @@ type PausedEvent = {
   responseHeaders?: Array<{ name: string; value: string }>;
 };
 
-export const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 /**
  * Live chains per target. A chain closes when its request finishes or fails;
  * a full table refuses new body-bearing requests (fail closed) and never
@@ -390,7 +390,10 @@ export class BodyRedirectGuard {
           this.options.blockDocumentWorkers &&
           !browserRedirect &&
           ![204, 205, 304].includes(event.responseStatusCode ?? 0) &&
-          event.resourceType?.toLowerCase() === 'document'
+          // Fail-closed: apply worker CSP when resourceType is absent (prefetch,
+          // prerender, internal loads) or explicitly Document. Only skip for
+          // resource types we know are non-document (XHR, Script, Image, etc.)
+          (event.resourceType === undefined || event.resourceType?.toLowerCase() === 'document')
         ) {
           const body = await scopedResponseBody(cdp, event.requestId);
           await cdp.send('Fetch.fulfillRequest', {

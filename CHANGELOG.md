@@ -14,11 +14,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   new bounded navigation reason `http_error_response` instead of the misleading
   `engine_error`. The origin answered; the browser did not crash.
 
-- Scope `requestHeaders` now honors `hostSuffix` for enforcement, not just injection.
-  Cross-origin requests to non-matching hosts (hCaptcha challenge API, OAuth providers,
-  payment iframes) pass through with zero header-policy interaction — no more
-  `POLICY_HEADERS_UNCHECKABLE` blocking. Carried markers are still stripped
-  leak-prevention-safe; CORS preflights are never injected.
+- Body redirect guard no longer blocks cross-origin POST responses. When the guard's
+  `Fetch.continueResponse` fails (a CDP limitation for POST responses that carried
+  request-stage header overrides), it now falls back to `Fetch.continueRequest`
+  pass-through instead of blocking. Redirect-chain enforcement (per-hop scope
+  verdicts, hop caps, loop detection) is unchanged and still runs before any
+  continue. Fixes hCaptcha, OAuth, and payment-iframe POST flows.
+
+- Worker CSP (`blockDocumentWorkers`) in the guard now applies only to `Document`
+  resource types (and absent resourceType — fail-closed). XHR/fetch API responses
+  no longer go through the 8 MiB body re-commitment path, eliminating a major
+  source of cross-origin POST blocking. Route-handler CSP coverage is unchanged.
 
 ## [1.29.0] — 2026-10-31
 
