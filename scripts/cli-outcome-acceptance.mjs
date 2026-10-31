@@ -9,10 +9,7 @@ import {
   createCliEnvironment,
 } from '../examples/node-test/application-outcome.mjs';
 import { qualifyApplicationRecipe } from './application-recipe-acceptance.mjs';
-import {
-  runExecutable,
-  validateCliTestEvaluationDiscovery,
-} from './release-smoke.mjs';
+import { runExecutable, validateCliTestEvaluationDiscovery } from './release-smoke.mjs';
 
 /** Agent processes inherit runtime essentials, never the operator/server environment. */
 export function runAgentCli(command, { env, token, ...options }) {
@@ -38,7 +35,15 @@ const cases = [
 
 /** Evaluate only after execution ownership has fully settled; return only a complete batch. */
 export async function evaluateBufferedTestCaseBundles(
-  { settlement = Promise.resolve(), bundles, expectedCount = bundles.length, cli, directory, env, expectedVersion },
+  {
+    settlement = Promise.resolve(),
+    bundles,
+    expectedCount = bundles.length,
+    cli,
+    directory,
+    env,
+    expectedVersion,
+  },
   { runner = runAgentCli } = {}
 ) {
   await settlement;
@@ -244,9 +249,13 @@ export async function checkCliApplicationOutcome(
           let assertion = { id: 'save', status: 'skipped', reasonCode: 'PRECONDITION_UNAVAILABLE' };
           const invocations = [];
           const outerId = `cli-outcome-${name}`;
-          const positive = ['pass', 'pass-repeat', 'navigation-reset', 'lost-response', 'cleanup-failure'].includes(
-            name
-          );
+          const positive = [
+            'pass',
+            'pass-repeat',
+            'navigation-reset',
+            'lost-response',
+            'cleanup-failure',
+          ].includes(name);
           const denied = ['historical', 'wrong-resource', 'api-shortcut'].includes(name);
           let execution;
           let verification;
@@ -255,9 +264,9 @@ export async function checkCliApplicationOutcome(
           let caseError;
           let observedEnvironment = environment;
           let navigationReset;
-          const otherResource =
-            ['wrong-resource', 'navigation-reset'].includes(name)
-              ? await proc.rpc('oracle', { name: 'pass' }) : undefined;
+          const otherResource = ['wrong-resource', 'navigation-reset'].includes(name)
+            ? await proc.rpc('oracle', { name: 'pass' })
+            : undefined;
           try {
             const { url } = await proc.rpc('fixture', { name });
             fixtures.set(name, url); // acquire first, register immediately, even if setup fails
@@ -346,17 +355,46 @@ export async function checkCliApplicationOutcome(
               if (name === 'navigation-reset') {
                 const before = await proc.rpc('oracle', { name });
                 const oldRef = button.ref;
-                const navigated = JSON.parse((await invoke([
-                  '--operation-id', 'navigation-reset', 'navigate',
-                  session.sessionId, page.pageId, url, '--wait-until', 'networkidle',
-                ], grant.token)).stdout);
+                const navigated = JSON.parse(
+                  (
+                    await invoke(
+                      [
+                        '--operation-id',
+                        'navigation-reset',
+                        'navigate',
+                        session.sessionId,
+                        page.pageId,
+                        url,
+                        '--wait-until',
+                        'networkidle',
+                      ],
+                      grant.token
+                    )
+                  ).stdout
+                );
                 assert.equal(navigated.status, 'success');
                 assert.equal(new URL(navigated.url).origin, url);
-                const refreshed = JSON.parse((await invoke([
-                  'snapshot', session.sessionId, page.pageId,
-                  '--max-elements', '30', '--max-bytes', '12000',
-                ], grant.token)).stdout);
-                assert.equal(new URL(refreshed.url).origin, url, 'Reset must reach the target fixture');
+                const refreshed = JSON.parse(
+                  (
+                    await invoke(
+                      [
+                        'snapshot',
+                        session.sessionId,
+                        page.pageId,
+                        '--max-elements',
+                        '30',
+                        '--max-bytes',
+                        '12000',
+                      ],
+                      grant.token
+                    )
+                  ).stdout
+                );
+                assert.equal(
+                  new URL(refreshed.url).origin,
+                  url,
+                  'Reset must reach the target fixture'
+                );
                 assert.ok(refreshed.revision > initialSnapshot.revision);
                 assert.notEqual(refreshed.truncated, true);
                 assert.notEqual(refreshed.degraded, true);
@@ -365,16 +403,32 @@ export async function checkCliApplicationOutcome(
                 );
                 assert.ok(button, 'Reset must reacquire the current button');
                 assert.notEqual(button.ref, oldRef);
-                const refused = await invoke([
-                  '--operation-id', 'navigation-stale-probe', 'act', 'click',
-                  session.sessionId, page.pageId, oldRef,
-                ], grant.token, undefined, 1);
+                const refused = await invoke(
+                  [
+                    '--operation-id',
+                    'navigation-stale-probe',
+                    'act',
+                    'click',
+                    session.sessionId,
+                    page.pageId,
+                    oldRef,
+                  ],
+                  grant.token,
+                  undefined,
+                  1
+                );
                 assert.equal(refused.stdout, '');
                 assert.match(refused.stderr, /STALE_TARGET/u);
-                assert.deepEqual(await proc.rpc('oracle', { name }), before,
-                  'Stale reference must not dispatch, read evidence or mutate the target');
-                assert.deepEqual(await proc.rpc('oracle', { name: 'pass' }), otherResource,
-                  'Navigation and stale reference must not mutate the source fixture');
+                assert.deepEqual(
+                  await proc.rpc('oracle', { name }),
+                  before,
+                  'Stale reference must not dispatch, read evidence or mutate the target'
+                );
+                assert.deepEqual(
+                  await proc.rpc('oracle', { name: 'pass' }),
+                  otherResource,
+                  'Navigation and stale reference must not mutate the source fixture'
+                );
                 navigationReset = {
                   previousRevision: initialSnapshot.revision,
                   revision: refreshed.revision,
@@ -440,13 +494,21 @@ export async function checkCliApplicationOutcome(
               }
               oracle = await proc.rpc('oracle', { name });
               assert.equal(oracle.claims, denied ? 0 : 1, `${name}: admitted claims`);
-              assert.equal(oracle.actions, denied || name === 'failed-action' ? 0 : 1, `${name}: independent action dispatch`);
+              assert.equal(
+                oracle.actions,
+                denied || name === 'failed-action' ? 0 : 1,
+                `${name}: independent action dispatch`
+              );
               assert.equal(
                 oracle.shortcuts,
                 name === 'historical' || name === 'api-shortcut' ? 1 : 0
               );
               if (name === 'historical') {
-                assert.deepEqual(oracle.genericReceipt, { ...intent.command, version: 1, total: 2 });
+                assert.deepEqual(oracle.genericReceipt, {
+                  ...intent.command,
+                  version: 1,
+                  total: 2,
+                });
               }
               if (name === 'api-shortcut') assert.equal(oracle.genericReceipt, null);
               if (denied || name === 'failed-action') assert.equal(oracle.reads, 0);
@@ -524,10 +586,14 @@ export async function checkCliApplicationOutcome(
             assertions: [assertion],
             cleanup,
           };
-          const expectedVerdict =
-            ['pass', 'pass-repeat', 'navigation-reset', 'lost-response'].includes(name)
-              ? 'passed'
-              : 'failed';
+          const expectedVerdict = [
+            'pass',
+            'pass-repeat',
+            'navigation-reset',
+            'lost-response',
+          ].includes(name)
+            ? 'passed'
+            : 'failed';
           if (name === 'cleanup-failure')
             assert.equal(report.assertions[0].report.outcome.verification.evidenceRefIds.length, 1);
           bufferedBundles.push({
@@ -558,8 +624,11 @@ export async function checkCliApplicationOutcome(
         // The existing managed-child RPC channel permits one outstanding receive.
         // Settle every fixture serially, even if an earlier close fails.
         for (const name of [...fixtures.keys()]) {
-          try { await closeFixture(name); }
-          catch (reason) { finalizers.push({ status: 'rejected', reason }); }
+          try {
+            await closeFixture(name);
+          } catch (reason) {
+            finalizers.push({ status: 'rejected', reason });
+          }
         }
         if (firstFailure) throw firstFailure;
         const failed = finalizers.find((entry) => entry.status === 'rejected');
@@ -576,8 +645,14 @@ export async function checkCliApplicationOutcome(
       matrixElapsedMs = Math.round(performance.now() - matrixStarted);
       proc.phase('application-recipe');
       applicationRecipe = await qualifyApplicationRecipe({
-        proc, cli, directory, env, key, baseUrl: ready.baseUrl,
-        fixture: ready.fixture, expectedVersion,
+        proc,
+        cli,
+        directory,
+        env,
+        key,
+        baseUrl: ready.baseUrl,
+        fixture: ready.fixture,
+        expectedVersion,
       });
     }
   );
@@ -606,7 +681,8 @@ export async function checkCliApplicationOutcome(
       matrixCliLaunches,
       matrixCliLaunchesBasis: 'observed onSpawn callbacks; excludes executable internals',
       modelContextBytes: 0,
-      modelContextBasis: 'deterministic matrix has no model invocation; discovery/config bytes are separate',
+      modelContextBasis:
+        'deterministic matrix has no model invocation; discovery/config bytes are separate',
     },
     cliDiscoveryCalls: 2,
     modelCalls: 0,

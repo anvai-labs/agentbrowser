@@ -1,7 +1,11 @@
 /** Application-owned Node test using an installed CLI and a preconfigured service. */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cleanupRecipeFiles, publishRecipeArtifacts, readPrivateRecipeBytes } from './report-artifacts.mjs';
+import {
+  cleanupRecipeFiles,
+  publishRecipeArtifacts,
+  readPrivateRecipeBytes,
+} from './report-artifacts.mjs';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -596,7 +600,11 @@ export async function runCounterCase(rawConfig, options = {}) {
 async function readPrivateConfig(path) {
   try {
     if (typeof path !== 'string' || !isAbsolute(path)) fail();
-    return parseConfig(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readPrivateRecipeBytes(path))));
+    return parseConfig(
+      JSON.parse(
+        new TextDecoder('utf-8', { fatal: true }).decode(await readPrivateRecipeBytes(path))
+      )
+    );
   } catch {
     return fail('Application outcome recipe configuration is invalid.');
   }
@@ -622,7 +630,9 @@ async function main() {
     try {
       const result = await runCounterCase(config, { signal: controller.signal });
       controller.signal.throwIfAborted();
-      artifact = await publishRecipeArtifacts(config.reportPath, result, { signal: controller.signal });
+      artifact = await publishRecipeArtifacts(config.reportPath, result, {
+        signal: controller.signal,
+      });
       controller.signal.throwIfAborted();
       context.diagnostic(`Private evaluation artifact: sha256:${artifact.evaluation.sha256}`);
       assert.equal(result.evaluation.verdict, 'passed', 'Application outcome did not pass.');

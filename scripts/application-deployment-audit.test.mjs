@@ -22,11 +22,19 @@ test('accepts an internal workspace link without a browser dependency', async (t
   await auditApplicationDeployment(deployment, deployment);
 });
 
-for (const name of ['playwright-core', 'puppeteer-core', '@agentbrowser/api', '@agentbrowser/engine-firefox']) {
+for (const name of [
+  'playwright-core',
+  'puppeteer-core',
+  '@agentbrowser/api',
+  '@agentbrowser/engine-firefox',
+]) {
   test(`rejects installed ${name} even when the entrypoint does not import it`, async (t) => {
     const { deployment } = await fixture(t);
     await writeFile(join(deployment, 'package.json'), JSON.stringify({ name }));
-    await assert.rejects(auditApplicationDeployment(deployment, deployment), /Browser dependency installed/);
+    await assert.rejects(
+      auditApplicationDeployment(deployment, deployment),
+      /Browser dependency installed/
+    );
   });
 }
 
@@ -44,7 +52,10 @@ for (const name of ['@agentbrowser/core', 'playwright-core']) {
     await writeFile(join(deployment, 'metadata.json'), JSON.stringify({ name }));
     await symlink('../metadata.json', join(dependency, 'package.json'));
     if (name === 'playwright-core') {
-      await assert.rejects(auditApplicationDeployment(deployment, deployment), /Browser dependency installed/);
+      await assert.rejects(
+        auditApplicationDeployment(deployment, deployment),
+        /Browser dependency installed/
+      );
     } else {
       await auditApplicationDeployment(deployment, deployment);
     }

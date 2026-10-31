@@ -96,10 +96,15 @@ const imports = countWorkspaceImports(
 const leaks = imports.filter((r) => !r.declared);
 if (leaks.length > 0) {
   const pairs = new Map();
-  for (const l of leaks) pairs.set(`${l.pkg} -> ${l.target}`, (pairs.get(`${l.pkg} -> ${l.target}`) ?? 0) + 1);
-  console.error(`LAYERING RATCHET: ${leaks.length} undeclared workspace import(s) across ${pairs.size} pair(s):`);
+  for (const l of leaks)
+    pairs.set(`${l.pkg} -> ${l.target}`, (pairs.get(`${l.pkg} -> ${l.target}`) ?? 0) + 1);
+  console.error(
+    `LAYERING RATCHET: ${leaks.length} undeclared workspace import(s) across ${pairs.size} pair(s):`
+  );
   for (const [k, n] of pairs) console.error(`  ${n} imports  ${k}`);
   console.error("Declare the dependency in the importer's package.json, or remove the import.");
   process.exit(1);
 }
-console.log(`layering ratchet: ${imports.length} workspace imports (incl. deep paths), 0 undeclared — OK`);
+console.log(
+  `layering ratchet: ${imports.length} workspace imports (incl. deep paths), 0 undeclared — OK`
+);

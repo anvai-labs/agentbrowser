@@ -68,13 +68,15 @@ async function shippedNames(dir) {
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     if (entry.name.startsWith('@')) {
-      for (const scoped of await readdir(join(dir, 'node_modules', entry.name))) names.push(`${entry.name}/${scoped}`);
+      for (const scoped of await readdir(join(dir, 'node_modules', entry.name)))
+        names.push(`${entry.name}/${scoped}`);
     } else names.push(entry.name);
   }
   return names;
 }
 
-const runsOnTarget = (manifest) => admits(manifest.os, TARGET.os) && admits(manifest.cpu, TARGET.cpu);
+const runsOnTarget = (manifest) =>
+  admits(manifest.os, TARGET.os) && admits(manifest.cpu, TARGET.cpu);
 
 /** Names a package ships inside itself (npm bundleDependencies; `true` = all). */
 function bundledNames(manifest) {
@@ -131,7 +133,9 @@ async function readGraph(root) {
       const dir = await lookup(node.dir, name, root);
       if (dir === undefined) {
         if (kind === 'required') {
-          throw new Error(`${node.label} requires ${name}, which the deployed tree does not contain`);
+          throw new Error(
+            `${node.label} requires ${name}, which the deployed tree does not contain`
+          );
         }
         if (kind === 'optional' && name.includes('win32')) {
           throw new Error(
@@ -176,7 +180,11 @@ function place(rootNode, packageCount) {
       // conflicting copy, and under which no earlier resolution of this
       // name passes through to a higher holder (it would be shadowed).
       let into = holder;
-      for (let level = holder.parent; level && level.modules.get(name) === undefined; level = level.parent) {
+      for (
+        let level = holder.parent;
+        level && level.modules.get(name) === undefined;
+        level = level.parent
+      ) {
         // Compare by the directory that holds a package (its parent), not
         // the package itself.
         const shadows = resolved.some(
@@ -194,7 +202,10 @@ function place(rootNode, packageCount) {
         parent: into,
         depth: into.depth + 1,
       };
-      if (placement.depth > MAX_NESTING || placements.length >= packageCount * MAX_PLACEMENTS_PER_PACKAGE) {
+      if (
+        placement.depth > MAX_NESTING ||
+        placements.length >= packageCount * MAX_PLACEMENTS_PER_PACKAGE
+      ) {
         throw new Error(
           `no finite hoisted layout: ${target.label} (needed by ${holder.node.label}) keeps requiring nested copies — a dependency cycle between conflicting versions`
         );
@@ -224,7 +235,9 @@ async function copyTree(from, to, node, top) {
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const source = join(from, entry.name);
     if (entry.isSymbolicLink()) {
-      throw new Error(`${node.label} contains a link (${relative(top, source)}); a Windows tree cannot carry links`);
+      throw new Error(
+        `${node.label} contains a link (${relative(top, source)}); a Windows tree cannot carry links`
+      );
     }
     if (entry.isDirectory()) await copyTree(source, join(to, entry.name), node, top);
     else if (entry.isFile()) await copyFile(source, join(to, entry.name));
@@ -246,14 +259,18 @@ async function copyPackage(from, to, node, bundled) {
       continue;
     }
     if (entry.isSymbolicLink()) {
-      throw new Error(`${node.label} contains a link (${entry.name}); a Windows tree cannot carry links`);
+      throw new Error(
+        `${node.label} contains a link (${entry.name}); a Windows tree cannot carry links`
+      );
     }
     if (entry.isDirectory()) await copyTree(source, join(to, entry.name), node, from);
     else if (entry.isFile()) await copyFile(source, join(to, entry.name));
   }
   for (const name of bundled) {
     if (!(await isPackageDir(join(from, 'node_modules', name)))) {
-      throw new Error(`${node.label} bundles ${name}, but the deployed package does not contain it`);
+      throw new Error(
+        `${node.label} bundles ${name}, but the deployed package does not contain it`
+      );
     }
   }
 }
@@ -281,6 +298,12 @@ export async function materializeHoisted(isolatedRoot, output) {
       );
     }
   }
-  const labels = [...new Set(placements.filter((p) => p.node !== rootNode).map((p) => p.node.label))].sort();
-  return { packages: labels, placements: placements.length - 1, nested: placements.filter((p) => p.parent && p.parent.path !== '').length };
+  const labels = [
+    ...new Set(placements.filter((p) => p.node !== rootNode).map((p) => p.node.label)),
+  ].sort();
+  return {
+    packages: labels,
+    placements: placements.length - 1,
+    nested: placements.filter((p) => p.parent && p.parent.path !== '').length,
+  };
 }

@@ -42,8 +42,13 @@ export function validateNativeNodeReport(junit, { cases, failureMessage, diagnos
       }
     }
     for (const [name, count] of Object.entries({
-      tests: cases.length, suites: 0, pass: cases.length - failed, fail: failed,
-      cancelled: 0, skipped: 0, todo: 0,
+      tests: cases.length,
+      suites: 0,
+      pass: cases.length - failed,
+      fail: failed,
+      cancelled: 0,
+      skipped: 0,
+      todo: 0,
     })) {
       const matches = [...junit.matchAll(new RegExp(`<!--\\s*${name} (\\d+)\\s*-->`, 'gu'))];
       assert.equal(matches.length, 1);
@@ -52,17 +57,24 @@ export function validateNativeNodeReport(junit, { cases, failureMessage, diagnos
     if (diagnostic !== undefined) {
       assert.match(diagnostic, /^Private evaluation artifact: sha256:[a-f0-9]{64}$/u);
       const diagnostics = [...junit.matchAll(/<!--\s*(Private evaluation artifact:[\s\S]*?)-->/gu)];
-      assert.deepEqual(diagnostics.map((entry) => entry[1].trim()), [diagnostic]);
+      assert.deepEqual(
+        diagnostics.map((entry) => entry[1].trim()),
+        [diagnostic]
+      );
     }
     return { tests: cases.length, passed: cases.length - failed, failed, cancelled: 0, skipped: 0 };
-  } catch { throw failure(); }
+  } catch {
+    throw failure();
+  }
 }
 
 /** Summarize bytes only after structural/lifecycle validation; do not retain private XML. */
 export function summarizeNativeNodeReport(junit) {
-  if (typeof junit !== 'string' || !junit.length || Buffer.byteLength(junit) > MAX_BYTES) throw failure();
+  if (typeof junit !== 'string' || !junit.length || Buffer.byteLength(junit) > MAX_BYTES)
+    throw failure();
   return {
-    mediaType: 'application/xml', sizeBytes: Buffer.byteLength(junit),
+    mediaType: 'application/xml',
+    sizeBytes: Buffer.byteLength(junit),
     sha256: createHash('sha256').update(junit).digest('hex'),
   };
 }

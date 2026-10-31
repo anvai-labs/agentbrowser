@@ -22,13 +22,15 @@ function* walk(dir) {
 
 /** GitHub-style slug of a markdown heading. */
 function slugify(text) {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/`/g, '')
-    // drop emoji/punctuation except word chars, spaces, hyphens, underscores
-    .replace(/[^\p{L}\p{N}\s\-_]/gu, '')
-    .replace(/\s+/g, '-');
+  return (
+    text
+      .toLowerCase()
+      .trim()
+      .replace(/`/g, '')
+      // drop emoji/punctuation except word chars, spaces, hyphens, underscores
+      .replace(/[^\p{L}\p{N}\s\-_]/gu, '')
+      .replace(/\s+/g, '-')
+  );
 }
 
 /** Collect heading slugs for a file (ATX headings inside fenced code excluded). */
@@ -80,7 +82,12 @@ for (const file of walk(ROOT)) {
     if (pathPart === '') {
       // same-file anchor
       if (!anchorExists(slugs, decodeURIComponent(anchorPart ?? ''))) {
-        broken.push({ file: relative(ROOT, file), target, label, why: 'missing anchor in same file' });
+        broken.push({
+          file: relative(ROOT, file),
+          target,
+          label,
+          why: 'missing anchor in same file',
+        });
       }
       continue;
     }
@@ -101,7 +108,12 @@ for (const file of walk(ROOT)) {
     if (anchorPart) {
       const targetSlugs = headingSlugs(hit);
       if (!anchorExists(targetSlugs, decodeURIComponent(anchorPart))) {
-        broken.push({ file: relative(ROOT, file), target, label, why: `missing anchor in ${relative(ROOT, hit)}` });
+        broken.push({
+          file: relative(ROOT, file),
+          target,
+          label,
+          why: `missing anchor in ${relative(ROOT, hit)}`,
+        });
       }
     }
   }

@@ -3,13 +3,16 @@ import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { ChildCdp } from './probes/child-cdp.mjs';
 
-const setup = options => {
+const setup = (options) => {
   const parent = new EventEmitter();
   const sent = [];
-  parent.send = async (method, params) => { sent.push({ method, ...params }); };
+  parent.send = async (method, params) => {
+    sent.push({ method, ...params });
+  };
   return { parent, sent, child: new ChildCdp(parent, 'owned', options) };
 };
-const reply = (parent, sessionId, message) => parent.emit('Target.receivedMessageFromTarget', { sessionId, message: JSON.stringify(message) });
+const reply = (parent, sessionId, message) =>
+  parent.emit('Target.receivedMessageFromTarget', { sessionId, message: JSON.stringify(message) });
 
 test('commands and events are scoped to the owned child session', async () => {
   const { parent, child, sent } = setup();
@@ -21,7 +24,7 @@ test('commands and events are scoped to the owned child session', async () => {
   reply(parent, 'owned', { id: 1, result: { ok: true } });
   assert.deepEqual(await result, { ok: true });
   const events = [];
-  child.on('Network.loadingFailed', event => events.push(event));
+  child.on('Network.loadingFailed', (event) => events.push(event));
   reply(parent, 'owned', { method: 'Network.loadingFailed', params: { requestId: 'r1' } });
   assert.deepEqual(events, [{ requestId: 'r1' }]);
   child.close();
@@ -32,7 +35,9 @@ test('protocol errors and parent-send failures settle the command', async () => 
   const command = child.send('Network.enable');
   reply(parent, 'owned', { id: 1, error: { message: 'unsupported' } });
   await assert.rejects(command, /unsupported/);
-  parent.send = async () => { throw new Error('transport failed'); };
+  parent.send = async () => {
+    throw new Error('transport failed');
+  };
   await assert.rejects(child.send('Network.enable'), /transport failed/);
   assert.equal(child.pendingCount, 0);
   child.close();
@@ -81,7 +86,10 @@ test('nested sessions route through their owning child and await the inner reply
   assert.equal(JSON.parse(outer.params.message).method, 'Target.setAutoAttach');
   reply(parent, 'owned', { id: outer.id, result: {} });
   assert.equal(nested.pendingCount, 1, 'outer acknowledgement does not settle nested command');
-  reply(parent, 'owned', { method: 'Target.receivedMessageFromTarget', params: { sessionId: 'nested', message: JSON.stringify({ id: 1, result: { ok: true } }) } });
+  reply(parent, 'owned', {
+    method: 'Target.receivedMessageFromTarget',
+    params: { sessionId: 'nested', message: JSON.stringify({ id: 1, result: { ok: true } }) },
+  });
   assert.deepEqual(await pending, { ok: true });
   nested.close();
   child.close();

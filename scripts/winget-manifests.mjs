@@ -63,12 +63,21 @@ const COMMANDS = [
 const zipFile = arg('zip-file');
 let zipSha = arg('zip-sha256');
 
-if (!version) { console.error('--version is required'); exit(1); }
+if (!version) {
+  console.error('--version is required');
+  exit(1);
+}
 if (!zipSha) {
-  if (!zipFile) { console.error('need --zip-file or --zip-sha256'); exit(1); }
+  if (!zipFile) {
+    console.error('need --zip-file or --zip-sha256');
+    exit(1);
+  }
   zipSha = sha256(zipFile);
 }
-if (!/^[0-9A-Fa-f]{64}$/.test(zipSha)) { console.error(`zip sha256 malformed: ${zipSha}`); exit(1); }
+if (!/^[0-9A-Fa-f]{64}$/.test(zipSha)) {
+  console.error(`zip sha256 malformed: ${zipSha}`);
+  exit(1);
+}
 zipSha = zipSha.toUpperCase();
 
 mkdirSync(outDir, { recursive: true });
@@ -78,15 +87,13 @@ const nestedFiles = COMMANDS.map(
 ).join('');
 
 const yamls = {
-  'AnvaiLabs.AgentBrowser.yaml':
-`PackageIdentifier: AnvaiLabs.AgentBrowser
+  'AnvaiLabs.AgentBrowser.yaml': `PackageIdentifier: AnvaiLabs.AgentBrowser
 PackageVersion: ${version}
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: ${MANIFEST_VERSION}
 `,
-  'AnvaiLabs.AgentBrowser.installer.yaml':
-`PackageIdentifier: AnvaiLabs.AgentBrowser
+  'AnvaiLabs.AgentBrowser.installer.yaml': `PackageIdentifier: AnvaiLabs.AgentBrowser
 PackageVersion: ${version}
 InstallerLocale: en-US
 Platform:
@@ -102,8 +109,7 @@ ${nestedFiles}  InstallerUrl: ${zipUrl}
 ManifestType: installer
 ManifestVersion: ${MANIFEST_VERSION}
 `,
-  'AnvaiLabs.AgentBrowser.locale.en-US.yaml':
-`PackageIdentifier: AnvaiLabs.AgentBrowser
+  'AnvaiLabs.AgentBrowser.locale.en-US.yaml': `PackageIdentifier: AnvaiLabs.AgentBrowser
 PackageVersion: ${version}
 PackageLocale: en-US
 Publisher: Anvai Labs

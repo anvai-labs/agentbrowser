@@ -96,9 +96,7 @@
               },
               "requiredLayer": "G4",
               "achievedLayer": "G4",
-              "evidenceRefIds": [
-                "event-1"
-              ]
+              "evidenceRefIds": ["event-1"]
             }
           }
         }

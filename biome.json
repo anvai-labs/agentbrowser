@@ -8,14 +8,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": [
-      "**",
-      "!**/node_modules",
-      "!**/dist",
-      "!**/*.md",
-      "!**/.git",
-      "!**/coverage"
-    ]
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/*.md", "!**/.git", "!**/coverage"]
   },
   "formatter": {
     "indentStyle": "space",
@@ -29,7 +22,7 @@
       "react": "none"
     },
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
         "noAdjacentSpacesInRegex": "error",
         "noArguments": "error",
@@ -133,11 +126,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "**/*.test.ts",
-        "**/*.test.tsx",
-        "**/test-support/**"
-      ],
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/test-support/**"],
       "linter": {
         "rules": {
           "style": {
@@ -145,6 +134,79 @@
           },
           "suspicious": {
             "noExplicitAny": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["docs/**", "examples/**", "scripts/**", ".github/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off",
+            "noUnusedFunctionParameters": "off",
+            "noUnsafeFinally": "off",
+            "useParseIntRadix": "off"
+          },
+          "suspicious": {
+            "noControlCharactersInRegex": "off",
+            "noAssignInExpressions": "off",
+            "useIterableCallbackReturn": "off",
+            "noExportsInTest": "off",
+            "noVar": "off"
+          },
+          "complexity": {
+            "useArrowFunction": "off",
+            "useOptionalChain": "off",
+            "noUselessStringRaw": "off",
+            "noForEach": "off",
+            "noImportantStyles": "off",
+            "noAdjacentSpacesInRegex": "off"
+          },
+          "style": {
+            "useSingleVarDeclarator": "off",
+            "useTemplate": "off",
+            "noParameterAssign": "off",
+            "noUnusedTemplateLiteral": "off",
+            "useNumberNamespace": "off"
+          },
+          "performance": {
+            "noDelete": "off"
+          },
+          "a11y": {
+            "noSvgWithoutTitle": "off"
+          }
+        }
+      },
+      "assist": {
+        "actions": {
+          "source": {
+            "organizeImports": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off",
+            "noUnusedFunctionParameters": "off",
+            "noUnusedPrivateClassMembers": "off"
+          },
+          "style": {
+            "useSingleVarDeclarator": "off",
+            "noUnusedTemplateLiteral": "off"
+          }
+        }
+      },
+      "assist": {
+        "actions": {
+          "source": {
+            "organizeImports": "off"
           }
         }
       }

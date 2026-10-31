@@ -55,7 +55,9 @@ export async function pruneCedarWasm(...roots) {
     }
     for (const entry of store) {
       if (entry.isDirectory() && entry.name.startsWith('@cedar-policy+cedar-wasm@')) {
-        scopes.push(join(root, 'node_modules', '.pnpm', entry.name, 'node_modules', '@cedar-policy'));
+        scopes.push(
+          join(root, 'node_modules', '.pnpm', entry.name, 'node_modules', '@cedar-policy')
+        );
       }
     }
     for (const scope of scopes) {

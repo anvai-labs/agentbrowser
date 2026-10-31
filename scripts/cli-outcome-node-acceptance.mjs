@@ -19,28 +19,44 @@ const MAX_BYTES = 64 * 1024;
 
 /** Strict transport shape; the reporter does not evaluate or certify case truth. */
 export function validNodeOutcomeProjection(cases) {
-  return Array.isArray(cases) && cases.length === NODE_OUTCOME_CONTROLS.length &&
-    cases.every((entry, index) => entry &&
-      Object.keys(entry).sort().join(',') === 'name,passing' &&
-      entry.name === NODE_OUTCOME_CONTROLS[index].name && typeof entry.passing === 'boolean');
+  return (
+    Array.isArray(cases) &&
+    cases.length === NODE_OUTCOME_CONTROLS.length &&
+    cases.every(
+      (entry, index) =>
+        entry &&
+        Object.keys(entry).sort().join(',') === 'name,passing' &&
+        entry.name === NODE_OUTCOME_CONTROLS[index].name &&
+        typeof entry.passing === 'boolean'
+    )
+  );
 }
 
 /** Narrow qualification of our fixed local Node reporter, not a general XML importer. */
 export function validateNodeOutcomeArtifacts({ sidecar, junit, expectedVersion }) {
   try {
-    assert.ok(isDeepStrictEqual(sidecar, {
-      schemaVersion: 1, productVersion: expectedVersion, runtime: process.version,
-      cases: NODE_OUTCOME_CONTROLS,
-    }));
+    assert.ok(
+      isDeepStrictEqual(sidecar, {
+        schemaVersion: 1,
+        productVersion: expectedVersion,
+        runtime: process.version,
+        cases: NODE_OUTCOME_CONTROLS,
+      })
+    );
     return validateNativeNodeReport(junit, {
-      cases: NODE_OUTCOME_CONTROLS, failureMessage: NODE_OUTCOME_FAILURE,
+      cases: NODE_OUTCOME_CONTROLS,
+      failureMessage: NODE_OUTCOME_FAILURE,
     });
-  } catch { throw failure(); }
+  } catch {
+    throw failure();
+  }
 }
 
 /** Called only after the live coordinator has returned; never starts a service/browser. */
 export async function qualifyCliOutcomeWithNodeTest(
-  result, { directory, env, expectedVersion }, { runner = runAgentCli } = {}
+  result,
+  { directory, env, expectedVersion },
+  { runner = runAgentCli } = {}
 ) {
   let transport;
   try {
@@ -55,11 +71,16 @@ export async function qualifyCliOutcomeWithNodeTest(
     const configPath = join(transport, 'config.json');
     const resultPath = join(transport, 'result.json');
     await writeFile(configPath, JSON.stringify({ expectedVersion, resultPath, cases }), {
-      flag: 'wx', mode: 0o600,
+      flag: 'wx',
+      mode: 0o600,
     });
-    const output = await runner([
-      process.execPath, '--test-reporter=junit', probe, configPath,
-    ], { cwd: directory, env, expectedExitCode: 1, timeoutMs: 20_000, maxOutputBytes: MAX_BYTES });
+    const output = await runner([process.execPath, '--test-reporter=junit', probe, configPath], {
+      cwd: directory,
+      env,
+      expectedExitCode: 1,
+      timeoutMs: 20_000,
+      maxOutputBytes: MAX_BYTES,
+    });
     assert.equal(output.code, 1);
     assert.equal(output.stderr, '');
     const bytes = await readFile(resultPath);
@@ -71,16 +92,23 @@ export async function qualifyCliOutcomeWithNodeTest(
       conventionalRunner: {
         purpose: 'failure-propagation-controls',
         liveExecutionOwner: 'package-acceptance',
-        reporter: 'junit', runtime: sidecar.runtime, exitCode: output.code, counts,
+        reporter: 'junit',
+        runtime: sidecar.runtime,
+        exitCode: output.code,
+        counts,
         cases,
         artifact: summarizeNativeNodeReport(output.stdout),
       },
     };
-  } catch { throw failure(); }
-  finally {
+  } catch {
+    throw failure();
+  } finally {
     if (transport) {
-      try { await rm(transport, { recursive: true, force: true }); }
-      catch { throw failure(); }
+      try {
+        await rm(transport, { recursive: true, force: true });
+      } catch {
+        throw failure();
+      }
     }
   }
 }

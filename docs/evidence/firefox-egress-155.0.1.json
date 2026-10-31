@@ -2,10 +2,7 @@
   "candidate": "public-interception-v1",
   "driver": "25.11.0",
   "browser": "firefox/155.0.1",
-  "versions": [
-    "firefox/155.0.1",
-    "firefox/155.0.1"
-  ],
+  "versions": ["firefox/155.0.1", "firefox/155.0.1"],
   "channels": [
     {
       "channel": "navigation",
