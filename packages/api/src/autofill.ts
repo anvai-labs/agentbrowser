@@ -128,7 +128,7 @@ function committedMember(
  * shared typeahead. Each confirmed step is recorded; a failure part-way is reported with its
  * effects so far and never compensated by guesswork.
  */
-const runExactSet: NonNullable<WidgetStrategy['run']> = async (field, ref, identity, scope) => {
+const runExactSet: NonNullable<WidgetStrategy['run']> = async (field, _ref, identity, scope) => {
   const desired = field.options?.values ?? [];
   const membersOf = (elements: PageElement[]) => {
     const control = scope.resolve(elements, field.match, identity);
@@ -279,7 +279,7 @@ const strategies: readonly WidgetStrategy[] = [
       !!e.attributes?.['aria-autocomplete'] &&
       e.attributes?.tag === 'input' &&
       hasPopupEvidence(e),
-    action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
+    action: (_f, ref) => ({ action: 'click', target: { ref }, remap: false }),
     isCommitted: singleValueCommitted,
     run: runTypeahead,
   },
@@ -292,7 +292,7 @@ const strategies: readonly WidgetStrategy[] = [
       e.role === 'combobox' &&
       !!e.attributes?.['aria-autocomplete'] &&
       hasPopupEvidence(e),
-    action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
+    action: (_f, ref) => ({ action: 'click', target: { ref }, remap: false }),
     isCommitted: committedMember,
     run: (field, ref, identity, scope) =>
       field.options !== undefined

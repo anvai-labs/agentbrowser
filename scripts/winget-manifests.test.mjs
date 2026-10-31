@@ -14,7 +14,13 @@ const SHA = 'A'.repeat(64);
 function generate() {
   const out = mkdtempSync(join(tmpdir(), 'winget-'));
   execFileSync(process.execPath, [
-    'scripts/winget-manifests.mjs', '--version', '1.2.3', '--zip-sha256', SHA, '--out', out,
+    'scripts/winget-manifests.mjs',
+    '--version',
+    '1.2.3',
+    '--zip-sha256',
+    SHA,
+    '--out',
+    out,
   ]);
   const read = (name) => readFileSync(join(out, name), 'utf8');
   return {
@@ -33,10 +39,16 @@ test('one zip installer carries all three commands as nested portable files', ()
   // server entry is the launcher, which needs node\\ and server\\ beside it —
   // winget extracts the whole zip into the package directory.
   for (const alias of ['agentbrowser-mcp', 'agentbrowser-cli', 'agentbrowser-server']) {
-    assert.match(installer, new RegExp(`RelativeFilePath: ${alias}\\.exe\\n\\s+PortableCommandAlias: ${alias}\\n`));
+    assert.match(
+      installer,
+      new RegExp(`RelativeFilePath: ${alias}\\.exe\\n\\s+PortableCommandAlias: ${alias}\\n`)
+    );
   }
   assert.doesNotMatch(installer, /windows-x64\.exe/, 'no standalone-asset names inside the bundle');
-  assert.match(installer, /InstallerUrl: https:\/\/github\.com\/anvai-labs\/agentbrowser\/releases\/download\/v1\.2\.3\/agentbrowser-windows-x64\.zip/);
+  assert.match(
+    installer,
+    /InstallerUrl: https:\/\/github\.com\/anvai-labs\/agentbrowser\/releases\/download\/v1\.2\.3\/agentbrowser-windows-x64\.zip/
+  );
   assert.match(installer, new RegExp(`InstallerSha256: ${SHA}`));
 });
 
@@ -45,12 +57,19 @@ test('version manifest declares the default locale the schema requires', () => {
   assert.match(version, /^DefaultLocale: en-US$/m);
   assert.match(locale, /^PackageLocale: en-US$/m);
   // winget-pkgs checks URL reachability: the release page, not the download path.
-  assert.match(locale, /^ReleaseNotesUrl: https:\/\/github\.com\/anvai-labs\/agentbrowser\/releases\/tag\/v1\.2\.3$/m);
+  assert.match(
+    locale,
+    /^ReleaseNotesUrl: https:\/\/github\.com\/anvai-labs\/agentbrowser\/releases\/tag\/v1\.2\.3$/m
+  );
 });
 
 test('refuses a malformed zip hash', () => {
   assert.throws(() =>
-    execFileSync(process.execPath, ['scripts/winget-manifests.mjs', '--version', '1.2.3', '--zip-sha256', 'nothex'], { stdio: 'pipe' })
+    execFileSync(
+      process.execPath,
+      ['scripts/winget-manifests.mjs', '--version', '1.2.3', '--zip-sha256', 'nothex'],
+      { stdio: 'pipe' }
+    )
   );
 });
 
@@ -68,6 +87,10 @@ test('the locale manifest describes what the bundle actually installs', () => {
 
 test('generated manifests contain no control characters (winget YAML rejects them)', () => {
   for (const [name, text] of Object.entries(generate())) {
-    assert.doesNotMatch(text, /[\u0000-\u0008\u000B-\u001F\u007F]/, `${name} manifest has a control character`);
+    assert.doesNotMatch(
+      text,
+      /[\u0000-\u0008\u000B-\u001F\u007F]/,
+      `${name} manifest has a control character`
+    );
   }
 });

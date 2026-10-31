@@ -10,7 +10,10 @@ import {
   createCliEnvironment,
   readJson,
 } from '../examples/node-test/application-outcome.mjs';
-import { cleanupRecipeFiles, readRecipeArtifacts } from '../examples/node-test/report-artifacts.mjs';
+import {
+  cleanupRecipeFiles,
+  readRecipeArtifacts,
+} from '../examples/node-test/report-artifacts.mjs';
 import { validateNativeNodeReport, summarizeNativeNodeReport } from './node-junit-report.mjs';
 import { runExecutable } from './release-smoke.mjs';
 
@@ -21,8 +24,11 @@ const recipeScript = fileURLToPath(
 /** Exercise exactly the documented two-file copy; own and remove all staging. */
 export async function withStandaloneRecipe(directory, exercise, { remove = rm } = {}) {
   let root;
-  try { root = await realpath(await mkdtemp(join(directory, 'standalone-recipe-'))); }
-  catch { throw new Error('Standalone recipe staging failed'); }
+  try {
+    root = await realpath(await mkdtemp(join(directory, 'standalone-recipe-')));
+  } catch {
+    throw new Error('Standalone recipe staging failed');
+  }
   let failed = false;
   try {
     const source = join(root, 'source');
@@ -35,14 +41,23 @@ export async function withStandaloneRecipe(directory, exercise, { remove = rm } 
         await copyFile(new URL(`../examples/node-test/${name}`, import.meta.url), target);
         await chmod(target, 0o600);
       }
-    } catch { throw new Error('Standalone recipe staging failed'); }
+    } catch {
+      throw new Error('Standalone recipe staging failed');
+    }
     return await exercise({ script: join(source, 'application-outcome.mjs'), cwd });
   } catch (error) {
     failed = true;
     throw error;
   } finally {
-    try { await remove(root, { recursive: true, force: true }); }
-    catch { throw new Error(failed ? 'Standalone recipe execution and cleanup failed' : 'Standalone recipe cleanup failed'); }
+    try {
+      await remove(root, { recursive: true, force: true });
+    } catch {
+      throw new Error(
+        failed
+          ? 'Standalone recipe execution and cleanup failed'
+          : 'Standalone recipe cleanup failed'
+      );
+    }
   }
 }
 const cases = Object.freeze([
@@ -157,13 +172,24 @@ export function validateApplicationRecipeNativeReport({ name, stdout, stderr, di
       diagnostic: `Private evaluation artifact: sha256:${digest}`,
     });
     return {
-      reporter: 'junit', runtime: process.version, counts,
+      reporter: 'junit',
+      runtime: process.version,
+      counts,
       artifact: summarizeNativeNodeReport(stdout),
     };
-  } catch { throw new Error('Application recipe native report is invalid'); }
+  } catch {
+    throw new Error('Application recipe native report is invalid');
+  }
 }
 
-export async function runNodeRecipe({ configPath, env, expectedExitCode, proc, script = recipeScript, cwd }) {
+export async function runNodeRecipe({
+  configPath,
+  env,
+  expectedExitCode,
+  proc,
+  script = recipeScript,
+  cwd,
+}) {
   let child;
   let escalation;
   let terminationRequested = false;
@@ -267,11 +293,16 @@ export async function qualifyApplicationRecipe({
         const { evaluation, manifest, manifestBytes } = await readRecipeArtifacts(reportPath);
         assert.equal(manifest.oracleMatches, true, 'Application recipe oracle mismatch');
         const nativeReport = validateApplicationRecipeNativeReport({
-          name: definition.name, stdout: processResult.stdout, stderr: processResult.stderr,
+          name: definition.name,
+          stdout: processResult.stdout,
+          stderr: processResult.stderr,
           digest: manifest.evaluation.sha256,
         });
         for (const privatePath of [configPath, reportPath])
-          assert.ok(!`${processResult.stdout}${processResult.stderr}`.includes(privatePath), 'Recipe exposed private path');
+          assert.ok(
+            !`${processResult.stdout}${processResult.stderr}`.includes(privatePath),
+            'Recipe exposed private path'
+          );
         const oracle = await proc.rpc('oracle', { name: definition.resource });
         const result = validateApplicationRecipeResult({
           name: definition.name,
@@ -291,7 +322,9 @@ export async function qualifyApplicationRecipe({
         );
         const { href: _href, ...artifact } = manifest.evaluation;
         staged.push({
-          ...result, sessionCleanup: 'verified', artifact,
+          ...result,
+          sessionCleanup: 'verified',
+          artifact,
           nativeReport,
           configBytes: Buffer.byteLength(serializedConfig),
           manifestBytes,
@@ -319,7 +352,8 @@ export async function qualifyApplicationRecipe({
       maxEvaluationBytes: Math.max(...staged.map((entry) => entry.artifact.sizeBytes)),
       maxManifestBytes: Math.max(...staged.map((entry) => entry.manifestBytes)),
       maxJunitBytes: Math.max(...staged.map((entry) => entry.nativeReport.artifact.sizeBytes)),
-      countBasis: 'fixed qualified call paths; excludes browser descendants and executable internals',
+      countBasis:
+        'fixed qualified call paths; excludes browser descendants and executable internals',
     },
     nodeTestCalls: staged.length,
     cliVersionCalls: staged.length,

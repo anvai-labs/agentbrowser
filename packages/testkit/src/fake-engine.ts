@@ -224,8 +224,6 @@ class FakePage implements EnginePage {
   private removeSelf: () => void = () => {};
   private ownerSession: FakeSession | undefined;
   private destroyedAnnounced = false;
-  private sessionOptions: EngineSessionOptions;
-  private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
   /** Browsing history including the current entry (bounded). */
   private historyStack: string[] = ['about:blank'];

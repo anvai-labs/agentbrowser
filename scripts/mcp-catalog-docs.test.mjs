@@ -38,12 +38,26 @@ test('requires bounded footprint samples and an explicit tokenizer interpreter',
 });
 
 test('catalog digest detects nested schema drift even with unchanged tool summaries', () => {
-  const catalog = [{ mode: 'fixture', tools: [{ name: 'fixture_tool', description: 'A tool. Detailed behavior.', inputSchema: { type: 'object', properties: { fields: { type: 'array', maxItems: 2 } } } }] }];
+  const catalog = [
+    {
+      mode: 'fixture',
+      tools: [
+        {
+          name: 'fixture_tool',
+          description: 'A tool. Detailed behavior.',
+          inputSchema: { type: 'object', properties: { fields: { type: 'array', maxItems: 2 } } },
+        },
+      ],
+    },
+  ];
   const before = renderCatalog(catalog);
   catalog[0].tools[0].inputSchema.properties.fields.maxItems = 3;
   const after = renderCatalog(catalog);
   assert.notEqual(before, after);
-  assert.equal(before.split('\n').find((line) => line.startsWith('| `fixture_tool`')), after.split('\n').find((line) => line.startsWith('| `fixture_tool`')));
+  assert.equal(
+    before.split('\n').find((line) => line.startsWith('| `fixture_tool`')),
+    after.split('\n').find((line) => line.startsWith('| `fixture_tool`'))
+  );
 });
 
 test('generated catalog checks detect stale files across fixed profiles and bindings', async () => {
@@ -62,5 +76,7 @@ test('generated catalog checks detect stale files across fixed profiles and bind
     assert.match(original, /urn:agentbrowser:autofill-report:v1/);
     await writeFile(file, original.replace('autofill', 'missing-tool'));
     await assert.rejects(checkCatalogDocument({ file }), /stale/);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

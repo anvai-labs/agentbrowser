@@ -1,15 +1,9 @@
 {
   "candidate": "session-bidi-v1",
   "driver": "direct-bidi-probe-v1",
-  "drivers": [
-    "direct-bidi-probe-v1",
-    "direct-bidi-probe-v1"
-  ],
+  "drivers": ["direct-bidi-probe-v1", "direct-bidi-probe-v1"],
   "browser": "firefox/155.0.1",
-  "versions": [
-    "firefox/155.0.1",
-    "firefox/155.0.1"
-  ],
+  "versions": ["firefox/155.0.1", "firefox/155.0.1"],
   "sessionDetails": [
     {
       "scope": "session",

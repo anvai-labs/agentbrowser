@@ -24,7 +24,10 @@ const PUBLIC_API = new Set(['protocol', 'sdk-typescript']);
 const files = execSync('git ls-files', { cwd: ROOT, encoding: 'utf8' })
   .trim()
   .split('\n')
-  .filter((f) => /^packages\/[^/]+\/src\/.*\.ts$/.test(f) && !/\.test\.|\.spec\.|test-support|\.d\.ts/.test(f));
+  .filter(
+    (f) =>
+      /^packages\/[^/]+\/src\/.*\.ts$/.test(f) && !/\.test\.|\.spec\.|test-support|\.d\.ts/.test(f)
+  );
 
 const offenders = [];
 for (const f of files) {
@@ -36,8 +39,13 @@ for (const f of files) {
     if (!name) continue;
     let ext = 0;
     try {
-      ext = parseInt(
-        execSync(`git grep -lw ${name} | grep -v '${f}' | wc -l`, { cwd: ROOT, encoding: 'utf8', shell: '/bin/bash' }).trim()
+      ext = Number.parseInt(
+        execSync(`git grep -lw ${name} | grep -v '${f}' | wc -l`, {
+          cwd: ROOT,
+          encoding: 'utf8',
+          shell: '/bin/bash',
+        }).trim(),
+        10
       );
     } catch {
       ext = 0;
@@ -46,15 +54,21 @@ for (const f of files) {
   }
 }
 
-console.log(`exports ratchet: ${offenders.length} zero-external-reference exports (baseline ${BASELINE})`);
+console.log(
+  `exports ratchet: ${offenders.length} zero-external-reference exports (baseline ${BASELINE})`
+);
 if (offenders.length > BASELINE) {
   console.error('EXPORTS RATCHET: new unused exports (or baseline raised without cause):');
   offenders.forEach((o) => console.error(`  ${o}`));
-  console.error('Use the symbol, de-export it, or delete it — then lower the baseline if this was a real reduction.');
+  console.error(
+    'Use the symbol, de-export it, or delete it — then lower the baseline if this was a real reduction.'
+  );
   process.exit(1);
 }
 if (offenders.length < BASELINE) {
-  console.error(`EXPORTS RATCHET: fell to ${offenders.length} < baseline ${BASELINE} — lower BASELINE in this PR.`);
+  console.error(
+    `EXPORTS RATCHET: fell to ${offenders.length} < baseline ${BASELINE} — lower BASELINE in this PR.`
+  );
   process.exit(1);
 }
 console.log('exports ratchet: OK');

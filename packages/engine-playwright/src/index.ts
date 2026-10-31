@@ -67,7 +67,7 @@ import {
   type Locator,
   type Page,
 } from 'playwright';
-import { BodyRedirectGuard, BODY_METHODS } from './body-redirect-guard.js';
+import { BODY_METHODS, BodyRedirectGuard } from './body-redirect-guard.js';
 
 /** Each scoped context's redirect guard, so new pages wait until it is armed. */
 const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();

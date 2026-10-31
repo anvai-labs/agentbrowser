@@ -60,7 +60,9 @@ class McpClient {
           if (msg.error) reject(new Error(JSON.stringify(msg.error)));
           else resolve(msg.result);
         }
-      } catch { /* mid-line */ }
+      } catch {
+        /* mid-line */
+      }
     }
   }
   request(method, params, timeoutMs = 45000) {
@@ -71,38 +73,66 @@ class McpClient {
         reject(new Error(`${method} timeout after ${timeoutMs}ms`));
       }, timeoutMs);
       this.pending.set(id, {
-        resolve: (v) => { clearTimeout(timer); resolve(v); },
-        reject: (e) => { clearTimeout(timer); reject(e); },
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
       });
       this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   }
-  call(tool, args) { return this.request('tools/call', { name: tool, arguments: args }); }
-  stop() { this.child?.kill(); }
+  call(tool, args) {
+    return this.request('tools/call', { name: tool, arguments: args });
+  }
+  stop() {
+    this.child?.kill();
+  }
 }
 
-test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && 'windows-only' }, async (t) => {
-  assert.ok(existsSync(MCP_COMMAND.at(-1)), `MCP entry missing: ${MCP_COMMAND.at(-1)} — run pnpm -r build first`);
-  assert.ok(process.env.AGENTBROWSER_BASE_URL, 'AGENTBROWSER_BASE_URL must point at a running service');
+test('MCP end-to-end: create -> observe -> close on win32', {
+  skip: !IS_WIN && 'windows-only',
+}, async (t) => {
+  assert.ok(
+    existsSync(MCP_COMMAND.at(-1)),
+    `MCP entry missing: ${MCP_COMMAND.at(-1)} — run pnpm -r build first`
+  );
+  assert.ok(
+    process.env.AGENTBROWSER_BASE_URL,
+    'AGENTBROWSER_BASE_URL must point at a running service'
+  );
   const c = new McpClient();
   t.after(() => c.stop());
   c.start();
 
   const init = await c.request('initialize', {
-    protocolVersion: '2024-11-05', capabilities: {},
+    protocolVersion: '2024-11-05',
+    capabilities: {},
     clientInfo: { name: 'win-e2e', version: '0.0.0' },
   });
   assert.ok(init.serverInfo, 'initialize returns serverInfo');
   // The bundle smoke pins the shipped MCP executable to the release version.
   if (process.env.AGENTBROWSER_E2E_EXPECTED_VERSION) {
-    assert.equal(init.serverInfo.version, process.env.AGENTBROWSER_E2E_EXPECTED_VERSION, 'MCP executable version');
+    assert.equal(
+      init.serverInfo.version,
+      process.env.AGENTBROWSER_E2E_EXPECTED_VERSION,
+      'MCP executable version'
+    );
   }
-  c.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+  c.child.stdin.write(
+    JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n'
+  );
 
   const tools = await c.request('tools/list', {});
   const names = (tools.tools || []).map((x) => x.name);
   for (const expected of ['create', 'observe', 'close']) {
-    assert.ok(names.includes(expected), `tools/list must expose ${expected} (have ${names.length} tools)`);
+    assert.ok(
+      names.includes(expected),
+      `tools/list must expose ${expected} (have ${names.length} tools)`
+    );
   }
 
   const created = await c.call('create', {
@@ -112,7 +142,13 @@ test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && '
     idleTimeoutMs: 120000,
   });
   const text = (created.content || []).map((p) => p.text || '').join('');
-  const createdJson = (() => { try { return JSON.parse(text || '{}'); } catch { return {}; } })();
+  const createdJson = (() => {
+    try {
+      return JSON.parse(text || '{}');
+    } catch {
+      return {};
+    }
+  })();
   const sessionId = created.sessionId ?? createdJson.sessionId;
   assert.ok(sessionId, `create must return sessionId (text=${text.slice(0, 200)})`);
   const pageId = created.pageId ?? createdJson.pageId;

@@ -1,9 +1,9 @@
 /** Self-contained owned fixture function, serialized into either browser controller. */
 export function probeServiceWorker({ script }) {
   return new Promise((resolve) => {
-    let finished = false,
-      dispatched = false,
-      registration;
+    let finished = false;
+    let dispatched = false;
+    let registration;
     const cleanups = [];
     let timer = setTimeout(() => finish('setup-timeout'), 10000);
     function finish(value) {

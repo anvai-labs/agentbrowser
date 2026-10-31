@@ -15,7 +15,10 @@ function diagnostics(mutate = (source) => source) {
   assert.equal(config.error, undefined);
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
   const options = {
-    ...parsed.options, noEmit: true, rootDir: root, baseUrl: root,
+    ...parsed.options,
+    noEmit: true,
+    rootDir: root,
+    baseUrl: root,
     paths: {
       '@agentbrowser/sdk-typescript': ['packages/sdk-typescript/src/index.ts'],
       '@agentbrowser/protocol': ['packages/protocol/src/index.ts'],
@@ -30,8 +33,13 @@ function diagnostics(mutate = (source) => source) {
     mutated = true;
     return mutate(source);
   };
-  const program = ts.createProgram(['cli/src/contracts.ts', 'mcp-server/src/contracts.ts']
-    .map((path) => resolve(root, 'packages', path)), options, host);
+  const program = ts.createProgram(
+    ['cli/src/contracts.ts', 'mcp-server/src/contracts.ts'].map((path) =>
+      resolve(root, 'packages', path)
+    ),
+    options,
+    host
+  );
   const result = ts.getPreEmitDiagnostics(program);
   assert.ok(mutated, 'fault probe must read the actual SDK source');
   return result;
@@ -43,15 +51,28 @@ function replaceOnce(source, before, after) {
 }
 
 function assertCallerFailure(errors, caller, code) {
-  assert.ok(errors.some((error) => error.code === code &&
-    error.file && resolve(error.file.fileName) === resolve(root, 'packages', caller)),
-  `${caller} must reject fault with TS${code}; got ${errors.map((e) =>
-    `${e.file?.fileName}: TS${e.code} ${ts.flattenDiagnosticMessageText(e.messageText, ' ')}`).join('\n')}`);
+  assert.ok(
+    errors.some(
+      (error) =>
+        error.code === code &&
+        error.file &&
+        resolve(error.file.fileName) === resolve(root, 'packages', caller)
+    ),
+    `${caller} must reject fault with TS${code}; got ${errors
+      .map(
+        (e) =>
+          `${e.file?.fileName}: TS${e.code} ${ts.flattenDiagnosticMessageText(e.messageText, ' ')}`
+      )
+      .join('\n')}`
+  );
 }
 
 test('real SDK and both production callers compile without a mutation', () => {
   const errors = diagnostics();
-  assert.deepEqual(errors.map((e) => ts.flattenDiagnosticMessageText(e.messageText, ' ')), []);
+  assert.deepEqual(
+    errors.map((e) => ts.flattenDiagnosticMessageText(e.messageText, ' ')),
+    []
+  );
 });
 
 test('renaming optional SDK methods breaks the consumers rather than silently dropping them', () => {
@@ -59,16 +80,21 @@ test('renaming optional SDK methods breaks the consumers rather than silently dr
     ['applicationDiscover', ['cli/src/cli.ts']],
     ['operation', ['cli/src/cli.ts', 'mcp-server/src/mcp-server.ts']],
   ]) {
-    const errors = diagnostics((source) => replaceOnce(source,
-      `async ${method}(`, `async removed_${method}(`));
+    const errors = diagnostics((source) =>
+      replaceOnce(source, `async ${method}(`, `async removed_${method}(`)
+    );
     for (const caller of callers) assertCallerFailure(errors, caller, 2344);
   }
 });
 
 test('narrowing SDK input fails at the actual CLI and MCP call sites', () => {
-  const errors = diagnostics((source) => replaceOnce(source,
-    'async create(request: SessionRequest)',
-    'async create(request: SessionRequest & { newlyRequired: string })'));
+  const errors = diagnostics((source) =>
+    replaceOnce(
+      source,
+      'async create(request: SessionRequest)',
+      'async create(request: SessionRequest & { newlyRequired: string })'
+    )
+  );
   for (const caller of ['cli/src/cli.ts', 'mcp-server/src/mcp-server.ts'])
     assertCallerFailure(errors, caller, 2379);
 });

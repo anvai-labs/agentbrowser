@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPolicyFile } from '@agentbrowser/policy-engine';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { AgentBrowserService } from './service.js';
 
 /**
@@ -20,7 +20,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
-const sha = (key: string) => createHash('sha256').update(key).digest('hex');
+const _sha = (key: string) => createHash('sha256').update(key).digest('hex');
 
 it('a per-tenant act rule decides enforcement for that tenant only', async () => {
   const path = join(dir, 'per-tenant-act.json');
