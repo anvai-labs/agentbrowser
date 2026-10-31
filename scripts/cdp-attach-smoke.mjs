@@ -11,8 +11,8 @@ import { loadConsumerSmokeRuntime } from './consumer-smoke-runtime.mjs';
 import { checkMcp, runExecutable } from './release-smoke.mjs';
 
 const runtime = await loadConsumerSmokeRuntime({
-  live: { type: 'boolean', default: false },
-  disconnect: { type: 'boolean', default: false },
+    live: { type: 'boolean', default: false },
+    disconnect: { type: 'boolean', default: false },
 });
 const {
   values: { live, disconnect },
@@ -111,7 +111,15 @@ try {
   const client = new AgentBrowserClient({ baseUrl, apiKey: key, timeout: 60000 });
   const cli = async (...args) => {
     const result = await runExecutable(
-      [...cliCommand, '--base-url', baseUrl, '--timeout', '60000', '--json', ...args],
+      [
+        ...cliCommand,
+        '--base-url',
+        baseUrl,
+        '--timeout',
+        '60000',
+        '--json',
+        ...args,
+      ],
       { env, timeoutMs: 65000 }
     );
     return JSON.parse(result.stdout);
@@ -247,7 +255,14 @@ try {
     );
     assert.equal((await fetch(`${baseUrl}/v1/sessions/${attached.sessionId}`)).status, 401);
     const command = await runExecutable(
-      [...cliCommand, '--base-url', baseUrl, 'session', 'get', attached.sessionId],
+      [
+        ...cliCommand,
+        '--base-url',
+        baseUrl,
+        'session',
+        'get',
+        attached.sessionId,
+      ],
       { env, expectedExitCode: 1 }
     );
     assert.match(command.stderr, /close-cause=engine_disconnected/);

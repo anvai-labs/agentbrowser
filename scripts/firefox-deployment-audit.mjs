@@ -2,23 +2,14 @@ import assert from 'node:assert/strict';
 import { lstat, readdir, readFile, realpath, symlink, unlink } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 
-const forbidden = new Set([
-  'playwright',
-  'playwright-core',
-  '@agentbrowser/engine-playwright',
-  '@agentbrowser/engine-obscura',
-]);
+const forbidden = new Set(['playwright', 'playwright-core', '@agentbrowser/engine-playwright', '@agentbrowser/engine-obscura']);
 
 /** pnpm 9 deploy retains the selected workspace's self-link. Repair only that verified link. */
 export async function normalizeFirefoxSelfLink(directory, source) {
   const link = join(directory, 'node_modules/.pnpm/node_modules/@agentbrowser/engine-firefox');
   let entry;
-  try {
-    entry = await lstat(link);
-  } catch (error) {
-    if (error.code === 'ENOENT') return;
-    throw error;
-  }
+  try { entry = await lstat(link); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
   assert.ok(entry.isSymbolicLink(), 'Unexpected Firefox self-reference');
   const boundary = await realpath(directory);
   const parent = await realpath(dirname(link));
@@ -34,10 +25,7 @@ export async function auditFirefoxDeployment(directory, boundary) {
     const path = join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       const actual = await realpath(path);
-      assert.ok(
-        actual === boundary || actual.startsWith(boundary + sep),
-        `Dependency escapes deployment: ${path}`
-      );
+      assert.ok(actual === boundary || actual.startsWith(boundary + sep), `Dependency escapes deployment: ${path}`);
     } else if (entry.isDirectory()) await auditFirefoxDeployment(path, boundary);
     else if (entry.name === 'package.json') {
       const manifest = JSON.parse(await readFile(path, 'utf8'));

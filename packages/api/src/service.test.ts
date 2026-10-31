@@ -1226,7 +1226,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('should accept load and networkidle conditions', async () => {
-      const _observation = await service.observe(sessionId, pageId, {});
+      const observation = await service.observe(sessionId, pageId, {});
 
       const load = await service.act(sessionId, pageId, {
         action: 'press',
@@ -2350,7 +2350,7 @@ describe('AgentBrowserService', () => {
 });
 
 /** Reach the engine page backing a service page id (single-session tests). */
-function _enginePageOf(engine: FakeEngine, pageId: string) {
+function enginePageOf(engine: FakeEngine, pageId: string) {
   const ids = engine.getSessionIds();
   const sessionId = ids[ids.length - 1];
   if (sessionId === undefined) {

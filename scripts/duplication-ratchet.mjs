@@ -27,7 +27,7 @@ execFileSync(
     // pnpm nests the package; resolve the bin entry from the installed manifest.
     join(
       fileURLToPath(new URL('../node_modules/.pnpm', import.meta.url)),
-      'jscpd@5.4.2',
+      `jscpd@5.4.2`,
       'node_modules',
       'jscpd',
       'run-jscpd.js'

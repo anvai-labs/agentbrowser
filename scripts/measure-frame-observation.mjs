@@ -26,8 +26,8 @@ const nestedInner = '<button onclick="this.textContent=\'DONE-N\'">Nested Action
 const server = createServer((request, response) => {
   const path = request.url ?? '/';
   const bodies = {
-    '/frame-a': '<button>Frame A Action</button>',
-    '/frame-b': '<button>Frame B Action</button>',
+    '/frame-a': `<button>Frame A Action</button>`,
+    '/frame-b': `<button>Frame B Action</button>`,
     '/nested': nestedOuter,
     '/nested-inner': nestedInner,
     '/baseline': '<button>Main Action</button>',

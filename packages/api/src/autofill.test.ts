@@ -959,7 +959,7 @@ describe('multi-step widget strategies', () => {
 
   it('strategy refusal: react-select combobox without option.value produces INVALID_REQUEST', async () => {
     const f = fixture([]);
-    f.act.mockImplementation(async (_request: Record<string, unknown>, onDispatch: () => void) => {
+    f.act.mockImplementation(async (request: Record<string, unknown>, onDispatch: () => void) => {
       onDispatch();
       f.dispatch();
     });

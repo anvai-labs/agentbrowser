@@ -2,59 +2,31 @@
 import assert from 'node:assert/strict';
 import { checkMcp } from './release-smoke.mjs';
 
-export async function checkPackagedCoexistence({
-  request,
-  surface,
-  process,
-  fixture,
-  options,
-  env,
-  sessions,
-  close,
-  key,
-}) {
+export async function checkPackagedCoexistence({ request, surface, process, fixture, options, env, sessions, close, key }) {
   const session = await request('/v1/sessions', {
-    method: 'POST',
-    body: { tenantId: 'release-smoke', controlMode: 'delegated' },
+    method: 'POST', body: { tenantId: 'release-smoke', controlMode: 'delegated' },
   });
   sessions.add(session.sessionId);
   assert.equal(session.engine?.name, 'playwright-chromium');
   const page = await request(`/v1/sessions/${session.sessionId}/pages`, {
-    method: 'POST',
-    body: { url: `${fixture.http}/coexistence` },
-    operationId: 'packaged-create-page',
+    method: 'POST', body: { url: `${fixture.http}/coexistence` }, operationId: 'packaged-create-page',
   });
-  const operator = (action) =>
-    process.rpc('operator', {
-      pageId: page.pageId,
-      sessionId: session.sessionId,
-      key,
-      action,
-    });
+  const operator = (action) => process.rpc('operator', {
+    pageId: page.pageId, sessionId: session.sessionId, key, action,
+  });
   const bind = (token, exercise) => {
-    const agentEnv = {
-      ...env,
-      AGENTBROWSER_SESSION_ID: session.sessionId,
-      AGENTBROWSER_API_KEY: token,
-    };
+    const agentEnv = { ...env, AGENTBROWSER_SESSION_ID: session.sessionId, AGENTBROWSER_API_KEY: token };
     // The delegated process receives its grant, never the server's owner-key map.
     delete agentEnv.AGENTBROWSER_API_KEYS;
     return surface((settings) => checkMcp(options.mcp, settings), {
-      expectedVersion: options.expectedVersion,
-      catalog: 'delegated',
-      timeoutMs: 45_000,
-      env: agentEnv,
-      exercise,
+      expectedVersion: options.expectedVersion, catalog: 'delegated', timeoutMs: 45_000,
+      env: agentEnv, exercise,
     });
   };
   const denied = async (client, name, args, code) => {
     const result = await client.request('tools/call', { name, arguments: args });
     assert.equal(result.isError, true, `${name} unexpectedly succeeded`);
-    if (code)
-      assert.ok(
-        result.content.some((item) => item.type === 'text' && item.text.includes(code)),
-        `Missing ${code} refusal`
-      );
+    if (code) assert.ok(result.content.some((item) => item.type === 'text' && item.text.includes(code)), `Missing ${code} refusal`);
   };
   const effects = async (expected) => {
     // Application-side HTTP receipt is independent of MCP/driver success payloads.
@@ -63,11 +35,7 @@ export async function checkPackagedCoexistence({
       process.signal.throwIfAborted();
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    assert.deepEqual(
-      fixture.effects,
-      expected,
-      'Packaged workflow produced unexpected application effects'
-    );
+    assert.deepEqual(fixture.effects, expected, 'Packaged workflow produced unexpected application effects');
   };
   const token = await operator('grant');
   await bind(token, async (client) => {
@@ -77,36 +45,18 @@ export async function checkPackagedCoexistence({
       assert.ok(field?.ref, 'Missing Note binding');
       return field;
     };
-    await denied(
-      client,
-      'act',
-      {
-        pageId: page.pageId,
-        action: 'fill',
-        target: { ref: note(await observe()).ref },
-        value: '',
-        expectValue: 'different',
-        operationId: 'packaged-mismatch',
-      },
-      'VALUE_MISMATCH'
-    );
+    await denied(client, 'act', {
+      pageId: page.pageId, action: 'fill', target: { ref: note(await observe()).ref },
+      value: '', expectValue: 'different', operationId: 'packaged-mismatch',
+    }, 'VALUE_MISMATCH');
     const verified = await client.callTool('act', {
-      pageId: page.pageId,
-      action: 'fill',
-      target: { ref: note(await observe()).ref },
-      value: '',
-      expectValue: '',
-      operationId: 'packaged-verified',
+      pageId: page.pageId, action: 'fill', target: { ref: note(await observe()).ref },
+      value: '', expectValue: '', operationId: 'packaged-verified',
     });
     assert.deepEqual(verified.result, { verified: true });
     const button = (await observe()).elements.find((element) => element.name === 'Add item');
     assert.ok(button?.ref, 'Missing button binding');
-    const action = {
-      pageId: page.pageId,
-      action: 'click',
-      target: { ref: button.ref },
-      operationId: 'packaged-one-click',
-    };
+    const action = { pageId: page.pageId, action: 'click', target: { ref: button.ref }, operationId: 'packaged-one-click' };
     await client.callTool('act', action);
     await effects([{ trusted: true, value: '' }]);
     await denied(client, 'act', action, 'OPERATION_RECORDED');
@@ -131,19 +81,11 @@ export async function checkPackagedCoexistence({
       const freshButton = fresh.elements.find((element) => element.name === 'Add item');
       assert.ok(freshButton?.ref);
       await next.callTool('act', {
-        ...action,
-        target: { ref: freshButton.ref },
-        operationId: 'packaged-after-human',
+        ...action, target: { ref: freshButton.ref }, operationId: 'packaged-after-human',
       });
-      await effects([
-        { trusted: true, value: '' },
-        { trusted: true, value: 'human edit' },
-      ]);
+      await effects([{ trusted: true, value: '' }, { trusted: true, value: 'human edit' }]);
     });
   });
   await close(session.sessionId);
-  await effects([
-    { trusted: true, value: '' },
-    { trusted: true, value: 'human edit' },
-  ]);
+  await effects([{ trusted: true, value: '' }, { trusted: true, value: 'human edit' }]);
 }

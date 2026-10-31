@@ -18,29 +18,21 @@ test('independence audit rejects hidden Playwright packages and dependency symli
     await writeFile(join(nested, 'package.json'), JSON.stringify({ name: 'puppeteer-core' }));
     await symlink(tmpdir(), join(root, 'escaped-dependency'));
     await assert.rejects(auditFirefoxDeployment(root, boundary), /Dependency escapes deployment/);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('normalizes only a verified pnpm workspace self-link', async () => {
   const root = await mkdtemp(join(tmpdir(), 'firefox-self-link-'));
   try {
-    const deployment = join(root, 'deployment'),
-      source = join(root, 'source');
+    const deployment = join(root, 'deployment'), source = join(root, 'source');
     const parent = join(deployment, 'node_modules/.pnpm/node_modules/@agentbrowser');
     const link = join(parent, 'engine-firefox');
     await mkdir(parent, { recursive: true });
     await mkdir(source);
     await symlink(source, link);
-    await assert.rejects(
-      normalizeFirefoxSelfLink(deployment, root),
-      /Unexpected Firefox self-link target/
-    );
+    await assert.rejects(normalizeFirefoxSelfLink(deployment, root), /Unexpected Firefox self-link target/);
     await normalizeFirefoxSelfLink(deployment, source);
     assert.equal(await realpath(link), await realpath(deployment));
     await auditFirefoxDeployment(deployment, await realpath(deployment));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

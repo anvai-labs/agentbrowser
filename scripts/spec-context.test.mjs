@@ -260,6 +260,7 @@ test('completed T3 unlocks audit context while production application-security s
   }
 });
 
+
 test('real specification packets stay within existing budgets after Windows CRLF checkout', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agentbrowser-spec-crlf-'));
   roots.push(root);
@@ -269,12 +270,12 @@ test('real specification packets stay within existing budgets after Windows CRLF
   for (const module of Object.values(manifest.modules)) {
     const content = await readFile(new URL(module.path, source), 'utf8');
     const destination = join(root, module.path);
-    await mkdir(dirname(destination), { recursive: true });
+    await mkdir(dirname(destination), {recursive:true});
     await writeFile(destination, content.replace(/\r?\n/g, '\r\n'));
   }
-  assert.equal((await checkSpecContext({ root })).selections, 86);
+  assert.equal((await checkSpecContext({root})).selections, 86);
   for (const format of ['markdown', 'json']) {
-    const packet = await loadSpecContext({ root, mode: 'bounty', format });
+    const packet = await loadSpecContext({root, mode:'bounty', format});
     assert.ok(packet.serializedBytes <= manifest.views.agent.maxBytes);
     assert.equal(packet.serializedBytes, Buffer.byteLength(packet.output));
   }

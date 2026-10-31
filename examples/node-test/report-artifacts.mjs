@@ -20,20 +20,11 @@ export async function readPrivateRecipeBytes(path) {
     checkPath(path);
     const before = await lstat(path);
     if (!before.isFile() || before.isSymbolicLink()) throw invalid();
-    handle = await open(
-      path,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
-    );
+    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const metadata = await handle.stat();
-    if (
-      !metadata.isFile() ||
-      metadata.ino !== before.ino ||
-      metadata.dev !== before.dev ||
-      metadata.size < 2 ||
-      metadata.size > MAX_BYTES ||
-      (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)
-    )
-      throw invalid();
+    if (!metadata.isFile() || metadata.ino !== before.ino || metadata.dev !== before.dev ||
+        metadata.size < 2 || metadata.size > MAX_BYTES ||
+        (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0)) throw invalid();
     const buffer = Buffer.alloc(MAX_BYTES + 1);
     let size = 0;
     while (size < buffer.length) {
@@ -43,22 +34,15 @@ export async function readPrivateRecipeBytes(path) {
     }
     if (size < 2 || size > MAX_BYTES) throw invalid();
     return buffer.subarray(0, size);
-  } catch {
-    throw invalid();
-  } finally {
-    try {
-      await handle?.close();
-    } catch {
-      throw invalid();
-    }
+  } catch { throw invalid(); }
+  finally {
+    try { await handle?.close(); } catch { throw invalid(); }
   }
 }
 
 /** Attempt every owned cleanup even if one file is locked; never expose filesystem errors. */
 export async function cleanupRecipeFiles(paths, { remove = rm } = {}) {
-  const results = await Promise.allSettled(
-    paths.map(async (path) => remove(path, { force: true }))
-  );
+  const results = await Promise.allSettled(paths.map(async (path) => remove(path, { force: true })));
   if (results.some((result) => result.status === 'rejected')) throw invalid();
 }
 
@@ -85,8 +69,7 @@ export async function publishRecipeArtifacts(path, { evaluation, oracleMatches }
     signal?.throwIfAborted();
     if (!evaluation || typeof evaluation !== 'object' || Array.isArray(evaluation)) throw invalid();
     const serialized = JSON.stringify(evaluation);
-    if (typeof serialized !== 'string' || Buffer.byteLength(serialized) + 1 > MAX_BYTES)
-      throw invalid();
+    if (typeof serialized !== 'string' || Buffer.byteLength(serialized) + 1 > MAX_BYTES) throw invalid();
     const bytes = Buffer.from(`${serialized}\n`);
     const snapshot = decode(bytes);
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw invalid();
@@ -98,11 +81,8 @@ export async function publishRecipeArtifacts(path, { evaluation, oracleMatches }
       signal?.throwIfAborted();
       const handle = await open(target, 'wx', 0o600);
       owned.push(target);
-      try {
-        await handle.writeFile(content, { signal });
-      } finally {
-        await handle.close();
-      }
+      try { await handle.writeFile(content, { signal }); }
+      finally { await handle.close(); }
       signal?.throwIfAborted();
     }
     return manifest;
@@ -124,7 +104,5 @@ export async function readRecipeArtifacts(path) {
     const evaluation = decode(bytes);
     if (!evaluation || typeof evaluation !== 'object' || Array.isArray(evaluation)) throw invalid();
     return { evaluation, manifest, manifestBytes: manifestBytes.length };
-  } catch {
-    throw invalid();
-  }
+  } catch { throw invalid(); }
 }

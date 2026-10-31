@@ -40,13 +40,10 @@ const NODE = process.execPath;
 function mcpHandshake(args, { timeoutMs = 20000, cwd } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(NODE, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '',
-      err = '';
+    let out = '', err = '';
     const timer = setTimeout(() => {
       child.kill();
-      reject(
-        new Error(`handshake timeout; stdout=${out.slice(0, 400)} stderr=${err.slice(0, 400)}`)
-      );
+      reject(new Error(`handshake timeout; stdout=${out.slice(0, 400)} stderr=${err.slice(0, 400)}`));
     }, timeoutMs);
     child.stdout.on('data', (d) => {
       out += d;
@@ -59,30 +56,18 @@ function mcpHandshake(args, { timeoutMs = 20000, cwd } = {}) {
             child.kill();
             resolve(msg);
           }
-        } catch {
-          /* partial line — keep buffering */
-        }
+        } catch { /* partial line — keep buffering */ }
       }
     });
-    child.stderr.on('data', (d) => {
-      err += d;
-    });
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.stdin.write(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'win-gotcha-smoke', version: '0.0.0' },
-        },
-      }) + '\n'
-    );
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05', capabilities: {},
+        clientInfo: { name: 'win-gotcha-smoke', version: '0.0.0' },
+      },
+    }) + '\n');
   });
 }
 
@@ -92,17 +77,12 @@ test('G1: MCP stdio handshake on win32', { skip: !IS_WIN && 'windows-only' }, as
   assert.ok(msg.result?.serverInfo, 'initialize result must carry serverInfo');
 });
 
-test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', {
-  skip: !IS_WIN && 'windows-only',
-}, () => {
+test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', { skip: !IS_WIN && 'windows-only' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'ab-shim-'));
   const target = join(dir, 'target.js');
   // What the target script proves: env + argv propagation through the two
   // exec layers (cmd.exe -> node), and that the shim resolves %~dp0 paths.
-  writeFileSync(
-    target,
-    'console.log(JSON.stringify({argv: process.argv.slice(1), marker: process.env.AB_GOTCHA}))\n'
-  );
+  writeFileSync(target, `console.log(JSON.stringify({argv: process.argv.slice(1), marker: process.env.AB_GOTCHA}))\n`);
   // Shape mirrors npm's generated shims (npm.cmd): %~dp0-relative node call.
   const shim = join(dir, 'agentbrowser-fake.cmd');
   writeFileSync(shim, `@ECHO off\r\n"${NODE.replace(/"/g, '')}" "%~dp0target.js" %*\r\n`);
@@ -111,18 +91,12 @@ test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', {
     // quote-ambiguous without it. windowsVerbatimArguments stops Node from
     // double-escaping the quotes we need cmd.exe to see.
     const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${shim}" arg-one`], {
-      encoding: 'utf8',
-      timeout: 20000,
+      encoding: 'utf8', timeout: 20000,
       env: { ...process.env, AB_GOTCHA: 'via-cmd' },
       windowsVerbatimArguments: true,
     });
     assert.equal(r.status, 0, `shim exit=${r.status} stderr=${r.stderr}`);
-    const payload = JSON.parse(
-      r.stdout
-        .trim()
-        .split(/\r?\n/)
-        .find((l) => l.startsWith('{'))
-    );
+    const payload = JSON.parse(r.stdout.trim().split(/\r?\n/).find((l) => l.startsWith('{')));
     assert.equal(payload.marker, 'via-cmd', 'env must survive the cmd relay');
     // The target prints argv.slice(1) = [target.js, ...forwarded args]: index 0
     // proves the %~dp0-relative script resolution, index 1 proves %* relay.
@@ -159,51 +133,27 @@ test('G4: UNC working directory tolerated', { skip: !IS_WIN && 'windows-only' },
 });
 
 test('G5: PowerShell relay (interop drive pattern)', { skip: !IS_WIN && 'windows-only' }, (t) => {
-  const ps = join(
-    process.env.SystemRoot || 'C:\\Windows',
-    'System32',
-    'WindowsPowerShell',
-    'v1.0',
-    'powershell.exe'
-  );
+  const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   if (!existsSync(ps)) {
     t.skip('powershell.exe not present (stripped image)');
     return;
   }
-  const r = spawnSync(
-    ps,
-    ['-NoProfile', '-Command', `& '${NODE.replace(/'/g, "''")}' -e "console.log('ps-relay-ok')"`],
-    { encoding: 'utf8', timeout: 25000 }
-  );
+  const r = spawnSync(ps, ['-NoProfile', '-Command',
+    `& '${NODE.replace(/'/g, "''")}' -e "console.log('ps-relay-ok')"`],
+    { encoding: 'utf8', timeout: 25000 });
   assert.ok(r.stdout.includes('ps-relay-ok'), `ps relay failed: ${r.stderr}`);
 });
 
-test('G6: browser present for engine detection (Chrome or Playwright path)', {
-  skip: !IS_WIN && 'windows-only',
-}, () => {
+test('G6: browser present for engine detection (Chrome or Playwright path)', { skip: !IS_WIN && 'windows-only' }, () => {
   const chromeCandidates = [
-    join(
-      process.env.ProgramFiles || 'C:\\Program Files',
-      'Google',
-      'Chrome',
-      'Application',
-      'chrome.exe'
-    ),
-    join(
-      process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
-      'Google',
-      'Chrome',
-      'Application',
-      'chrome.exe'
-    ),
+    join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
   ];
   const hasChrome = chromeCandidates.some(existsSync);
   const hasPwBrowsers = !!process.env.PLAYWRIGHT_BROWSERS_PATH;
   // CI installs Chromium into PLAYWRIGHT_BROWSERS_PATH; end-user machines
   // rely on system Chrome. Either is sufficient; neither is a build bug,
   // so this gates with a clear message rather than skipping silently.
-  assert.ok(
-    hasChrome || hasPwBrowsers,
-    'no system Chrome and no PLAYWRIGHT_BROWSERS_PATH — engine detection would find no browser'
-  );
+  assert.ok(hasChrome || hasPwBrowsers,
+    'no system Chrome and no PLAYWRIGHT_BROWSERS_PATH — engine detection would find no browser');
 });
