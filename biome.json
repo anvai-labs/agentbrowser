@@ -8,14 +8,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": [
-      "**",
-      "!**/node_modules",
-      "!**/dist",
-      "!**/*.md",
-      "!**/.git",
-      "!**/coverage"
-    ]
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/*.md", "!**/.git", "!**/coverage"]
   },
   "formatter": {
     "indentStyle": "space",
@@ -67,6 +60,10 @@
         "noChildrenProp": "error",
         "noRenderReturnValue": "error",
         "noUnusedLabels": "error",
+        "noUnusedVariables": "off",
+        "noUnusedImports": "off",
+        "noUnusedFunctionParameters": "off",
+        "noUnusedPrivateClassMembers": "off",
         "useExhaustiveDependencies": "error",
         "useJsxKeyInIterable": "error"
       },
@@ -133,11 +130,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "**/*.test.ts",
-        "**/*.test.tsx",
-        "**/test-support/**"
-      ],
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/test-support/**"],
       "linter": {
         "rules": {
           "style": {

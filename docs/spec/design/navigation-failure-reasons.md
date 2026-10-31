@@ -31,6 +31,7 @@ It does not enable retries or promise replay safety.
 | dns_refused | Refused query/server connection from the resolver operation |
 | connection_refused | Destination TCP connection refusal; never inferred to be DNS refusal |
 | tls_refused | An allowlisted TLS/certificate failure at the transport boundary |
+| http_error_response | The origin returned a non-2xx HTTP status that Chromium aborted instead of committing (classically an empty error-status body, surfaced by the driver as `net::ERR_HTTP_RESPONSE_CODE_FAILURE`) |
 | egress_policy | An actual policy decision at the existing preflight/routing owner |
 | browser_error_document | Resolved navigation committed a recognized internal browser error document |
 | engine_error | Cause is unknown, ambiguous, or outside the bounded vocabulary |
@@ -50,7 +51,7 @@ fetch failure receives a minimal synthetic 502 so the owner can correlate the
 result to its Request, then navigation throws a typed bounded error. Subresource
 failures still abort. Every dispatched navigation invalidates engine and public
 service refs before awaiting; preflight policy refusal does not dispatch or
-invalidate. Remote 403/502 content remains an ordinary successful document load.
+invalidate. Remote 403/502 content remains an ordinary successful document load. A non-2xx response the driver aborts before any content can commit (empty error-status body) is `http_error_response`: the origin answered, the engine did not fail.
 
 Only anchored driver-owned codes/prefixes classify native errors. A URL containing
 `browser.closed` or a connection error cannot establish browser death. Actual typed

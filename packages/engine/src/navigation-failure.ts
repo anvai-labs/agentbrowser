@@ -21,6 +21,10 @@ export function classifyNavigationFailure(
   if (transportCode === 'net::ERR_CONNECTION_REFUSED' || code === 'ECONNREFUSED')
     return 'connection_refused';
   if (transportCode === 'net::ERR_DNS_TIMED_OUT') return 'dns_timeout';
+  // The origin answered with a non-2xx status Chromium refused to commit
+  // (classically an error status whose body is empty, so there is no error
+  // document to load). The server is the cause; the engine did not fail.
+  if (transportCode === 'net::ERR_HTTP_RESPONSE_CODE_FAILURE') return 'http_error_response';
   if (
     transportCode &&
     /^net::ERR_(?:CERT_(?:AUTHORITY_INVALID|COMMON_NAME_INVALID|DATE_INVALID|REVOKED|INVALID)|SSL_(?:PROTOCOL_ERROR|VERSION_OR_CIPHER_MISMATCH|CLIENT_AUTH_CERT_NEEDED))$/.test(
