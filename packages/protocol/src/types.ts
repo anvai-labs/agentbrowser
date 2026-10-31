@@ -50,6 +50,7 @@ export interface CookieHandoffRequest {
  */
 export interface SessionRequest {
   mode?: 'bounty';
+  trace?: 'denials' | 'off';
   /** Select a trusted, startup-configured operator profile attachment. */
   cdpAttach?: boolean;
   controlMode?: 'delegated';

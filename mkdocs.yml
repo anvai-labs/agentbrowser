@@ -187,6 +187,7 @@ nav:
     - '026 Policy Reload Without Restart': adr/026-policy-reload-without-restart.md
     - '027 Evidence Pass State Transfer': adr/027-evidence-pass-state-transfer.md
     - '028 Operator Asset Scope Amendments': adr/028-operator-asset-scope-amendments.md
+    - '029 Operator Budget Top-up': adr/029-operator-budget-topup.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
@@ -236,6 +237,7 @@ nav:
     - 'Session Lease Visibility': spec/design/session-lease-visibility.md
     - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
     - 'T10 Bounty Operator Workflow': spec/design/t10-bounty-operator-workflow.md
+    - 'T10 Bounty Flow Continuity': spec/design/t10-bounty-flow-continuity.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md
     - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
     - 'T3 Live Junit': spec/design/t3-live-junit.md

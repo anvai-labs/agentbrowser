@@ -6,6 +6,7 @@ import {
 } from '@agentbrowser/protocol';
 import { hostPatternsOverlap } from './domain-matcher.js';
 import { scopeBundleHosts } from './scope-bundles.js';
+import { parseScopeConfiguration, scopeIdentityHints } from './scope-configuration.js';
 import { tldts } from './tldts-lazy.js';
 
 /**
@@ -26,7 +27,7 @@ import { tldts } from './tldts-lazy.js';
  * the caller or the scope carries no program.
  */
 
-export type ProgramScopeFormat = 'h1' | 'bugcrowd' | 'text';
+export type ProgramScopeFormat = 'h1' | 'bugcrowd' | 'text' | 'agentbrowser';
 
 export interface ProgramScopeEntry {
   entry: string;
@@ -42,6 +43,7 @@ export type ProgramScopeImport =
   | { ok: false; error: string; report: ProgramScopeEntry[] };
 
 export interface ProgramScopeMeta {
+  preset?: 'h1-spa' | 'bugcrowd-spa';
   assetBundles?: string[];
   requestBudget?: number;
   pagesPlanned?: number;
@@ -209,6 +211,42 @@ export function importProgramScope(
     throw new Error('Program authorization needs both authorizedBy and authorizedAt.');
   if (meta.authorizedBy !== undefined && meta.programId === undefined)
     throw new Error('Program authorization needs a programId.');
+  if (format === 'agentbrowser') {
+    if (Object.values(meta).some((value) => value !== undefined))
+      throw new Error(
+        'Canonical scope import refuses overrides; edit the operator configuration explicitly.'
+      );
+    try {
+      const scope = parseScopeConfiguration(input);
+      return { ok: true, scope, report: [], warnings: scopeIdentityHints(scope) };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Invalid AgentBrowser scope',
+        report: [],
+      };
+    }
+  }
+  if (
+    meta.rateLimit !== undefined &&
+    !validateEngagementScope({ allowedHosts: ['scope.invalid'], rateLimit: meta.rateLimit }).ok
+  )
+    return { ok: false, error: 'Invalid published rate limit', report: [] };
+  const preset =
+    meta.preset === undefined
+      ? undefined
+      : meta.preset === 'h1-spa'
+        ? { requests: 5, perSeconds: 1 }
+        : meta.preset === 'bugcrowd-spa'
+          ? { requests: 2, perSeconds: 1 }
+          : undefined;
+  if (meta.preset !== undefined && !preset) throw new Error('Unknown scope preset');
+  const rateLimit =
+    preset &&
+    (!meta.rateLimit ||
+      preset.requests / preset.perSeconds < meta.rateLimit.requests / meta.rateLimit.perSeconds)
+      ? preset
+      : meta.rateLimit;
   if (meta.requestBudget !== undefined && meta.pagesPlanned !== undefined)
     throw new Error('Choose requestBudget or pagesPlanned, not both.');
   for (const value of [meta.requestBudget, meta.pagesPlanned])
@@ -216,7 +254,11 @@ export function importProgramScope(
       throw new Error('Budget and planned pages must be positive safe integers.');
   const requestBudget =
     meta.requestBudget ??
-    (meta.pagesPlanned !== undefined ? Math.max(150, meta.pagesPlanned * 120) : undefined);
+    (meta.pagesPlanned !== undefined
+      ? Math.max(150, meta.pagesPlanned * (preset ? 180 : 120))
+      : preset
+        ? 900
+        : undefined);
   if (requestBudget !== undefined && !Number.isSafeInteger(requestBudget))
     throw new Error('Planned budget is too large.');
   const raw =
@@ -326,7 +368,7 @@ export function importProgramScope(
     }
   const scope: EngagementScope = {
     ...(requestBudget !== undefined ? { requestBudget } : {}),
-    ...(meta.rateLimit !== undefined ? { rateLimit: { ...meta.rateLimit } } : {}),
+    ...(rateLimit !== undefined ? { rateLimit: { ...rateLimit } } : {}),
     allowedHosts,
     ...(assetHosts.length ? { assetHosts } : {}),
     ...(pathRules.length > 0 ? { pathRules } : {}),

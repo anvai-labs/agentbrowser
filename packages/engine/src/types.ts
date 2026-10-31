@@ -374,6 +374,8 @@ export interface ExtractionEvidence {
  * Engine event types
  */
 export type EngineEventType =
+  | 'scope.denied'
+  | 'scope.dependency-starved'
   | 'page.created'
   | 'page.destroyed'
   | 'page.navigated'

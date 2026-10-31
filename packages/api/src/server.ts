@@ -1,6 +1,10 @@
 import { createReadStream } from 'node:fs';
 import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
-import { validateEvidencePassRequest, validateScopeAssetAmendment } from '@agentbrowser/protocol';
+import {
+  parseScopeBudgetTopup,
+  validateEvidencePassRequest,
+  validateScopeAssetAmendment,
+} from '@agentbrowser/protocol';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
   cdpAttachAdmission,
@@ -21,6 +25,7 @@ import {
   searchJournalNamespaces,
 } from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
+import { registerScopeTraceStream } from './scope-trace-stream.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
  * AgentBrowser REST API Server
@@ -1776,6 +1781,35 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           { ...meta, publication: 'when-controlled' }
         );
 
+      onTransport(
+        'POST',
+        '/operator/sessions/:sessionId/scope/budget',
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          let input: import('@agentbrowser/protocol').ScopeBudgetTopup;
+          try {
+            input = parseScopeBudgetTopup(request.body);
+          } catch {
+            throw new ServiceError('INVALID_REQUEST', 'Invalid scope budget top-up');
+          }
+          const { sessionId } = request.params as { sessionId: string };
+          return reply.send(await service.topUpScopeBudget(sessionId, input, principal));
+        },
+        { operatorRoute: true }
+      );
+      on(
+        'GET',
+        '/sessions/:sessionId/scope/traffic',
+        async (request) => {
+          const { sessionId } = request.params as { sessionId: string };
+          requireOwnership(sessionId, tenantOf(request));
+          return responseDraft(service.getScopeTraffic(sessionId));
+        },
+        { capability: 'session.control' }
+      );
+
       // Session management endpoints
       onTransport(
         'POST',
@@ -2226,6 +2260,22 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         },
         { capability: 'application.discover', publication: 'guarded' }
       );
+
+      registerScopeTraceStream(v1, service, route, (request, id) => {
+        requireOwnership(id, tenantOf(request));
+        const principal = principals.get(request);
+        if (principal?.actor === 'agent') {
+          const token = /^Bearer\s+(.+)$/i.exec(request.headers.authorization ?? '')?.[1];
+          const current = token ? service.authority.authenticate(token) : undefined;
+          if (
+            !current ||
+            current.sessionId !== id ||
+            current.epoch !== principal.epoch ||
+            current.bindingGeneration !== principal.bindingGeneration
+          )
+            throw new ServiceError('CONTROL_REVOKED', 'Trace authority was revoked');
+        }
+      });
 
       // Session event stream: WebSocket upgrade, JSON per frame.
       v1.get(

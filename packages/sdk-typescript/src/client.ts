@@ -14,6 +14,8 @@ import {
   parseAutofillReport,
   parseOperationReplay,
   parseOperatorApprovalView,
+  parseScopeTraceEnd,
+  parseScopeTraceEvent,
   SELF_ADMITTING_ROUTE_SEGMENTS,
   type SnapshotControl,
   validateApplicationReview,
@@ -309,6 +311,9 @@ class HttpClient {
       parseResponse?: (input: unknown) => T;
       /** Return the success body as text (NDJSON exports) instead of parsing JSON. */
       text?: boolean;
+      /** Headers-only completion for bounded streaming consumers. */
+      stream?: boolean;
+      signal?: AbortSignal;
     } = {}
   ): Promise<T> {
     const operationId =
@@ -325,7 +330,11 @@ class HttpClient {
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
         : undefined;
     const controller = new AbortController();
-    const callerSignal = this.requestSignal?.();
+    const requestSignal = this.requestSignal?.();
+    const callerSignal =
+      requestSignal && init.signal
+        ? AbortSignal.any([requestSignal, init.signal])
+        : (requestSignal ?? init.signal);
     const cancelled = () => callerSignal?.aborted === true;
     const cancel = () => controller.abort();
     const timeoutId = setTimeout(() => controller.abort(), init.timeoutMs ?? this.timeoutMs);
@@ -342,7 +351,9 @@ class HttpClient {
           ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-        signal: controller.signal,
+        signal: callerSignal
+          ? AbortSignal.any([controller.signal, callerSignal])
+          : controller.signal,
       });
       if (!response.ok) {
         let error: ApiError;
@@ -384,6 +395,7 @@ class HttpClient {
         );
       }
 
+      if (init.stream === true) return response as T;
       if (init.text === true) return (await response.text()) as T;
       const result: unknown = await response.json();
       const invalidResponse = () =>
@@ -493,6 +505,95 @@ export class EngagementsClient {
 export class SessionsClient {
   constructor(private readonly http: HttpClient) {}
 
+  /** Read live sanitized scope denials; disconnect/cancel never changes the session. */
+  async *traceDenials(
+    sessionId: string,
+    options: { signal?: AbortSignal; onReady?: () => void } = {}
+  ): AsyncGenerator<import('@agentbrowser/protocol').ScopeTraceEvent> {
+    const response = await this.http.requestJson<Response>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/scope/trace`,
+      { stream: true, ...(options.signal ? { signal: options.signal } : {}) }
+    );
+    if (!response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) {
+      await response.body?.cancel();
+      throw new AgentBrowserError('INVALID_RESPONSE', 'Invalid denial trace stream', false);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    let ended = false;
+    try {
+      options.onReady?.();
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        pending += decoder.decode(chunk.value, { stream: true });
+        let boundary = pending.indexOf('\n\n');
+        while (boundary >= 0) {
+          const block = pending.slice(0, boundary);
+          if (new TextEncoder().encode(block).byteLength > 65536)
+            throw new AgentBrowserError(
+              'INVALID_RESPONSE',
+              'Denial trace frame exceeds its bound',
+              false
+            );
+          pending = pending.slice(boundary + 2);
+          boundary = pending.indexOf('\n\n');
+          const line = block.split('\n').find((row) => row.startsWith('data: '));
+          if (!line) continue;
+          if (block.startsWith('event: end\n')) {
+            let end: import('@agentbrowser/protocol').ScopeTraceEnd;
+            try {
+              end = parseScopeTraceEnd(JSON.parse(line.slice(6)));
+            } catch {
+              throw new AgentBrowserError(
+                'INVALID_RESPONSE',
+                'Invalid denial trace completion',
+                false
+              );
+            }
+            if (end.reason === 'revoked')
+              throw new AgentBrowserError(
+                'CONTROL_REVOKED',
+                'Denial trace authority was revoked',
+                false
+              );
+            if (end.reason !== 'session-ended' && end.reason !== 'server-shutdown')
+              throw new AgentBrowserError(
+                'INVALID_RESPONSE',
+                'Denial trace lost delivery; inspect retained events before reconnecting',
+                false
+              );
+            ended = true;
+            continue;
+          }
+          let event: import('@agentbrowser/protocol').ScopeTraceEvent;
+          try {
+            event = parseScopeTraceEvent(JSON.parse(line.slice(6)));
+          } catch {
+            throw new AgentBrowserError('INVALID_RESPONSE', 'Invalid denial trace event', false);
+          }
+          yield event;
+        }
+        if (new TextEncoder().encode(pending).byteLength > 65536)
+          throw new AgentBrowserError(
+            'INVALID_RESPONSE',
+            'Denial trace frame exceeds its bound',
+            false
+          );
+      }
+      if (!ended && !options.signal?.aborted)
+        throw new AgentBrowserError(
+          'INVALID_RESPONSE',
+          'Denial trace ended without a completion marker; inspect retained events',
+          false
+        );
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+
   async control(sessionId: string): Promise<ControlView> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control`);
   }
@@ -506,6 +607,22 @@ export class SessionsClient {
     return this.http.requestJson(
       `/v1/operator/sessions/${encodeURIComponent(sessionId)}/scope/assets`,
       { method: 'POST', body: request }
+    );
+  }
+
+  async scopeTraffic(
+    sessionId: string
+  ): Promise<import('@agentbrowser/protocol').ScopeTrafficSummary> {
+    return this.http.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/scope/traffic`);
+  }
+  /** Human-operator client only; no ordinary API/delegated authority. */
+  async topUpScopeBudget(
+    sessionId: string,
+    input: import('@agentbrowser/protocol').ScopeBudgetTopup
+  ): Promise<EngagementScopeStatus> {
+    return this.http.requestJson(
+      `/v1/operator/sessions/${encodeURIComponent(sessionId)}/scope/budget`,
+      { method: 'POST', body: input }
     );
   }
 

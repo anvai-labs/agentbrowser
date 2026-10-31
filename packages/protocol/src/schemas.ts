@@ -1,3 +1,4 @@
+import { ScopeTraceModeSchema } from './scope-trace.js';
 /**
  * JSON Schema definitions for AgentBrowser v1 API
  *
@@ -356,6 +357,7 @@ export const SessionCookieSchema = Type.Object({
 export const SessionRequestSchema = Type.Object(
   {
     mode: Type.Optional(Type.Literal('bounty')),
+    trace: Type.Optional(ScopeTraceModeSchema),
     cdpAttach: Type.Optional(Type.Boolean()),
     controlMode: Type.Optional(Type.Literal('delegated')),
     tenantId: Type.Optional(Type.String({ minLength: 1 })),
@@ -414,6 +416,7 @@ export type ScopeAssetAmendment = Static<typeof ScopeAssetAmendmentSchema>;
 /** ADR-027: authenticated operator input; raw browser state is never a wire field. */
 export const EvidencePassRequestSchema = Type.Object(
   {
+    trace: Type.Optional(ScopeTraceModeSchema),
     scope: EngagementScopeSchema,
     tenantId: Type.Optional(Type.String({ minLength: 1 })),
     origins: Type.Optional(
@@ -521,6 +524,8 @@ export const EngineInfoSchema = Type.Object({
 // ============================================================================
 
 export const SessionResponseSchema = Type.Object({
+  trace: Type.Optional(ScopeTraceModeSchema),
+  traceDropped: Type.Optional(Type.Integer({ minimum: 0 })),
   policyVersion: Type.Optional(Type.String()),
   warnings: Type.Optional(Type.Array(Type.String())),
   sessionId: Type.String({ pattern: '^ses_[a-zA-Z0-9_]+$' }),

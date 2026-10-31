@@ -1849,6 +1849,244 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/scope/traffic": {
+      "get": {
+        "operationId": "getSessionScopeTraffic",
+        "summary": "Observed method × destination-class fingerprint, including denied methods",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded advisory counts; never grants authority",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScopeTrafficSummary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Session authority required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Engine request recording unsupported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operator/sessions/{sessionId}/scope/budget": {
+      "post": {
+        "operationId": "topUpSessionScopeBudget",
+        "summary": "Human-operator-approved finite live budget increase",
+        "description": "ADR-029. Same tenant and revision, open engagement ledger, critical authorization before grant. Preserves spending, pacing and pages; stopped/expired sessions cannot be revived. No automatic request replay.",
+        "tags": [
+          "operator"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeBudgetTopup"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scope with new absolute budget limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngagementScopeStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid limit or stale revision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/scope/trace": {
+      "get": {
+        "operationId": "traceSessionScopeDenials",
+        "summary": "Follow live scope denials and advisory dependency starvation hints",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "T10 P0-3. Authenticated page.observe stream; defaults on for bounty scopes. SSE data frames use ScopeTraceEvent; event:end uses ScopeTraceEnd. URL credentials, query and fragment omitted. Bounded observers/backpressure; no replay. Cancellation detaches only the observer. Paused sessions publish no private events. Authorization is rechecked on every frame and heartbeat.",
+        "responses": {
+          "200": {
+            "description": "SSE denial events and explicit completion marker",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Tracing disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Session authority required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Observer capacity exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/scope/denied": {
       "get": {
         "operationId": "getSessionScopeDenied",
@@ -9020,6 +9258,18 @@
             "const": "bounty",
             "type": "string"
           },
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
           "cdpAttach": {
             "type": "boolean"
           },
@@ -9502,6 +9752,18 @@
           "scope"
         ],
         "properties": {
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
           "scope": {
             "additionalProperties": false,
             "type": "object",
@@ -9917,6 +10179,272 @@
           }
         }
       },
+      "ScopeTraceEvent": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "type",
+              "timestamp",
+              "sessionId",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "const": "scope.denied",
+                "type": "string"
+              },
+              "timestamp": {
+                "maxLength": 64,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "sessionId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "pageId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "data": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "scope",
+                  "method",
+                  "url",
+                  "hostname"
+                ],
+                "properties": {
+                  "scope": {
+                    "anyOf": [
+                      {
+                        "const": "SCOPE_HOST_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_PATH_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_METHOD_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_IDENTITY_DENIED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_EXPIRED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_BUDGET_EXHAUSTED",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_LEDGER_UNAVAILABLE",
+                        "type": "string"
+                      },
+                      {
+                        "const": "SCOPE_RATE_LIMITED",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "method": {
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "pattern": "^(?:[A-Z][A-Z0-9-]{0,31}|\\?)$",
+                    "type": "string"
+                  },
+                  "url": {
+                    "maxLength": 2048,
+                    "pattern": "^https?://[^\\s\\x00-\\x1f]*$",
+                    "type": "string"
+                  },
+                  "hostname": {
+                    "maxLength": 253,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "type",
+              "timestamp",
+              "sessionId",
+              "data"
+            ],
+            "properties": {
+              "type": {
+                "const": "scope.dependency-starved",
+                "type": "string"
+              },
+              "timestamp": {
+                "maxLength": 64,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "sessionId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "pageId": {
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                "type": "string"
+              },
+              "data": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "hostname",
+                  "count",
+                  "message"
+                ],
+                "properties": {
+                  "hostname": {
+                    "maxLength": 253,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 3,
+                    "type": "integer"
+                  },
+                  "message": {
+                    "maxLength": 512,
+                    "pattern": "^[^\\x00-\\x1f\\x7f]*$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ScopeTraceEnd": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "const": "session-ended",
+                "type": "string"
+              },
+              {
+                "const": "server-shutdown",
+                "type": "string"
+              },
+              {
+                "const": "revoked",
+                "type": "string"
+              },
+              {
+                "const": "backpressure",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "ScopeBudgetTopup": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "requestBudget"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requestBudget": {
+            "minimum": 1,
+            "maximum": 10000000,
+            "type": "integer"
+          }
+        }
+      },
+      "ScopeTrafficSummary": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rows",
+          "truncated"
+        ],
+        "properties": {
+          "rows": {
+            "maxItems": 128,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "method",
+                "hostClass",
+                "requests",
+                "denied"
+              ],
+              "properties": {
+                "method": {
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "pattern": "^[A-Z][A-Z0-9-]*$",
+                  "type": "string"
+                },
+                "hostClass": {
+                  "anyOf": [
+                    {
+                      "const": "program",
+                      "type": "string"
+                    },
+                    {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    {
+                      "const": "resource",
+                      "type": "string"
+                    },
+                    {
+                      "const": "other",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "requests": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "denied": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
       "SessionResponse": {
         "type": "object",
         "required": [
@@ -9927,6 +10455,22 @@
           "idleTimeoutMs"
         ],
         "properties": {
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
+          "traceDropped": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "policyVersion": {
             "type": "string"
           },
@@ -14242,6 +14786,22 @@
           "pages"
         ],
         "properties": {
+          "trace": {
+            "anyOf": [
+              {
+                "const": "denials",
+                "type": "string"
+              },
+              {
+                "const": "off",
+                "type": "string"
+              }
+            ]
+          },
+          "traceDropped": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "userAgent": {
             "type": "string"
           },

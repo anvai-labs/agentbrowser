@@ -1,12 +1,23 @@
 import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
-import { type DeniedHostSummary, summarizeDeniedHosts } from '@agentbrowser/core';
+import {
+  DenialTrace,
+  type DeniedHostSummary,
+  denialTraceLine,
+  hostMatchesPattern,
+  PageCostHistory,
+  ScopeTraffic,
+  scopeDenialDetail,
+  scopeIdentityHints,
+  summarizeDeniedHosts,
+} from '@agentbrowser/core';
 import {
   isNavigationFailureReason,
   isScopeDenialCode,
   MAX_PLAN_STEPS,
   type NavigationFailureReason,
   navigationFailureDetailFromParts,
+  parseScopeBudgetTopup,
   sessionLeaseRemainingMs,
   validateScopeAssetAmendment,
 } from '@agentbrowser/protocol';
@@ -215,6 +226,7 @@ export class ServiceError extends Error {
 
 export interface ServiceSessionRequest {
   mode?: 'bounty';
+  trace?: 'denials' | 'off';
   cdpAttach?: boolean;
   controlMode?: 'delegated';
   tenantId?: string;
@@ -589,6 +601,8 @@ export interface ServiceDependencies {
   metrics?: MetricsRegistry;
   /** Structured operation log; absent means no operation logging. */
   logger?: StructuredLogger;
+  /** Operator diagnostic sink; sanitized denial metadata only. */
+  traceSink?: (line: string) => void;
   /** How often to reconcile service state with coordinator expiry (ms). */
   sweepIntervalMs?: number;
   /**
@@ -815,6 +829,8 @@ export class AgentBrowserService {
   private readonly controlledContexts = new WeakSet<SessionContext>();
   private readonly cdpAttachAdmission: CdpAttachAdmission;
   private readonly bountyDefaults: { mode?: 'bounty'; ttlMs?: number; idleTimeoutMs?: number };
+  private readonly scopeTraffic = new Map<string, ScopeTraffic>();
+  private readonly pageCostHistory = new PageCostHistory();
   private readonly engine: BrowserEngine;
   private readonly extractMaxBytes: number;
   private readonly engines: Map<string, BrowserEngine> = new Map();
@@ -928,10 +944,15 @@ export class AgentBrowserService {
     timestamp: string;
   }> = [];
   /** Session -> event listeners, fed by per-page engine event pumps. */
+  private readonly scopeTracers = new Map<string, DenialTrace>();
+  private readonly scopeTraceModes = new Map<string, 'denials' | 'off'>();
+  private readonly traceSink: ((line: string) => void) | undefined;
+  private readonly scopeTraceDropped = new Map<string, number>();
   private readonly eventListeners = new Map<string, Set<(event: EngineEvent) => void>>();
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.traceSink = deps.traceSink;
     this.bountyDefaults = {
       ...(deps.defaultMode ? { mode: deps.defaultMode } : {}),
       ...(deps.defaultTtlMs !== undefined ? { ttlMs: deps.defaultTtlMs } : {}),
@@ -1136,6 +1157,10 @@ export class AgentBrowserService {
   private deleteSessionState(sessionId: string): void {
     this.initializingEvidence.delete(sessionId);
     this.deniedHosts.delete(sessionId);
+    this.scopeTracers.delete(sessionId);
+    this.scopeTraceModes.delete(sessionId);
+    this.scopeTraffic.delete(sessionId);
+    this.scopeTraceDropped.delete(sessionId);
     this.assetClassified.delete(sessionId);
     this.authority.remove(sessionId);
     this.downloads.get(sessionId)?.revoke(new ServiceError('SESSION_NOT_FOUND', 'Session closed'));
@@ -1231,6 +1256,20 @@ export class AgentBrowserService {
         this.metrics.incrementCounter('errors_total', { code });
       }
     }
+    if (
+      outcome === 'error' &&
+      typeof attributes.sessionId === 'string' &&
+      /(?:^|\.)(?:navigate|act|plan|autofill)$/.test(operation)
+    ) {
+      for (const hint of this.scopeTracers.get(attributes.sessionId)?.hints(performance.now()) ??
+        [])
+        this.publishScopeTrace(
+          attributes.sessionId,
+          'scope.dependency-starved',
+          hint,
+          typeof attributes.pageId === 'string' ? attributes.pageId : undefined
+        );
+    }
     if (this.logger) {
       const fields: Record<string, unknown> = this.secretManager.redact({ ...attributes, outcome });
       if (code !== undefined) {
@@ -1242,6 +1281,69 @@ export class AgentBrowserService {
         this.logger.info(operation, fields);
       }
     }
+  }
+
+  private publishScopeTrace(
+    sessionId: string,
+    type: 'scope.denied' | 'scope.dependency-starved',
+    data: Record<string, unknown>,
+    pageId?: string
+  ): void {
+    const owner = this.coordinator.get(sessionId);
+    if (!owner || this.initializingEvidence.has(sessionId) || owner.signal.aborted) return;
+    const event: EngineEvent = {
+      type,
+      timestamp: new Date().toISOString(),
+      sessionId,
+      ...(pageId ? { pageId } : {}),
+      data: this.secretManager.redactUntrustedScoped(data, sessionId) as Record<string, unknown>,
+    };
+    try {
+      const detail = event.data as Record<string, unknown>;
+      const line =
+        type === 'scope.denied'
+          ? denialTraceLine({
+              ...detail,
+              timestamp: event.timestamp,
+            } as import('@agentbrowser/protocol').ScopeDenialDetail & { timestamp: string })
+          : `${event.timestamp} ${detail.message}`;
+      if (this.traceSink) this.traceSink(line);
+      else if (process.stderr.writableLength <= 64 * 1024) {
+        const lost = this.scopeTraceDropped.get(sessionId) ?? 0;
+        process.stderr.write(
+          `${lost ? `[trace: ${lost} diagnostic lines lost to output backpressure] ` : ''}${line}\n`
+        );
+      } else
+        this.scopeTraceDropped.set(sessionId, (this.scopeTraceDropped.get(sessionId) ?? 0) + 1);
+    } catch {
+      this.scopeTraceDropped.set(sessionId, (this.scopeTraceDropped.get(sessionId) ?? 0) + 1);
+    }
+
+    if (!this.canPublishEvents(sessionId, owner) || !this.recordEvent(sessionId, event)) return;
+    for (const listener of [...(this.eventListeners.get(sessionId) ?? [])]) {
+      if (!this.canPublishEvents(sessionId, owner)) break;
+      try {
+        listener(structuredClone(event));
+      } catch {
+        /* Listener isolation. */
+      }
+    }
+  }
+
+  private traceScopeDenial(
+    sessionId: string,
+    data: Record<string, unknown>,
+    pageId?: string
+  ): void {
+    const tracer = this.scopeTracers.get(sessionId);
+    if (!tracer) return;
+    const owner = this.coordinator.get(sessionId);
+    const safeData = this.secretManager.redactUntrustedScoped(data, sessionId);
+    const detail =
+      owner && this.canPublishEvents(sessionId, owner)
+        ? tracer.note(safeData, performance.now())
+        : scopeDenialDetail(safeData);
+    if (detail) this.publishScopeTrace(sessionId, 'scope.denied', detail, pageId);
   }
 
   /**
@@ -1315,7 +1417,7 @@ export class AgentBrowserService {
   }
 
   private recordEvent(sessionId: string, event: EngineEvent): boolean {
-    const isRequest = event.type.startsWith('request.');
+    const isRequest = event.type.startsWith('request.') || event.type.startsWith('scope.');
     const store = isRequest ? this.requestHistory : this.eventHistory;
     const limit = isRequest
       ? AgentBrowserService.REQUEST_HISTORY_LIMIT
@@ -1380,9 +1482,10 @@ export class AgentBrowserService {
       if (typeFilter === undefined) throw new Error('since/limit require a type filter');
       const limit = selector.limit ?? 200;
       const since = selector.since ?? -1;
-      const ledger = typeFilter.startsWith('request.')
-        ? this.requestHistory.get(sessionId)
-        : this.eventHistory.get(sessionId);
+      const ledger =
+        typeFilter.startsWith('request.') || typeFilter.startsWith('scope.')
+          ? this.requestHistory.get(sessionId)
+          : this.eventHistory.get(sessionId);
       // Filter by the exact type while scanning: the cursor advances past
       // other types in the same ledger instead of returning them.
       const page = ledger?.page(since, limit, (event) => event.type === typeFilter);
@@ -1403,7 +1506,7 @@ export class AgentBrowserService {
       return [...others, ...requests];
     }
     if (typeof selector === 'string') {
-      if (selector.startsWith('request.')) {
+      if (selector.startsWith('request.') || selector.startsWith('scope.')) {
         return requests.filter((event) => event.type === selector);
       }
       return others.filter((event) => event.type === selector);
@@ -1417,7 +1520,7 @@ export class AgentBrowserService {
       // type (which matches nothing).
       return { events: [...others, ...requests], nextCursor: -1 };
     }
-    if (typeFilter.startsWith('request.')) {
+    if (typeFilter.startsWith('request.') || typeFilter.startsWith('scope.')) {
       return { events: requests.filter((event) => event.type === typeFilter), nextCursor: -1 };
     }
     return { events: others.filter((event) => event.type === typeFilter), nextCursor: -1 };
@@ -1755,6 +1858,30 @@ export class AgentBrowserService {
     return this.scopeOf(sessionId).status();
   }
 
+  /** Shared locked preflight; callers retain their own tenant/context and grant checks. */
+  private scopeAmendmentState(
+    sessionId: string,
+    expectedRevision: number
+  ): { scope: EngagementScopePolicy; ledger: EngagementLedger } {
+    const scope = this.scopeOf(sessionId);
+    if ((scope.status().revision ?? 0) !== expectedRevision)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'Scope revision changed; re-read before approving',
+        false,
+        { rule: 'scope.amendment.revision' }
+      );
+    const ledger = this.sessionLedgers.get(sessionId);
+    if (ledger?.state !== 'open')
+      throw new ServiceError(
+        'POLICY_DENIED',
+        'Scope amendment requires an open engagement ledger',
+        false,
+        { scope: 'SCOPE_LEDGER_UNAVAILABLE' }
+      );
+    return { scope, ledger };
+  }
+
   /** ADR-028. The authenticated operator request is the explicit grant for these assets. */
   async amendScopeAssets(
     sessionId: string,
@@ -1779,22 +1906,7 @@ export class AgentBrowserService {
           'ENGINE_UNSUPPORTED',
           'The selected engine cannot classify asset requests'
         );
-      const scope = this.scopeOf(sessionId);
-      if ((scope.status().revision ?? 0) !== request.expectedRevision)
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          'Scope revision changed; re-read before approving',
-          false,
-          { rule: 'scope.amendment.revision' }
-        );
-      const ledger = this.sessionLedgers.get(sessionId);
-      if (ledger?.state !== 'open')
-        throw new ServiceError(
-          'POLICY_DENIED',
-          'Scope amendment requires an open engagement ledger',
-          false,
-          { scope: 'SCOPE_LEDGER_UNAVAILABLE' }
-        );
+      const { scope, ledger } = this.scopeAmendmentState(sessionId, request.expectedRevision);
       let evidence: Record<string, unknown> | undefined;
       try {
         const status = await scope.appendAssets(
@@ -1827,6 +1939,72 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
     });
+  }
+
+  /** ADR-029: separately authenticated finite budget increase, audited before grant. */
+  async topUpScopeBudget(
+    sessionId: string,
+    input: import('@agentbrowser/protocol').ScopeBudgetTopup,
+    principal: SessionPrincipal
+  ): Promise<EngagementScopeStatus> {
+    if (principal.actor !== 'human-operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+    const owner = this.coordinator.inspect(sessionId)?.context;
+    if (!owner || owner.metadata.tenantId !== principal.tenant)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    let request: import('@agentbrowser/protocol').ScopeBudgetTopup;
+    try {
+      request = structuredClone(parseScopeBudgetTopup(input));
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'Invalid scope budget top-up');
+    }
+    return this.serializeHandoff(sessionId, async () => {
+      const current = () => {
+        if (owner.signal.aborted || this.coordinator.inspect(sessionId)?.context !== owner)
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during amendment');
+      };
+      current();
+      const { scope, ledger } = this.scopeAmendmentState(sessionId, request.expectedRevision);
+      let evidence: Record<string, unknown> | undefined;
+      try {
+        const status = await scope.topUpBudget(
+          request.requestBudget,
+          request.expectedRevision,
+          async (next) => {
+            evidence = {
+              expectedRevision: request.expectedRevision,
+              ...next,
+              authorizedBy: 'human-operator',
+              tenantId: principal.tenant,
+              policyVersion: this.policyVersion ?? 'legacy',
+            };
+            await ledger.appendCritical('scope.budget.authorized', evidence);
+            current();
+          }
+        );
+        if (evidence) await ledger.appendCritical('scope.budget.completed', evidence);
+        current();
+        return status;
+      } catch (error) {
+        if (evidence !== undefined || ledger.state !== 'open') scope.stop('amendment incomplete');
+        if (evidence !== undefined && !(error instanceof Error && 'code' in error))
+          throw new ServiceError(
+            'POLICY_DENIED',
+            'Scope amendment could not be durably completed',
+            false,
+            { scope: 'SCOPE_LEDGER_UNAVAILABLE', rule: 'scope.amendment.commit' }
+          );
+        throw this.mapError(error);
+      }
+    });
+  }
+
+  getScopeTraffic(sessionId: string): import('@agentbrowser/protocol').ScopeTrafficSummary {
+    this.requireSession(sessionId);
+    this.scopeOf(sessionId);
+    const traffic = this.scopeTraffic.get(sessionId);
+    if (!traffic)
+      throw new ServiceError('ENGINE_UNSUPPORTED', 'Request fingerprinting unavailable');
+    return traffic.summary();
   }
 
   getScopeDenied(sessionId: string): import('@agentbrowser/protocol').ScopeDeniedSummary {
@@ -1868,6 +2046,18 @@ export class AgentBrowserService {
     initialize?: (id: string, engineSession: EngineSession) => Promise<void>
   ): Promise<ServiceSessionView> {
     const input = applyBountyDefaults(requestInput, this.bountyDefaults);
+    if (input.trace !== undefined && input.trace !== 'denials' && input.trace !== 'off')
+      throw new ServiceError('INVALID_REQUEST', 'trace must be denials or off');
+    if (input.trace === 'denials' && !input.scope)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        'Denial tracing requires a contained engagement scope',
+        false,
+        { rule: 'scope.trace.required' }
+      );
+    const traceMode =
+      input.trace ??
+      (input.scope && (input.mode === 'bounty' || input.scope.program) ? 'denials' : 'off');
     if (
       input.userAgent !== undefined &&
       (typeof input.userAgent !== 'string' || !/^[\x20-\x7e]{1,512}$/.test(input.userAgent))
@@ -2031,6 +2221,14 @@ export class AgentBrowserService {
               pending: [] as EngineRequestRecord[],
             }
           : undefined;
+      if (traceMode === 'denials' && capabilities.requestRecording !== true)
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The engine cannot stream scope denials',
+          false,
+          { rule: 'scope.trace.engine' }
+        );
+      let traceSessionId: string | undefined;
       const denied = { hosts: [] as DeniedHostSummary[], truncated: false };
       if (ledgerFeed && capabilities.requestRecording !== true)
         throw new ServiceError(
@@ -2045,6 +2243,16 @@ export class AgentBrowserService {
             ...record,
             data: this.secretManager.redactUntrusted(record.data) as Record<string, unknown>,
           };
+          if (traceSessionId && record.type !== 'request.headersInjected')
+            this.scopeTraffic
+              .get(traceSessionId)
+              ?.note(
+                redacted.data,
+                record.type === 'request.failed' && isScopeDenialCode(redacted.data.scope),
+                this.sessionScopes.get(traceSessionId)?.status()
+              );
+          if (traceSessionId && record.type === 'request.failed')
+            this.traceScopeDenial(traceSessionId, redacted.data);
           for (const entry of summarizeDeniedHosts([redacted]).hosts) {
             const previous = denied.hosts.find((row) => row.hostname === entry.hostname);
             if (previous) {
@@ -2180,6 +2388,13 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        traceSessionId = session.sessionId;
+        if (request.scope || request.trace !== undefined)
+          this.scopeTraceModes.set(session.sessionId, traceMode);
+        if (request.scope && capabilities.requestRecording === true)
+          this.scopeTraffic.set(session.sessionId, new ScopeTraffic(request.scope));
+        if (traceMode === 'denials' && request.scope)
+          this.scopeTracers.set(session.sessionId, new DenialTrace(request.scope.allowedHosts));
         if (capabilities.assetRequestClassification === true)
           this.assetClassified.add(session.sessionId);
         if (request.scope && capabilities.requestRecording === true)
@@ -2386,6 +2601,7 @@ export class AgentBrowserService {
     return this.createSession(
       {
         mode: 'bounty',
+        ...(request.trace !== undefined ? { trace: request.trace } : {}),
         tenantId: principal.tenant,
         scope: request.scope,
         credentialSource: 'operator',
@@ -2490,7 +2706,25 @@ export class AgentBrowserService {
   ): ServiceSessionView {
     const scope = this.sessionScopes.get(context.id)?.status();
     const userAgent = this.sessionUserAgents.get(context.id);
+    const trace = this.scopeTraceModes.get(context.id);
+    const traceDropped = this.scopeTraceDropped.get(context.id) ?? 0;
+    const warnings = [
+      ...(context.engineSession.warnings ?? []),
+      ...(scope ? scopeIdentityHints(scope) : []),
+      ...(() => {
+        const hint = scope
+          ? this.pageCostHistory.warning(
+              context.metadata.tenantId ?? '',
+              scope.allowedHosts,
+              scope.budget?.limit
+            )
+          : undefined;
+        return hint ? [hint] : [];
+      })(),
+    ];
     return {
+      ...(trace !== undefined ? { trace } : {}),
+      ...(traceDropped > 0 ? { traceDropped } : {}),
       ...(userAgent !== undefined ? { userAgent } : {}),
       ...(scope
         ? {
@@ -2522,9 +2756,7 @@ export class AgentBrowserService {
       ...(this.projectActionLease(context.id) ?? {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
-      ...(context.engineSession.warnings?.length
-        ? { warnings: [...context.engineSession.warnings] }
-        : {}),
+      ...(warnings.length ? { warnings } : {}),
       ...(includeTenant && context.metadata.tenantId !== undefined
         ? { tenantId: context.metadata.tenantId }
         : {}),
@@ -4484,6 +4716,7 @@ export class AgentBrowserService {
               });
             else summary.truncated = true;
           }
+          this.traceScopeDenial(sessionId, { method: 'GET', url, scope: scopeCode }, pageId);
           this.sessionLedgers.get(sessionId)?.append('preflight.denied', {
             method: 'GET',
             url: `${target.origin}${target.pathname}`,
@@ -4503,9 +4736,14 @@ export class AgentBrowserService {
       // T10 M5: page attribution and a live subscription avoid session-wide
       // deltas, clock races and bounded-history eviction during long loads.
       const scopeDenials: Record<string, number> = {};
+      let navigationRequests = 0;
+      const navigationOwner = this.coordinator.get(sessionId);
       const unsubscribe = this.sessionScopes.has(sessionId)
         ? this.subscribe(sessionId, (event) => {
-            if (event.pageId !== pageId || event.type !== 'request.failed') return;
+            if (event.pageId !== pageId) return;
+            if (event.type === 'request.finished' || event.type === 'request.failed')
+              navigationRequests++;
+            if (event.type !== 'request.failed') return;
             const code = event.data?.scope;
             if (isScopeDenialCode(code)) scopeDenials[code] = (scopeDenials[code] ?? 0) + 1;
           })
@@ -4537,6 +4775,21 @@ export class AgentBrowserService {
         });
       } finally {
         unsubscribe?.();
+      }
+
+      if (
+        result.status === 'success' &&
+        navigationOwner &&
+        !navigationOwner.signal.aborted &&
+        this.coordinator.get(sessionId) === navigationOwner
+      ) {
+        for (const host of this.sessionScopes.get(sessionId)?.status().allowedHosts ?? [])
+          if (hostMatchesPattern(this.hostnameOf(url), host))
+            this.pageCostHistory.note(
+              navigationOwner.metadata.tenantId ?? '',
+              host,
+              navigationRequests
+            );
       }
 
       return this.secretManager.redact({
