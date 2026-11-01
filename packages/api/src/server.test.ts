@@ -1704,7 +1704,6 @@ describe('authentication and tenancy (P0-1)', () => {
   const KEY_B = 'key-beta-456';
   let authServer: FastifyInstance;
   let authUrl: string;
-  const crypto = { createHash: undefined as unknown };
 
   beforeAll(async () => {
     const nodeCrypto = await import('node:crypto');

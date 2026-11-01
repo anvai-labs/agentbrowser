@@ -1,3 +1,8 @@
+import {
+  type CoordinateOptions,
+  coordinatePoint,
+  withCoordinateOptions,
+} from './coordinate-options.js';
 import { adoptScopeAssets } from './scope-assets-file.js';
 /**
  * AgentBrowser CLI
@@ -2108,6 +2113,7 @@ export function buildCli(deps: CliDependencies): Cli {
 
               ctx.emit(snapshot, () => [
                 `${snapshot.url} (${snapshot.mode}, revision ${snapshot.revision})`,
+                ...(snapshot.interactionHint ? [`  Hint: ${snapshot.interactionHint}`] : []),
                 ...snapshot.fields.map((f) => `  ${f.ref} [${f.role}] ${f.label}`),
                 ...(snapshot.controls && snapshot.controls.length > 0
                   ? [
@@ -2437,16 +2443,32 @@ export function buildCli(deps: CliDependencies): Cli {
           'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
         );
 
-      act
-        .command('click')
-        .description('click an element')
+      withCoordinateOptions(act.command('click'))
+        .description('click an element or an explicitly approved viewport point')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('<ref>')
+        .argument('[ref]')
         .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'click', target: refTarget(ref) });
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              ref: string | undefined,
+              options: CoordinateOptions
+            ) => {
+              const at = coordinatePoint(options);
+              if (at && ref) throw new UsageError('Choose an element ref or --at');
+              if (at) await runAction(ctx, sessionId, pageId, { action: 'clickAt', at });
+              else {
+                if (ref === undefined) throw new UsageError('click requires a ref or --at');
+                await runAction(ctx, sessionId, pageId, {
+                  action: 'click',
+                  target: refTarget(ref),
+                });
+              }
+            }
+          )
         );
 
       act
@@ -2495,8 +2517,7 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
-      act
-        .command('upload')
+      withCoordinateOptions(act.command('upload'))
         .description(
           'attach service-host file(s) to a file input (ref optional when the page has one)'
         )
@@ -2526,7 +2547,7 @@ export function buildCli(deps: CliDependencies): Cli {
               pageId: string,
               refArg: string | undefined,
               pathsArg: string[],
-              options: { sha256?: string; mimeType?: string }
+              options: CoordinateOptions & { sha256?: string; mimeType?: string }
             ) => {
               // commander fills the optional [ref] before the variadic paths,
               // so untargeted invocations parse their first path into the ref
@@ -2543,8 +2564,13 @@ export function buildCli(deps: CliDependencies): Cli {
               if (paths.length === 0) {
                 throw new UsageError('upload requires at least one absolute file path');
               }
+              const at = coordinatePoint(options);
+              if (at && ref) throw new UsageError('Choose a file-input ref or --at');
+              if (at && (paths.length !== 1 || options.sha256 === undefined))
+                throw new UsageError('Coordinate upload requires one file and --sha256');
               await runAction(ctx, sessionId, pageId, {
-                action: 'upload',
+                action: at ? 'uploadAt' : 'upload',
+                ...(at ? { at } : {}),
                 ...(ref ? { target: refTarget(ref) } : {}),
                 paths,
                 ...(options.sha256 !== undefined ? { sha256: options.sha256 } : {}),
@@ -4129,7 +4155,20 @@ async function runAction(
     : ctx.client.sessions.executeAction(sessionId, pageId, request, execution));
 
   const navigationObservation = parseActionNavigationObservation(result.navigationObservation);
+  const visual =
+    request.action === 'clickAt' && result.result && typeof result.result === 'object'
+      ? (result.result as { visibleEffect?: unknown }).visibleEffect
+      : undefined;
   ctx.emit(result, () => [
+    ...(visual === 'none'
+      ? [
+          'WARNING: No visible effect — input was dispatched. Inspect current state before any retry.',
+        ]
+      : visual === 'unavailable'
+        ? [
+            'WARNING: Visual verification unavailable after dispatch. Inspect current state before any retry.',
+          ]
+        : []),
     `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
     ...(navigationObservation
@@ -4292,6 +4331,7 @@ function renderObservation(observation: ObservationResponse): string[] {
     );
   }
 
+  if (observation.interactionHint) lines.push(`  Hint: ${observation.interactionHint}`);
   if (observation.degraded)
     lines.push(
       `  Warning: degraded observation (${observation.degradedReason ?? 'unknown'}). Wait for readiness or inspect HTML before acting.`

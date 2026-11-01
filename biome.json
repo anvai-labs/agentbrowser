@@ -22,7 +22,7 @@
       "react": "none"
     },
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
         "noAdjacentSpacesInRegex": "error",
         "noArguments": "error",
@@ -60,12 +60,13 @@
         "noChildrenProp": "error",
         "noRenderReturnValue": "error",
         "noUnusedLabels": "error",
-        "noUnusedVariables": "off",
-        "noUnusedImports": "off",
-        "noUnusedFunctionParameters": "off",
-        "noUnusedPrivateClassMembers": "off",
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "noUnusedFunctionParameters": "error",
+        "noUnusedPrivateClassMembers": "error",
         "useExhaustiveDependencies": "error",
-        "useJsxKeyInIterable": "error"
+        "useJsxKeyInIterable": "error",
+        "noUndeclaredDependencies": "error"
       },
       "performance": {
         "noAccumulatingSpread": "error",
@@ -73,7 +74,8 @@
       },
       "security": {
         "noDangerouslySetInnerHtml": "error",
-        "noDangerouslySetInnerHtmlWithChildren": "error"
+        "noDangerouslySetInnerHtmlWithChildren": "error",
+        "noGlobalEval": "error"
       },
       "style": {
         "noInferrableTypes": "error",
@@ -116,7 +118,14 @@
         "noSuspiciousSemicolonInJsx": "error",
         "noVar": "error",
         "useDefaultSwitchClauseLast": "error",
-        "useIsArray": "error"
+        "useIsArray": "error",
+        "noUnusedExpressions": "error",
+        "noImportCycles": {
+          "level": "error",
+          "options": {
+            "ignoreTypes": true
+          }
+        }
       }
     }
   },

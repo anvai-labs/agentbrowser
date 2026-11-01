@@ -1,3 +1,4 @@
+import type { ViewportCapture } from '@agentbrowser/protocol';
 /**
  * Artifact Store (TD-017)
  *
@@ -15,6 +16,7 @@
 export interface ArtifactMetadata {
   artifactId: string;
   controlEpoch?: number;
+  coordinates?: ViewportCapture;
   type: 'download' | 'screenshot' | 'pdf' | 'trace' | 'html' | 'dom';
   contentType: string;
   sizeBytes: number;
@@ -93,7 +95,13 @@ export class ArtifactStore {
     type: ArtifactMetadata['type'],
     contentType: string,
     bytes: Uint8Array,
-    labels: { filename?: string; sessionId?: string; tenantId?: string; controlEpoch?: number } = {}
+    labels: {
+      filename?: string;
+      sessionId?: string;
+      tenantId?: string;
+      controlEpoch?: number;
+      coordinates?: ViewportCapture;
+    } = {}
   ): ArtifactMetadata {
     if (bytes.length > this.maxBytes) {
       throw new ArtifactError(
@@ -117,6 +125,7 @@ export class ArtifactStore {
     const now = this.clock();
     const metadata: ArtifactMetadata = {
       ...(labels.controlEpoch !== undefined ? { controlEpoch: labels.controlEpoch } : {}),
+      ...(labels.coordinates ? { coordinates: { ...labels.coordinates } } : {}),
       artifactId: `art_${now}_${++this.counter}`,
       type,
       contentType,

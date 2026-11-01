@@ -7,6 +7,37 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.30.0] — 2026-11-01
+
+### Added — coordinate interaction for closed shadow DOM (T10 A1)
+
+- Chromium `clickAt` and `uploadAt` actions, CLI `act click/upload --at`, and
+  capture-bound mapping from original viewport PNG pixels to CSS coordinates.
+  Every gesture requires exact one-use approval; scope and controlled/durable
+  operation checks still apply. Closed-root/limited-semantics hints appear in
+  observe and snapshot; click results report observed/no/unavailable visual effect.
+- Verified native file-input attachment binds one SHA-256 checked file buffer to
+  the approved main-frame backend input. Competing/late choosers refuse; file
+  events are synthetic and application acceptance requires verification.
+- Monotonic deadlines and page/document/owner cancellation prevent late reads
+  from dispatching. Submitted writes retain uncertainty evidence and exclusive
+  page input until they settle. Initial mapping qualifies DPR 1/2 at default zoom;
+  non-default/unknown browser zoom, pinch and viewport offsets refuse. See
+  [operations](docs/operations.md) and [ADR-031](docs/adr/031-coordinate-interaction-and-visual-evidence.md).
+
+### Changed — development hygiene
+
+- Restored unused-variable/import/parameter/private-member lint checks as errors.
+  Added undeclared-dependency, runtime import-cycle, unused-expression and global
+  eval checks. Hooks and CI use the same warning-failing lint command, with
+  executable positive/negative probes guarding the configuration. Removed dead
+  bindings/helpers and declared Playwright as an API test dependency.
+
+## [1.29.1] — 2026-10-31
+
+Maintenance release from `c2b4550e`; published source and delivery are recorded in
+[the release evidence](docs/spec/evidence/release-1.29.1.md).
+
 ### Fixed
 
 - `net::ERR_HTTP_RESPONSE_CODE_FAILURE` — a non-2xx HTTP response Chromium aborts

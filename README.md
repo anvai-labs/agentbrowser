@@ -198,7 +198,7 @@ connection.
 pnpm install          # Node 24.21.0, pnpm 9.15
 pnpm -r build && pnpm -r type-check
 pnpm -r test          # unit + contract; Safari tests self-gate on macOS
-pnpm -r lint          # Biome
+pnpm lint             # Biome and lint-policy regression probes
 ```
 
 ## Documentation

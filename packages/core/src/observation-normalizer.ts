@@ -55,7 +55,7 @@ export class ObservationNormalizer {
     const pageId = options.pageId || 'pg_default';
 
     // Process elements based on mode
-    const elements = this.processElements(rawState.elements, mode, options.revision);
+    const elements = this.processElements(rawState.elements, options.revision);
 
     // Apply truncation if needed
     const { truncated, prioritizedElements } = this.applyTruncation(
@@ -65,7 +65,7 @@ export class ObservationNormalizer {
     );
 
     // Generate page summary
-    const summary = this.generateSummary(prioritizedElements, rawState);
+    const summary = this.generateSummary(prioritizedElements);
 
     // Build base observation
     const observation: PageState = {
@@ -106,6 +106,8 @@ export class ObservationNormalizer {
     if (rawState.degradedReason !== undefined) {
       observation.degradedReason = rawState.degradedReason;
     }
+    if (rawState.interactionHint !== undefined)
+      observation.interactionHint = rawState.interactionHint;
     if (rawState.frameCoverage !== undefined) {
       observation.frameCoverage = rawState.frameCoverage;
     }
@@ -122,11 +124,7 @@ export class ObservationNormalizer {
   /**
    * Process elements based on observation mode
    */
-  private processElements(
-    rawElements: RawElement[],
-    mode: ObservationMode,
-    revision: number
-  ): PageElement[] {
+  private processElements(rawElements: RawElement[], revision: number): PageElement[] {
     return rawElements.map((rawEl, index) => {
       const element: PageElement = {
         ref: this.generateRef(revision, index),
@@ -295,7 +293,7 @@ export class ObservationNormalizer {
   /**
    * Generate page summary
    */
-  private generateSummary(elements: PageElement[], rawState: RawPageState): string {
+  private generateSummary(elements: PageElement[]): string {
     let buttonCount = 0;
     let inputCount = 0;
     let linkCount = 0;

@@ -305,7 +305,8 @@ export class DownloadTransport {
                 tls?.removeListener('secureConnect', secure);
                 tls?.removeListener('error', failed);
                 tls?.removeListener('close', closed);
-                error ? reject(error) : resolve();
+                if (error) reject(error);
+                else resolve();
               };
               const secure = () => done();
               const failed = (error: Error) => done(error);

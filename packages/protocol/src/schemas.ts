@@ -1,3 +1,4 @@
+import { CoordinatePointSchema, ViewportCaptureSchema } from './coordinate.js';
 import { ScopeTraceModeSchema } from './scope-trace.js';
 /**
  * JSON Schema definitions for AgentBrowser v1 API
@@ -464,6 +465,8 @@ export const ObservationModeSchema = Type.Union([
 
 /** The ActionType literal tuple, derived from the schema (never hand-listed). */
 export const ACTION_TYPE_LITERALS = [
+  'clickAt',
+  'uploadAt',
   'navigate',
   'click',
   'dblclick',
@@ -492,6 +495,7 @@ export const ActionTypeSchema = Type.Union(
 );
 
 export const EngineCapabilitiesSchema = Type.Object({
+  coordinateInput: Type.Optional(Type.Boolean()),
   supportsScreenshots: Type.Boolean(),
   supportsPdf: Type.Boolean(),
   supportsDownloads: Type.Boolean(),
@@ -633,6 +637,7 @@ export const FrameCoverageSchema = Type.Object({
 });
 
 export const PageStateSchema = Type.Object({
+  interactionHint: Type.Optional(Type.String({ maxLength: 256 })),
   sessionId: Type.String(),
   pageId: Type.String(),
   revision: Type.Integer({ minimum: 1 }),
@@ -855,6 +860,7 @@ export const DeliveredWaitConditionSchema = Type.Union(
 );
 
 export const PlanStepSchema = Type.Object({
+  at: Type.Optional(CoordinatePointSchema),
   action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
   target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
   value: Type.Optional(Type.String()),
@@ -948,7 +954,25 @@ export const DismissDialogActionSchema = Type.Object({
 // ADR-015: this union MUST mirror the TS SupportedAction union exactly -
 // a runtime drift-coverage test asserts the two sets are equal (they had
 // drifted: dialogs existed only in the TS union, navigate/wait only here).
+export const CoordinateClickActionSchema = Type.Object(
+  { type: Type.Literal('clickAt'), at: CoordinatePointSchema },
+  { additionalProperties: false }
+);
+export const CoordinateUploadActionSchema = Type.Object(
+  {
+    type: Type.Literal('uploadAt'),
+    at: CoordinatePointSchema,
+    paths: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 1 }),
+    sha256: Type.String({ pattern: UPLOAD_SHA256_PATTERN }),
+    mimeType: Type.Optional(
+      Type.String({ pattern: UPLOAD_MIME_TYPE_PATTERN, maxLength: UPLOAD_MIME_TYPE_MAX_LENGTH })
+    ),
+  },
+  { additionalProperties: false }
+);
 export const ActionSchema = Type.Union([
+  CoordinateClickActionSchema,
+  CoordinateUploadActionSchema,
   NavigateActionSchema,
   ClickActionSchema,
   DblClickActionSchema,
@@ -1123,6 +1147,7 @@ export const LocalArtifactFileSchema = Type.Object({
   expiresAt: Type.Optional(Type.Number()),
 });
 export const ArtifactRefSchema = Type.Object({
+  coordinates: Type.Optional(ViewportCaptureSchema),
   file: Type.Optional(LocalArtifactFileSchema),
   artifactId: Type.String(),
   type: Type.Union([

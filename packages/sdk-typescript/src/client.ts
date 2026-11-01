@@ -154,6 +154,7 @@ export { validateWireAction } from '@agentbrowser/protocol';
 
 export interface ActionResult {
   status: string;
+  result?: unknown;
   navigationObservation?: import('@agentbrowser/protocol').ActionNavigationObservation;
   actionId?: string;
   newRevision?: number;
@@ -259,6 +260,7 @@ export interface ExportedCookie {
  * MCP server and REST surface; declare it once, here.
  */
 export interface PageSnapshot {
+  interactionHint?: string;
   url: string;
   title: string;
   revision: number;

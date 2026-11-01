@@ -76,7 +76,7 @@ describe('Engine Interface Types', () => {
       type EngineMethods = Pick<BrowserEngine, 'createSession'>;
 
       const engine: EngineMethods = {
-        async createSession(options: EngineSessionOptions): Promise<EngineSession> {
+        async createSession(_options: EngineSessionOptions): Promise<EngineSession> {
           throw new Error('Not implemented');
         },
       };
@@ -114,7 +114,7 @@ describe('Engine Interface Types', () => {
           return {} as EngineSession;
         },
         async close() {},
-        async restoreSession(snapshot, options) {
+        async restoreSession(_snapshot, _options) {
           return {} as EngineSession;
         },
       };
@@ -149,7 +149,7 @@ describe('Engine Interface Types', () => {
       type SessionMethods = Pick<EngineSession, 'newPage'>;
 
       const session: SessionMethods = {
-        async newPage(options?: NewPageOptions): Promise<EnginePage> {
+        async newPage(_options?: NewPageOptions): Promise<EnginePage> {
           return {} as EnginePage;
         },
       };
@@ -173,7 +173,7 @@ describe('Engine Interface Types', () => {
       type SessionMethods = Pick<EngineSession, 'close'>;
 
       const session: SessionMethods = {
-        async close(reason?: string): Promise<void> {
+        async close(_reason?: string): Promise<void> {
           // Mock implementation
         },
       };
@@ -215,7 +215,7 @@ describe('Engine Interface Types', () => {
       type PageMethods = Pick<EnginePage, 'observe'>;
 
       const page: PageMethods = {
-        async observe(request: ObservationRequest): Promise<RawPageState> {
+        async observe(_request: ObservationRequest): Promise<RawPageState> {
           return {
             url: 'https://example.com',
             title: 'Example',
@@ -233,7 +233,7 @@ describe('Engine Interface Types', () => {
       type PageMethods = Pick<EnginePage, 'act'>;
 
       const page: PageMethods = {
-        async act(action: EngineAction): Promise<ActionEffect> {
+        async act(_action: EngineAction): Promise<ActionEffect> {
           return {
             actionId: 'action-1',
             startTimestamp: new Date().toISOString(),
@@ -253,7 +253,7 @@ describe('Engine Interface Types', () => {
 
       const page: PageMethods = {
         async screenshot(
-          request: ScreenshotRequest
+          _request: ScreenshotRequest
         ): Promise<{ artifactId: string; contentType: string; sizeBytes: number; url: string }> {
           return {
             artifactId: 'art-1',
@@ -296,7 +296,7 @@ describe('Engine Interface Types', () => {
         },
         async *events() {},
         async close() {},
-        async pdf(request) {
+        async pdf(_request) {
           return {
             artifactId: 'pdf-1',
             contentType: 'application/pdf',
@@ -520,12 +520,6 @@ describe('Type Compatibility', () => {
   it('should ensure interface types are compatible with protocol types', () => {
     // This test validates that engine types are compatible with protocol types
     // For a real implementation, this would check type compatibility
-
-    type ProtocolCapabilities = {
-      supportsScreenshots: boolean;
-      supportsPdf: boolean;
-      // ... other properties
-    };
 
     const capabilities: EngineCapabilities = {
       supportsScreenshots: true,

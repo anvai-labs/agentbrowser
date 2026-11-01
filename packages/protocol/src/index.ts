@@ -10,6 +10,7 @@ export * from './application.js';
 export * from './autofill.js';
 export * from './contracts.js';
 export * from './control.js';
+export * from './coordinate.js';
 export * from './display.js';
 export * from './download-failure.js';
 export * from './errors.js';

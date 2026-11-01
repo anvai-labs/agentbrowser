@@ -66,7 +66,9 @@ export class FakeEngine implements BrowserEngine {
       // No network traffic, so every (zero) request outcome is recorded.
       requestRecording: true,
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
-      supportedActionTypes: [...DELIVERED_ACTION_TYPES],
+      supportedActionTypes: DELIVERED_ACTION_TYPES.filter(
+        (type) => type !== 'clickAt' && type !== 'uploadAt'
+      ),
     };
   }
 
@@ -194,7 +196,7 @@ class FakeSession implements EngineSession {
     this.initScripts.push(script);
   }
 
-  async close(reason?: string): Promise<void> {
+  async close(_reason?: string): Promise<void> {
     this.closed = true;
     // Close all pages
     for (const page of this._pages.values()) {
@@ -224,8 +226,6 @@ class FakePage implements EnginePage {
   private removeSelf: () => void = () => {};
   private ownerSession: FakeSession | undefined;
   private destroyedAnnounced = false;
-  private sessionOptions: EngineSessionOptions;
-  private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
   /** Browsing history including the current entry (bounded). */
   private historyStack: string[] = ['about:blank'];
@@ -373,10 +373,8 @@ class FakePage implements EnginePage {
     }
   }
 
-  constructor(id: string, sessionOptions: EngineSessionOptions, pageOptions?: NewPageOptions) {
+  constructor(id: string, _sessionOptions: EngineSessionOptions, _pageOptions?: NewPageOptions) {
     this.id = id;
-    this.sessionOptions = sessionOptions;
-    this.pageOptions = pageOptions ? { ...pageOptions } : undefined;
   }
 
   /** Registered by the owning session so close() removes it from the map. */
@@ -549,6 +547,12 @@ class FakePage implements EnginePage {
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    if (action.type === 'clickAt' || action.type === 'uploadAt')
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'FakeEngine cannot dispatch coordinate input',
+        false
+      );
     this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
@@ -790,7 +794,7 @@ class FakePage implements EnginePage {
     };
   }
 
-  async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+  async extract(_request: ExtractionRequest): Promise<ExtractionResult> {
     return {
       data: { extracted: true },
       evidence: [],

@@ -32,8 +32,7 @@ const RISK_TO_LEVEL: Record<string, 'error' | 'warning' | 'note'> = {
 
 function accessibilitySarif(
   result: AccessibilityAuditResult,
-  sourceUrl?: string,
-  toolVersion?: string
+  sourceUrl?: string
 ): { rules: SarifRule[]; results: SarifResult[] } {
   // Deduplicate rules by id (axe groups by rule, but a merged result
   // could carry duplicates — SARIF requires unique rule ids per run).
@@ -74,10 +73,7 @@ function accessibilitySarif(
   return { rules, results: sarifResults };
 }
 
-function scannerSarif(
-  result: ScannerScanResult,
-  toolVersion?: string
-): { rules: SarifRule[]; results: SarifResult[] } {
+function scannerSarif(result: ScannerScanResult): { rules: SarifRule[]; results: SarifResult[] } {
   const seen = new Map<number, SarifRule>();
   const sarifResults: SarifResult[] = result.findings.map((finding) => {
     if (!seen.has(finding.pluginId)) {
@@ -161,8 +157,7 @@ export function buildSarifReport(inputs: {
   if (inputs.accessibility !== undefined) {
     const { rules, results } = accessibilitySarif(
       inputs.accessibility,
-      inputs.accessibilitySourceUrl,
-      inputs.toolVersion
+      inputs.accessibilitySourceUrl
     );
     runs.push({
       tool: {
@@ -176,7 +171,7 @@ export function buildSarifReport(inputs: {
     });
   }
   if (inputs.scanner !== undefined) {
-    const { rules, results } = scannerSarif(inputs.scanner, inputs.toolVersion);
+    const { rules, results } = scannerSarif(inputs.scanner);
     runs.push({
       tool: {
         driver: {

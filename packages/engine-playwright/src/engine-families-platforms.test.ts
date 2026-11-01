@@ -67,8 +67,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
  * branch must fall back cleanly to the bundled binary.
  */
 describe('default branded-Chrome candidates per platform (ADR-016)', () => {
-  type HeadedOptions = () => Promise<{ executablePath?: string }>;
-
   const headedOptionsOn = async (
     platform: NodeJS.Platform
   ): Promise<{ executablePath?: string }> => {

@@ -118,8 +118,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run Biome
-        run: pnpm -r lint
+      - name: Run Biome and lint-policy regression probes
+        run: pnpm lint
 
       # Prose rots quietly: every relative link in every markdown file must
       # resolve to a real file and a real heading (GitHub-slugified).

@@ -177,6 +177,7 @@ export const PageSnapshotSchema = Type.Object(
     ),
     truncated: Type.Optional(Type.Boolean()),
     degraded: Type.Optional(Type.Boolean()),
+    interactionHint: Type.Optional(Type.String({ maxLength: 256 })),
     degradedReason: Type.Optional(Type.String()),
   },
   { $id: 'urn:agentbrowser:page-snapshot:v1' }

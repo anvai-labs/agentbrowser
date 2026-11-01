@@ -258,6 +258,7 @@ export interface EngineCapabilities {
   /** T10 M2: reports every request outcome through `EngineSessionOptions.requestRecorder`. */
   requestRecording?: boolean;
   assetRequestClassification?: boolean;
+  coordinateInput?: boolean;
   requestHeaderInjection?: boolean;
   userAgentOverride?: boolean;
   supportedObservationModes: ObservationMode[];
@@ -285,6 +286,8 @@ export type ObservationMode =
  * Action type
  */
 export type ActionType =
+  | 'clickAt'
+  | 'uploadAt'
   | 'navigate'
   | 'click'
   | 'dblclick'
@@ -318,6 +321,7 @@ export interface FrameCoverage {
 }
 
 export interface PageState {
+  interactionHint?: string;
   sessionId: string;
   pageId: string;
   revision: number;
@@ -679,7 +683,21 @@ export interface WaitAction extends Action {
  * Mirrors `ActionSchema` in schemas.ts so that narrowing on `action.type`
  * yields the correct per-action parameters.
  */
+export interface CoordinateClickAction extends Action {
+  type: 'clickAt';
+  at: import('./coordinate.js').CoordinatePoint;
+}
+export interface CoordinateUploadAction extends Action {
+  type: 'uploadAt';
+  at: import('./coordinate.js').CoordinatePoint;
+  paths: string[];
+  sha256: string;
+  mimeType?: string;
+}
+
 export type SupportedAction =
+  | CoordinateClickAction
+  | CoordinateUploadAction
   | NavigateAction
   | ClickAction
   | DblClickAction
@@ -785,6 +803,8 @@ export interface DismissDialogAction extends Action {
  * a protocol action into a delivered one.
  */
 export const DELIVERED_ACTION_TYPES = [
+  'clickAt',
+  'uploadAt',
   'click',
   'dblclick',
   'hover',
@@ -1010,6 +1030,7 @@ export interface ApprovalDecision {
  * Artifact reference
  */
 export interface ArtifactRef {
+  coordinates?: import('./coordinate.js').ViewportCapture;
   file?: { path: string; bytes: number; expiresAt?: number };
   artifactId: string;
   type: 'screenshot' | 'pdf' | 'trace' | 'download' | 'html' | 'dom';

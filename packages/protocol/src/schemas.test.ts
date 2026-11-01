@@ -392,6 +392,8 @@ describe('Schema Validation - Page State', () => {
 describe('Delivered capability truth (single source)', () => {
   it('should expose the delivered action set as a const tuple', () => {
     expect(DELIVERED_ACTION_TYPES).toEqual([
+      'clickAt',
+      'uploadAt',
       'click',
       'dblclick',
       'hover',
@@ -671,6 +673,8 @@ describe('ADR-015 action-union drift coverage', () => {
       (entry) => (entry as { properties?: { type?: { const?: string } } }).properties?.type?.const
     );
     const expected = [
+      'clickAt',
+      'uploadAt',
       'navigate',
       'click',
       'dblclick',

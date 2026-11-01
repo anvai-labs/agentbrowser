@@ -9,7 +9,20 @@ describe('family capability declarations', () => {
       const capabilities = await engine.capabilities();
       expect(capabilities.supportsCdp).toBe(browser === 'chromium');
       expect(capabilities.supportsPdf).toBe(browser === 'chromium');
+      expect(capabilities.coordinateInput === true).toBe(browser === 'chromium');
+      expect(capabilities.supportedActionTypes.includes('clickAt')).toBe(browser === 'chromium');
       await engine.close();
     }
   );
+  it('permits trusted adapters to disable unqualified coordinate support', async () => {
+    const engine = new PlaywrightChromiumEngine({ coordinateInput: false });
+    try {
+      const capabilities = await engine.capabilities();
+      expect(capabilities.coordinateInput).not.toBe(true);
+      expect(capabilities.supportedActionTypes).not.toContain('clickAt');
+      expect(capabilities.supportedActionTypes).not.toContain('uploadAt');
+    } finally {
+      await engine.close();
+    }
+  });
 });

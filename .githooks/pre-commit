@@ -39,10 +39,10 @@ fi
 # 2. Linting and formatting
 echo ""
 echo "2️⃣  Checking code formatting and linting..."
-if pnpm -r lint; then
+if pnpm lint; then
     print_success "Code is properly formatted and linted"
 else
-    print_error "Linting issues found. Run: pnpm -r lint (or biome)"
+    print_error "Linting issues found. Run: pnpm lint (or biome)"
     exit 1
 fi
 

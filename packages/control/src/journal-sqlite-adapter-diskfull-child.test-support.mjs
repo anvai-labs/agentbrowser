@@ -104,7 +104,7 @@ try {
     disconnect();
   };
 
-  const dispatchCall = (kind, handle, namespaceId, ownerFence, value, read) => {
+  const dispatchCall = (kind, _handle, namespaceId, ownerFence, value, read) => {
     let outcome;
     if (kind === 'close') {
       liveByNamespace.delete(namespaceId);

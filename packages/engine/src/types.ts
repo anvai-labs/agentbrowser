@@ -197,6 +197,7 @@ export interface RawFrameCoverage {
 }
 
 export interface RawPageState {
+  interactionHint?: string;
   /** Child frames not fully inspected, present only when some are missing. */
   frameCoverage?: RawFrameCoverage[];
   /** Optional monotonic engine observation generation, including out-of-band DOM changes. */
@@ -563,7 +564,21 @@ export interface NativeFormControlEvidence {
   text?: string;
 }
 
+export interface CoordinateAuthority {
+  readonly signal?: AbortSignal;
+  assertCurrent(): void;
+}
+export interface PreparedCoordinateAction {
+  readonly identity: string;
+  readonly token: object;
+  dispose(): void;
+}
+
 export interface EnginePage {
+  prepareCoordinate?(
+    action: EngineAction,
+    authority?: CoordinateAuthority
+  ): Promise<PreparedCoordinateAction>;
   /**
    * Page ID
    */

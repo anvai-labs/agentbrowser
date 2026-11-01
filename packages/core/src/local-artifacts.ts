@@ -4,7 +4,7 @@ import { constants, type Stats } from 'node:fs';
 import { lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { ArtifactRef } from '@agentbrowser/protocol';
+import { type ArtifactRef, parseViewportCapture } from '@agentbrowser/protocol';
 import { writePrivateFile } from './private-file.js';
 
 export const ARTIFACT_CACHE_LIMITS = Object.freeze({
@@ -57,6 +57,7 @@ async function privateDirectory(directory: string): Promise<void> {
 export function artifactReference(artifact: ArtifactRef): ArtifactRef {
   return {
     ...(artifact.warnings ? { warnings: artifact.warnings } : {}),
+    ...(artifact.coordinates ? { coordinates: parseViewportCapture(artifact.coordinates) } : {}),
     artifactId: artifact.artifactId,
     type: artifact.type,
     contentType: artifact.contentType,
