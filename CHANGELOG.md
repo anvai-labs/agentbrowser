@@ -7,6 +7,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — development hygiene
+
+- Restored unused-variable/import/parameter/private-member lint checks as errors.
+  Added undeclared-dependency, runtime import-cycle, unused-expression and global
+  eval checks. Hooks and CI use the same warning-failing lint command, with
+  executable positive/negative probes guarding the configuration. Removed dead
+  bindings/helpers and declared Playwright as an API test dependency.
+
 ## [1.29.1] — 2026-10-31
 
 Maintenance release from `c2b4550e`; published source and delivery are recorded in

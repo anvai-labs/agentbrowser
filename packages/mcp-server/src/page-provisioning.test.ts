@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { buildMcpServer, type McpClient, type McpDependencies } from './mcp-server.js';
+import type { McpDependencies } from './mcp-server.js';
 import { rpcHarness } from './test-support/rpc-harness.js';
 
 function fixture(options: Partial<McpDependencies> = {}) {

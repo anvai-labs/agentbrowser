@@ -366,7 +366,6 @@ describe('egress all-hop redirect enforcement', () => {
       }
     );
     if (!routeHandler) throw new Error('Missing route handler');
-    const terminal = makeResponse(200, undefined, '<p>end</p>');
     const byUrl = new Map<string, ReturnType<typeof makeResponse>>([
       ['https://example.test/h0?entry=1', makeResponse(302, '/h1?token=secret-query')],
       ['https://example.test/h1?token=secret-query', makeResponse(302, '/h2')],

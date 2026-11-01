@@ -8,7 +8,7 @@ import { PlaywrightChromiumEngine } from './index.js';
 // storage (pinned at the service level).
 describe('page.error event capture', () => {
   it('captures an uncaught page exception as an untrusted page.error event', async () => {
-    const fixture = createServer((request, response) => {
+    const fixture = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end('<script>setTimeout(() => { throw new Error("boom-uncaught"); }, 0);</script>');
     });

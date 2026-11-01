@@ -21,7 +21,7 @@ describe('managed subprocess server', () => {
     createManagedServer({
       launcher,
       clock: () => clock.now,
-      setInterval_: (fn: () => void, ms: number) => {
+      setInterval_: (fn: () => void, _ms: number) => {
         timers.push(fn);
         return timers.length - 1;
       },

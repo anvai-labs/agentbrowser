@@ -61,10 +61,10 @@ pnpm release:artifacts
 # 3. Lint check
 echo ""
 echo "3️⃣  Code formatting and linting..."
-if pnpm -r lint; then
+if pnpm lint; then
     print_success "Code properly formatted"
 else
-    print_error "Linting failed. Run: pnpm -r lint"
+    print_error "Linting failed. Run: pnpm lint"
     exit 1
 fi
 

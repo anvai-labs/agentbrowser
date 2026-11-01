@@ -3721,7 +3721,7 @@ class PlaywrightPage implements EnginePage {
           root: import('playwright').Page | import('playwright').Frame,
           scan: () => Promise<T[]>,
           fallback: T[],
-          pass: 1 | 2
+          _pass: 1 | 2
         ): Promise<T[]> => {
           try {
             const result = await reads.read(
@@ -5625,7 +5625,7 @@ class PlaywrightPage implements EnginePage {
     };
   }
 
-  async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+  async extract(_request: ExtractionRequest): Promise<ExtractionResult> {
     const data = (await this.page.textContent('body')) || '';
 
     return {

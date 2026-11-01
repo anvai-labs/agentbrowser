@@ -1226,7 +1226,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('should accept load and networkidle conditions', async () => {
-      const observation = await service.observe(sessionId, pageId, {});
+      await service.observe(sessionId, pageId, {});
 
       const load = await service.act(sessionId, pageId, {
         action: 'press',
@@ -2348,20 +2348,6 @@ describe('AgentBrowserService', () => {
     });
   });
 });
-
-/** Reach the engine page backing a service page id (single-session tests). */
-function enginePageOf(engine: FakeEngine, pageId: string) {
-  const ids = engine.getSessionIds();
-  const sessionId = ids[ids.length - 1];
-  if (sessionId === undefined) {
-    throw new Error('no engine session was created');
-  }
-  const page = engine.getFakePage(sessionId, pageId);
-  if (!page) {
-    throw new Error(`no engine page for ${pageId}`);
-  }
-  return page;
-}
 
 /** Capture a ServiceError instead of throwing past the assertion. */
 async function capture(fn: () => Promise<unknown>): Promise<ServiceError | undefined> {

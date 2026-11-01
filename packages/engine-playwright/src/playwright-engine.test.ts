@@ -450,7 +450,7 @@ describe('PlaywrightChromiumEngine', () => {
       // Hermetic local page: example.com restructured its live page (2026-09) and
       // now asks not to be relied on for testing — the click target is a local
       // counter button whose DOM effect proves the synthetic click dispatched.
-      const server = http.createServer((request, response) => {
+      const server = http.createServer((_request, response) => {
         response.writeHead(200, { 'content-type': 'text/html' });
         response.end(
           '<button id="counter" onclick="this.textContent=String(Number(this.textContent||0)+1)">0</button>'
@@ -676,7 +676,9 @@ describe('PlaywrightChromiumEngine ref store', () => {
 
     // Non-mutating: hover leaves the revision alone.
     const before = (await page.observe({ mode: 'interactive' })).revision ?? 0;
-    await page.act({ type: 'hover', target: { ref } });
+    const hover = await page.act({ type: 'hover', target: { ref } });
+    expect(hover.oldRevision).toBe(before);
+    expect(hover.newRevision).toBe(before);
     await page.act({ type: 'wait', condition: { until: 'load' } });
 
     // Mutating: dblclick advances it.
@@ -1215,7 +1217,7 @@ describe('in-page download interception (spec 10)', () => {
   it('should capture a page-initiated download with bytes and events', async () => {
     // Fixture page serving a download via Content-Disposition.
     const http = require('node:http') as typeof import('node:http');
-    const server = http.createServer((request, response) => {
+    const server = http.createServer((_request, response) => {
       const payload = 'col1,col2\n1,2\n';
       response.writeHead(200, {
         'content-type': 'text/csv',

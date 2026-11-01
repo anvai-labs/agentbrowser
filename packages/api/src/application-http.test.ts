@@ -261,7 +261,7 @@ it('withholds the application surface from grants without the application capabi
 it('unbinds as the operator and leaves the surface inert', async () => {
   const { server, state } = await buildApplicationServer();
   try {
-    const { path, token } = await bindAndDelegate(server);
+    const { path } = await bindAndDelegate(server);
     // Unbind needs the human in control, like bind.
     await server.inject({
       method: 'POST',

@@ -137,7 +137,7 @@ describe('ObservationNormalizer', () => {
         content: '<html><body></body></html>',
         elements: [
           { role: 'button', visible: true, enabled: true, focused: true },
-          ...Array.from({ length: 50 }, (_, i) => ({
+          ...Array.from({ length: 50 }, (_, _i) => ({
             role: 'text',
             visible: true,
             enabled: true,

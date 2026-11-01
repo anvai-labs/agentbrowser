@@ -95,12 +95,25 @@ pnpm -r test
 pnpm test:unit
 
 # Lint and format
-pnpm -r lint
+pnpm lint
 pnpm -r format
 
 # Clean build artifacts and dependencies
 pnpm clean
 ```
+
+## Lint hygiene
+
+`pnpm lint` is the complete gate: package checks fail on warnings, followed by
+executable lint-policy probes. Pre-commit, pre-push and CI run this same command.
+The policy probes verify unused imports/variables/parameters/private members,
+undeclared dependencies, runtime import cycles, unused expressions and global eval
+as errors, plus a clean fixture and a disabled-rule failure control.
+
+Remove dead code while preserving calls and awaited side effects. Prefix unused
+parameters with `_` when an interface or callback position requires retaining them.
+Declare test-only dependencies in the importing package's devDependencies. Keep
+exceptions narrow and explained; do not globally disable rules to make CI pass.
 
 ## Git Workflow
 

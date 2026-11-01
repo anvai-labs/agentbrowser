@@ -23,7 +23,6 @@ const fault = JSON.parse(process.argv[3] ?? '{}');
 
 const { openJournalSqliteStore } = await import('../dist/journal-sqlite-store.js');
 const {
-  closeJournalSqliteNamespace,
   commitJournalSqliteTerminal,
   ensureJournalSqliteRecordSchema,
   lookupJournalSqliteRecord,
@@ -77,7 +76,6 @@ process.on('message', (raw) => {
   if (!isJournalChildRequest(raw)) return;
   const message = raw;
   if (message.kind === 'open') {
-    const openId = message.openId;
     let openOutcome;
     try {
       openOutcome = store.mutate((tx) => {
