@@ -6,12 +6,20 @@ import { chromium, type Page } from 'playwright';
 import { expect, it, vi } from 'vitest';
 import { AgentBrowserService } from './service.js';
 
-it.each([1, 2])(
-  'maps actual DPR%s image pixels to a small edge target after two-axis scrolling',
-  async (dpr) => {
+it.each([
+  { dpr: 1, scrollbars: 'hidden' },
+  { dpr: 2, scrollbars: 'hidden' },
+  { dpr: 1, scrollbars: 'visible' },
+  { dpr: 2, scrollbars: 'visible' },
+])(
+  'maps actual DPR$dpr image pixels with $scrollbars scrollbars to a small edge target after two-axis scrolling',
+  async ({ dpr, scrollbars }) => {
     const launch = chromium.launch.bind(chromium);
     vi.spyOn(chromium, 'launch').mockImplementation(async (options) => {
-      const browser = await launch(options);
+      const browser = await launch({
+        ...options,
+        ...(scrollbars === 'visible' ? { ignoreDefaultArgs: ['--hide-scrollbars'] } : {}),
+      });
       const newContext = browser.newContext.bind(browser);
       vi.spyOn(browser, 'newContext').mockImplementation((contextOptions) =>
         newContext({ ...contextOptions, deviceScaleFactor: dpr })
@@ -94,6 +102,14 @@ it.each([1, 2])(
       const image = await service.screenshot(sessionId, pageId, {});
       const c = image.coordinates!;
       expect(c.devicePixelRatio).toBe(dpr);
+      const viewport = await native.evaluate(() => ({
+        width: innerWidth,
+        height: innerHeight,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      if (scrollbars === 'visible') expect(viewport.clientWidth).toBeLessThan(viewport.width);
+      expect(c.cssWidth).toBe(viewport.width);
+      expect(c.cssHeight).toBe(viewport.height);
       expect(c.scrollX).toBeGreaterThan(0);
       expect(c.scrollY).toBeGreaterThan(0);
       // Pixel point comes from independently measured CSS bounds and fixture DPR,

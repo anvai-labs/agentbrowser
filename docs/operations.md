@@ -929,7 +929,7 @@ controls inaccessible through semantic refs. A positive closed-root diagnostic i
 advisory; sparse semantics alone cannot identify the cause.
 
 ```bash
-agentbrowser screenshot SESSION PAGE
+agentbrowser --json screenshot SESSION PAGE
 agentbrowser act click SESSION PAGE --at 50,35
 agentbrowser act click SESSION PAGE --at 100,70 --capture CAPTURE_ID --image-size 1600,1200
 agentbrowser act upload SESSION PAGE /absolute/proof.txt --at 50,185 --sha256 SHA256
@@ -938,7 +938,8 @@ agentbrowser act upload SESSION PAGE /absolute/proof.txt --at 50,185 --sha256 SH
 `--at` alone means viewport CSS pixels. With `--capture` and `--image-size`, it
 means pixels in the original delivered viewport PNG, whose `coordinates` metadata
 contains the capture ID and actual raster dimensions. Display resizing is not a
-new coordinate system. Captures are page-owned, expire after 60 seconds (at most
+new coordinate system. The CSS extent includes visible scrollbars present in the
+PNG. Captures are page-owned, expire after 60 seconds (at most
 four retained), and refuse after document, viewport, scroll or visual changes.
 Full-page/JPEG screenshots do not authorize image-coordinate input. Initial
 Chromium support qualifies DPR 1/2 at default browser zoom; unknown/non-default

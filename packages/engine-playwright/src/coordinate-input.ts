@@ -24,6 +24,10 @@ type State = {
   documentUrl: string;
   cssWidth: number;
   cssHeight: number;
+  visualWidth: number;
+  visualHeight: number;
+  layoutWidth: number;
+  layoutHeight: number;
   devicePixelRatio: number;
   visualScale: number;
   visualOffsetX: number;
@@ -186,8 +190,8 @@ export class CoordinateController {
       frameId: tree.frameTree.frame.id,
       worldName: 'agentbrowser-coordinate-metrics',
     });
-    const dpr = await cdp.send('Runtime.evaluate', {
-      expression: 'devicePixelRatio',
+    const nativeViewport = await cdp.send('Runtime.evaluate', {
+      expression: '({devicePixelRatio, width:innerWidth, height:innerHeight})',
       contextId: world.executionContextId,
       returnByValue: true,
     });
@@ -201,13 +205,22 @@ export class CoordinateController {
     this.live();
     const v = metrics.cssVisualViewport;
     const l = metrics.cssLayoutViewport;
+    const native = nativeViewport.result.value as
+      | { devicePixelRatio?: unknown; width?: unknown; height?: unknown }
+      | undefined;
     const value = {
       frameId: tree.frameTree.frame.id,
       loaderId: tree.frameTree.frame.loaderId,
       documentUrl: digest(tree.frameTree.frame.url ?? ''),
-      cssWidth: v.clientWidth,
-      cssHeight: v.clientHeight,
-      devicePixelRatio: Number(dpr.result.value),
+      // PNG covers the complete viewport, including classic scrollbars. CDP's
+      // client extents exclude them and would shrink the image-to-mouse mapping.
+      cssWidth: Number(native?.width),
+      cssHeight: Number(native?.height),
+      visualWidth: v.clientWidth,
+      visualHeight: v.clientHeight,
+      layoutWidth: l.clientWidth,
+      layoutHeight: l.clientHeight,
+      devicePixelRatio: Number(native?.devicePixelRatio),
       visualScale: v.scale,
       visualOffsetX: v.offsetX,
       visualOffsetY: v.offsetY,
@@ -215,11 +228,24 @@ export class CoordinateController {
       scrollY: l.pageY,
       ...(v.zoom === undefined ? {} : { pageZoom: v.zoom }),
     };
+    const clip = this.page.viewportSize();
+    if (clip && (clip.width !== value.cssWidth || clip.height !== value.cssHeight))
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Screenshot clip disagrees with the native viewport; capture transform is unqualified',
+        false
+      );
     if (
       !Object.values(value).every((item) => typeof item === 'string' || Number.isFinite(item)) ||
-      value.cssWidth <= 0 ||
-      value.cssHeight <= 0 ||
-      value.devicePixelRatio <= 0
+      [
+        value.cssWidth,
+        value.cssHeight,
+        value.visualWidth,
+        value.visualHeight,
+        value.layoutWidth,
+        value.layoutHeight,
+        value.devicePixelRatio,
+      ].some((item) => item <= 0)
     )
       throw new EngineError('ENGINE_UNSUPPORTED', 'Coordinate metrics unavailable', false);
     this.live();

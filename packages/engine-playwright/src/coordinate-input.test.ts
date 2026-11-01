@@ -43,7 +43,8 @@ function fixture() {
         },
       };
     if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
-    if (method === 'Runtime.evaluate') return { result: { value: 2 } };
+    if (method === 'Runtime.evaluate')
+      return { result: { value: { devicePixelRatio: 2, width: state.width, height: 600 } } };
     if (method === 'DOM.getNodeForLocation') return { frameId: 'frame', backendNodeId: 10 };
     if (method === 'DOM.describeNode')
       return { node: { nodeName: 'INPUT', backendNodeId: 10, attributes: ['type', 'file'] } };
@@ -59,6 +60,7 @@ function fixture() {
   const page = Object.assign(pageEvents, {
     screenshot: vi.fn(async () => png),
     mouse,
+    viewportSize: vi.fn(() => ({ width: state.width, height: 600 })),
     isClosed: () => false,
   }) as unknown as Page;
   return {
@@ -219,6 +221,19 @@ it.each(['zoom', 'scale', 'offsetX'])('refuses unqualified %s before input', asy
   const f = fixture();
   try {
     f.state[field as 'zoom' | 'scale' | 'offsetX'] = 1.25;
+    await expect(
+      f.controller.prepare({ type: 'clickAt', at: { unit: 'css', x: 10, y: 10 } })
+    ).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' });
+    expect(f.mouse.click).not.toHaveBeenCalled();
+  } finally {
+    f.controller.close();
+  }
+});
+it('refuses a native viewport that disagrees with the configured screenshot clip', async () => {
+  const f = fixture();
+  try {
+    vi.spyOn(f.page, 'viewportSize').mockReturnValue({ width: 801, height: 600 });
+    await expect(f.controller.capture()).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' });
     await expect(
       f.controller.prepare({ type: 'clickAt', at: { unit: 'css', x: 10, y: 10 } })
     ).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' });

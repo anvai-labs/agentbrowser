@@ -27,8 +27,13 @@ Capture metadata reports actual raster dimensions, CSS viewport extent, DPR,
 visual scale/offset, scroll, timestamp and an opaque capture ID. Mapping uses the
 actual delivered raster/CSS extent rather than multiplying DPR twice.
 For an untransformed viewport PNG, image point (px, py) maps to
-(x, y) = (px × cssVisualWidth / rasterWidth, py × cssVisualHeight / rasterHeight).
-Use cssLayoutViewport/cssVisualViewport, not deprecated device-pixel metrics.
+(x, y) = (px × cssWidth / rasterWidth, py × cssHeight / rasterHeight).
+The CSS extent comes from isolated-world native `innerWidth`/`innerHeight`,
+including visible scrollbars covered by the PNG. CDP client extents exclude those
+bars and must not shrink this mapping. Retain cssLayoutViewport/cssVisualViewport
+for scroll/transform and staleness checks, not deprecated device-pixel metrics.
+When Playwright configures an explicit screenshot viewport, require its clip to
+agree with those native CSS extents; unexplained emulation/clip mismatches refuse.
 Reported browser page zoom is recorded in the metrics; unknown/non-unit page zoom,
 non-unit pinch scale or nonzero visual-viewport offsets initially refuse until a receiver oracle qualifies their
 transform. Cropped, full-page, externally resized/downscaled or unknown-transform
