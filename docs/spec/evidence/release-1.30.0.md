@@ -1,7 +1,8 @@
 # Release 1.30.0 qualification
 
-Status: candidate; not published. Protected integration/promotion CI, final
-independent review, tag ancestry and delivery verification remain required.
+Status: published 2026-11-01. [Immutable GitHub release](https://github.com/anvai-labs/agentbrowser/releases/tag/v1.30.0)
+and npm `@anvailabs/agentbrowser-mcp@1.30.0` verified. Homebrew delivery is a
+separate gate, tracked below.
 
 ## A1 acceptance evidence
 
@@ -27,6 +28,15 @@ synthetic file events; it does not promise application acceptance.
 
 ## Delivery gates
 
-Full hooks, exact-commit adversarial review, protected PR CI and release channel
-verification will be recorded when completed. Existing immutable release tags and
-assets are not replaced.
+| Gate | Evidence |
+| --- | --- |
+| Local checks and independent review | Final source `b6d99b329b8bea92886ab7e84d2e7a44899530ce`, tree `f0fee13e78ed0dfe95b302de47b0b438265c6a6d`; full pre-commit/pre-push checks with 6,389 package tests, including pinned Obscura; separate adversarial review found no remaining blocker |
+| Develop integration | [PR #669](https://github.com/anvai-labs/agentbrowser/pull/669), squash `e32acb2e`; final-head protected checks green, including Windows, Obscura, documentation and journal gates |
+| Main promotion and ancestry | [PR #670](https://github.com/anvai-labs/agentbrowser/pull/670), merge `d686cd4b808db488bc98bc743b2fa4cd480fac54`, exact reviewed tree; tag ancestry check passed |
+| Published delivery | [Release workflow](https://github.com/anvai-labs/agentbrowser/actions/runs/41359633603) green; immutable release has 16 assets. Public npm version and `latest` both report 1.30.0 |
+| Download verification | Darwin arm64 CLI, MCP and server archive match the published SHA-256 manifest. Downloaded CLI `--version` and MCP initialize `serverInfo.version` report 1.30.0 |
+| Main back-sync | [PR #671](https://github.com/anvai-labs/agentbrowser/pull/671), merge `b652a338`; all checks green; no source tree changes |
+| Homebrew | [Tap PR #154](https://github.com/anvai-labs/homebrew-tap/pull/154) generated from the published bytes; independent URL/hash review and required CI pending |
+
+Existing immutable release tags and assets are not replaced. No running operator
+service was upgraded or restarted.

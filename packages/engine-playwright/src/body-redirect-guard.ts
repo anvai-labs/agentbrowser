@@ -4,7 +4,7 @@ import { scopedResponseBody } from './scoped-response-body.js';
 import { WORKER_DENIAL_CSP } from './worker-document-policy.js';
 
 /**
- * Redirects that follow a body-bearing request (POST/PUT/PATCH) are checked
+ * Redirects that follow a non-GET/HEAD request are checked
  * hop by hop in scoped sessions (T10 M1).
  *
  * Those requests go to the browser natively (`route.continue()` keeps upload
@@ -101,7 +101,9 @@ type PausedEvent = {
   responseHeaders?: Array<{ name: string; value: string }>;
 };
 
-const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+/** Native transport preserves every supported method and its optional body. */
+export const usesNativeRequestTransport = (method: string): boolean =>
+  !['GET', 'HEAD'].includes(method.toUpperCase());
 /**
  * Live chains per target. A chain closes when its request finishes or fails;
  * a full table refuses new body-bearing requests (fail closed) and never
@@ -113,9 +115,9 @@ const keyOf = (method: string, url: string): string => `${method.toUpperCase()} 
 
 /** The method the browser uses for the next hop (Fetch standard, 4.4). */
 export function followMethod(status: number, method: string): string {
-  if (status === 307 || status === 308) return method;
-  if (status === 303) return method === 'HEAD' ? 'HEAD' : 'GET';
-  return method === 'POST' ? 'GET' : method;
+  if ((status === 301 || status === 302) && method === 'POST') return 'GET';
+  if (status === 303 && method !== 'GET' && method !== 'HEAD') return 'GET';
+  return method;
 }
 
 export class BodyRedirectGuard {
@@ -316,7 +318,7 @@ export class BodyRedirectGuard {
       if (
         networkId !== undefined &&
         !target.chains.has(networkId) &&
-        BODY_METHODS.has(event.request.method.toUpperCase())
+        usesNativeRequestTransport(event.request.method)
       ) {
         if (target.chains.size >= (this.options.maxChains ?? MAX_TRACKED_CHAINS)) {
           // Full: refuse rather than track it without room (fail closed).

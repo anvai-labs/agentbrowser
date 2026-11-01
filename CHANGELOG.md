@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.30.1] — 2026-11-01
+
+### Fixed — scoped redirect method and body fidelity (T10 P0-2 prerequisite)
+
+- HEAD remains HEAD through 301/302/303 and mixed redirect chains. The bodyless
+  walker follows only the browser redirect statuses, preserving each hop's
+  current method. A Location field on 300 or 304 does not trigger another request.
+- Browser-supported methods other than GET/HEAD, including DELETE and OPTIONS,
+  use the native transport with the existing fail-closed redirect guard. Exact
+  request bodies survive 301/302/307/308 where browser semantics preserve them;
+  303 converts to GET without a later hop restoring the old method or body.
+  Method, host, rate and budget denials remain enforced and ledgered. This repair
+  prepares the transport for `page fetch`; the command remains unshipped.
+
 ## [1.30.0] — 2026-11-01
 
 ### Added — coordinate interaction for closed shadow DOM (T10 A1)

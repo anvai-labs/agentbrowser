@@ -68,7 +68,11 @@ import {
   type Locator,
   type Page,
 } from 'playwright';
-import { BodyRedirectGuard } from './body-redirect-guard.js';
+import {
+  BodyRedirectGuard,
+  followMethod,
+  usesNativeRequestTransport,
+} from './body-redirect-guard.js';
 
 /** Each scoped context's redirect guard, so new pages wait until it is armed. */
 const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
@@ -2135,7 +2139,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           return;
         }
 
-        // Body-bearing requests bypass response inspection (residual, ADR-006):
+        // Non-GET/HEAD requests use native transport (residual, ADR-006):
         // route.fetch()'s Node-side re-issue does not preserve request bodies
         // with the byte-for-byte fidelity some upload flows require - observed
         // empirically, an S3 presigned-POST multipart upload that succeeds
@@ -2144,7 +2148,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // exposure for these requests; response-size capping is given up.
         // Redirect hops are checked by the guard (T10 M1) where it can watch
         // the request's target; a scope refuses the request where it cannot.
-        if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+        if (usesNativeRequestTransport(method)) {
           if (redirectGuard !== undefined && !redirectGuard.track(request)) {
             emitRequest('request.failed', request, {
               blocked: true,
@@ -2183,12 +2187,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         let redirectHeaders = originalHeaders;
         let current = response;
         let currentUrl = url;
+        let currentMethod = method;
         let hops = 0;
         try {
           while (true) {
             const hopHeaders = await current.headers();
             const location = hopHeaders.location;
-            if (!(current.status() >= 300 && current.status() < 400 && location !== undefined)) {
+            if (!([301, 302, 303, 307, 308].includes(current.status()) && location !== undefined)) {
               break;
             }
             hops += 1;
@@ -2228,8 +2233,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               );
             }
             const hopRequestHeaders = headersFor(absolute.hostname, redirectHeaders);
+            const nextMethod = followMethod(current.status(), currentMethod);
             const hop = await verdictOf(absolute.hostname, absolute.toString(), {
-              method: current.status() === 307 || current.status() === 308 ? method : 'GET',
+              method: nextMethod,
               headers: hopRequestHeaders,
               ...classification,
             });
@@ -2243,19 +2249,17 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               await deny(hop.reason ?? 'engine_error', hop.scope);
               return;
             }
-            // This walker only handles body-less requests (the body-bearing
-            // passthrough above): 303 always re-issues GET, 307/308 keep the
-            // original method.
-            const followMethod =
-              current.status() === 307 || current.status() === 308 ? method : 'GET';
+            // Only GET/HEAD enter this walker. HEAD stays HEAD, including 303;
+            // derive each hop from the current method, never the initial method.
             recordInjection(absolute.toString());
             const next = await route.fetch({
               ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
               url: absolute.toString(),
-              method: followMethod,
+              method: nextMethod,
               maxRedirects: 0,
             });
             currentUrl = absolute.toString();
+            currentMethod = nextMethod;
             const previous = current;
             current = next;
             await previous.dispose().catch(() => {});
