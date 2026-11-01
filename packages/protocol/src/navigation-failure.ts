@@ -9,6 +9,7 @@ export const NavigationFailureReasonSchema = Type.Union([
   Type.Literal('dns_timeout'),
   Type.Literal('dns_refused'),
   Type.Literal('tls_refused'),
+  Type.Literal('http_error_response'),
   Type.Literal('egress_policy'),
   Type.Literal('browser_error_document'),
   Type.Literal('engine_error'),

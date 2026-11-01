@@ -7,6 +7,30 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.29.1] — 2026-10-31
+
+Maintenance release from `c2b4550e`; published source and delivery are recorded in
+[the release evidence](docs/spec/evidence/release-1.29.1.md).
+
+### Fixed
+
+- `net::ERR_HTTP_RESPONSE_CODE_FAILURE` — a non-2xx HTTP response Chromium aborts
+  instead of committing (classically an empty-body 404/500) — now classifies as the
+  new bounded navigation reason `http_error_response` instead of the misleading
+  `engine_error`. The origin answered; the browser did not crash.
+
+- Body redirect guard no longer blocks cross-origin POST responses. When the guard's
+  `Fetch.continueResponse` fails (a CDP limitation for POST responses that carried
+  request-stage header overrides), it now falls back to `Fetch.continueRequest`
+  pass-through instead of blocking. Redirect-chain enforcement (per-hop scope
+  verdicts, hop caps, loop detection) is unchanged and still runs before any
+  continue. Fixes hCaptcha, OAuth, and payment-iframe POST flows.
+
+- Worker CSP (`blockDocumentWorkers`) in the guard now applies only to `Document`
+  resource types (and absent resourceType — fail-closed). XHR/fetch API responses
+  no longer go through the 8 MiB body re-commitment path, eliminating a major
+  source of cross-origin POST blocking. Route-handler CSP coverage is unchanged.
+
 ## [1.29.0] — 2026-10-31
 
 Minor release: operator evidence sessions and bounty foundation diagnostics.
