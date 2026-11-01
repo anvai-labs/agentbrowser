@@ -389,7 +389,11 @@ export class BodyRedirectGuard {
         } else if (
           this.options.blockDocumentWorkers &&
           !browserRedirect &&
-          ![204, 205, 304].includes(event.responseStatusCode ?? 0)
+          ![204, 205, 304].includes(event.responseStatusCode ?? 0) &&
+          // Fail-closed: apply worker CSP when resourceType is absent (prefetch,
+          // prerender, internal loads) or explicitly Document. Only skip for
+          // resource types we know are non-document (XHR, Script, Image, etc.)
+          (event.resourceType === undefined || event.resourceType?.toLowerCase() === 'document')
         ) {
           const body = await scopedResponseBody(cdp, event.requestId);
           await cdp.send('Fetch.fulfillRequest', {
@@ -423,7 +427,15 @@ export class BodyRedirectGuard {
             ],
           });
         } else {
-          await cdp.send('Fetch.continueResponse', { requestId: event.requestId });
+          try {
+            await cdp.send('Fetch.continueResponse', { requestId: event.requestId });
+          } catch {
+            // continueResponse can fail for POST requests whose request-stage
+            // already carried header overrides (a CDP limitation). Fall back to
+            // continueRequest — the header was applied, the response body is
+            // what it is, and the page needs this response to function.
+            await cdp.send('Fetch.continueRequest', { requestId: event.requestId });
+          }
         }
       } catch {
         throw new Error('POLICY_HEADERS_UNCHECKABLE');

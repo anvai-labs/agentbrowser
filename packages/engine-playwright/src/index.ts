@@ -2079,6 +2079,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // Native scoped bodies were transformed by their target's CDP guard.
         // route.continue({headers}) would persist that override across redirects
         // and overwrite the guard's destination-specific headers on a later hop.
+        // (This call site is only reached for POST/PUT/PATCH — bodyless requests
+        // go through route.fetch with a Node-side redirect walk instead.)
         return route.continue(egress.headersForRequest && !redirectGuard ? { headers } : undefined);
       };
 

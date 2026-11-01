@@ -14,6 +14,7 @@ it('bounds navigation reasons and projects no raw topology or details', () => {
     'dns_timeout',
     'dns_refused',
     'tls_refused',
+    'http_error_response',
     'egress_policy',
     'browser_error_document',
     'engine_error',

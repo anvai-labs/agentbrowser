@@ -9,6 +9,7 @@ journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2 
 
 | Version | GitHub release | main | Headline | Record |
 | --- | --- | --- | --- | --- |
+| 1.29.1 | 2026-10-31 | `c2b4550e` | Maintenance: HTTP-error navigation classification and scoped interception repairs; header host-scoping remains separate local work | [record](spec/evidence/release-1.29.1.md) |
 | 1.29.0 | 2026-10-31 | `9cb443e9` | T10 B1–B6: operator evidence sessions and asset scope amendments; live denial diagnostics, budget top-up and scope round-trip | [record](spec/evidence/release-1.29.0.md) |
 | 1.28.0 | 2026-10-30 | `0efc9582` | T10 M5: research traffic identity, engagement diagnostics and sizing; disclosure CDP navigation repair | [record](spec/evidence/release-1.28.0.md) |
 | 1.26.0 | 2026-10-19 | `09e3bca` | T10 M4: `run` (saved plan end to end), the `plan-run` CI action, durable runs; owner #588 subtree domains | [record](spec/evidence/release-1.26.0.md) |
