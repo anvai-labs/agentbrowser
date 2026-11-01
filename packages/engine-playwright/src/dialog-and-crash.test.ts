@@ -1,5 +1,4 @@
-import type { EngineEvent, EnginePage } from '@agentbrowser/engine';
-import type { Page } from 'playwright';
+import type { EngineEvent } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 import { backingPage } from './test-support/backing-page.js';

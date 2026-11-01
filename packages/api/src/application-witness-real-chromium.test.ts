@@ -439,7 +439,7 @@ async function fixture(
         return result;
       });
     const composition = () => {
-      const { collector, application, page } = prepareCollector();
+      const { collector } = prepareCollector();
       return {
         action: {
           intent: 'draft',

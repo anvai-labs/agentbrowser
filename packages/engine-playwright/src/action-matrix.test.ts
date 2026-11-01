@@ -1,6 +1,5 @@
 import http from 'node:http';
 import type { EnginePage, EngineSession } from '@agentbrowser/engine';
-import type { Page } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import { backingPage } from './test-support/backing-page.js';
 import { sharedEngine } from './test-support/shared-engine.js';

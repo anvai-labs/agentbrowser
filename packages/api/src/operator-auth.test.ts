@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +20,6 @@ afterAll(async () => {
 });
 
 const OPERATOR_KEY = 'operator-key-aaaaaaaaaa';
-const sha = (key: string) => createHash('sha256').update(key).digest('hex');
 
 const previous: Record<string, string | undefined> = {};
 const start = async (overrides: Record<string, string | undefined> = {}) => {
@@ -32,7 +30,7 @@ const start = async (overrides: Record<string, string | undefined> = {}) => {
     AGENTBROWSER_OPERATOR_KEYS_FILE: path,
     ...overrides,
   };
-  for (const [key, value] of Object.entries(wanted)) previous[key] = process.env[key];
+  for (const key of Object.keys(wanted)) previous[key] = process.env[key];
   try {
     for (const [key, value] of Object.entries(wanted)) {
       if (value === undefined) delete process.env[key];

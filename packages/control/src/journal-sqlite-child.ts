@@ -71,7 +71,6 @@ try {
     readonly ownerFence: string;
   }
   const liveByNamespace = new Map<string, LiveHandle>();
-  const openSequence = 0;
   let inFlight = 0;
 
   const maybeShutdown = () => {
@@ -88,7 +87,7 @@ try {
 
   const dispatchCall = (
     kind: string,
-    handle: LiveHandle,
+    _handle: LiveHandle,
     namespaceId: string,
     ownerFence: string,
     value: unknown,

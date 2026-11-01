@@ -194,7 +194,7 @@ class FakeSession implements EngineSession {
     this.initScripts.push(script);
   }
 
-  async close(reason?: string): Promise<void> {
+  async close(_reason?: string): Promise<void> {
     this.closed = true;
     // Close all pages
     for (const page of this._pages.values()) {
@@ -224,8 +224,6 @@ class FakePage implements EnginePage {
   private removeSelf: () => void = () => {};
   private ownerSession: FakeSession | undefined;
   private destroyedAnnounced = false;
-  private sessionOptions: EngineSessionOptions;
-  private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
   /** Browsing history including the current entry (bounded). */
   private historyStack: string[] = ['about:blank'];
@@ -373,10 +371,8 @@ class FakePage implements EnginePage {
     }
   }
 
-  constructor(id: string, sessionOptions: EngineSessionOptions, pageOptions?: NewPageOptions) {
+  constructor(id: string, _sessionOptions: EngineSessionOptions, _pageOptions?: NewPageOptions) {
     this.id = id;
-    this.sessionOptions = sessionOptions;
-    this.pageOptions = pageOptions ? { ...pageOptions } : undefined;
   }
 
   /** Registered by the owning session so close() removes it from the map. */
@@ -790,7 +786,7 @@ class FakePage implements EnginePage {
     };
   }
 
-  async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+  async extract(_request: ExtractionRequest): Promise<ExtractionResult> {
     return {
       data: { extracted: true },
       evidence: [],

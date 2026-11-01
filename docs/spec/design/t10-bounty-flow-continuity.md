@@ -30,7 +30,10 @@ changes back into develop while retaining develop's 1.29.0 evidence record.
 
 Main's #664 also disabled four unused-code Biome rules globally. The back-sync
 preserves that published configuration; its green lint result does not establish
-the previous lint coverage. Restoring those checks is a distinct follow-up.
+the previous lint coverage. The subsequent lint-hardening checkpoint restores
+all four as errors and adds dependency, runtime-cycle, unused-expression and
+global-eval checks. Hooks and CI share the warning-failing root gate and executable
+policy probes; see [lint hygiene](../../../CLAUDE.md#lint-hygiene).
 
 Further additive public capabilities receive the next minor version (1.30.0).
 A standalone repair to shipped behavior receives a maintenance version (next:

@@ -76,7 +76,7 @@ function startServers(): Promise<{
     response.end(body);
   });
   // A second origin (different port) for the cross-origin frame case.
-  const cross = createServer((request, response) => {
+  const cross = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' });
     response.end(frameB);
   });
@@ -158,7 +158,7 @@ describe('child-frame observation and ref binding (T6)', () => {
       const crossPage = await session.newPage();
       const crossServerPage = `
 <iframe src="${servers.crossOrigin}" name="cross" title="Cross"></iframe>`;
-      const holder = createServer((request, response) => {
+      const holder = createServer((_request, response) => {
         response.writeHead(200, { 'content-type': 'text/html' });
         response.end(crossServerPage);
       });

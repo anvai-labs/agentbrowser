@@ -1,10 +1,9 @@
-import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApprovalGate, SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildServer } from './server.js';
 import { AgentBrowserService, type ServiceDependencies } from './service.js';
 
