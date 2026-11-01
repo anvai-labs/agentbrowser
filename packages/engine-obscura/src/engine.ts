@@ -41,6 +41,8 @@ export async function createObscuraEngine(
 
   const engine = new PlaywrightChromiumEngine({
     cdpEndpoint: server.wsEndpoint,
+    // Obscura's partial CDP bridge is not qualified for coordinate diagnostics/input.
+    coordinateInput: false,
     ...(options.egress !== undefined ? { egress: options.egress } : {}),
   });
 

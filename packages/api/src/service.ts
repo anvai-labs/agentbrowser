@@ -18,6 +18,7 @@ import {
   type NavigationFailureReason,
   navigationFailureDetailFromParts,
   parseScopeBudgetTopup,
+  parseViewportCapture,
   sessionLeaseRemainingMs,
   validateScopeAssetAmendment,
 } from '@agentbrowser/protocol';
@@ -381,6 +382,7 @@ export interface ServiceWaitCondition {
 
 export interface ServiceActRequest {
   action: string;
+  at?: import('@agentbrowser/protocol').CoordinatePoint;
   target?: { ref: string } | undefined;
   value?: string | undefined;
   /** Native-field comparison after one fill; no write replay. */
@@ -4319,6 +4321,7 @@ export class AgentBrowserService {
     controlsProjection?: { matched: number; total: number };
     truncated?: boolean;
     degraded?: boolean;
+    interactionHint?: string;
     degradedReason?:
       | 'aria-snapshot-timeout'
       | 'dom-semantic-subset'
@@ -4465,6 +4468,7 @@ export class AgentBrowserService {
       // Whole-body ariaSnapshot fallback signal (see observe()): a
       // one-shot-plan caller must see this just as clearly as observe
       // does, since `fields` alone looks structurally identical either way.
+      ...(fieldsBudget.interactionHint ? { interactionHint: fieldsBudget.interactionHint } : {}),
       ...(redacted.degraded === true ? { degraded: true } : {}),
       ...(redacted.degradedReason !== undefined ? { degradedReason: redacted.degradedReason } : {}),
     };
@@ -5121,9 +5125,15 @@ export class AgentBrowserService {
     // Reviewed consent and dispatch must share one detached request across all
     // awaits, including nested target/values/paths. Legacy input semantics stay intact.
     let request = input;
-    if (this.usesOperatorReview(sessionId)) {
+    const legacy = input as unknown as Record<string, unknown>;
+    if (!('action' in legacy) && (legacy.type === 'clickAt' || legacy.type === 'uploadAt')) {
+      const { type, ...fields } = legacy;
+      request = { ...fields, action: type } as unknown as ServiceActRequest;
+    }
+    const coordinate = request.action === 'clickAt' || request.action === 'uploadAt';
+    if (coordinate || this.usesOperatorReview(sessionId)) {
       try {
-        request = JSON.parse(canonicalJson(input)) as ServiceActRequest;
+        request = JSON.parse(canonicalJson(request)) as ServiceActRequest;
       } catch {
         throw new ServiceError('INVALID_REQUEST', 'Reviewed actions require bounded JSON data');
       }
@@ -5211,75 +5221,151 @@ export class AgentBrowserService {
         });
       }
 
-      const adapter = new RefTranslatingPage(page.enginePage, page);
-      const result = await this.executor.execute(
-        {
-          pageId,
-          expectedRevision: actRequest.expectedRevision ?? page.revision,
-          action: actionValidation.value,
-        },
-        {
-          enginePage: adapter,
-          observation: this.lastObservationOf(page),
-          currentRevision: page.revision,
-          beforeAction: async (resolved) => {
-            if (this.authority.browserGuardPendingInScope(sessionId)) {
-              // T5 B-dur (B6): the FIRST dispatch of a durable browser operation. Decide now (an
-              // approval round trip still throws here, before any marker); re-validate the
-              // target and the approval after the marker's storage wait; consume only then.
-              const approval = await this.prepareApproval(
-                sessionId,
-                pageId,
-                page,
-                request,
-                resolved?.fingerprint,
-                span
-              );
-              const recheckRequest = {
-                pageId,
-                expectedRevision: actRequest.expectedRevision ?? page.revision,
-                action: actionValidation.value,
-              };
-              this.authority.captureBrowserDispatchInScope(sessionId, async () => {
-                const failure = await this.executor.revalidateTarget(recheckRequest, {
-                  enginePage: adapter,
-                  observation: this.lastObservationOf(page),
-                  currentRevision: page.revision,
-                  ...(page.lastObservation !== undefined
-                    ? { elementIndex: page.lastObservation.byRef }
-                    : {}),
-                });
-                if (failure)
-                  throw new ServiceError(
-                    failure.code,
-                    failure.message,
-                    failure.retryable ?? false,
-                    failure.details
-                  );
-                await approval.revalidate();
-                await approval.commit();
-              });
-            } else {
-              await this.checkApproval(
-                sessionId,
-                pageId,
-                page,
-                request,
-                resolved?.fingerprint,
-                span
-              );
+      let coordinateBinding: ConstructorParameters<typeof RefTranslatingPage>[2];
+      let coordinateApproval:
+        | Awaited<ReturnType<AgentBrowserService['prepareApproval']>>
+        | undefined;
+      if (coordinate) {
+        const sessionOwner = this.requireSession(sessionId);
+        const controlledOwner = this.controlledContexts.has(sessionOwner)
+          ? this.capturePageOwnerInScope(sessionId, pageId)
+          : undefined;
+        const owner = {
+          assertAuthority: () => {
+            if (controlledOwner) controlledOwner.assertAuthority();
+            else {
+              this.assertAuthority(sessionId);
+              if (
+                this.requireSession(sessionId) !== sessionOwner ||
+                this.pages.get(pageId) !== page ||
+                page.sessionId !== sessionId
+              )
+                throw new ServiceError('CONTROL_REVOKED', 'Coordinate page owner changed');
             }
-            // T5 B-dur: in a durable operation the effect starts only after the recheck, so an
-            // owner (autofill) must not record a refused dispatch as possibly written.
-            if (onDispatch) this.authority.onBrowserEffectInScope(sessionId, onDispatch);
           },
-          // TD-BROWSER-9, A7: reuse the map already built in observe() rather
-          // than let the executor re-scan observation.elements per action.
-          ...(page.lastObservation !== undefined
-            ? { elementIndex: page.lastObservation.byRef }
-            : {}),
+        };
+        const capabilities = await this.requireSession(sessionId).engine.capabilities();
+        owner.assertAuthority();
+        if (capabilities.coordinateInput !== true || !page.enginePage.prepareCoordinate)
+          throw new ServiceError(
+            'ENGINE_UNSUPPORTED',
+            'Coordinate input requires a qualified engine'
+          );
+        const prepared = await page.enginePage.prepareCoordinate(
+          { ...actionValidation.value },
+          {
+            signal: controlledOwner?.ownerSignal ?? sessionOwner.signal,
+            assertCurrent: owner.assertAuthority,
+          }
+        );
+        try {
+          owner.assertAuthority();
+        } catch (error) {
+          prepared.dispose();
+          throw error;
         }
-      );
+        coordinateBinding = {
+          prepared,
+          assertCurrent: owner.assertAuthority,
+          beforeDispatch: async () => {
+            owner.assertAuthority();
+            if (!coordinateApproval)
+              throw new ServiceError('POLICY_DENIED', 'Coordinate approval was not prepared');
+            await coordinateApproval.revalidate();
+            owner.assertAuthority();
+            await coordinateApproval.commit();
+            owner.assertAuthority();
+          },
+        };
+      }
+      const adapter = new RefTranslatingPage(page.enginePage, page, coordinateBinding);
+      const result = await this.executor
+        .execute(
+          {
+            pageId,
+            expectedRevision: actRequest.expectedRevision ?? page.revision,
+            action: actionValidation.value,
+          },
+          {
+            enginePage: adapter,
+            observation: this.lastObservationOf(page),
+            currentRevision: page.revision,
+            beforeAction: async (resolved) => {
+              if (coordinateBinding) {
+                coordinateBinding.assertCurrent();
+                coordinateApproval = await this.prepareApproval(
+                  sessionId,
+                  pageId,
+                  page,
+                  request,
+                  coordinateBinding.prepared.identity,
+                  span
+                );
+                coordinateBinding.assertCurrent();
+                if (this.authority.browserGuardPendingInScope(sessionId))
+                  this.authority.captureBrowserDispatchInScope(sessionId, async () => {
+                    coordinateBinding?.assertCurrent();
+                    await coordinateApproval?.revalidate();
+                    coordinateBinding?.assertCurrent();
+                  });
+              } else if (this.authority.browserGuardPendingInScope(sessionId)) {
+                // T5 B-dur (B6): the FIRST dispatch of a durable browser operation. Decide now (an
+                // approval round trip still throws here, before any marker); re-validate the
+                // target and the approval after the marker's storage wait; consume only then.
+                const approval = await this.prepareApproval(
+                  sessionId,
+                  pageId,
+                  page,
+                  request,
+                  resolved?.fingerprint,
+                  span
+                );
+                const recheckRequest = {
+                  pageId,
+                  expectedRevision: actRequest.expectedRevision ?? page.revision,
+                  action: actionValidation.value,
+                };
+                this.authority.captureBrowserDispatchInScope(sessionId, async () => {
+                  const failure = await this.executor.revalidateTarget(recheckRequest, {
+                    enginePage: adapter,
+                    observation: this.lastObservationOf(page),
+                    currentRevision: page.revision,
+                    ...(page.lastObservation !== undefined
+                      ? { elementIndex: page.lastObservation.byRef }
+                      : {}),
+                  });
+                  if (failure)
+                    throw new ServiceError(
+                      failure.code,
+                      failure.message,
+                      failure.retryable ?? false,
+                      failure.details
+                    );
+                  await approval.revalidate();
+                  await approval.commit();
+                });
+              } else {
+                await this.checkApproval(
+                  sessionId,
+                  pageId,
+                  page,
+                  request,
+                  resolved?.fingerprint,
+                  span
+                );
+              }
+              // T5 B-dur: in a durable operation the effect starts only after the recheck, so an
+              // owner (autofill) must not record a refused dispatch as possibly written.
+              if (onDispatch) this.authority.onBrowserEffectInScope(sessionId, onDispatch);
+            },
+            // TD-BROWSER-9, A7: reuse the map already built in observe() rather
+            // than let the executor re-scan observation.elements per action.
+            ...(page.lastObservation !== undefined
+              ? { elementIndex: page.lastObservation.byRef }
+              : {}),
+          }
+        )
+        .finally(() => coordinateBinding?.prepared.dispose());
 
       if (result.error) {
         // A crash inside the executor surfaces as an INTERNAL whose message
@@ -5369,7 +5455,7 @@ export class AgentBrowserService {
           (result.result as { verified?: unknown } | undefined)?.verified === true
             ? { result: { verified: true } }
             : {}),
-          ...(request.action === 'upload' && result.result != null
+          ...((request.action === 'upload' || coordinate) && result.result != null
             ? { result: result.result }
             : {}),
         };
@@ -5951,7 +6037,11 @@ export class AgentBrowserService {
     type: ArtifactMetadata['type'],
     contentType: string,
     bytes: Uint8Array,
-    labels: { filename?: string; sessionId?: string } = {}
+    labels: {
+      filename?: string;
+      sessionId?: string;
+      coordinates?: import('@agentbrowser/protocol').ViewportCapture;
+    } = {}
   ): ArtifactMetadata {
     this.assertAuthority(sessionId);
     const controlEpoch = this.authority.currentEpoch(sessionId);
@@ -6296,6 +6386,9 @@ export class AgentBrowserService {
         new Uint8Array(bytes),
         {
           sessionId,
+          ...(captured.coordinates
+            ? { coordinates: parseViewportCapture(captured.coordinates) }
+            : {}),
         }
       );
       const inline = this.inlineFor(captured.bytesBase64, bytes.byteLength);
@@ -7178,12 +7271,22 @@ export class AgentBrowserService {
       url: currentUrl,
       ...(element ? { element } : {}),
     });
-    const risk = classification.effect;
-    const decision = tightenApprovalMode(
-      risk,
+    const coordinate = request.action === 'clickAt' || request.action === 'uploadAt';
+    const risk = coordinate ? 'transaction' : classification.effect;
+    let decision = tightenApprovalMode(
+      classification.effect,
       approvalModeOf(this.approvalAuthorizerFor(sessionId), classification),
       this.sessionApprovalPolicies.get(sessionId)
     );
+    // Preserve an existing deny before applying the stricter untargeted-input floor.
+    if (coordinate && decision !== 'deny') {
+      const floorDecision = tightenApprovalMode(
+        risk,
+        approvalModeOf(this.approvalAuthorizerFor(sessionId), { ...classification, effect: risk }),
+        this.sessionApprovalPolicies.get(sessionId)
+      );
+      decision = floorDecision === 'deny' ? 'deny' : 'required';
+    }
     // A policy deny stands above everything, leases included.
     if (decision === 'deny')
       throw new ServiceError(
@@ -7232,6 +7335,26 @@ export class AgentBrowserService {
     const decoded = decodeWireAction(request);
     if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
 
+    // A stable picture is not a stable grant: unused coordinate consent must end
+    // on takeover/regrant, including repeated human takeover at the same epoch.
+    const control =
+      coordinate && this.controlledContexts.has(this.requireSession(sessionId))
+        ? this.authority.get(sessionId)
+        : undefined;
+    const approvalIdentity = control
+      ? createHash('sha256')
+          .update(
+            canonicalJson({
+              engineIdentity: identity,
+              sessionIncarnation: this.authority.sessionIncarnation(sessionId),
+              epoch: this.authority.currentEpoch(sessionId),
+              reviewVersion: control.reviewVersion(),
+              admission: this.authority.admissionInScope(sessionId),
+            })
+          )
+          .digest('hex')
+      : identity;
+
     const approvalRequest = {
       sessionId,
       action: {
@@ -7241,7 +7364,7 @@ export class AgentBrowserService {
         pageId,
         revision: page.revision,
         url: currentUrl,
-        ...(identity !== undefined ? { identity } : {}),
+        ...(approvalIdentity !== undefined ? { identity: approvalIdentity } : {}),
         parameters: { ...decoded.value },
         ...(request.value !== undefined ? { value: request.value } : {}),
       },
@@ -7419,7 +7542,12 @@ class RefTranslatingPage implements EnginePage {
 
   constructor(
     private readonly inner: EnginePage,
-    private readonly page: PageContext
+    private readonly page: PageContext,
+    private readonly coordinateBinding?: {
+      prepared: import('@agentbrowser/engine').PreparedCoordinateAction;
+      assertCurrent(): void;
+      beforeDispatch(): Promise<void>;
+    }
   ) {
     this.id = inner.id;
   }
@@ -7438,7 +7566,16 @@ class RefTranslatingPage implements EnginePage {
 
   async act(action: { type: string; target?: { ref: string }; [key: string]: unknown }) {
     const oldRevision = this.page.revision;
-    const projected = { ...action };
+    const projected = {
+      ...action,
+      ...(this.coordinateBinding
+        ? {
+            coordinateToken: this.coordinateBinding.prepared.token,
+            coordinateAssertCurrent: this.coordinateBinding.assertCurrent,
+            coordinateBeforeDispatch: this.coordinateBinding.beforeDispatch,
+          }
+        : {}),
+    };
     if (action.target !== undefined) {
       const engineRef = this.page.lastObservation?.refMap.get(action.target.ref);
       if (engineRef !== undefined) {

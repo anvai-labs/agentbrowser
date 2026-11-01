@@ -188,6 +188,7 @@ nav:
     - '027 Evidence Pass State Transfer': adr/027-evidence-pass-state-transfer.md
     - '028 Operator Asset Scope Amendments': adr/028-operator-asset-scope-amendments.md
     - '029 Operator Budget Top-up': adr/029-operator-budget-topup.md
+    - '031 Coordinate Interaction': adr/031-coordinate-interaction-and-visual-evidence.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
@@ -322,6 +323,7 @@ nav:
     - 'Release 1.28.0': spec/evidence/release-1.28.0.md
     - 'Release 1.29.0': spec/evidence/release-1.29.0.md
     - 'Release 1.29.1': spec/evidence/release-1.29.1.md
+    - 'Release 1.30.0 Qualification': spec/evidence/release-1.30.0.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md

@@ -4713,8 +4713,88 @@
                   "action"
                 ],
                 "properties": {
+                  "at": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "unit",
+                          "x",
+                          "y"
+                        ],
+                        "properties": {
+                          "unit": {
+                            "const": "css",
+                            "type": "string"
+                          },
+                          "x": {
+                            "minimum": 0,
+                            "maximum": 65536,
+                            "type": "number"
+                          },
+                          "y": {
+                            "minimum": 0,
+                            "maximum": 65536,
+                            "type": "number"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "unit",
+                          "x",
+                          "y",
+                          "captureId",
+                          "rasterWidth",
+                          "rasterHeight"
+                        ],
+                        "properties": {
+                          "unit": {
+                            "const": "image",
+                            "type": "string"
+                          },
+                          "x": {
+                            "minimum": 0,
+                            "maximum": 65536,
+                            "type": "number"
+                          },
+                          "y": {
+                            "minimum": 0,
+                            "maximum": 65536,
+                            "type": "number"
+                          },
+                          "captureId": {
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "type": "string"
+                          },
+                          "rasterWidth": {
+                            "minimum": 1,
+                            "maximum": 65536,
+                            "type": "integer"
+                          },
+                          "rasterHeight": {
+                            "minimum": 1,
+                            "maximum": 65536,
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    ]
+                  },
                   "action": {
                     "anyOf": [
+                      {
+                        "const": "clickAt",
+                        "type": "string"
+                      },
+                      {
+                        "const": "uploadAt",
+                        "type": "string"
+                      },
                       {
                         "const": "click",
                         "type": "string"
@@ -10514,6 +10594,9 @@
                   "supportedActionTypes"
                 ],
                 "properties": {
+                  "coordinateInput": {
+                    "type": "boolean"
+                  },
                   "supportsScreenshots": {
                     "type": "boolean"
                   },
@@ -10592,6 +10675,14 @@
                     "type": "array",
                     "items": {
                       "anyOf": [
+                        {
+                          "const": "clickAt",
+                          "type": "string"
+                        },
+                        {
+                          "const": "uploadAt",
+                          "type": "string"
+                        },
                         {
                           "const": "navigate",
                           "type": "string"
@@ -10726,6 +10817,9 @@
               "supportedActionTypes"
             ],
             "properties": {
+              "coordinateInput": {
+                "type": "boolean"
+              },
               "supportsScreenshots": {
                 "type": "boolean"
               },
@@ -10804,6 +10898,14 @@
                 "type": "array",
                 "items": {
                   "anyOf": [
+                    {
+                      "const": "clickAt",
+                      "type": "string"
+                    },
+                    {
+                      "const": "uploadAt",
+                      "type": "string"
+                    },
                     {
                       "const": "navigate",
                       "type": "string"
@@ -10912,6 +11014,9 @@
           "supportedActionTypes"
         ],
         "properties": {
+          "coordinateInput": {
+            "type": "boolean"
+          },
           "supportsScreenshots": {
             "type": "boolean"
           },
@@ -10990,6 +11095,14 @@
             "type": "array",
             "items": {
               "anyOf": [
+                {
+                  "const": "clickAt",
+                  "type": "string"
+                },
+                {
+                  "const": "uploadAt",
+                  "type": "string"
+                },
                 {
                   "const": "navigate",
                   "type": "string"
@@ -11093,6 +11206,10 @@
           "untrustedContent"
         ],
         "properties": {
+          "interactionHint": {
+            "maxLength": 256,
+            "type": "string"
+          },
           "sessionId": {
             "type": "string"
           },
@@ -12014,8 +12131,88 @@
           "action"
         ],
         "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "unit",
+                  "x",
+                  "y"
+                ],
+                "properties": {
+                  "unit": {
+                    "const": "css",
+                    "type": "string"
+                  },
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 65536,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 65536,
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "unit",
+                  "x",
+                  "y",
+                  "captureId",
+                  "rasterWidth",
+                  "rasterHeight"
+                ],
+                "properties": {
+                  "unit": {
+                    "const": "image",
+                    "type": "string"
+                  },
+                  "x": {
+                    "minimum": 0,
+                    "maximum": 65536,
+                    "type": "number"
+                  },
+                  "y": {
+                    "minimum": 0,
+                    "maximum": 65536,
+                    "type": "number"
+                  },
+                  "captureId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "rasterWidth": {
+                    "minimum": 1,
+                    "maximum": 65536,
+                    "type": "integer"
+                  },
+                  "rasterHeight": {
+                    "minimum": 1,
+                    "maximum": 65536,
+                    "type": "integer"
+                  }
+                }
+              }
+            ]
+          },
           "action": {
             "anyOf": [
+              {
+                "const": "clickAt",
+                "type": "string"
+              },
+              {
+                "const": "uploadAt",
+                "type": "string"
+              },
               {
                 "const": "click",
                 "type": "string"
@@ -12694,8 +12891,88 @@
                 "action"
               ],
               "properties": {
+                "at": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "unit",
+                        "x",
+                        "y"
+                      ],
+                      "properties": {
+                        "unit": {
+                          "const": "css",
+                          "type": "string"
+                        },
+                        "x": {
+                          "minimum": 0,
+                          "maximum": 65536,
+                          "type": "number"
+                        },
+                        "y": {
+                          "minimum": 0,
+                          "maximum": 65536,
+                          "type": "number"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "unit",
+                        "x",
+                        "y",
+                        "captureId",
+                        "rasterWidth",
+                        "rasterHeight"
+                      ],
+                      "properties": {
+                        "unit": {
+                          "const": "image",
+                          "type": "string"
+                        },
+                        "x": {
+                          "minimum": 0,
+                          "maximum": 65536,
+                          "type": "number"
+                        },
+                        "y": {
+                          "minimum": 0,
+                          "maximum": 65536,
+                          "type": "number"
+                        },
+                        "captureId": {
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "type": "string"
+                        },
+                        "rasterWidth": {
+                          "minimum": 1,
+                          "maximum": 65536,
+                          "type": "integer"
+                        },
+                        "rasterHeight": {
+                          "minimum": 1,
+                          "maximum": 65536,
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  ]
+                },
                 "action": {
                   "anyOf": [
+                    {
+                      "const": "clickAt",
+                      "type": "string"
+                    },
+                    {
+                      "const": "uploadAt",
+                      "type": "string"
+                    },
                     {
                       "const": "click",
                       "type": "string"
@@ -13901,6 +14178,10 @@
               "untrustedContent"
             ],
             "properties": {
+              "interactionHint": {
+                "maxLength": 256,
+                "type": "string"
+              },
               "sessionId": {
                 "type": "string"
               },
@@ -14263,6 +14544,87 @@
                 "sizeBytes"
               ],
               "properties": {
+                "coordinates": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "captureId",
+                    "createdAt",
+                    "kind",
+                    "cssWidth",
+                    "cssHeight",
+                    "rasterWidth",
+                    "rasterHeight",
+                    "devicePixelRatio",
+                    "visualScale",
+                    "visualOffsetX",
+                    "visualOffsetY",
+                    "scrollX",
+                    "scrollY"
+                  ],
+                  "properties": {
+                    "captureId": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "kind": {
+                      "const": "viewport-png",
+                      "type": "string"
+                    },
+                    "cssWidth": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 65536,
+                      "type": "number"
+                    },
+                    "cssHeight": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 65536,
+                      "type": "number"
+                    },
+                    "rasterWidth": {
+                      "minimum": 1,
+                      "maximum": 65536,
+                      "type": "integer"
+                    },
+                    "rasterHeight": {
+                      "minimum": 1,
+                      "maximum": 65536,
+                      "type": "integer"
+                    },
+                    "devicePixelRatio": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 32,
+                      "type": "number"
+                    },
+                    "pageZoom": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 10,
+                      "type": "number"
+                    },
+                    "visualScale": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 10,
+                      "type": "number"
+                    },
+                    "visualOffsetX": {
+                      "type": "number"
+                    },
+                    "visualOffsetY": {
+                      "type": "number"
+                    },
+                    "scrollX": {
+                      "type": "number"
+                    },
+                    "scrollY": {
+                      "type": "number"
+                    }
+                  }
+                },
                 "file": {
                   "type": "object",
                   "required": [
@@ -14683,6 +15045,87 @@
           "sizeBytes"
         ],
         "properties": {
+          "coordinates": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "captureId",
+              "createdAt",
+              "kind",
+              "cssWidth",
+              "cssHeight",
+              "rasterWidth",
+              "rasterHeight",
+              "devicePixelRatio",
+              "visualScale",
+              "visualOffsetX",
+              "visualOffsetY",
+              "scrollX",
+              "scrollY"
+            ],
+            "properties": {
+              "captureId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "createdAt": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "kind": {
+                "const": "viewport-png",
+                "type": "string"
+              },
+              "cssWidth": {
+                "exclusiveMinimum": 0,
+                "maximum": 65536,
+                "type": "number"
+              },
+              "cssHeight": {
+                "exclusiveMinimum": 0,
+                "maximum": 65536,
+                "type": "number"
+              },
+              "rasterWidth": {
+                "minimum": 1,
+                "maximum": 65536,
+                "type": "integer"
+              },
+              "rasterHeight": {
+                "minimum": 1,
+                "maximum": 65536,
+                "type": "integer"
+              },
+              "devicePixelRatio": {
+                "exclusiveMinimum": 0,
+                "maximum": 32,
+                "type": "number"
+              },
+              "pageZoom": {
+                "exclusiveMinimum": 0,
+                "maximum": 10,
+                "type": "number"
+              },
+              "visualScale": {
+                "exclusiveMinimum": 0,
+                "maximum": 10,
+                "type": "number"
+              },
+              "visualOffsetX": {
+                "type": "number"
+              },
+              "visualOffsetY": {
+                "type": "number"
+              },
+              "scrollX": {
+                "type": "number"
+              },
+              "scrollY": {
+                "type": "number"
+              }
+            }
+          },
           "file": {
             "type": "object",
             "required": [

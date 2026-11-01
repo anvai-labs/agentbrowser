@@ -106,6 +106,8 @@ export class ObservationNormalizer {
     if (rawState.degradedReason !== undefined) {
       observation.degradedReason = rawState.degradedReason;
     }
+    if (rawState.interactionHint !== undefined)
+      observation.interactionHint = rawState.interactionHint;
     if (rawState.frameCoverage !== undefined) {
       observation.frameCoverage = rawState.frameCoverage;
     }
