@@ -1,3 +1,4 @@
+import { CoordinateController } from './coordinate-input.js';
 import { type SummaryInfo, selectDisclosureRows } from './disclosure-rows.js';
 import { denyWorkersInDocument } from './worker-document-policy.js';
 /**
@@ -1331,6 +1332,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       assetRequestClassification: true,
       requestHeaderInjection: true,
       userAgentOverride: true,
+      ...(this.browserFamily === 'chromium' ? { coordinateInput: true } : {}),
       ...(this.operatorCdp?.allowUnenforcedEgress &&
       this.browserFamily === 'chromium' &&
       this.cdpEndpoint === undefined
@@ -1339,7 +1341,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
       // Derived from the protocol single source of truth: drift is
       // impossible by construction.
-      supportedActionTypes: [...DELIVERED_ACTION_TYPES],
+      supportedActionTypes: DELIVERED_ACTION_TYPES.filter(
+        (type) => this.browserFamily === 'chromium' || (type !== 'clickAt' && type !== 'uploadAt')
+      ),
     };
   }
 
@@ -2855,6 +2859,21 @@ function navigationEvidenceUrl(value: string): string {
  * PlaywrightPage implements EnginePage
  */
 class PlaywrightPage implements EnginePage {
+  private coordinateController: CoordinateController | undefined;
+  private ordinaryInput = 0;
+  private coordinates(): CoordinateController {
+    if (this.coordinateController === undefined)
+      this.coordinateController = new CoordinateController(this.page, () => this.disclosureCdp());
+    return this.coordinateController;
+  }
+  prepareCoordinate(
+    action: EngineAction,
+    authority?: import('@agentbrowser/engine').CoordinateAuthority
+  ) {
+    if (this.ordinaryInput)
+      return Promise.reject(new EngineError('SESSION_BUSY', 'Another input owns this page', false));
+    return this.coordinates().prepare(action, authority);
+  }
   private actionDispatches = 0;
   private navigationDispatches = 0;
   private actionNavigationEpoch: object = {};
@@ -2872,6 +2891,7 @@ class PlaywrightPage implements EnginePage {
   private formIdentityGeneration = 0;
   private readonly onFrameNavigated = (frame: import('playwright').Frame) => {
     if (frame === this.page.mainFrame()) {
+      this.coordinateController?.invalidate();
       this.enqueueEvent({
         type: 'page.navigated',
         timestamp: new Date().toISOString(),
@@ -3009,6 +3029,7 @@ class PlaywrightPage implements EnginePage {
     // The browser can close pages without PlaywrightPage.close() running
     // (engine.close()); Playwright's own close event ends the iterator.
     this.onPageClose = () => {
+      this.coordinateController?.close();
       // Use the same cleanup as an explicit close: remove only our named
       // handlers, release refs, and end the stream even for self-closing popups.
       void this.close().catch(() => {});
@@ -3256,6 +3277,16 @@ class PlaywrightPage implements EnginePage {
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
+    if (this.coordinateController?.busy)
+      throw new EngineError('SESSION_BUSY', 'Another input owns this page', false);
+    this.ordinaryInput++;
+    try {
+      return await this.navigateInternal(request);
+    } finally {
+      this.ordinaryInput--;
+    }
+  }
+  private async navigateInternal(request: NavigationRequest): Promise<NavigationResult> {
     // A concurrent direct navigation makes an action's temporal evidence ambiguous.
     this.actionNavigationEpoch = {};
     this.navigationDispatches += 1;
@@ -4287,6 +4318,18 @@ class PlaywrightPage implements EnginePage {
       });
     }
 
+    let interactionHint: string | undefined;
+    if (baseElements.length <= 5) {
+      const closed = await withDeadline(this.coordinates().hasClosedShadowRoot(), 1000).catch(
+        () => false
+      );
+      if (closed)
+        interactionHint =
+          'Closed shadow roots detected; semantic coverage may omit visible controls. Capture a viewport screenshot and switch to coordinate mode.';
+      else if (emptyOverNonEmptyDom)
+        interactionHint =
+          'Semantic coverage is limited. Visible controls may be in shadow roots, canvas or frames; capture a viewport screenshot before choosing coordinate input.';
+    }
     const title = await reads.read('metadata', () => this.page.title());
     const content = await reads.read('html', () => this.page.content());
     if (this.page.url() !== initialUrl || title !== initialTitle) {
@@ -4306,6 +4349,7 @@ class PlaywrightPage implements EnginePage {
       revision: this.revision,
       url: initialUrl,
       title,
+      ...(interactionHint ? { interactionHint } : {}),
       status: 'interactive',
       content,
       elements: elements,
@@ -4906,6 +4950,22 @@ class PlaywrightPage implements EnginePage {
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    const coordinate = action.type === 'clickAt' || action.type === 'uploadAt';
+    if (
+      (coordinate && this.ordinaryInput > 0) ||
+      (this.coordinateController?.busy && !this.coordinateController.owns(action.coordinateToken))
+    )
+      throw new EngineError('SESSION_BUSY', 'Another input owns this page', false);
+    if (!coordinate) this.ordinaryInput++;
+    try {
+      return await this.actInternal(action);
+    } finally {
+      if (!coordinate) this.ordinaryInput--;
+    }
+  }
+  private async actInternal(action: EngineAction): Promise<ActionEffect> {
+    if (this.coordinateController?.busy && !this.coordinateController.owns(action.coordinateToken))
+      throw new EngineError('SESSION_BUSY', 'A prepared coordinate gesture owns this page', false);
     try {
       return await this.performAction(action);
     } catch (error) {
@@ -5227,6 +5287,38 @@ class PlaywrightPage implements EnginePage {
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
 
+    if (action.type === 'clickAt' || action.type === 'uploadAt') {
+      const assertCurrent = action.coordinateAssertCurrent;
+      const beforeDispatch = action.coordinateBeforeDispatch;
+      if (
+        typeof assertCurrent !== 'function' ||
+        typeof beforeDispatch !== 'function' ||
+        typeof action.coordinateToken !== 'object' ||
+        action.coordinateToken === null
+      )
+        throw new EngineError(
+          'INVALID_REQUEST',
+          'Coordinate input requires a prepared approved gesture',
+          false
+        );
+      const result = await this.coordinates().perform(
+        action.coordinateToken,
+        assertCurrent as () => void,
+        async () => {
+          await (beforeDispatch as () => Promise<void>)();
+          onDispatch();
+        }
+      );
+      this.bumpRevision();
+      return {
+        actionId,
+        startTimestamp,
+        endTimestamp: new Date().toISOString(),
+        oldRevision,
+        newRevision: this.revision,
+        result,
+      };
+    }
     onDispatch();
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
@@ -5269,7 +5361,7 @@ class PlaywrightPage implements EnginePage {
         };
       }
       case 'navigate':
-        await this.navigate({ url: action.url as string });
+        await this.navigateInternal({ url: action.url as string });
         break;
       case 'click': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
@@ -5636,6 +5728,22 @@ class PlaywrightPage implements EnginePage {
   }
 
   async screenshot(request: ScreenshotRequest): Promise<CapturedArtifact> {
+    if (
+      !request.fullPage &&
+      (!request.format || request.format === 'png') &&
+      (await this.disclosureCdp())
+    ) {
+      const capture = await this.coordinates().capture();
+      return {
+        artifactId: `screenshot-${Date.now()}`,
+        type: 'screenshot',
+        contentType: 'image/png',
+        sizeBytes: capture.bytes.length,
+        url: `/v1/artifacts/screenshot-${Date.now()}`,
+        bytesBase64: capture.bytes.toString('base64'),
+        coordinates: capture.coordinates,
+      };
+    }
     const screenshot = await this.page.screenshot({
       fullPage: request.fullPage || false,
       type: request.format || 'png',
@@ -5743,11 +5851,13 @@ class PlaywrightPage implements EnginePage {
   }
 
   private closeDisclosureCdp(): void {
+    this.coordinateController?.invalidate();
     void this.disclosureCdpSession?.detach().catch(() => {});
     this.disclosureCdpSession = undefined;
   }
 
   async close(): Promise<void> {
+    this.coordinateController?.close();
     this.eventsClosed = true;
     this.closeDisclosureCdp();
     this.releaseRefs();

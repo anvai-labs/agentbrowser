@@ -2,7 +2,8 @@
 
 Status: revised base/addendum plan approved; incremental releases authorized.
 Foundation release 1.29.0 shipped; maintenance release 1.29.1 shipped.
-Coordinate mode (A1) remains the next ordered capability and is not released.
+Coordinate mode (A1) is prepared for 1.30.0; full gates, review and promotion must
+finish before it is described as released.
 The updated external handoff/kickoff define acceptance. Their revised order takes
 precedence over the kickoff's older numbered list:
 P0-1 → P0-3 → P1-4 → A1 → P0-2 → P1-5/P1-6+A4 → P1-7+A2/A3 → P2-8 → A5 → A6.
@@ -22,7 +23,7 @@ changes back into develop while retaining develop's 1.29.0 evidence record.
 | Handoff work | Reconciled status |
 | --- | --- |
 | T10 B1–B6; P0-1/P0-3/P1-4 | Released in 1.29.0; live Wolt/Vinted acceptance remains pending operator verification |
-| A1 | Local work in progress: protocol, preparation/approval, capture metadata, CLI and refusal tests; the closed-shadow fixture still refuses the upload point, so acceptance is incomplete |
+| A1 | 1.30.0 candidate: public closed-shadow picker/search/select/upload/one-submit fixture passes; DPR 1/2, controlled durable no-replay and method/host/rate/budget denial ledgers covered; full gates/review/promotion pending |
 | P0-2 | Separate local API-probe work in progress; qualification/review incomplete |
 | P1-5/P1-6+A4; P1-7+A2/A3; P2-8; A5; A6 | Planned in the approved order; not completed by the published hotfix |
 | Header hostSuffix pass-through | Local commit `93213f22`; absent from the 1.29.1 source despite the #664 description; separate review and qualification required |
@@ -98,6 +99,10 @@ Tests cover finite increases, stale/concurrent/unauthorized/failed grants, prese
 pages/spending, expired-navigation sample isolation and unsupported engines.
 Live Vinted sizing remains pending operator verification.
 A1: coordinate input and capture-bound visual verification for closed-shadow UIs.
+The [ADR-031](../../adr/031-coordinate-interaction-and-visual-evidence.md) candidate
+adds exact one-use consent, native input-bound verified bytes and bounded owner
+cancellation. Unknown/non-unit browser zoom is explicitly unqualified; live
+Bugcrowd verification remains pending operator verification.
 P0-2: controlled, scoped, ledgered origin-context API requests.
 P1-5: explicit functional resource hosts, distinct from static assets/targets.
 P1-6+A4: rotation diagnostics, operator-approved reseed, scoped CDP extraction

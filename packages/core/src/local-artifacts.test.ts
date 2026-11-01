@@ -53,6 +53,22 @@ describe('private artifact cache', () => {
     });
     expect(receipt).not.toHaveProperty('url');
     expect(receipt).not.toHaveProperty('inline');
+    const coordinates = {
+      captureId: 'page-owned-capture',
+      createdAt: 1,
+      kind: 'viewport-png' as const,
+      cssWidth: 800,
+      cssHeight: 600,
+      rasterWidth: 1600,
+      rasterHeight: 1200,
+      devicePixelRatio: 2,
+      visualScale: 1,
+      visualOffsetX: 0,
+      visualOffsetY: 0,
+      scrollX: 0,
+      scrollY: 50,
+    };
+    expect(artifactReference({ ...receipt, coordinates }).coordinates).toEqual(coordinates);
   });
   it.skipIf(process.platform === 'win32')(
     'evicts expired and oldest excess managed files while preserving user files and links',

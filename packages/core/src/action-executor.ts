@@ -216,6 +216,7 @@ export class ActionExecutor {
           return invalidRequest('Select action requires a non-empty values parameter');
         }
         break;
+      case 'uploadAt':
       case 'upload': {
         if (!action.paths || action.paths.length === 0) {
           return invalidRequest('Upload action requires a non-empty paths parameter');

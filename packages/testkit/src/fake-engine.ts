@@ -66,7 +66,9 @@ export class FakeEngine implements BrowserEngine {
       // No network traffic, so every (zero) request outcome is recorded.
       requestRecording: true,
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
-      supportedActionTypes: [...DELIVERED_ACTION_TYPES],
+      supportedActionTypes: DELIVERED_ACTION_TYPES.filter(
+        (type) => type !== 'clickAt' && type !== 'uploadAt'
+      ),
     };
   }
 
@@ -545,6 +547,12 @@ class FakePage implements EnginePage {
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    if (action.type === 'clickAt' || action.type === 'uploadAt')
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'FakeEngine cannot dispatch coordinate input',
+        false
+      );
     this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');

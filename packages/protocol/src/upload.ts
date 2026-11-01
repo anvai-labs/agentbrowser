@@ -12,7 +12,7 @@ export function validateUploadIntegrity(input: unknown): string | undefined {
   if (typeof input !== 'object' || input === null) return undefined;
   const action = input as Record<string, unknown>;
   if (action.sha256 === undefined && action.mimeType === undefined) return undefined;
-  if ((action.type ?? action.action) !== 'upload') {
+  if (!['upload', 'uploadAt'].includes(String(action.type ?? action.action))) {
     return 'sha256 and mimeType are only supported for upload';
   }
   if (typeof action.sha256 !== 'string' || !digest.test(action.sha256)) {

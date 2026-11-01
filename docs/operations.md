@@ -923,6 +923,42 @@ require the human-operator plane and durable ledger acknowledgments; a critical
 ledger failure stops the scope. See [ADR-027](adr/027-evidence-pass-state-transfer.md)
 and [ADR-028](adr/028-operator-asset-scope-amendments.md).
 
+**Closed shadow DOM interaction (T10 A1, ADR-031).** If `observe` or `snapshot`
+reports `interactionHint`, inspect a viewport PNG and use coordinate actions for
+controls inaccessible through semantic refs. A positive closed-root diagnostic is
+advisory; sparse semantics alone cannot identify the cause.
+
+```bash
+agentbrowser screenshot SESSION PAGE
+agentbrowser act click SESSION PAGE --at 50,35
+agentbrowser act click SESSION PAGE --at 100,70 --capture CAPTURE_ID --image-size 1600,1200
+agentbrowser act upload SESSION PAGE /absolute/proof.txt --at 50,185 --sha256 SHA256
+```
+
+`--at` alone means viewport CSS pixels. With `--capture` and `--image-size`, it
+means pixels in the original delivered viewport PNG, whose `coordinates` metadata
+contains the capture ID and actual raster dimensions. Display resizing is not a
+new coordinate system. Captures are page-owned, expire after 60 seconds (at most
+four retained), and refuse after document, viewport, scroll or visual changes.
+Full-page/JPEG screenshots do not authorize image-coordinate input. Initial
+Chromium support qualifies DPR 1/2 at default browser zoom; unknown/non-default
+page zoom, pinch zoom and visual viewport offsets refuse.
+
+Every `clickAt`/`uploadAt` requires one-use approval bound to the exact gesture and
+current page evidence. Repeat the exact request with that approval token through
+the normal approval workflow. File upload requires one regular file, mandatory
+SHA-256, at most 16 MiB, and an integral CSS point resolving to a main-frame native
+file input or label. Bytes go only to that approved input; custom chooser buttons
+and competing/unverifiable choosers refuse. File events are synthetic; verify the
+application accepted the attachment.
+
+Inspect `visibleEffect` and any warning after a click. Visible change does not
+prove a remote commit, and no-effect/timeout/`dispatch: uncertain` never means it
+is safe to replay. Pending browser writes keep page input exclusive until they
+settle. Scope, rate, budget, method and host denials still apply and are ledgered.
+The closed-shadow draft fixture is covered offline; live Bugcrowd verification
+remains pending operator verification.
+
 **Findings bound to an engagement (T10 M3).** Findings are a researcher-owned JSON array
 (`id`, `title`, `severity`, `status: suspected|confirmed`, `url`, `description`, optional `method`,
 `ruleId`, `ledgerRefs`, `evidence`), checked offline against an exported ledger:
