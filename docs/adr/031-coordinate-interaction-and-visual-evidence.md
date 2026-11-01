@@ -12,6 +12,9 @@ Add typed coordinate click and coordinate file-chooser upload actions. CLI
 An image-coordinate option binds the point to a recent viewport screenshot capture.
 Neither action exposes selectors, arbitrary JavaScript or raw CDP to agents. Ref
 clicks keep their existing meaning. Keyboard input can operate the resulting focus.
+An unqualified CDP-compatible adapter can only disable the capability through a
+trusted engine option. Obscura opts out unconditionally: no coordinate probing,
+mapped capture metadata or coordinate input. No session/wire override enables it.
 
 Coordinate input has no semantic target from which to infer transaction risk.
 It therefore requires an explicit one-use action approval, composed with operator

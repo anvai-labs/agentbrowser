@@ -141,3 +141,23 @@ it('seals a revoked coordinate dispatch as unknown and refuses replay after a ne
     tree.dispose();
   }
 }, 60000);
+
+it('refuses public coordinate input when a trusted Chromium-compatible adapter opts out', async () => {
+  const service = new AgentBrowserService({
+    engine: new PlaywrightChromiumEngine({ coordinateInput: false }),
+    approvalPolicy: { unknownRisk: 'allow' },
+  });
+  try {
+    const { sessionId } = await service.createSession({});
+    const { pageId } = await service.createPage(sessionId);
+    await expect(
+      service.act(sessionId, pageId, { action: 'clickAt', at: { unit: 'css', x: 10, y: 10 } })
+    ).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' });
+    const image = await service.screenshot(sessionId, pageId, {});
+    expect(image.sizeBytes).toBeGreaterThan(0);
+    expect(image.coordinates).toBeUndefined();
+    expect(typeof (await service.observe(sessionId, pageId, {})).title).toBe('string');
+  } finally {
+    await service.shutdown();
+  }
+}, 30000);

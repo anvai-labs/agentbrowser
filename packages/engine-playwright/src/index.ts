@@ -1037,6 +1037,8 @@ const BLOCKED_RESPONSE = {
 } as const;
 
 export interface PlaywrightEngineOptions {
+  /** Trusted adapters may disable coordinate input when their CDP subset is unqualified. */
+  coordinateInput?: false;
   /** Held-dialog auto-settle grace in ms (default 5000). */
   dialogGraceMs?: number;
   /**
@@ -1257,6 +1259,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly rootEgress: RequestPolicy | undefined;
   private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
+  readonly supportsCoordinateInput: boolean;
   private readonly cdpEndpoint: string | undefined;
   private readonly operatorCdp: { endpoint: string; allowUnenforcedEgress: boolean } | undefined;
   private operatorAttachReserved = false;
@@ -1273,6 +1276,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.webSocketPolicy = options.webSocketPolicy;
     this.forceWebrtcIpHandlingPolicy = options.forceWebrtcIpHandlingPolicy === true;
     this.browserFamily = options.browser ?? 'chromium';
+    this.supportsCoordinateInput =
+      this.browserFamily === 'chromium' && options.coordinateInput !== false;
     this.cdpEndpoint = options.cdpEndpoint;
     this.operatorCdp =
       options.operatorCdp === undefined
@@ -1332,7 +1337,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       assetRequestClassification: true,
       requestHeaderInjection: true,
       userAgentOverride: true,
-      ...(this.browserFamily === 'chromium' ? { coordinateInput: true } : {}),
+      ...(this.supportsCoordinateInput ? { coordinateInput: true } : {}),
       ...(this.operatorCdp?.allowUnenforcedEgress &&
       this.browserFamily === 'chromium' &&
       this.cdpEndpoint === undefined
@@ -1342,7 +1347,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // Derived from the protocol single source of truth: drift is
       // impossible by construction.
       supportedActionTypes: DELIVERED_ACTION_TYPES.filter(
-        (type) => this.browserFamily === 'chromium' || (type !== 'clickAt' && type !== 'uploadAt')
+        (type) => this.supportsCoordinateInput || (type !== 'clickAt' && type !== 'uploadAt')
       ),
     };
   }
@@ -2861,15 +2866,25 @@ function navigationEvidenceUrl(value: string): string {
 class PlaywrightPage implements EnginePage {
   private coordinateController: CoordinateController | undefined;
   private ordinaryInput = 0;
+  private assertCoordinateInput(): void {
+    if (!this.engine.supportsCoordinateInput)
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'This engine is not qualified for coordinate input',
+        false
+      );
+  }
   private coordinates(): CoordinateController {
+    this.assertCoordinateInput();
     if (this.coordinateController === undefined)
       this.coordinateController = new CoordinateController(this.page, () => this.disclosureCdp());
     return this.coordinateController;
   }
-  prepareCoordinate(
+  async prepareCoordinate(
     action: EngineAction,
     authority?: import('@agentbrowser/engine').CoordinateAuthority
   ) {
+    this.assertCoordinateInput();
     if (this.ordinaryInput)
       return Promise.reject(new EngineError('SESSION_BUSY', 'Another input owns this page', false));
     return this.coordinates().prepare(action, authority);
@@ -4319,7 +4334,7 @@ class PlaywrightPage implements EnginePage {
     }
 
     let interactionHint: string | undefined;
-    if (baseElements.length <= 5) {
+    if (this.engine.supportsCoordinateInput && baseElements.length <= 5) {
       const closed = await withDeadline(this.coordinates().hasClosedShadowRoot(), 1000).catch(
         () => false
       );
@@ -4951,6 +4966,7 @@ class PlaywrightPage implements EnginePage {
 
   async act(action: EngineAction): Promise<ActionEffect> {
     const coordinate = action.type === 'clickAt' || action.type === 'uploadAt';
+    if (coordinate) this.assertCoordinateInput();
     if (
       (coordinate && this.ordinaryInput > 0) ||
       (this.coordinateController?.busy && !this.coordinateController.owns(action.coordinateToken))
@@ -5729,6 +5745,7 @@ class PlaywrightPage implements EnginePage {
 
   async screenshot(request: ScreenshotRequest): Promise<CapturedArtifact> {
     if (
+      this.engine.supportsCoordinateInput &&
       !request.fullPage &&
       (!request.format || request.format === 'png') &&
       (await this.disclosureCdp())
