@@ -19,6 +19,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   from unrelated response failures. Local iframe/CORS fixtures verify exact request
   bytes, marker boundaries and sealed method/host/rate/budget denial ledgers.
 
+### Fixed — seeded-session privacy
+
+- Register a detached cookie snapshot with the owning session before engine
+  startup. Startup errors, early records and late callbacks retain that owner's
+  redaction generation; stale creation and ledger completions cannot replace a
+  new owner's state or cleanup handle.
+- Register seed values in one batch and prime redaction once. Recorder failures
+  stop the captured scope and emit fixed failure metadata; allocation/error
+  cleanup still runs if redaction fails, without publishing raw exceptions.
+
 ### Internal and test qualification
 
 - Added a bounded response-admission helper for the upcoming API-probe workflow.

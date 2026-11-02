@@ -27,6 +27,7 @@ changes back into develop while retaining develop's 1.29.0 evidence record.
 | P0-2 | In progress and disabled. Redirect method/body repairs released in 1.30.1; response-admission helper qualified locally, with activation/controlled-service gates still open |
 | P1-5/P1-6+A4; P1-7+A2/A3; P2-8; A5; A6 | Planned in the approved order; not completed by the published hotfix |
 | Header hostSuffix pass-through | Ported and qualified in #676 after exact review, full 6,491-test hooks and green protected CI; maintenance 1.30.2 candidate, delivery pending |
+| Initial seed privacy prerequisite | Reserved-owner registration, generation-bound redaction/cleanup and fail-closed recorder faults are in the 1.30.2 candidate; independently reviewed, combined release gates pending. This does not implement live reseed |
 | Scope host suggestions | Helpers/tests exist in 1.29.1; no public call site found, so this is not a delivered resource-host workflow |
 
 Main's #664 also disabled four unused-code Biome rules globally. The back-sync

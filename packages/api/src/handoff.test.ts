@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApprovalGate, SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';
 import { AgentBrowserService, type ServiceDependencies } from './service.js';
 
@@ -68,7 +68,6 @@ interface Fixture {
   engine: FakeEngine;
   sessionId: string;
   login: ReturnType<typeof fakeLoginBrowser>;
-  secretSpy: ReturnType<typeof vi.spyOn>;
 }
 
 async function handoffFixture(
@@ -94,8 +93,7 @@ async function handoffFixture(
     tenantId: 'owner',
     ...(options.create ?? {}),
   });
-  const secretSpy = vi.spyOn(secrets, 'registerSessionSecret');
-  return { service, gate, secrets, engine, sessionId, login, secretSpy };
+  return { service, gate, secrets, engine, sessionId, login };
 }
 
 const refused = async (promise: Promise<unknown>): Promise<{ code: string; details: unknown }> => {
@@ -243,6 +241,8 @@ describe('the handoff approval and completion (ADR-025 s3 steps 3-8)', () => {
 
   it('needs the operator decision; the retry with the decided token completes the handoff', async () => {
     const f = await handoffFixture();
+    const capturedOwner = f.secrets.captureRegisteredScopedRedactor(f.sessionId);
+    expect(capturedOwner).toBeTypeOf('function');
     f.login.state.cookies = [
       cookie({ name: 'session', value: 'operator-secret-value' }),
       cookie({ name: 'other', value: 'another-operator-value', domain: 'example.com' }),
@@ -278,8 +278,13 @@ describe('the handoff approval and completion (ADR-025 s3 steps 3-8)', () => {
     if (!fakeSession) throw new Error('Expected an engine session');
     const sessionCookies = await fakeSession.cookies();
     expect(sessionCookies.map((c) => c.name).sort()).toEqual(['other', 'session']);
-    expect(f.secretSpy).toHaveBeenCalledWith(f.sessionId, 'operator-secret-value');
-    expect(f.secretSpy).toHaveBeenCalledWith(f.sessionId, 'another-operator-value');
+    const operatorValues = ['operator-secret-value', 'another-operator-value'];
+    for (const value of operatorValues) {
+      expect(f.secrets.redactScoped(value, f.sessionId)).toBe('***');
+      expect(capturedOwner?.(value)).toBe('***');
+      expect(f.secrets.redactScoped(value, 'unrelated-owner')).toBe(value);
+      expect(f.secrets.redact(value)).toBe(value);
+    }
     // The RTC-removal init script is installed on the live session.
     expect(fakeSession.initScripts.join('\n')).toContain('RTCPeerConnection');
     // The single-use token cannot drive a second handoff (the session now
@@ -293,6 +298,12 @@ describe('the handoff approval and completion (ADR-025 s3 steps 3-8)', () => {
       })
     );
     expect(reuse.code).toBe('APPROVAL_REQUIRED');
+    await f.service.closeSession(f.sessionId);
+    for (const value of operatorValues) {
+      // Teardown removes live owner lookup without exposing late callbacks.
+      expect(f.secrets.redactScoped(value, f.sessionId)).toBe(value);
+      expect(capturedOwner?.(value)).toBe('***');
+    }
   });
 
   it('the binding survives count changes and fails when a domain goes some-to-none', async () => {
