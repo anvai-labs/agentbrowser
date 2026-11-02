@@ -193,4 +193,14 @@ Live Vinted/Wolt verification remains pending operator verification.
 
 Transport semantics follow the [Fetch standard](https://fetch.spec.whatwg.org/),
 including its forbidden request headers and redirect method rules. Additional
-credential and method-tunneling header refusals are deliberate product limits.
+refusals are deliberate product limits, enforced at the protocol contract so
+every surface refuses identically: credential headers (`Authorization`,
+`Proxy-Authorization` — the page origin's cookie jar is the credential surface);
+the method-tunneling and request-context families (`x-http-method*`, `x-method*`,
+`x-override-method`, `x-rest-method`, `x-forwarded*`, `x-original-*`,
+`x-rewrite-*`, `x-real-ip` — a `read`-classified GET must never carry an
+effective write method past the method-based consent floor, the same refusal
+the scope-marker path applies); the fetch-spec `sec-*`/`proxy-*` prefixes (the
+browser would silently drop them, and a silent drop is a repair, not a refusal);
+the synthetic-denial marker; and header values that are not ByteString-encodable
+or carry CR/LF/NUL.

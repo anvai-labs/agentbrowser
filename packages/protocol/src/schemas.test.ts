@@ -407,6 +407,7 @@ describe('Delivered capability truth (single source)', () => {
       'scroll',
       'press',
       'wait',
+      'fetch',
       'goBack',
       'goForward',
       'reload',
@@ -668,10 +669,16 @@ describe('validateSessionRequest (compiled, ADR-015 B4)', () => {
 describe('ADR-015 action-union drift coverage', () => {
   it('ActionSchema and SupportedAction declare the same action types', () => {
     // Would have caught the pre-unification drift: dialogs only in the TS
-    // union, navigate/wait only in the TypeBox union.
-    const schemaTypes = ActionSchema.anyOf.map(
-      (entry) => (entry as { properties?: { type?: { const?: string } } }).properties?.type?.const
+    // union, navigate/wait only in the TypeBox union. Nested unions (the
+    // fetch action discriminates body-bearing methods) flatten first.
+    const typeOf = (entry: unknown): string | undefined =>
+      (entry as { properties?: { type?: { const?: string } } }).properties?.type?.const;
+    const flattened = ActionSchema.anyOf.flatMap((entry) =>
+      'anyOf' in (entry as object)
+        ? (entry as { anyOf: unknown[] }).anyOf.map(typeOf)
+        : [typeOf(entry)]
     );
+    const schemaTypes = [...new Set(flattened)];
     const expected = [
       'clickAt',
       'uploadAt',
@@ -689,6 +696,7 @@ describe('ADR-015 action-union drift coverage', () => {
       'scroll',
       'press',
       'wait',
+      'fetch',
       'goBack',
       'goForward',
       'reload',
@@ -715,6 +723,7 @@ describe('ADR-015 action-union drift coverage', () => {
       { type: 'scroll', direction: 'down' },
       { type: 'press', key: 'Enter' },
       { type: 'wait', condition: { until: 'load' } },
+      { type: 'fetch', method: 'PUT', url: 'https://example.com/api/items/1', body: '{"a":1}' },
       { type: 'goBack' },
       { type: 'goForward' },
       { type: 'reload' },

@@ -553,6 +553,12 @@ class FakePage implements EnginePage {
         'FakeEngine cannot dispatch coordinate input',
         false
       );
+    if (action.type === 'fetch')
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'FakeEngine is not qualified for origin-context API probes',
+        false
+      );
     this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
