@@ -505,6 +505,66 @@ describe('BodyRedirectGuard unit rules', () => {
     });
   });
 
+  it('continues a hop with NO header overrides when the policy has no interaction with it', async () => {
+    const { guard, pageCdp, main, request, seen } = await harness(undefined, {
+      // A destination outside every hostSuffix carrying no marker: undefined.
+      headersForRequest: () => undefined,
+    });
+    seen(pageCdp, 'passthrough');
+    await settle();
+    const continued = pageCdp.sent.filter((call) => call.method === 'Fetch.continueRequest');
+    expect(continued).toHaveLength(1);
+    // No headers override at all: the request continues exactly as a scope
+    // without requestHeaders would (cross-origin dependencies are untouched).
+    expect((continued[0]!.params as { headers?: unknown }).headers).toBeUndefined();
+    expect(pageCdp.sent.some((call) => call.method === 'Fetch.failRequest')).toBe(false);
+    expect(guard.track(request(main) as never)).toBe(true);
+  });
+
+  it('sends CDP header overrides only where the policy returns them, and labels failures accordingly', async () => {
+    const outcomes: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const { pageCdp, seen } = await harness(undefined, {
+      blockDocumentWorkers: true,
+      headersForRequest: (_url: string, headers: Record<string, string>) => ({
+        ...headers,
+        'x-hackerone-research': 'researcher',
+      }),
+      onOutcome: (record) => {
+        outcomes.push(record as { type: string; data: Record<string, unknown> });
+      },
+    });
+    seen(pageCdp, 'override');
+    await settle();
+    const continued = pageCdp.sent.filter((call) => call.method === 'Fetch.continueRequest');
+    expect(continued).toHaveLength(1);
+    expect(
+      (continued[0]!.params as { headers?: Array<{ name: string; value: string }> }).headers
+    ).toContainEqual({ name: 'x-hackerone-research', value: 'researcher' });
+    // The response stage of an overridden chain that cannot be re-committed
+    // stays a header-policy failure (fail closed, correctly labeled).
+    const forward = pageCdp.send.bind(pageCdp);
+    pageCdp.send = async (method: string, params?: unknown) => {
+      if (method === 'Fetch.takeResponseBodyAsStream') return { stream: 'body' };
+      if (method === 'IO.read') return { data: '', eof: true };
+      if (method === 'Fetch.fulfillRequest') throw new Error('CDP commit failed');
+      return forward(method, params);
+    };
+    pageCdp.emit('Fetch.requestPaused', {
+      requestId: 'job-override',
+      networkId: 'override',
+      request: { url: 'http://127.0.0.1/form', method: 'POST', headers: {} },
+      responseStatusCode: 200,
+      responseHeaders: [],
+    });
+    await settle();
+    expect(outcomes).toContainEqual(
+      expect.objectContaining({
+        type: 'request.failed',
+        data: expect.objectContaining({ detail: 'POLICY_HEADERS_UNCHECKABLE' }),
+      })
+    );
+  });
+
   it('claims a request only after the guard saw it (fail closed)', async () => {
     const { guard, pageCdp, main, request, seen } = await harness();
     expect(guard.track(request(main) as never)).toBe(false);
