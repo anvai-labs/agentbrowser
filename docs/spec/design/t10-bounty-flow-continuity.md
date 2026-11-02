@@ -3,6 +3,8 @@
 Status: revised base/addendum plan approved; incremental releases authorized.
 Foundation release 1.29.0 shipped; maintenance release 1.29.1 shipped.
 Coordinate mode (A1) shipped in [1.30.0](../evidence/release-1.30.0.md).
+The redirect method/body prerequisite shipped in
+[1.30.1](../evidence/release-1.30.1.md).
 The updated external handoff/kickoff define acceptance. Their revised order takes
 precedence over the kickoff's older numbered list:
 P0-1 → P0-3 → P1-4 → A1 → P0-2 → P1-5/P1-6+A4 → P1-7+A2/A3 → P2-8 → A5 → A6.
@@ -22,7 +24,7 @@ changes back into develop while retaining develop's 1.29.0 evidence record.
 | --- | --- |
 | T10 B1–B6; P0-1/P0-3/P1-4 | Released in 1.29.0; live Wolt/Vinted acceptance remains pending operator verification |
 | A1 | Released in 1.30.0: public closed-shadow picker/search/select/upload/one-submit fixture; DPR 1/2, controlled durable no-replay and method/host/rate/budget denial ledgers; full checks, exact-head independent review and release delivery passed. Live program verification pending |
-| P0-2 | API-probe design/protocol work in progress; feature disabled pending qualification. Existing transport method repairs are isolated as a maintenance checkpoint before enabling it |
+| P0-2 | In progress and disabled. Redirect method/body repairs released in 1.30.1; response-admission helper qualified locally, with activation/controlled-service gates still open |
 | P1-5/P1-6+A4; P1-7+A2/A3; P2-8; A5; A6 | Planned in the approved order; not completed by the published hotfix |
 | Header hostSuffix pass-through | Local commit `93213f22`; absent from the 1.29.1 source despite the #664 description; separate review and qualification required |
 | Scope host suggestions | Helpers/tests exist in 1.29.1; no public call site found, so this is not a delivered resource-host workflow |
@@ -36,7 +38,7 @@ policy probes; see [lint hygiene](../../../CLAUDE.md#lint-hygiene).
 
 Further additive public capabilities receive the next minor version (1.31.0).
 A standalone repair to shipped behavior receives a maintenance version (next:
-1.30.1). Published tags and assets must not be reused or rewritten.
+1.30.2). Published tags and assets must not be reused or rewritten.
 
 ## Release cadence
 
@@ -82,6 +84,33 @@ Browser-generated CORS preflight qualification remains a separate foundational
 follow-up before expanding native admission: marker injection must never precede
 its policy decision, preflights must remain distinct from explicit OPTIONS, and
 any new native lane must preserve response caps and all outer policy floors.
+
+## P0-2 checkpoint: authoritative response admission
+
+The [API-probe decision](../../adr/030-scoped-page-fetch.md) now distinguishes
+complete transport witnesses from the truncated public response. The private
+helper snapshots full headers and response identity before awaiting policy,
+preserves duplicate delivery cookies, checks cumulative decoded bytes, and bounds
+policy waits and CDP reads by owner cancellation, revocation and a monotonic
+deadline. Refused decoded buffers are cleared; late stream handles are closed.
+
+Local qualification covers 15 real-Chromium cases plus the existing 20 redirect
+guard cases. Compression, hidden declared length, HEAD/204/205/304, all five
+redirect statuses, terminal 302 without Location, exact PUT bytes/cookies and a
+stalled stream have receiver/result oracles. A redirect-header denial reaches no
+destination receiver. Chromium cannot stream a native redirect's body at its
+response pause: those outcomes carry a distinct redirect classification, never
+a fabricated zero-byte witness. Only terminal body bytes are measured, matching
+the existing inspected redirect walker; this is not a bandwidth cap.
+
+Independent review caught mutable policy-header classification; regressions
+ensure callbacks cannot turn a terminal response into a redirect/bodyless result
+or change which response stream is acquired. A page/URL matching shortcut was
+also rejected as an activation design. Existing transport lanes and all policy
+charges remain unchanged in this checkpoint. The helper is not wired into the
+engine yet; the public command is not qualified or released. Next gates are
+trusted transport integration, prepared document/authority binding, controlled
+service admission, session-secret redaction and durable no-replay qualification.
 
 ## P0-1: marker compliance and configuration round-trip
 
