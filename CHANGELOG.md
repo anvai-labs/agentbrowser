@@ -7,7 +7,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-## [1.30.2] — 2026-11-01
+## [1.30.3] — 2026-11-02
+
+### Fixed — owner-bound publication (T10 foundation)
+
+- Apply the captured session's credential redaction to ordinary observations,
+  projections and live/replayed event data. Preserve exact references and trusted
+  schema fields; stale owners and redaction failures refuse publication safely.
+- Allocate masked dictionary-key suffixes with linear work, retaining literal-key
+  collision behavior. Operation-count regressions cover both redactors and the
+  public observation path.
+
+## [1.30.2] — 2026-11-02
 
 ### Fixed — research marker transport (T10 A8)
 

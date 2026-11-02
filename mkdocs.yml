@@ -240,6 +240,7 @@ nav:
     - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
     - 'T10 Bounty Operator Workflow': spec/design/t10-bounty-operator-workflow.md
     - 'T10 Bounty Flow Continuity': spec/design/t10-bounty-flow-continuity.md
+    - 'T10 Owner-bound Publication': spec/design/t10-owner-publication.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md
     - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
     - 'T3 Live Junit': spec/design/t3-live-junit.md
@@ -327,6 +328,7 @@ nav:
     - 'Release 1.30.0': spec/evidence/release-1.30.0.md
     - 'Release 1.30.1 Qualification': spec/evidence/release-1.30.1.md
     - 'Release 1.30.2 Qualification': spec/evidence/release-1.30.2.md
+    - 'Release 1.30.3 Qualification': spec/evidence/release-1.30.3.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md

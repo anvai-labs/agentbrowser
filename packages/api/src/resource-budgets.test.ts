@@ -45,9 +45,11 @@ it('advances diff element cursors and honors explicit page size', async () => {
 
 it('paginates the full observation and budgets after expanding redaction', async () => {
   const engine = new FakeEngine();
+  // Keep the one-byte expansion fixture outside generated identifier alphabets.
+  const shortSecret = '~';
   const service = new AgentBrowserService({
     engine,
-    secretManager: new SecretManager({ 'vault://short': 'q' }),
+    secretManager: new SecretManager({ 'vault://short': shortSecret }),
   });
   try {
     const { sessionId } = await service.createSession({ tenantId: 'local' });
@@ -58,7 +60,7 @@ it('paginates the full observation and budgets after expanding redaction', async
     page.setElements(
       Array.from({ length: 420 }, (_, index) => ({
         role: 'button',
-        name: `${index} qqqqqqqqqq\u{1F642}`,
+        name: `${index} ${shortSecret.repeat(10)}\u{1F642}`,
       }))
     );
     const first = await service.observe(sessionId, pageId, {});

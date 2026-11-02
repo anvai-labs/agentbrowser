@@ -326,14 +326,21 @@ export class SecretManager {
     }
     if (value !== null && typeof value === 'object') {
       const seen = new Set<string>();
+      let nextSuffix: Map<string, number> | undefined;
       return Object.fromEntries(
         Object.entries(value).map(([key, item]) => {
           const base = redactKeys ? this.redactString(key, scope) : key;
           let safeKey = base;
-          let suffix = 1;
           // Preserve both values if redacted names collide, without exposing
           // original keys. fromEntries also treats __proto__ as an own key.
-          while (seen.has(safeKey)) safeKey = `${base}#${suffix++}`;
+          if (seen.has(safeKey)) {
+            let suffix = nextSuffix?.get(base) ?? 1;
+            do {
+              safeKey = `${base}#${suffix++}`;
+            } while (seen.has(safeKey));
+            nextSuffix ??= new Map();
+            nextSuffix.set(base, suffix);
+          }
           seen.add(safeKey);
           return [safeKey, this.redactValue(item, redactKeys, scope)];
         })
