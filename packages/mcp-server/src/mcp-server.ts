@@ -30,6 +30,7 @@ import {
   createPlanReportParser,
   DEFAULT_AGENT_MODE,
   DELIVERED_ACTION_TYPES,
+  EventReplaySelectorSchema,
   ExtractMaxBytesSchema,
   ExtractOutcomeSchema,
   formatErrorForUser,
@@ -61,6 +62,7 @@ import {
   SessionEventsPageResultSchema,
   SessionInspectionResultSchema,
   UsageError,
+  validateEventReplaySelector,
   validateWireAction,
   WireActionEnvelopeSchema,
 } from '@agentbrowser/protocol';
@@ -1365,47 +1367,32 @@ export function buildTools(
       name: 'events_replay',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
-        "Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). Cursor paging via since/limit requires a type filter — cursors are per-ledger entry sequences, paged rows match the type exactly, and a cursor older than the retained window re-reads from the oldest kept entry with gap: true in the result; pass nextCursor back as since.",
+        'Replay bounded session events oldest-first per ledger. Filter published request facts by URL regex, method, recorded status class or failure; unknown status remains unknown and denied means typed policy evidence. Request filters select the request ledger; type or stream also selects one ledger for cursor paging. Pass nextCursor back as since; evicted entries report gap:true. URLs are query-stripped, data is redacted and page-derived text is untrusted. Native terminal-status coverage can be incomplete. Filtered reads require a versioned backend acknowledgment; older backends are rejected.',
       inputSchema: {
         type: 'object',
         properties: {
           sessionId: { type: 'string', minLength: 1 },
-          type: {
-            type: 'string',
-            description: 'Filter by event type, e.g. console.log or request.failed.',
-          },
-          since: {
-            type: 'integer',
-            minimum: -1,
-            description:
-              'Paging cursor: return entries with a sequence above this (-1 = from the start).',
-          },
-          limit: {
-            type: 'integer',
-            minimum: 1,
-            maximum: 1000,
-            description: 'Paging cap (default 200, max 1000).',
-          },
+          ...EventReplaySelectorSchema.properties,
         },
         required: ['sessionId'],
+        additionalProperties: false,
       },
       outputSchema: SessionEventsPageResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (typeof client.sessions.events !== 'function')
           throw new UsageError('Client does not support event replay');
-        const type = typeof args.type === 'string' ? args.type : undefined;
-        const since = typeof args.since === 'number' ? args.since : undefined;
-        const limit = typeof args.limit === 'number' ? args.limit : undefined;
-        if ((since !== undefined || limit !== undefined) && type === undefined)
-          throw new UsageError('since/limit require a type filter (cursors are per-ledger)');
+        const selector = Object.fromEntries(
+          Object.entries(args).filter(([key]) => key !== 'sessionId')
+        );
+        const checked = validateEventReplaySelector(selector);
+        if (!checked.ok)
+          throw new UsageError(
+            'Invalid event replay selector; paging requires a type filter or stream.'
+          );
         // Object selectors resolve to the paging envelope for every flag
         // combination; the tool's result shape is stable across calls.
-        return client.sessions.events(sessionId, {
-          ...(type !== undefined ? { type } : {}),
-          ...(since !== undefined ? { since } : {}),
-          ...(limit !== undefined ? { limit } : {}),
-        });
+        return client.sessions.events(sessionId, checked.value);
       },
       annotations: { readOnlyHint: true, idempotentHint: true },
     },

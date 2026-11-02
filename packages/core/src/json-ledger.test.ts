@@ -14,6 +14,69 @@ import { JsonLedger } from './json-ledger.js';
 const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
 
 describe('JsonLedger', () => {
+  describe('bounded snapshot scans', () => {
+    it('advances over skipped rows and stops before an unreturned matching row', () => {
+      const ledger = new JsonLedger<number>({ maxEntries: 10, maxBytes: 1000, maxEntryBytes: 100 });
+      for (let value = 0; value < 5; value++) ledger.push(value);
+      const first = ledger.scanPage(-1, 10, (value) =>
+        value === 0
+          ? { action: 'skip' }
+          : value === 2
+            ? { action: 'stop' }
+            : { action: 'emit', value }
+      );
+      expect(first).toEqual({
+        rows: [{ seq: 1, value: 1 }],
+        lastScanned: 1,
+        oldestSeq: 0,
+        gap: false,
+      });
+      const next = ledger.scanPage(first.lastScanned, 2, (value) => ({ action: 'emit', value }));
+      expect(next.rows).toEqual([
+        { seq: 2, value: 2 },
+        { seq: 3, value: 3 },
+      ]);
+      expect(next.lastScanned).toBe(3);
+    });
+
+    it('takes a high-water snapshot before callbacks can append or evict entries', () => {
+      const ledger = new JsonLedger<{ n: number }>({
+        maxEntries: 2,
+        maxBytes: 1000,
+        maxEntryBytes: 100,
+      });
+      ledger.push({ n: 0 });
+      ledger.push({ n: 1 });
+      const page = ledger.scanPage(-1, 10, (value, seq) => {
+        if (seq === 0) ledger.push({ n: 2 });
+        return { action: 'emit', value };
+      });
+      expect(page.rows.map((row) => row.value.n)).toEqual([0, 1]);
+      expect(page.lastScanned).toBe(1);
+      expect(page.oldestSeq).toBe(0);
+      page.rows[0]!.value.n = 99;
+      expect(ledger.toArray()).toEqual([{ n: 1 }, { n: 2 }]);
+      expect(ledger.scanPage(-1, 10, () => ({ action: 'skip' }))).toEqual({
+        rows: [],
+        lastScanned: 2,
+        oldestSeq: 1,
+        gap: true,
+      });
+    });
+
+    it('does not advance a stop at the first row and validates its cursor/limit', () => {
+      const ledger = new JsonLedger<number>({ maxEntries: 2, maxBytes: 1000, maxEntryBytes: 100 });
+      ledger.push(1);
+      expect(ledger.scanPage(-1, 1, () => ({ action: 'stop' })).lastScanned).toBe(-1);
+      for (const [since, limit] of [
+        [-2, 1],
+        [0.5, 1],
+        [-1, 0],
+        [-1, 1.2],
+      ])
+        expect(() => ledger.scanPage(since!, limit!, () => ({ action: 'skip' }))).toThrow();
+    });
+  });
   describe('construction', () => {
     it('accepts positive safe-integer limits', () => {
       expect(() => new JsonLedger({ maxEntries: 1, maxBytes: 1, maxEntryBytes: 1 })).not.toThrow();

@@ -54,8 +54,8 @@ import {
   DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
+  decodeEventReplayQuery,
   ErrorCode,
-  EVENT_REPLAY_MIN_SINCE,
   isAgentMode,
   parseExtractMaxBytes,
   parsePlanSteps,
@@ -2415,31 +2415,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on('GET', '/sessions/:sessionId/events/replay', async (request) => {
         const { sessionId } = params(request, 'sessionId');
         requireOwnership(sessionId, tenantOf(request));
-        // request.* events live in their own ledger (network summary,
-        // spec 5.1); getSessionEvents routes the filter accordingly.
-        // Paging (N1 G2) applies to one stream at a time: since/limit
-        // require a type filter, since cursors are per-stream sequences.
-        const query = (request.query ?? {}) as { type?: string; since?: string; limit?: string };
-        const options: { type?: string; since?: number; limit?: number } = {};
-        if (query.type !== undefined && query.type !== '') options.type = query.type;
-        if (query.since !== undefined) {
-          if (options.type === undefined)
-            return responseDraft({ error: 'since requires a type filter' }, 400);
-          const since = Number(query.since);
-          // -1 (from the start) is the cursor an empty page hands back.
-          if (!Number.isSafeInteger(since) || since < EVENT_REPLAY_MIN_SINCE)
-            return responseDraft({ error: 'since must be an integer >= -1' }, 400);
-          options.since = since;
-        }
-        if (query.limit !== undefined) {
-          if (options.type === undefined)
-            return responseDraft({ error: 'limit requires a type filter' }, 400);
-          const limit = Number(query.limit);
-          if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
-            return responseDraft({ error: 'limit must be an integer in [1, 1000]' }, 400);
-          options.limit = limit;
-        }
-        return responseDraft(service.getSessionEvents(sessionId, options));
+        const decoded = decodeEventReplayQuery(request.query ?? {});
+        if (!decoded.ok)
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'Invalid event replay selector; paging requires a type filter or stream.'
+          );
+        return responseDraft(service.getSessionEvents(sessionId, decoded.value));
       });
 
       // A3 evidence: export the session's completed spans as an artifact.

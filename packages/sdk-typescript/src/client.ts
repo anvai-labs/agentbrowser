@@ -10,7 +10,9 @@ import type {
 import {
   createOutcomeRunReportParser,
   createPlanReportParser,
+  eventReplayStream,
   INTERACTION_GUIDANCE,
+  isFilteredEventReplay,
   parseAutofillReport,
   parseOperationReplay,
   parseOperatorApprovalView,
@@ -20,6 +22,8 @@ import {
   type SnapshotControl,
   validateApplicationReview,
   validateCookieHandoffRequest,
+  validateEventReplayFilterReceipt,
+  validateEventReplaySelector,
   validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 /**
@@ -56,6 +60,7 @@ export type {
   AutofillReport,
   AutofillRequest,
   ControlView,
+  EventReplaySelector,
   OperationRecord,
   OutcomeRunReport,
   OutcomeRunRequest,
@@ -137,6 +142,7 @@ export interface NavigationResponse {
 export type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
 
 import type {
+  EventReplaySelector,
   ObservationRequest,
   ScreenshotRequest,
   SessionEventsPage,
@@ -876,27 +882,40 @@ export class SessionsClient {
   async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
   /**
    * Replay retained session events. Object selectors always resolve to the
-   * paging envelope `{events, nextCursor}` — the route answers with that
-   * shape for type-only and limit-only queries too, and a bare array here
-   * made limit-only callers crash on `envelope.events.map`.
+   * paging envelope `{events, nextCursor}`, including empty and type-only
+   * selectors. Cursor bounds require a selected type, stream or request filter.
+   * New filters require a versioned backend acknowledgment; older servers
+   * refuse locally with INVALID_RESPONSE instead of returning unfiltered data.
    */
+  async events(sessionId: string, options: EventReplaySelector): Promise<SessionEventsPage>;
   async events(
     sessionId: string,
-    options: { type?: string; since?: number; limit?: number }
-  ): Promise<SessionEventsPage>;
-  async events(
-    sessionId: string,
-    selector?: string | { type?: string; since?: number; limit?: number }
+    selector?: string | EventReplaySelector
   ): Promise<Array<Record<string, unknown>> | SessionEventsPage> {
     let query = '';
+    let expectedStream: 'request' | 'other' | undefined;
     if (selector === undefined || typeof selector === 'string') {
       query =
         selector !== undefined && selector !== '' ? `?type=${encodeURIComponent(selector)}` : '';
     } else {
+      const checked = validateEventReplaySelector(selector);
+      if (!checked.ok)
+        throw new AgentBrowserError('INVALID_REQUEST', 'Invalid event replay selector', false);
+      if (isFilteredEventReplay(checked.value)) expectedStream = eventReplayStream(checked.value);
       const params = new URLSearchParams();
-      if (selector.type !== undefined) params.set('type', selector.type);
-      if (selector.since !== undefined) params.set('since', String(selector.since));
-      if (selector.limit !== undefined) params.set('limit', String(selector.limit));
+      for (const key of [
+        'type',
+        'since',
+        'limit',
+        'stream',
+        'urlRegex',
+        'method',
+        'statusClass',
+        'failedOnly',
+      ] as const) {
+        const value = checked.value[key];
+        if (value !== undefined) params.set(key, String(value));
+      }
       query = params.size > 0 ? `?${params.toString()}` : '';
     }
     const body = await this.http.requestJson<{
@@ -904,7 +923,19 @@ export class SessionsClient {
       nextCursor?: number;
       oldestSeq?: number;
       gap?: boolean;
+      filter?: unknown;
     }>(`/v1/sessions/${sessionId}/events/replay${query}`);
+    let filter: SessionEventsPage['filter'];
+    if (expectedStream !== undefined) {
+      const receipt = validateEventReplayFilterReceipt(body?.filter);
+      if (!receipt.ok || receipt.value.stream !== expectedStream)
+        throw new AgentBrowserError(
+          'INVALID_RESPONSE',
+          'Invalid event replay filter acknowledgment',
+          false
+        );
+      filter = receipt.value;
+    }
     // No default parameter: an explicitly-undefined argument must keep the
     // legacy array shape (a default `= {}` would silently turn it into the
     // paging envelope and break overload-1 callers at runtime).
@@ -913,6 +944,7 @@ export class SessionsClient {
     return {
       events: body.events,
       nextCursor: body.nextCursor ?? -1,
+      ...(filter !== undefined ? { filter } : {}),
       ...(typeof body.oldestSeq === 'number' ? { oldestSeq: body.oldestSeq } : {}),
       ...(typeof body.gap === 'boolean' ? { gap: body.gap } : {}),
     };

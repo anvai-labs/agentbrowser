@@ -30,6 +30,7 @@ import {
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   EVENT_REPLAY_MIN_SINCE,
+  EventReplaySelectorSchema,
   EvidencePassRequestSchema,
   ExecutionRequirementSchema,
   ExtractMaxBytesSchema,
@@ -987,9 +988,20 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             'carrying the policy code/rule) live in their own bounded ledger - ' +
             'filter with ?type=request.finished etc. Unfiltered returns both ' +
             'ledgers (console first; cross-ledger ordering not preserved). ' +
-            'Paging: since/limit require a type filter (cursors are per-ledger ' +
+            'Legacy type-only and merged responses retain their shapes. New selectors ' +
+            '(stream, urlRegex, method, statusClass, failedOnly) select a bounded page; ' +
+            'request selectors imply stream=request and combine with AND. Regex uses ' +
+            'RE2 syntax and at most 256 UTF-8 bytes, matching the credential-safe URL ' +
+            'without userinfo, query or fragment. Status classes use actual terminal ' +
+            'HTTP responses; missing status and passthrough are unknown. A target 403 ' +
+            'is 4xx, while denied requires a typed policy denial. failedOnly includes ' +
+            'request failures and terminal HTTP errors. Request selectors omit duplicate ' +
+            'scope diagnostics unless type=scope.denied is explicit. New responses carry ' +
+            'filter={version:1,stream} and fit a complete 256 KiB serialized envelope; ' +
+            'an oversized first match refuses with OUTPUT_TRUNCATED. Paging requires a ' +
+            'type or stream (cursors are per-ledger ' +
             'entry sequences; the cursor is returned as nextCursor and advances ' +
-            'past entries of other types). Paged rows match the type exactly. A ' +
+            'past skipped entries). When type is provided, paged rows match it exactly. A ' +
             'cursor older than the retained window re-reads from the oldest kept ' +
             'entry; a paged response with since then reports gap: true and oldestSeq, the ' +
             'lowest retained sequence, so evicted entries are never silently ' +
@@ -1017,6 +1029,13 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               schema: { type: 'integer', minimum: 1, maximum: 1000 },
               description: 'Paging cap (default 200, max 1000).',
             },
+            ...(['stream', 'urlRegex', 'method', 'statusClass', 'failedOnly'] as const).map(
+              (name) => ({
+                name,
+                in: 'query',
+                schema: EventReplaySelectorSchema.properties[name],
+              })
+            ),
           ],
           responses: {
             '200': {
