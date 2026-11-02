@@ -48,7 +48,7 @@
     "pnpm": ">=9.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.4",
     "@types/node": "^22.20.5",
     "@vitest/coverage-v8": "^5.0.5",
     "jscpd": "5.4.2",
