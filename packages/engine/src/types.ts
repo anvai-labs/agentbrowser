@@ -590,6 +590,19 @@ export interface EnginePage {
     action: EngineAction,
     authority?: CoordinateAuthority
   ): Promise<PreparedCoordinateAction>;
+
+  /**
+   * ADR-030: bind a `fetch` action to the page's current document, main frame
+   * and loader before consent. The opaque token conveys no wire authority; it
+   * is consumed exactly once by the matching `act` dispatch, which refuses a
+   * replaced document. Unsupported/unqualified engines omit the method and the
+   * service refuses the action before input.
+   */
+  prepareFetch?(
+    action: EngineAction,
+    authority?: CoordinateAuthority
+  ): Promise<PreparedCoordinateAction>;
+
   /**
    * Page ID
    */

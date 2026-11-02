@@ -25,6 +25,7 @@ import {
   DELIVERED_ACTION_TYPES,
   ErrorCode,
   parseActionNavigationObservation,
+  parseFetchAction,
   parseRef,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
@@ -248,6 +249,20 @@ export class ActionExecutor {
           return invalidRequest('Wait action requires a condition with an until');
         }
         break;
+      case 'fetch': {
+        // ADR-030: the protocol's semantic refusals (forbidden/duplicate
+        // headers, GET/HEAD bodies, aggregate byte bounds, URL shape) run at
+        // this one gate for REST /act, /plan and direct service callers,
+        // before the engine re-validates on its side of the trust boundary.
+        const probe = parseFetchAction(action);
+        if (!probe.ok) {
+          return invalidRequest(
+            probe.issues.map((issue) => `${issue.path || '(root)'}: ${issue.message}`).join('; '),
+            { issues: probe.issues }
+          );
+        }
+        break;
+      }
       default:
         break;
     }

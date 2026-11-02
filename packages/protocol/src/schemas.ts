@@ -1,4 +1,5 @@
 import { CoordinatePointSchema, ViewportCaptureSchema } from './coordinate.js';
+import { FetchActionSchema, PROBE_METHODS, ProbeHeaderSchema } from './page-fetch.js';
 import { ScopeTraceModeSchema } from './scope-trace.js';
 /**
  * JSON Schema definitions for AgentBrowser v1 API
@@ -481,6 +482,7 @@ export const ACTION_TYPE_LITERALS = [
   'uncheck',
   'scroll',
   'wait',
+  'fetch',
   'upload',
   'download',
   'goBack',
@@ -496,6 +498,8 @@ export const ActionTypeSchema = Type.Union(
 
 export const EngineCapabilitiesSchema = Type.Object({
   coordinateInput: Type.Optional(Type.Boolean()),
+  /** ADR-030: scoped origin-context API probes (prepareFetch + fetch action). */
+  pageFetch: Type.Optional(Type.Boolean()),
   supportsScreenshots: Type.Boolean(),
   supportsPdf: Type.Boolean(),
   supportsDownloads: Type.Boolean(),
@@ -881,6 +885,11 @@ export const PlanStepSchema = Type.Object({
     ])
   ),
   amount: Type.Optional(Type.Number()),
+  /** ADR-030 fetch probe: validated as a unit by parseFetchAction at the seams. */
+  method: Type.Optional(Type.Union(PROBE_METHODS.map((literal) => Type.Literal(literal)))),
+  url: Type.Optional(Type.String({ minLength: 8, maxLength: 2048 })),
+  headers: Type.Optional(Type.Array(ProbeHeaderSchema)),
+  body: Type.Optional(Type.String({ maxLength: 65536 })),
   observe: Type.Optional(Type.Union([Type.Literal('after'), Type.Literal('none')])),
   expectedRevision: Type.Optional(Type.Integer({ minimum: 0 })),
   approvalToken: Type.Optional(Type.String()),
@@ -987,6 +996,7 @@ export const ActionSchema = Type.Union([
   ScrollActionSchema,
   PressActionSchema,
   WaitActionSchema,
+  FetchActionSchema,
   GoBackActionSchema,
   GoForwardActionSchema,
   ReloadActionSchema,
