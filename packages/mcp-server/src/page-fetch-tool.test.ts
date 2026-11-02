@@ -1,7 +1,9 @@
 /** ADR-030 P0-2: the page_fetch tool's envelope handling. Envelope fields
  * (approvalToken, operationId, executionRequirement) travel outside the probe;
  * a review finding showed them leaking into the strict action union, which made
- * every approved or delegated page_fetch undispatchable. */
+ * every approved or delegated page_fetch undispatchable. These dispatch tests
+ * are the seam's only executable oracle — the catalog/annotation listings do
+ * not exercise the handler. */
 import { beforeEach, expect, it, vi } from 'vitest';
 import { buildMcpServer } from './mcp-server';
 
