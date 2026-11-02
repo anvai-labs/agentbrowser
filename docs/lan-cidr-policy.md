@@ -1,10 +1,10 @@
-# Handoff: LAN CIDR allowlist for the egress policy
+# LAN CIDR allowlist policy
 
-Goal: let an operator explicitly allow navigation to specific private
-network ranges (e.g. `192.168.1.0/24` for a lab control plane at
-`192.168.1.89:8080`) without weakening the default SSRF posture for
-anyone else. The capability is operator-set, explicit, and off by
-default.
+Status: shipped (`AGENTBROWSER_ALLOWED_CIDRS`, operator-set, explicit, off by
+default). This page records the enforcement semantics: an operator can allow
+navigation to specific private network ranges (e.g. `192.168.1.0/24` for a lab
+control plane at `192.168.1.89:8080`) without weakening the default SSRF
+posture for anyone else.
 
 ## Current behavior (verified)
 

@@ -56,6 +56,6 @@ are generally broken. No application password was created during these probes.
 - Do not label Google bot protection, passkey UI, or a tab-handling regression as
   the cause without supporting evidence.
 
-Related: [initial-page contract history](td/TD-BROWSER-11-session-initial-page-race.md).
+Related: [initial-page contract history](../td/TD-BROWSER-11-session-initial-page-race.md).
 The older document describes a different version and must not be read as proof
 that the current CLI ignores `page create --url`.

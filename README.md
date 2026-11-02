@@ -142,13 +142,15 @@ packages/
 └── benchmarks/         # Performance benchmarks
 ```
 
-The unbound MCP catalog exposes seventeen tools: `browser_create`,
-`browser_page_create`, `browser_pages`, `browser_navigate`, `browser_observe`,
-`browser_act`, `browser_extract`, `browser_html`, `browser_screenshot`,
-`browser_pdf`, `browser_cookies`, `browser_close`, `browser_events_replay`,
-`browser_session`, and the batched tools `browser_snapshot`, `browser_plan`,
-and `browser_autofill`. Delegated mode exposes fifteen: it drops
-create/close/cookies and adds `browser_session` and `browser_operation`. No raw
+The unbound MCP catalog exposes twenty-five tools, among them `session_create`,
+`page_create`, `navigate`, `observe`, `act`, `autofill`, `plan`, `extract`,
+`screenshot`, `pdf`, `events_replay`, `policy`, `scope` — and `page_fetch`, the
+scoped origin-context API probe: one authenticated method+URL+body request
+issued from the live page's own origin (its cookie jar and CSRF headers apply)
+through the session's engagement scope, with unsafe methods gated by a one-use
+approval token (ADR-030). Delegated mode exposes twenty tools under operator
+control. The complete, versioned catalog is in
+[docs/mcp-tool-catalog.md](docs/mcp-tool-catalog.md). No raw
 selectors, no evaluate - element refs come from observations and die with their
 revision (ADR-009). Observed values are redacted at the engine's sensitivity
 boundary (TD-BROWSER-13): password and credential fields report

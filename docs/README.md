@@ -29,9 +29,13 @@ start with the [root README](../README.md).
 | Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |
 | Review deferred transport work and unresolved limitations | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
 | Understand the completed connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
-| See field findings from an intensive MCP consumer run (tabs, bot walls, session lifecycle) | [Consumer field handoff — 2026-09-24](consumer-field-handoff-2026-09-24.md) |
-| Implement the open consumer findings (paste-ready prompts, TDD + smoke gates) | [Consumer handoff: implementation briefs — 2026-09-25](consumer-field-handoff-2026-09-25-implementation-briefs.md) |
+| See field findings from an intensive MCP consumer run (tabs, bot walls, session lifecycle) | [Consumer field handoff — 2026-09-24](agent-handoffs/consumer-field-handoff-2026-09-24.md) (archived brief) |
+| Review the paste-ready implementation briefs that closed the consumer findings | [Consumer handoff: implementation briefs — 2026-09-25](agent-handoffs/consumer-field-handoff-2026-09-25-implementation-briefs.md) (archived brief) |
 | Implement the research-workload follow-ups through existing shared owners | [Consumer research intake and acceptance tasks](spec/design/consumer-research-intake.md) |
+
+Dated internal handoffs, session notes and investigation briefs live in the
+[agent-handoffs archive](agent-handoffs/); they are working records, not
+published documentation.
 
 ## Architecture Decision Records (ADRs)
 
@@ -181,9 +185,9 @@ complete and remains in [technical-design.md](technical-design.md).
   the ref store, fingerprints and native form evidence; honest boundaries for
   what value redaction cannot cover. **Implemented** (1.15.2; incident
   records: the
-  [password observation handoff](AGENTBROWSER_PASSWORD_OBSERVATION_HANDOFF_2026-10-06.md)
+  [password observation handoff](agent-handoffs/AGENTBROWSER_PASSWORD_OBSERVATION_HANDOFF_2026-10-06.md)
   and the
-  [WebAuthn TLS investigation](AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md)).
+  [WebAuthn TLS investigation](agent-handoffs/AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md)).
 - [TD-BROWSER-14](td/TD-BROWSER-14-compact-identifiers.md) - Compact identifiers
   and explicit CLI context ([ADR-022](adr/022-compact-identifiers-and-cli-context.md)).
   **Planned**, unscheduled.

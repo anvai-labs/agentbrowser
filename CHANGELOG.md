@@ -810,7 +810,7 @@ Upgrading from 1.21.x changes CLI capture defaults; use explicit inline options 
   and redacted errors; Windows fails closed for that option. Credentials are never shortened.
 - Regression coverage includes large capture receipts, modern MCP media output, cache ownership
   and concurrent pruning, browser read recovery, large synthetic forms and authorization boundaries.
-  [Consumer handoff](docs/consumer-field-handoff-2026-10-16.txt) records remaining limits: hard write
+  [Consumer handoff](docs/agent-handoffs/consumer-field-handoff-2026-10-16.txt) records remaining limits: hard write
   cancellation, live-site qualification, shorter ID aliases and streaming transport remain open.
 
 ### Added — the MCP `scope` tool (T10 M2)

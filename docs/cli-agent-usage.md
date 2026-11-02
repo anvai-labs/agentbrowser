@@ -96,7 +96,7 @@ ports. `--allow-hosts` only narrows a session's permissions. Loopback and cloud
 metadata remain denied even with a broad CIDR. A `POLICY_DENIED` result can reflect
 other rules; inspect its bounded reason and operator configuration before acting.
 Do not invent an allow-loopback flag or use CDP attachment as a policy workaround.
-For exact enforcement semantics, see [LAN policy](HANDOFF-LAN-CIDR-ALLOWLIST.md).
+For exact enforcement semantics, see [LAN CIDR policy](lan-cidr-policy.md).
 
 ### Explicitly authorized loopback testing
 
