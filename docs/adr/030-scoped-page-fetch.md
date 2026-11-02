@@ -1,6 +1,6 @@
 # ADR-030: Controlled origin-context API probes
 
-Status: Accepted and implemented (1.31.0); independent review before merge.
+Status: Accepted and implemented (1.32.0); independent review before merge.
 Initial design 2026-10-30; preparation/lifetime refinements 2026-11-01 from
 [ADR-031](031-coordinate-interaction-and-visual-evidence.md); activation
 2026-11-02. Live Vinted/Wolt acceptance remains pending operator verification.
