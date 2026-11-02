@@ -1,8 +1,9 @@
 # ADR-030: Controlled origin-context API probes
 
-Status: Accepted for the approved T10 handoff P0-2 increment; independent review
-required before merge. Initial design 2026-10-30; preparation/lifetime refinements
-2026-11-01 from [ADR-031](031-coordinate-interaction-and-visual-evidence.md).
+Status: Accepted and implemented (1.32.0); independent review before merge.
+Initial design 2026-10-30; preparation/lifetime refinements 2026-11-01 from
+[ADR-031](031-coordinate-interaction-and-visual-evidence.md); activation
+2026-11-02. Live Vinted/Wolt acceptance remains pending operator verification.
 Related: [ADR-006](006-network-egress-policy-ssrf.md),
 [ADR-007](007-approval-tokens-side-effects.md),
 [ADR-015](015-cross-package-contract-single-source-of-truth.md).

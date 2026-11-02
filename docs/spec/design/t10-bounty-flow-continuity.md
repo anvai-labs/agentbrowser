@@ -11,6 +11,7 @@ activation remain separate qualification gates.
 The owner-bound ordinary publication foundation is a
 [1.30.3 maintenance candidate](../evidence/release-1.30.3.md); delivery gates
 remain open. It does not activate fetch, resources, live reseed or submit helpers.
+Page fetch (P0-2) shipped in [1.32.0](../evidence/release-1.32.0.md).
 The updated external handoff/kickoff define acceptance. Their revised order takes
 precedence over the kickoff's older numbered list:
 P0-1 → P0-3 → P1-4 → A1 → P0-2 → P1-5/P1-6+A4 → P1-7+A2/A3 → P2-8 → A5 → A6.
@@ -30,7 +31,7 @@ changes back into develop while retaining develop's 1.29.0 evidence record.
 | --- | --- |
 | T10 B1–B6; P0-1/P0-3/P1-4 | Released in 1.29.0; live Wolt/Vinted acceptance remains pending operator verification |
 | A1 | Released in 1.30.0: public closed-shadow picker/search/select/upload/one-submit fixture; DPR 1/2, controlled durable no-replay and method/host/rate/budget denial ledgers; full checks, exact-head independent review and release delivery passed. Live program verification pending |
-| P0-2 | In progress and disabled. Redirect method/body repairs released in 1.30.1; response-admission helper qualified locally, with activation/controlled-service gates still open |
+| P0-2 | Released in 1.32.0: typed fetch action (protocol bounds and refusals), isolated-world transport with nonce attribution and authoritative admission on both lanes, one-use method-based consent, scope preflight, session-secret redaction, API/MCP/CLI/SDK surfaces. Live Vinted/Wolt acceptance remains pending operator verification |
 | P1-5/P1-6+A4; P1-7+A2/A3; P2-8; A5; A6 | Planned in the approved order; not completed by the published hotfix |
 | Header hostSuffix pass-through | Released in 1.30.2 after #676, combined release review, full 6,511-test hooks, green protected CI and package/tap delivery |
 | Initial seed privacy prerequisite | Released in 1.30.2: reserved-owner registration, generation-bound redaction/cleanup and fail-closed recorder faults. This does not implement live reseed or ordinary observe/console output privacy |
@@ -43,7 +44,7 @@ all four as errors and adds dependency, runtime-cycle, unused-expression and
 global-eval checks. Hooks and CI share the warning-failing root gate and executable
 policy probes; see [lint hygiene](../../../CLAUDE.md#lint-hygiene).
 
-Further additive public capabilities receive the next minor version (1.31.0).
+Further additive public capabilities receive the next minor version (1.32.0).
 A standalone repair to shipped behavior receives a maintenance version (next:
 1.30.2 candidate; subsequent standalone repairs use the next available patch).
 Published tags and assets must not be reused or rewritten.
@@ -119,6 +120,45 @@ charges remain unchanged in this checkpoint. The helper is not wired into the
 engine yet; the public command is not qualified or released. Next gates are
 trusted transport integration, prepared document/authority binding, controlled
 service admission, session-secret redaction and durable no-replay qualification.
+
+## P0-2 checkpoint: activation and controlled service admission
+
+The [ADR-030](../../adr/030-scoped-page-fetch.md) feature is delivered end to
+end. The protocol carries a delivered `fetch` action whose schema union
+discriminates bodyless methods; its bounds (8 KiB aggregate header bytes,
+64 KiB UTF-8 body measured in bytes, URL shape, forbidden and duplicate
+header names) live in one contract source enforced at the CLI, the service
+executor and the engine. The Chromium engine issues a fixed
+same-origin/credentials/no-store browser fetch in an isolated world
+(`grantUniveralAccess: false`) pinned to the prepared frame, loader and
+origin; a navigation invalidates the preparation and the consumed token
+refuses replay.
+
+Trusted attribution is a per-dispatch secret nonce header that exists only
+inside the isolated world: the CDP guard strips it before the wire on the
+native (POST/PUT/PATCH) lane, and the route handler's Node-side re-issue
+drops it on the inspected (GET/HEAD/DELETE/OPTIONS) lane; the rejected
+page-wide flag and method/URL FIFO approaches stay rejected. Terminal
+responses are admitted authoritatively — `admitPageFetchResponse` on the
+native lane, the verified Node response on the inspected lane — and the
+exact admitted bytes fulfill the page's request. Redirect hops carry a
+fresh scope verdict plus the probe's same-origin rule (cross-origin 307/308
+refused even when the destination is scope-allowed); the choke point's own
+synthetic denial is recognized by its marker and settles the probe denied
+with the noted sub-code.
+
+Service admission follows the HTTP method: GET/HEAD/OPTIONS read;
+POST/PUT/PATCH/DELETE transaction with the exact one-use consent floor and
+the prepared probe's identity bound into the approval. A scope preflight
+denies before any browser work (`SCOPE_METHOD_DENIED` in one round trip),
+the published result is redacted with the owning session's secret registry,
+and probe outcomes are ledgered with `probe: true`. Real-Chromium
+qualification covers the Vinted-shaped PUT (exact bytes, cookie, CSRF
+header, no nonce on the wire), the method denial with zero receiver hits
+and both ledger rows, competing identical-URL traffic, cross-origin and
+same-origin 307 chains, the inspected-lane GET, and stale-document token
+refusal. Live Vinted/Wolt verification remains pending operator
+verification.
 
 ## P0-1: marker compliance and configuration round-trip
 

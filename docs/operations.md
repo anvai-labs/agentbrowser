@@ -1127,6 +1127,56 @@ including per-engine egress guarantees, is in the
   benchmark-only — it cannot be selected by a session, by design; see the
   Obscura section in [engines.md](engines.md).
 
+## Scoped origin-context API probes (`page fetch`)
+
+ADR-030 ships the `fetch` action: one authenticated method+URL+body request
+issued from the live page's own origin through the session's engagement
+scope — the item-modification authorization test (PUT to another account's
+item) is now one command instead of a hand-written CDP script.
+
+- **Scope-only.** Probes exist inside engagement-scoped sessions; the scope's
+  method/host/path/rate/budget rules are enforced at the same egress choke
+  point as every page request. Outcomes that reach the choke point land in the
+  engagement ledger marked `probe`, and a preflight denial (before any browser
+  work) is a probe-marked `scope.denied` trace. A scope without `PUT` denies
+  the probe `SCOPE_METHOD_DENIED` in one round trip; denied probes reach zero
+  receivers. Sessions without an engagement scope cannot prepare a probe at
+  all.
+- **Same-origin.** The URL must match the live document origin (the page's
+  cookie jar applies; supply CSRF-style headers explicitly). Credential,
+  browser-controlled, method-tunneling and context-spoofing header names
+  (`cookie`, `authorization`, `user-agent`, `x-http-method-override`,
+  `x-forwarded-*`, ...) refuse — a read-classified GET can never carry an
+  effective write method; `x-agentbrowser-probe` is reserved. Redirect
+  destinations must stay same-origin — a 307 to a second origin is refused
+  on every method even when the scope allows it, so a CSRF header (or a 307
+  body) cannot leak.
+- **Approvals.** GET/HEAD/OPTIONS probes follow the read classification.
+  POST/PUT/PATCH/DELETE always require a one-use approval token: the first
+  call fails `APPROVAL_REQUIRED` with `details.tokenId`; retry with
+  `--approval-token`. The token binds the prepared probe's identity
+  (document, loader, request) and dies with either.
+- **Bounds and evidence.** Request bodies are UTF-8 ≤ 64 KiB; responses are
+  bounded (1 MiB body, 32 headers) with a disclosed `truncated` flag and the
+  true `bodyBytes`. Published bodies and header names/values are redacted
+  with the session's secret registry and re-bounded afterwards, and the
+  result is marked `untrustedContent` — it is the engagement target's own
+  output; never splice it into instructions. An uncertain outcome (timeout
+  after dispatch) is never retried automatically — reconcile the operation
+  before retrying.
+
+```bash
+# The Vinted item PUT probe — one command from a scoped, logged-in page,
+# plus the one-use approval retry every unsafe method requires:
+agentbrowser page fetch <sessionId> <pageId> PUT https://www.vinted.com/api/items/4029603257 \
+  --header 'X-CSRF-Token=<token>' --body '{"price_cents":101}' --json
+# First unsafe-method call: APPROVAL_REQUIRED with details.tokenId → retry with
+agentbrowser page fetch <sessionId> <pageId> PUT ... --approval-token <tokenId>
+```
+
+MCP exposes the same surface as the `page_fetch` tool (and `act` with
+`action: "fetch"`); the SDK as `sessions.fetch(sessionId, pageId, {...})`.
+
 ## Operating through the CLI
 
 The `agentbrowser` CLI (`packages/cli`) is a thin, scriptable surface over
