@@ -1478,3 +1478,43 @@ it('discards a current allocation without duplicating its pending close', async 
     await coordinator.shutdown();
   }
 });
+
+it('initializes a reserved owner synchronously before engine allocation can emit records', async () => {
+  const coordinator = new SessionCoordinator();
+  const engine = new MockEngine();
+  const order: string[] = [];
+  let reserved = '';
+  const create = engine.createSession.bind(engine);
+  vi.spyOn(engine, 'createSession').mockImplementation(async (options) => {
+    order.push('engine');
+    expect(reserved).not.toBe('');
+    return create(options);
+  });
+  try {
+    const allocated = await coordinator.createOwned({}, engine, (sessionId) => {
+      order.push('owner');
+      reserved = sessionId;
+    });
+    expect(allocated.response.sessionId).toBe(reserved);
+    expect(order).toEqual(['owner', 'engine']);
+  } finally {
+    await coordinator.shutdown();
+  }
+});
+
+it('releases the reservation when owner initialization refuses and never starts an engine', async () => {
+  const coordinator = new SessionCoordinator({ maxSessions: 1 });
+  const engine = new MockEngine();
+  const create = vi.spyOn(engine, 'createSession');
+  try {
+    await expect(
+      coordinator.createOwned({}, engine, () => {
+        throw new Error('owner initialization refused');
+      })
+    ).rejects.toThrow('owner initialization refused');
+    expect(create).not.toHaveBeenCalled();
+    await expect(coordinator.createOwned({}, engine)).resolves.toHaveProperty('response.sessionId');
+  } finally {
+    await coordinator.shutdown();
+  }
+});

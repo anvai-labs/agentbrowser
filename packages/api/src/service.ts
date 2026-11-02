@@ -21,6 +21,7 @@ import {
   parseViewportCapture,
   sessionLeaseRemainingMs,
   validateScopeAssetAmendment,
+  validateSessionRequest,
 } from '@agentbrowser/protocol';
 import { applyBountyDefaults, bountyPacing } from './bounty-defaults.js';
 import { ENGAGEMENT_ID, EngagementLedger, engagementPath } from './engagement-ledger.js';
@@ -888,6 +889,7 @@ export class AgentBrowserService {
   >();
   private readonly initializingEvidence = new Set<string>();
   private readonly sessionScopes = new Map<string, EngagementScopePolicy>();
+  private readonly sessionSecretDisposers = new Map<string, () => void>();
   /** Each ledgered session's engagement ledger (T10 M2). */
   private readonly sessionLedgers = new Map<string, EngagementLedger>();
   /** Ledger closes in progress, awaited by closeSession and shutdown. */
@@ -1156,7 +1158,7 @@ export class AgentBrowserService {
    * place the teardown set is expressed, so a new tracked map cannot
    * reintroduce the leak class TD-BROWSER-9 (A8) closed.
    */
-  private deleteSessionState(sessionId: string): void {
+  private deleteSessionState(sessionId: string, expectedSecretDisposer?: () => void): void {
     this.initializingEvidence.delete(sessionId);
     this.deniedHosts.delete(sessionId);
     this.scopeTracers.delete(sessionId);
@@ -1203,7 +1205,14 @@ export class AgentBrowserService {
     this.handoffLocks.delete(sessionId);
     // TD-BROWSER-16 phase 2's release valve: handoff-registered values stop
     // redacting once their session is gone.
-    this.secretManager.clearSessionSecrets(sessionId);
+    const dispose = expectedSecretDisposer ?? this.sessionSecretDisposers.get(sessionId);
+    if (
+      !expectedSecretDisposer ||
+      this.sessionSecretDisposers.get(sessionId) === expectedSecretDisposer
+    )
+      this.sessionSecretDisposers.delete(sessionId);
+    if (dispose) dispose();
+    else this.secretManager.clearSessionSecrets(sessionId);
   }
 
   /**
@@ -1215,7 +1224,18 @@ export class AgentBrowserService {
     attributes: Record<string, unknown>,
     operation: (span: Span | undefined) => Promise<T>
   ): Promise<T> {
-    const span = this.tracer?.startSpan(name, this.secretManager.redact(attributes));
+    const secretScope = typeof attributes.sessionId === 'string' ? attributes.sessionId : undefined;
+    const ownerRedactor =
+      secretScope === undefined
+        ? undefined
+        : this.secretManager.captureRegisteredScopedRedactor(secretScope);
+    const redact = <V>(value: V): V =>
+      ownerRedactor
+        ? (ownerRedactor(value, false) as V)
+        : secretScope === undefined
+          ? this.secretManager.redact(value)
+          : this.secretManager.redactScoped(value, secretScope);
+    const span = this.tracer?.startSpan(name, redact(attributes));
     const startedAt = Date.now();
     return operation(span).then(
       (value) => {
@@ -1226,19 +1246,19 @@ export class AgentBrowserService {
         return value;
       },
       (error) => {
-        const mapped = this.mapError(error, name);
+        const mapped = this.mapError(error, name, secretScope, ownerRedactor);
         const code = mapped.code;
         this.telemetry(name, 'error', attributes, startedAt, code);
         if (span) {
           this.tracer?.failSpan(
             span,
             code,
-            this.secretManager.redact(error instanceof Error ? error.message : String(error))
+            redact(error instanceof Error ? error.message : String(error))
           );
           this.tracer?.endSpan(span);
         }
         // The mapped, redacted error keeps a post-effect mark (T5 B-dur, B2).
-        throw carryAfterEffect(error, this.redactedError(mapped));
+        throw carryAfterEffect(error, this.redactedError(mapped, secretScope, ownerRedactor));
       }
     );
   }
@@ -2080,7 +2100,28 @@ export class AgentBrowserService {
         false,
         { rule: 'scope.identity.downloads' }
       );
-    const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
+    let cookies: ServiceSessionRequest['cookies'];
+    if (input.cookies !== undefined) {
+      try {
+        assertCookieRequestSize(input.cookies);
+        if (
+          !Array.isArray(input.cookies) ||
+          input.cookies.length > MAX_COOKIE_COUNT ||
+          !validateSessionRequest({ cookies: input.cookies }).ok
+        )
+          throw new Error('Invalid seed');
+        cookies = JSON.parse(JSON.stringify(input.cookies)) as NonNullable<
+          ServiceSessionRequest['cookies']
+        >;
+      } catch {
+        throw new ServiceError('INVALID_REQUEST', 'Invalid or oversized cookie seed');
+      }
+    }
+    const request = {
+      ...input,
+      ...(cookies ? { cookies } : {}),
+      ...(input.approval ? { approval: { ...input.approval } } : {}),
+    };
     if (
       request.approval?.review !== undefined &&
       (request.approval.review !== 'operator' ||
@@ -2231,6 +2272,11 @@ export class AgentBrowserService {
           { rule: 'scope.trace.engine' }
         );
       let traceSessionId: string | undefined;
+      let recordOwnerId: string | undefined;
+      let recordOwnerContext: SessionContext | undefined;
+      let recordRedactor: ((input: unknown) => unknown) | undefined;
+      let disposeSecrets: (() => void) | undefined;
+      let recordingFailed = false;
       const denied = { hosts: [] as DeniedHostSummary[], truncated: false };
       if (ledgerFeed && capabilities.requestRecording !== true)
         throw new ServiceError(
@@ -2241,11 +2287,32 @@ export class AgentBrowserService {
         );
       if (request.scope && capabilities.requestRecording === true) {
         engineRequest.requestRecorder = (record) => {
+          if (recordingFailed) return;
+          let safeData: unknown;
+          try {
+            if (!recordRedactor && recordOwnerId)
+              recordRedactor = this.secretManager.captureRegisteredScopedRedactor(recordOwnerId);
+            safeData = recordRedactor
+              ? recordRedactor(record.data)
+              : recordOwnerId
+                ? this.secretManager.redactUntrustedScoped(record.data, recordOwnerId)
+                : this.secretManager.redactUntrusted(record.data);
+          } catch {
+            recordingFailed = true;
+            if (scopedPolicy instanceof EngagementScopePolicy)
+              scopedPolicy.stop('request recording unavailable');
+            ledgerFeed?.ledger?.append('recording.failed', { reason: 'redaction_unavailable' });
+            return;
+          }
           const redacted: EngineRequestRecord = {
             ...record,
-            data: this.secretManager.redactUntrusted(record.data) as Record<string, unknown>,
+            data: safeData as Record<string, unknown>,
           };
-          if (traceSessionId && record.type !== 'request.headersInjected')
+          const currentOwner =
+            traceSessionId !== undefined &&
+            recordOwnerContext !== undefined &&
+            this.coordinator.captureForCleanup(traceSessionId) === recordOwnerContext;
+          if (currentOwner && traceSessionId && record.type !== 'request.headersInjected')
             this.scopeTraffic
               .get(traceSessionId)
               ?.note(
@@ -2253,7 +2320,7 @@ export class AgentBrowserService {
                 record.type === 'request.failed' && isScopeDenialCode(redacted.data.scope),
                 this.sessionScopes.get(traceSessionId)?.status()
               );
-          if (traceSessionId && record.type === 'request.failed')
+          if (currentOwner && traceSessionId && record.type === 'request.failed')
             this.traceScopeDenial(traceSessionId, redacted.data);
           for (const entry of summarizeDeniedHosts([redacted]).hosts) {
             const previous = denied.hosts.find((row) => row.hostname === entry.hostname);
@@ -2334,16 +2401,50 @@ export class AgentBrowserService {
               : {}),
             requestPolicy: sessionPolicy,
           },
-          engine
+          engine,
+          (sessionId) => {
+            recordOwnerId = sessionId;
+            try {
+              disposeSecrets = this.secretManager.initializeSessionSecrets(
+                sessionId,
+                (request.cookies ?? []).map((cookie) => cookie.value)
+              );
+              recordRedactor = this.secretManager.captureRegisteredScopedRedactor(sessionId);
+              recordRedactor?.('');
+            } catch {
+              recordingFailed = true;
+              if (scopedPolicy instanceof EngagementScopePolicy)
+                scopedPolicy.stop('credential redaction unavailable');
+              throw new ServiceError('INTERNAL', 'Credential-safe session initialization failed');
+            }
+          }
         );
       } catch (error) {
-        pacing?.stop();
-        throw this.mapError(error);
+        let failure: ServiceError;
+        try {
+          failure = this.mapError(error, 'session.create', recordOwnerId, recordRedactor);
+        } catch {
+          failure = new ServiceError('INTERNAL', 'Credential-safe session initialization failed');
+        } finally {
+          try {
+            pacing?.stop();
+          } finally {
+            disposeSecrets?.();
+          }
+        }
+        throw failure;
       }
 
       const { response: session, context } = allocation;
-      if (initialize) this.initializingEvidence.add(session.sessionId);
+      recordOwnerContext = context;
       try {
+        if (recordingFailed)
+          throw new ServiceError('INTERNAL', 'Credential-safe request recording is unavailable');
+        if (request.cookies?.length && recordOwnerId !== session.sessionId)
+          throw new ServiceError(
+            'INTERNAL',
+            'Cookie owner was not initialized before engine allocation'
+          );
         const inspection = this.coordinator.inspect(session.sessionId);
         if (
           this.shuttingDown ||
@@ -2353,6 +2454,10 @@ export class AgentBrowserService {
         ) {
           throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
         }
+        // A late old allocation must not publish cleanup into a replacement
+        // owner's textual session id. Fence every owner-indexed publication.
+        if (disposeSecrets) this.sessionSecretDisposers.set(session.sessionId, disposeSecrets);
+        if (initialize) this.initializingEvidence.add(session.sessionId);
         if (request.allowDownloads)
           this.downloads.set(
             session.sessionId,
@@ -2425,8 +2530,9 @@ export class AgentBrowserService {
               scope: scope.status(),
               ...(request.userAgent !== undefined ? { userAgent: request.userAgent } : {}),
             }
-          ).catch(async () => {
-            await this.closeSession(session.sessionId).catch(() => {});
+          ).catch(() => {
+            // The outer cleanup discards only this captured allocation. A
+            // reused textual id must never close a replacement session here.
             throw new ServiceError(
               'INTERNAL',
               'The engagement ledger could not be opened; the session was closed.',
@@ -2434,6 +2540,14 @@ export class AgentBrowserService {
               { rule: 'scope.ledger.unavailable' }
             );
           });
+          if (
+            this.shuttingDown ||
+            this.coordinator.captureForCleanup(session.sessionId) !== context ||
+            context.signal.aborted
+          ) {
+            await ledger.close({ cause: 'creation_failed' }).catch(() => {});
+            throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
+          }
           this.sessionLedgers.set(session.sessionId, ledger);
           if (ledgerFeed !== undefined) {
             for (const record of ledgerFeed.pending.splice(0)) ledgerRecord(ledger, record);
@@ -2478,15 +2592,28 @@ export class AgentBrowserService {
         this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
         return result;
       } catch (error) {
-        const current = this.coordinator.captureForCleanup(session.sessionId);
-        if (context && (current === context || current === undefined)) {
+        let failure: ServiceError;
+        try {
+          failure = this.mapError(error, 'session.create', session.sessionId, recordRedactor);
+        } catch {
+          failure = new ServiceError('INTERNAL', 'Credential-safe session initialization failed');
+        } finally {
           try {
-            this.deleteSessionState(session.sessionId);
+            const current = this.coordinator.captureForCleanup(session.sessionId);
+            if (context && (current === context || current === undefined)) {
+              try {
+                this.deleteSessionState(session.sessionId, disposeSecrets);
+              } finally {
+                await this.coordinator.discardIfCurrent(context, 'creation_failed');
+              }
+            }
+          } catch {
+            failure = new ServiceError('INTERNAL', 'Credential-safe session cleanup failed');
           } finally {
-            await this.coordinator.discardIfCurrent(context, 'creation_failed');
+            disposeSecrets?.();
           }
         }
-        throw error;
+        throw failure;
       }
     });
   }
@@ -2654,11 +2781,10 @@ export class AgentBrowserService {
             );
           }
           currentTransfer();
-          for (const value of [
+          this.secretManager.registerSessionSecrets(id, [
             ...state.cookies.map((c) => c.value),
             ...state.origins.flatMap((o) => o.localStorage.map((e) => e.value)),
-          ])
-            this.secretManager.registerSessionSecret(id, value);
+          ]);
           const ledger = this.sessionLedgers.get(id);
           if (!ledger) throw new ServiceError('POLICY_DENIED', 'Evidence ledger unavailable');
           const metadata = {
@@ -2774,6 +2900,8 @@ export class AgentBrowserService {
   }
 
   async closeSession(sessionId: string): Promise<void> {
+    const owner = this.coordinator.captureForCleanup(sessionId);
+    const disposeSecrets = this.sessionSecretDisposers.get(sessionId);
     this.authority.remove(sessionId);
     // T10 M2: a ledgered scope takes no new traffic while the session closes;
     // outcomes of requests already in flight still reach the ledger.
@@ -2784,8 +2912,11 @@ export class AgentBrowserService {
     } catch (error) {
       throw this.mapError(error);
     } finally {
-      this.deleteSessionState(sessionId);
-      await this.ledgerClosings.get(sessionId);
+      const current = this.coordinator.captureForCleanup(sessionId);
+      if (owner && (current === owner || current === undefined)) {
+        this.deleteSessionState(sessionId, disposeSecrets);
+        await this.ledgerClosings.get(sessionId);
+      }
     }
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
@@ -7151,9 +7282,10 @@ export class AgentBrowserService {
         );
       }
       await engineSession.addInitScript(HANDOFF_RTC_REMOVAL_INIT_SCRIPT);
-      for (const cookie of reCookies) {
-        this.secretManager.registerSessionSecret(sessionId, cookie.value);
-      }
+      this.secretManager.registerSessionSecrets(
+        sessionId,
+        reCookies.map((cookie) => cookie.value)
+      );
 
       // --- the mark; then apply-and-write ------------------------------------
       this.markOperatorCredentialSource(sessionId);
@@ -7502,22 +7634,43 @@ export class AgentBrowserService {
   }
 
   /** Strip registered secret values from an error before it leaves the service. */
-  private redactedError(error: ServiceError): ServiceError {
+  private redactedError(
+    error: ServiceError,
+    sessionId?: string,
+    captured?: (input: unknown, redactKeys?: boolean) => unknown
+  ): ServiceError {
     return new ServiceError(
       error.code,
-      this.secretManager.redact(error.message),
+      captured
+        ? (captured(error.message, false) as string)
+        : sessionId === undefined
+          ? this.secretManager.redact(error.message)
+          : this.secretManager.redactScoped(error.message, sessionId),
       error.retryable,
-      error.details !== undefined ? this.secretManager.redactUntrusted(error.details) : undefined
+      error.details !== undefined
+        ? captured
+          ? (captured(error.details) as Record<string, unknown>)
+          : sessionId === undefined
+            ? this.secretManager.redactUntrusted(error.details)
+            : this.secretManager.redactUntrustedScoped(error.details, sessionId)
+        : undefined
     );
   }
 
-  private mapError(error: unknown, operation = 'act'): ServiceError {
+  private mapError(
+    error: unknown,
+    operation = 'act',
+    sessionId?: string,
+    captured?: (input: unknown, redactKeys?: boolean) => unknown
+  ): ServiceError {
     if (error instanceof ServiceError) {
-      return this.redactedError(error);
+      return this.redactedError(error, sessionId, captured);
     }
     const failure = normalizeEngineError(error, operation);
     return this.redactedError(
-      new ServiceError(failure.code, failure.message, failure.retryable, failure.details)
+      new ServiceError(failure.code, failure.message, failure.retryable, failure.details),
+      sessionId,
+      captured
     );
   }
 }

@@ -66,6 +66,10 @@ export class SecretManager {
    */
   private readonly sessionSecrets = new Map<string, string[]>();
   private readonly sessionPatterns = new Map<string, RegExp | null>();
+  private readonly sessionGenerations = new Map<
+    string,
+    { values: string[]; pattern: RegExp | null }
+  >();
   private readonly sessionCaches = new Map<string, BoundedCache<string, string>>();
   private readonly sessionCacheMaxEntries: number;
   private readonly sessionScopesBound: number;
@@ -149,6 +153,34 @@ export class SecretManager {
     return this.redactValue(input, false, sessionId) as T;
   }
 
+  /**
+   * Capture an already-registered owner for in-flight records after teardown.
+   * Later additions to that generation stay protected; a reused ID does not
+   * replace the captured registry. No registry values leave this closure.
+   */
+  captureRegisteredScopedRedactor(
+    sessionId: string
+  ): ((input: unknown, redactKeys?: boolean) => unknown) | undefined {
+    const owner = this.sessionGenerations.get(sessionId);
+    if (!owner) return undefined;
+    const redactor = new SecretManager(
+      {},
+      { redactionCacheMaxEntries: 0, sessionScopesMaxSessions: 0 }
+    );
+    let values: string[] | undefined;
+    const refresh = () => {
+      redactor.sortedValues = [...this.sortedValues, ...owner.values];
+      redactor.redactionPattern = owner.pattern;
+      values = owner.values;
+      redactor.redact('');
+    };
+    refresh();
+    return (input, redactKeys = true) => {
+      if (values !== owner.values) refresh();
+      return redactKeys ? redactor.redactUntrusted(input) : redactor.redact(input);
+    };
+  }
+
   /** The untrusted-key variant with a session's scope (phase 6 wiring). */
   redactUntrustedScoped(input: Record<string, unknown>, sessionId: string): Record<string, unknown>;
   redactUntrustedScoped(input: unknown, sessionId: string): unknown;
@@ -166,26 +198,74 @@ export class SecretManager {
    * invalidates that scope's memoized redaction cache.
    */
   registerSessionSecret(sessionId: string, value: string): void {
-    if (this.sessionScopesBound === 0 || negligibleEntropy(value)) return;
+    if (this.sessionScopesBound === 0) return;
+    this.installSessionSecrets(sessionId, [value], false, false);
+  }
+
+  /** Atomic batch registration: no cumulative per-cookie sort/regex rebuild. */
+  registerSessionSecrets(sessionId: string, values: readonly string[]): void {
+    if (this.sessionScopesBound === 0) return;
+    this.installSessionSecrets(sessionId, values, false, true);
+  }
+
+  /** A reserved new allocation owns its own registry and identity-bound cleanup. */
+  initializeSessionSecrets(sessionId: string, values: readonly string[]): () => void {
+    if (this.sessionScopesBound === 0) return () => {};
+    const owner = this.installSessionSecrets(sessionId, values, true, true);
+    return () => {
+      if (owner && this.sessionGenerations.get(sessionId) === owner)
+        this.clearSessionSecrets(sessionId);
+    };
+  }
+
+  private installSessionSecrets(
+    sessionId: string,
+    input: readonly string[],
+    fresh: boolean,
+    prime: boolean
+  ) {
+    const previous = fresh ? [] : (this.sessionSecrets.get(sessionId) ?? []);
+    const values = new Set(previous);
+    for (const value of input) if (!negligibleEntropy(value)) values.add(value);
+    if (!fresh && values.size === previous.length) return this.sessionGenerations.get(sessionId);
     if (
+      values.size &&
       !this.sessionSecrets.has(sessionId) &&
       this.sessionSecrets.size >= this.sessionScopesBound
-    ) {
-      // Fail closed: the alternative — silently dropping the oldest scope's
-      // values — would un-protect a live session (ADR-025's guarantee).
+    )
       throw new SecretError(
         'SCOPE_LIMIT',
         `Session secret scope limit reached (${this.sessionScopesBound}); close sessions or raise sessionScopesMaxSessions`
       );
+    const next = [...values].sort((a, b) => b.length - a.length);
+    let pattern: RegExp | null;
+    try {
+      pattern = next.length ? this.buildSessionPattern(next) : this.redactionPattern;
+      if (prime) {
+        pattern?.test('');
+        if (pattern) pattern.lastIndex = 0;
+      }
+    } catch {
+      throw new SecretError(
+        'REDACTION_UNAVAILABLE',
+        'Credential redaction could not be initialized'
+      );
     }
-    const values = this.sessionSecrets.get(sessionId) ?? [];
-    if (!values.includes(value)) values.push(value);
-    // Longest-first, so overlapping values redact fully.
-    values.sort((a, b) => b.length - a.length);
-    this.sessionSecrets.set(sessionId, values);
-    this.buildSessionPattern(sessionId, values);
-    // The cached results no longer reflect the new value.
+    const owner = fresh
+      ? { values: next, pattern }
+      : (this.sessionGenerations.get(sessionId) ?? { values: next, pattern });
+    owner.values = next;
+    owner.pattern = pattern;
+    this.sessionGenerations.set(sessionId, owner);
+    if (next.length) {
+      this.sessionSecrets.set(sessionId, next);
+      this.sessionPatterns.set(sessionId, pattern);
+    } else {
+      this.sessionSecrets.delete(sessionId);
+      this.sessionPatterns.delete(sessionId);
+    }
     this.sessionCaches.delete(sessionId);
+    return owner;
   }
 
   /**
@@ -206,17 +286,15 @@ export class SecretManager {
   clearSessionSecrets(sessionId: string): void {
     this.sessionSecrets.delete(sessionId);
     this.sessionPatterns.delete(sessionId);
+    this.sessionGenerations.delete(sessionId);
     this.sessionCaches.delete(sessionId);
   }
 
-  private buildSessionPattern(sessionId: string, values: string[]): void {
+  private buildSessionPattern(values: string[]): RegExp | null {
     const all = [...values, ...this.sortedValues].sort((a, b) => b.length - a.length);
-    this.sessionPatterns.set(
-      sessionId,
-      all.length === 0
-        ? null
-        : new RegExp(all.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
-    );
+    return all.length === 0
+      ? null
+      : new RegExp(all.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
   }
 
   /** Registered references, for inventory. Values never leave this class. */

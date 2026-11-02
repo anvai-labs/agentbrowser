@@ -44,6 +44,26 @@ request for operator review; input/output files remain private evidence. Preserv
 existing refusal of operator-reviewed registered secrets and vault references.
 Private storage alone does not authorize a new secret-binding or disclosure path.
 
+Seeded credentials enter that registry before engine allocation can emit a
+record. A trusted synchronous `SessionCoordinator.createOwned` allocation hook
+receives the reserved session identifier before engine work; it registers values
+from the same detached cookie snapshot supplied to the engine. This hook is not
+a wire option or a second session creator. Allocation failures redact before
+teardown clears the live registry. The request recorder keeps an owner-private
+redactor bound to that registered generation for late close/failure records;
+reusing a textual session identifier never changes that captured owner.
+Publish cleanup and other owner-indexed state only after the exact captured
+session-context fence. Repeat that fence after asynchronous ledger allocation;
+late completion or failure closes only the captured allocation and cannot
+replace or close a new owner that reused the identifier.
+Register the bounded seed as one deduplicated atomic batch and compile/prime its
+pattern once before engine work. Capture construction is eager. A new allocation
+owns a generation-bound cleanup capability; failed old initialization cannot
+erase a replacement owner's registry. Any later recorder/redactor failure stops
+the exact captured engagement scope and records a fixed recording-failure marker,
+without a raw-data fallback. Redaction failure cannot bypass allocation cleanup:
+cleanup runs in `finally`, with a fixed secret-free error if mapping itself fails.
+
 Response-policy admission must use authoritative transport headers and decoded
 bytes read, independently of the displayed DTO. Never reconstruct a response-size
 floor from truncated headers/body or redacted text: header-count reduction might
