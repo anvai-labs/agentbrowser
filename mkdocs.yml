@@ -188,6 +188,7 @@ nav:
     - '027 Evidence Pass State Transfer': adr/027-evidence-pass-state-transfer.md
     - '028 Operator Asset Scope Amendments': adr/028-operator-asset-scope-amendments.md
     - '029 Operator Budget Top-up': adr/029-operator-budget-topup.md
+    - '030 Scoped Page Fetch': adr/030-scoped-page-fetch.md
     - '031 Coordinate Interaction': adr/031-coordinate-interaction-and-visual-evidence.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
