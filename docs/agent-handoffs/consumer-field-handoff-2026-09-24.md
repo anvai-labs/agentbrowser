@@ -33,13 +33,13 @@ passed 19/19 public checks (unauthenticated variant), 0 failures.
 **Context:** 2026-09-24
 **Producer:** Claude Code consumer session driving `agentbrowser-mcp` (headed
 sessions) for a multi-hour financial-research workload
-**Related:** [ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md),
-[ADR-009](adr/009-mcp-high-level-tools.md),
-[ADR-013](adr/013-headed-sessions-and-walled-logins.md),
-[ADR-016](adr/016-branded-chrome-first-headed-launches.md),
-[Shared session infrastructure](shared-session-infrastructure.md),
-[TD-BROWSER-10](td/TD-BROWSER-10-session-extension-loading.md),
-[TD-BROWSER-11](td/TD-BROWSER-11-session-initial-page-race.md)
+**Related:** [ADR-005](../adr/005-ephemeral-sessions-explicit-persistence.md),
+[ADR-009](../adr/009-mcp-high-level-tools.md),
+[ADR-013](../adr/013-headed-sessions-and-walled-logins.md),
+[ADR-016](../adr/016-branded-chrome-first-headed-launches.md),
+[Shared session infrastructure](../shared-session-infrastructure.md),
+[TD-BROWSER-10](../td/TD-BROWSER-10-session-extension-loading.md),
+[TD-BROWSER-11](../td/TD-BROWSER-11-session-initial-page-race.md)
 
 This document records what an intensive real consumer workload experienced on
 2026-09-24, what held up, where the MCP surface forced workarounds, and the
@@ -104,7 +104,7 @@ separate thing that can die mid-task, see F4).
 `session_page_create`/`page_close` tool pair (mirroring the existing CLI
 verbs) or implicit auto-provisioning when `browser_navigate` targets a new
 `pageId` within a session page budget.
-[Shared session infrastructure](shared-session-infrastructure.md) already
+[Shared session infrastructure](../shared-session-infrastructure.md) already
 frames sessions/pages/agents as first-class shared infrastructure and notes
 "MCP compatibility is an adapter concern" — this is the adapter gap. The
 `create` response already implies a page set (`pg_N_page-0` naming); make the
