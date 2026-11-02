@@ -41,7 +41,11 @@ export interface RedirectVerdict {
 export interface BodyRedirectGuardOptions {
   /** Scoped contexts disallow workers, including native POST document commits. */
   blockDocumentWorkers?: boolean;
-  headersForRequest?(url: string, headers: Record<string, string>): Record<string, string>;
+  /** Undefined omits marker overrides; network/redirect policy still applies. */
+  headersForRequest?(
+    url: string,
+    headers: Record<string, string>
+  ): Record<string, string> | undefined;
   onInjection?(url: string): void;
   verdictOf(
     hostname: string,
@@ -80,6 +84,8 @@ interface Chain {
   headers: Record<string, string>;
   hops: number;
   seen: Set<string>;
+  /** At least one hop carried a destination-specific header override. */
+  headerOverrides?: boolean;
 }
 
 interface GuardTarget {
@@ -337,7 +343,8 @@ export class BodyRedirectGuard {
         this.open(target, event, networkId);
       }
       const chain = networkId === undefined ? undefined : target.chains.get(networkId);
-      // Native bodies use per-hop CDP overrides, including the initial hop.
+      // Native bodies use per-hop CDP overrides only when a marker transform
+      // returns an object. Unrelated destinations keep native header handling.
       // Playwright route.continue({headers}) persists overrides across redirects
       // and would reapply an old marker after this guard stripped it.
       try {
@@ -347,6 +354,7 @@ export class BodyRedirectGuard {
               event.request.headers ?? chain.headers
             )
           : undefined;
+        if (headers && chain) chain.headerOverrides = true;
         if (headers && chain && chain.hops > 0) this.options.onInjection?.(event.request.url);
         await cdp.send('Fetch.continueRequest', {
           requestId: event.requestId,
@@ -438,7 +446,9 @@ export class BodyRedirectGuard {
           }
         }
       } catch {
-        throw new Error('POLICY_HEADERS_UNCHECKABLE');
+        throw new Error(
+          chain?.headerOverrides === true ? 'POLICY_HEADERS_UNCHECKABLE' : 'RESPONSE_UNCHECKABLE'
+        );
       }
     };
     const chain = networkId === undefined ? undefined : target.chains.get(networkId);
@@ -456,7 +466,7 @@ export class BodyRedirectGuard {
               method: event.request.method,
               blocked: true,
               reason: 'egress_policy',
-              detail: 'POLICY_HEADERS_UNCHECKABLE',
+              detail: 'RESPONSE_UNCHECKABLE',
             },
           });
         } catch {}
@@ -547,12 +557,15 @@ export class BodyRedirectGuard {
       outcome('request.finished', { status, redirect });
     } catch (error) {
       // Fail closed: a hop the guard could not judge is not followed.
+      const message = error instanceof Error ? error.message : '';
       await fail({
         reason: 'egress_policy',
         detail:
-          error instanceof Error && error.message === 'POLICY_HEADERS_UNCHECKABLE'
+          message === 'POLICY_HEADERS_UNCHECKABLE'
             ? 'POLICY_HEADERS_UNCHECKABLE'
-            : 'REDIRECT_UNCHECKABLE',
+            : message === 'RESPONSE_UNCHECKABLE' && !browserRedirect
+              ? 'RESPONSE_UNCHECKABLE'
+              : 'REDIRECT_UNCHECKABLE',
       });
     }
   }

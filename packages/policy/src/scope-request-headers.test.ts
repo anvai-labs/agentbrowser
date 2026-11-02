@@ -20,6 +20,27 @@ describe('T10 M5 research markers', () => {
       });
     }
   });
+  it('scopes enforcement to the hostSuffix: a non-matching host passes through untouched', () => {
+    const scope = new EngagementScopePolicy(base(), {
+      allowedHosts: ['.wolt.com', 'api.hcaptcha.com'],
+      requestHeaders: [marker],
+    });
+    // No matching entry and no carried marker: zero header-policy interaction
+    // (the engine sends the request exactly as a scope without requestHeaders).
+    expect(scope.headersForRequest!('api.hcaptcha.com', { accept: '*/*' })).toBeUndefined();
+    // A carried marker (page-forged or hop-inherited) is still stripped there.
+    expect(
+      scope.headersForRequest!('api.hcaptcha.com', {
+        'X-HackerOne-Research': 'leak',
+        accept: '*/*',
+      })
+    ).toEqual({ accept: '*/*' });
+    // Matching destinations still inject.
+    expect(scope.headersForRequest!('api.wolt.com', {})).toEqual({
+      'x-hackerone-research': 'researcher',
+    });
+  });
+
   it('injects on the host subtree, strips inherited/forged values elsewhere and composes with bindings', async () => {
     const policy = base();
     const scope = new EngagementScopePolicy(policy, {

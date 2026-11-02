@@ -64,10 +64,12 @@ it('refuses a native response when worker CSP installation fails and records fai
     },
   });
   expect(sent.at(-1)?.method).toBe('Fetch.failRequest');
+  // No header override was ever applied to this chain, so the fail-closed
+  // outcome names the response pipeline, not a header-policy failure.
   expect(outcomes).toEqual([
     expect.objectContaining({
       type: 'request.failed',
-      data: expect.objectContaining({ detail: 'POLICY_HEADERS_UNCHECKABLE' }),
+      data: expect.objectContaining({ detail: 'RESPONSE_UNCHECKABLE' }),
     }),
   ]);
   expect(target.chains.size).toBe(0);

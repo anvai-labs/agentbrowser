@@ -3,7 +3,15 @@ import { NetworkPolicyError } from './network-policy.js';
 
 /** The request-policy port (engine `RequestPolicy`), structurally. */
 export interface RequestPolicyChain {
-  headersForRequest?(hostname: string, headers: Record<string, string>): Record<string, string>;
+  /**
+   * `undefined` = no header-policy interaction (engine passes the request
+   * through untouched); an object is an override to dispatch. See the
+   * engine `RequestPolicy` port for the full contract.
+   */
+  headersForRequest?(
+    hostname: string,
+    headers: Record<string, string>
+  ): Record<string, string> | undefined;
   injectedHeaderNames?(hostname: string): string[];
   checkRequest(request: {
     hostname: string;

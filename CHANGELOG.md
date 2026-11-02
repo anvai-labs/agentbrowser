@@ -7,6 +7,35 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.30.2] — 2026-11-01
+
+### Fixed — research marker transport (T10 A8)
+
+- Requests with no header-policy interaction omit header overrides. Matching
+  hosts still receive configured research markers, and carried marker names are
+  stripped on other hosts. Existing policy/identity checks, redirect tracking,
+  inspected-response caps and cookie/auth hygiene remain enforced.
+- Response refusal diagnostics distinguish chains that carried a header override
+  from unrelated response failures. Local iframe/CORS fixtures verify exact request
+  bytes, marker boundaries and sealed method/host/rate/budget denial ledgers.
+
+### Fixed — seeded-session privacy
+
+- Register a detached cookie snapshot with the owning session before engine
+  startup. Startup errors, early records and late callbacks retain that owner's
+  redaction generation; stale creation and ledger completions cannot replace a
+  new owner's state or cleanup handle.
+- Register seed values in one batch and prime redaction once. Recorder failures
+  stop the captured scope and emit fixed failure metadata; allocation/error
+  cleanup still runs if redaction fails, without publishing raw exceptions.
+
+### Internal and test qualification
+
+- Added a bounded response-admission helper for the upcoming API-probe workflow.
+  The helper is not wired into a public action; `page fetch` remains unshipped.
+- Redirect fixtures separate DOM readiness and their response oracle from native
+  browser setup/teardown time under parallel suite load. Assertions remain intact.
+
 ## [1.30.1] — 2026-11-01
 
 ### Fixed — scoped redirect method and body fidelity (T10 P0-2 prerequisite)

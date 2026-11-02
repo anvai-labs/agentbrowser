@@ -151,7 +151,8 @@ export class SessionCoordinator {
   /** Internal allocation identity travels with its response across the await boundary. */
   async createOwned(
     request: CoordinatedSessionRequest,
-    engine: BrowserEngine
+    engine: BrowserEngine,
+    initializeOwner?: (sessionId: string) => undefined
   ): Promise<{ response: SessionResponse; context: SessionContext }> {
     // Check session limit
     if (this.sessions.size + this.pendingSessionIds.size >= this.config.maxSessions) {
@@ -172,6 +173,11 @@ export class SessionCoordinator {
     this.pendingSessionIds.add(sessionId);
 
     try {
+      // Trusted owner initialization (for example credential redaction) must
+      // precede any adapter work that can emit records for the new allocation.
+      const initialized: unknown = initializeOwner?.(sessionId);
+      if (initialized !== undefined)
+        throw new Error('Session owner initialization must be synchronous');
       // Create engine session
       const sessionOptions: import('@agentbrowser/engine').EngineSessionOptions = {};
       if (request.cdpAttach === true) sessionOptions.cdpAttach = true;

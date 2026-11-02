@@ -292,10 +292,12 @@ export class EngagementScopePolicy {
   declare readonly headersForRequest?: (
     hostname: string,
     headers: Record<string, string>
-  ) => Record<string, string>;
+  ) => Record<string, string> | undefined;
   private revision = 0;
   private readonly assetHosts: ScopeAssetHost[];
   private readonly injected: ResearchRequestHeader[];
+  /** Lowercased configured marker names, for the cheap carries-a-marker check. */
+  private readonly injectedNames: Set<string>;
   private readonly allowed: string[];
   private readonly paths: ScopePathRule[];
   private readonly methods: Set<string> | undefined;
@@ -379,6 +381,7 @@ export class EngagementScopePolicy {
       header: entry.header.toLowerCase(),
       ...(entry.hostSuffix ? { hostSuffix: normalizeHost(entry.hostSuffix) } : {}),
     }));
+    this.injectedNames = new Set(this.injected.map((entry) => entry.header));
     this.headersForRequest = this.transformHeaders.bind(this);
     this.allowed = scope.allowedHosts.map(normalizeHost);
     this.paths = (scope.pathRules ?? []).map((rule) => ({
@@ -507,24 +510,42 @@ export class EngagementScopePolicy {
     }
   }
 
-  /** Remove configured markers first, so cross-host hops cannot inherit one. */
+  /**
+   * Remove configured markers first, so cross-host hops cannot inherit one,
+   * then add the matching set for this destination. `undefined` means ZERO
+   * header-policy interaction: the destination matches no entry, carries no
+   * configured marker name, and is not an asset host — the engine passes the
+   * request through untouched (no replayed header set, no CDP overrides).
+   * This is what scopes `hostSuffix` to enforcement as well as injection:
+   * cross-origin dependencies of an in-scope page (captcha vendors, SSO,
+   * payment iframes) never touch the marker transport paths at all.
+   */
   private transformHeaders(
     hostname: string,
     headers: Record<string, string>
-  ): Record<string, string> {
-    const names = new Set(this.injected.map((entry) => entry.header));
+  ): Record<string, string> | undefined {
+    const host = normalizeHost(hostname);
+    if (
+      !this.assetHosts.some((a) => hostMatches(host, a.host)) &&
+      !this.injected.some(
+        (entry) => !entry.hostSuffix || hostMatchesPattern(host, entry.hostSuffix)
+      ) &&
+      !Object.keys(headers).some((name) => this.injectedNames.has(name.toLowerCase()))
+    ) {
+      return undefined; // pass-through: nothing to inject, strip, or scrub
+    }
     const result = Object.fromEntries(
-      Object.entries(headers).filter(([name]) => !names.has(name.toLowerCase()))
+      Object.entries(headers).filter(([name]) => !this.injectedNames.has(name.toLowerCase()))
     );
-    if (this.assetHosts.some((a) => hostMatches(normalizeHost(hostname), a.host))) {
+    if (this.assetHosts.some((a) => hostMatches(host, a.host))) {
       for (const name of Object.keys(result))
         if (['cookie', 'authorization', 'proxy-authorization'].includes(name.toLowerCase()))
-          delete result[name];
+          Reflect.deleteProperty(result, name);
       // Explicit empty Cookie also prevents route.fetch's automatic cookie-jar reattachment.
       return { ...result, cookie: '' };
     }
     for (const entry of this.injected)
-      if (!entry.hostSuffix || hostMatchesPattern(normalizeHost(hostname), entry.hostSuffix))
+      if (!entry.hostSuffix || hostMatchesPattern(host, entry.hostSuffix))
         result[entry.header] = entry.value;
     return result;
   }
