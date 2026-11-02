@@ -1870,8 +1870,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
     };
 
-    const headersFor = (hostname: string, headers: Record<string, string>) =>
-      egress.headersForRequest?.(hostname, headers) ?? headers;
+    const headersFor = (
+      hostname: string,
+      headers: Record<string, string>
+    ): Record<string, string> | undefined => egress.headersForRequest?.(hostname, headers);
     const recordInjection = (url: string) => {
       const at = new URL(url);
       const headers = egress.injectedHeaderNames?.(at.hostname) ?? [];
@@ -2018,7 +2020,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       egress.requireRedirectGuard === true
         ? new BodyRedirectGuard(context, {
             verdictOf: (hostname, url, hop) =>
-              verdictOf(hostname, url, { ...hop, headers: headersFor(hostname, hop.headers) }),
+              verdictOf(hostname, url, {
+                ...hop,
+                headers: headersFor(hostname, hop.headers) ?? hop.headers,
+              }),
             ...(egress.headersForRequest
               ? {
                   headersForRequest: (url: string, headers: Record<string, string>) =>
@@ -2083,14 +2088,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         terminalStarted = true;
         return route.fulfill({ ...options, ...(headers ? { headers } : {}) });
       };
-      const continueRequest = (headers: Record<string, string>) => {
+      const continueRequest = (headers: Record<string, string> | undefined) => {
         terminalStarted = true;
         // Native scoped bodies were transformed by their target's CDP guard.
         // route.continue({headers}) would persist that override across redirects
         // and overwrite the guard's destination-specific headers on a later hop.
         // (This call site is only reached for POST/PUT/PATCH — bodyless requests
         // go through route.fetch with a Node-side redirect walk instead.)
-        return route.continue(egress.headersForRequest && !redirectGuard ? { headers } : undefined);
+        return route.continue(headers !== undefined && !redirectGuard ? { headers } : undefined);
       };
 
       const deny = async (reason: NavigationFailureReason, scope?: ScopeDenialCode) => {
@@ -2109,7 +2114,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         const originalHeaders = egress.headersForRequest
           ? await request.allHeaders()
           : request.headers();
-        const requestHeaders = headersFor(hostname, originalHeaders);
+        const override = headersFor(hostname, originalHeaders);
+        const requestHeaders = override ?? originalHeaders;
         let initiatorHost: string | undefined;
         try {
           initiatorHost = new URL(request.frame().url()).hostname;
@@ -2161,14 +2167,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             redirectGuard === undefined
           );
           recordInjection(url);
-          await continueRequest(requestHeaders);
+          await continueRequest(override);
           return;
         }
 
         recordInjection(url);
         const response = await route.fetch({
           maxRedirects: 0,
-          ...(egress.headersForRequest ? { headers: requestHeaders } : {}),
+          ...(override !== undefined ? { headers: override } : {}),
         });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop
@@ -2245,7 +2251,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 })
               );
             }
-            const hopRequestHeaders = headersFor(absolute.hostname, redirectHeaders);
+            // Independent redirect credential/body hygiene remains mandatory
+            // even when this destination needs no marker-policy override.
+            const hopOverride = headersFor(absolute.hostname, redirectHeaders);
+            const hopRequestHeaders = hopOverride ?? redirectHeaders;
             const hop = await verdictOf(absolute.hostname, absolute.toString(), {
               method: nextMethod,
               headers: hopRequestHeaders,

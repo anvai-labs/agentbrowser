@@ -107,8 +107,19 @@ export interface EngineSessionOptions {
  * throwing means ALLOW.
  */
 export interface RequestPolicy {
-  /** Destination-specific research markers; apply before policy checks and dispatch. */
-  headersForRequest?(hostname: string, headers: Record<string, string>): Record<string, string>;
+  /**
+   * Destination-specific research markers; apply before policy checks and
+   * dispatch. `undefined` means the policy has NO interaction with this
+   * request's headers: omit header-policy replay and CDP header overrides,
+   * while retaining independent policy checks and redirect hygiene. Only a returned object is
+   * an override the engine dispatches. A `hostSuffix` entry therefore scopes
+   * BOTH injection and enforcement — a non-matching host that carries no
+   * configured marker name gets zero header-policy interaction.
+   */
+  headersForRequest?(
+    hostname: string,
+    headers: Record<string, string>
+  ): Record<string, string> | undefined;
   injectedHeaderNames?(hostname: string): string[];
   /**
    * `method` and `headers` are additive, optional context the Playwright

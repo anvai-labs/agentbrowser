@@ -31,6 +31,59 @@ The GET walker lets the context select destination cookies on every redirect;
 Authorization and proxy authorization are permanently removed when the chain
 changes origin, including when a later hop returns to the original origin.
 
+## A8/A9: destination header interaction and native response compatibility
+
+The transform distinguishes an override from absence of header-policy
+interaction. `undefined` means this destination matches no configured marker,
+carries no configured marker name, and needs no asset credential scrubbing.
+Policy checks still receive the original effective headers, but dispatch omits
+header overrides. A returned object supplies an exact injection/stripping/scrub
+override. A carried marker still forces stripping on a nonmatching destination;
+an asset host still forces credential scrubbing. This additive internal contract
+does not change identity validation or grant host/method authority.
+
+Initial inspected requests without interaction omit header replay. Redirects
+retain the independently required cookie/Host/auth and permanently dropped-body
+header hygiene introduced by 1.30.1. A transform's `undefined` result must never
+restore the source request's credentials or original body on a later hop.
+Browser-generated preflights remain distinct from explicit OPTIONS and never
+receive injected markers before their policy admission.
+
+Native POST/PUT/PATCH chains remain guarded on every hop even without marker
+interaction. Skipping the guard for nonmatching hosts would permit out-of-scope
+redirects and remove ledger outcomes, so the handoff's proposed zero-CDP-overhead
+shortcut is rejected. A9 qualification instead uses captcha-shaped cross-origin
+iframe POSTs with permissive CORS, checking successful response delivery and
+scope/base/tenant/metadata and method/host/rate/budget refusals. Diagnosis must
+distinguish header overrides from response continuation failures. If a response
+stream has been acquired, failure must cancel rather than continue the original
+response. Live Wolt/hCaptcha verification remains pending operator verification.
+
+Local A8/A9 qualification runs the same seven public-service cases against the
+archived 1.30.1 response-continuation baseline and the tri-state candidate. Both
+pass: marker/no-marker JSON POSTs from a cross-origin iframe complete with exact
+UTF-8 bytes, and an unscoped control also completes. Method, host, rate and budget
+controls each produce one typed scope denial, no denied API receiver hit and a
+verified sealed ledger. The reported A9 response failure is not reproduced on
+this baseline; no guard-skipping change is justified by these results.
+
+The fixture grants native local-network permission only to its fresh loopback
+source origins and delegates the iframe permission; application egress policy
+stays enforced. Before that fixture setup, Chromium reports
+`LocalNetworkAccessPermissionDenied` even for the unscoped control, so it is not
+evidence of an A9 response-enforcement failure. This permission is test setup,
+not a product option or a change to program traffic.
+
+Observed generated preflights have Fetch resource type `XHR`, while the matching
+Network event has type `Other`, `initiator.type: preflight` and an exact network
+request ID; event ordering varies. Playwright internally fulfills those OPTIONS
+with 204, so a successful wire oracle observes the application POST, not a remote
+OPTIONS hit. Future preflight authority must use correlated trusted browser
+metadata, not a header/method heuristic or the `Preflight` resource-type label
+alone. This A8 checkpoint does not qualify preflight policy/budget/DNS admission;
+that remains a separate transport/resource-host gate. The fixture must be rerun
+when stronger terminal-response admission is integrated.
+
 `identityBindings` stays unchanged: inject + bind composes normally. An
 injected marker is removed on a nonmatching destination, including same-session
 cross-host redirects. A caller cannot override a configured marker with a
