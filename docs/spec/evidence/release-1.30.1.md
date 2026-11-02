@@ -11,7 +11,9 @@ probe capability. No new command, scope authority or consent mechanism is expose
 | Baseline reproduction | Corrected UTF-8 fixture against 1.30.0: seven failures among 18 cases, including HEAD 301/302/303 changing to GET, DELETE/OPTIONS 301/302 changing method, and DELETE 303→307 restoring its original method/body |
 | Receiver qualification | Public service with real Chromium: HEAD, DELETE, OPTIONS and PROPFIND same-origin chains, mixed POST/PUT/DELETE 303→307 chains, independent body length/SHA-256, and 300/304 Location fields that must not redirect |
 | Denial qualification | HEAD/DELETE/OPTIONS method, host, rate and budget refusals; no denied receiver hit; exported engagement ledger chain verifies and is sealed; no request body in ledger |
-| Composition | Existing worker CSP, header injection, all-hop policy checks, redirect caps and fail-closed target tracking remain required regression checks |
+| Composition | DELETE/OPTIONS retain their inspected transport and response-size floors; native admission is unchanged. Existing worker CSP, header injection, all-hop policy checks, redirect caps and fail-closed target tracking remain required regression checks |
+| Review-driven controls | 40 receiver cases pass, including unscoped base-policy denied redirects, declared/chunked response caps, same-origin credential retention and a cross-origin/return cookie/auth chain. A co-located guard test prevents adding marker overrides to browser preflights |
+| Test timing | Native macOS headed-locale checks reproduced three 30s whole-case timeouts under suite load; isolated diagnostic passed all four. The fixture now waits for DOM readiness with a 10s bound and has a separate 60s native launch/setup/shutdown budget; assertions remain intact |
 | Pending | Full hooks, independent review, protected PR CI, tag ancestry and package delivery |
 
 The approved [handoff order](../design/t10-bounty-flow-continuity.md) is unchanged:

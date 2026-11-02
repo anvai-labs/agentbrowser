@@ -36,7 +36,7 @@ synthetic file events; it does not promise application acceptance.
 | Published delivery | [Release workflow](https://github.com/anvai-labs/agentbrowser/actions/runs/41359633603) green; immutable release has 16 assets. Public npm version and `latest` both report 1.30.0 |
 | Download verification | Darwin arm64 CLI, MCP and server archive match the published SHA-256 manifest. Downloaded CLI `--version` and MCP initialize `serverInfo.version` report 1.30.0 |
 | Main back-sync | [PR #671](https://github.com/anvai-labs/agentbrowser/pull/671), merge `b652a338`; all checks green; no source tree changes |
-| Homebrew | [Tap PR #154](https://github.com/anvai-labs/homebrew-tap/pull/154) generated from the published bytes; independent URL/hash review and required CI pending |
+| Homebrew | [Tap PR #154](https://github.com/anvai-labs/homebrew-tap/pull/154), squash `8a0f37b3`; separate review verified all 12 URL/hash pairs against the immutable manifest and a sole-file URL/hash diff. Normal required [PR CI](https://github.com/anvai-labs/homebrew-tap/actions/runs/41363870545) green, including Linux install/tests and macOS |
 
 Existing immutable release tags and assets are not replaced. No running operator
 service was upgraded or restarted.

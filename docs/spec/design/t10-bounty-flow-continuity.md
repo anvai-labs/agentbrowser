@@ -62,20 +62,26 @@ operator verification; fixture success is never described as a live program pass
 
 ## P0-2 prerequisite: redirect method and body fidelity
 
-Before enabling API probes, repair the existing scoped UI transport. Only GET and
-HEAD enter the bodyless Node walker; all other browser-supported methods use the
-native lane and its fail-closed all-hop redirect guard. This includes DELETE and
-OPTIONS, which previously entered the Node lane despite potentially carrying a
-body. HEAD remains HEAD through 301/302/303, and each hop derives its method from
-the current request. Only browser redirect statuses 301/302/303/307/308 follow.
-No policy or worker-response gate is removed. This is an existing-behavior repair,
-not delivery of the `page fetch` command.
+Before enabling API probes, repair the existing scoped UI redirect walker.
+HEAD remains HEAD through 301/302/303, and each hop derives its method from the
+current request. DELETE/OPTIONS retain their inspected lane and response-size
+checks. A 303 permanently clears their body and body headers; converted hops use
+the same context's API request jar without Route.fetch's original-body fallback.
+Cookie/Host and cross-origin authorization hygiene precedes destination transforms.
+Only browser redirect statuses 301/302/303/307/308 follow. Existing native
+POST/PUT/PATCH admission and worker-response gates are retained. This is an
+existing-behavior repair, not delivery of the `page fetch` command.
 
 Coverage: public-service real Chromium fixtures measure receiver method, body
 length and SHA-256 through same-origin and mixed chains; method/host/rate/budget
 refusals reach no denied receiver and persist in independently verified sealed
 engagement ledgers. This stable prerequisite is checkpointed separately so the
 longer API-probe qualification does not hold up the repair.
+
+Browser-generated CORS preflight qualification remains a separate foundational
+follow-up before expanding native admission: marker injection must never precede
+its policy decision, preflights must remain distinct from explicit OPTIONS, and
+any new native lane must preserve response caps and all outer policy floors.
 
 ## P0-1: marker compliance and configuration round-trip
 

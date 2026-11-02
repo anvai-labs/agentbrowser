@@ -68,11 +68,7 @@ import {
   type Locator,
   type Page,
 } from 'playwright';
-import {
-  BodyRedirectGuard,
-  followMethod,
-  usesNativeRequestTransport,
-} from './body-redirect-guard.js';
+import { BodyRedirectGuard, followMethod } from './body-redirect-guard.js';
 
 /** Each scoped context's redirect guard, so new pages wait until it is armed. */
 const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
@@ -2139,7 +2135,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           return;
         }
 
-        // Non-GET/HEAD requests use native transport (residual, ADR-006):
+        // Body-bearing requests bypass response inspection (residual, ADR-006):
         // route.fetch()'s Node-side re-issue does not preserve request bodies
         // with the byte-for-byte fidelity some upload flows require - observed
         // empirically, an S3 presigned-POST multipart upload that succeeds
@@ -2148,7 +2144,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // exposure for these requests; response-size capping is given up.
         // Redirect hops are checked by the guard (T10 M1) where it can watch
         // the request's target; a scope refuses the request where it cannot.
-        if (usesNativeRequestTransport(method)) {
+        if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
           if (redirectGuard !== undefined && !redirectGuard.track(request)) {
             emitRequest('request.failed', request, {
               blocked: true,
@@ -2188,6 +2184,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         let current = response;
         let currentUrl = url;
         let currentMethod = method;
+        let bodyDropped = false;
         let hops = 0;
         try {
           while (true) {
@@ -2219,7 +2216,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               return;
             }
             seen.add(hopKey);
-            if (egress.headersForRequest) {
+            const nextMethod = followMethod(current.status(), currentMethod);
+            if (nextMethod !== currentMethod && (nextMethod === 'GET' || nextMethod === 'HEAD')) {
+              bodyDropped = true;
+              redirectHeaders = Object.fromEntries(
+                Object.entries(redirectHeaders).filter(
+                  ([name]) =>
+                    ![
+                      'content-encoding',
+                      'content-language',
+                      'content-location',
+                      'content-type',
+                      'content-length',
+                    ].includes(name.toLowerCase())
+                )
+              );
+            }
+            if (egress.headersForRequest || bodyDropped) {
               const crossOrigin = new URL(currentUrl).origin !== absolute.origin;
               redirectHeaders = Object.fromEntries(
                 Object.entries(redirectHeaders).filter(([name]) => {
@@ -2233,7 +2246,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               );
             }
             const hopRequestHeaders = headersFor(absolute.hostname, redirectHeaders);
-            const nextMethod = followMethod(current.status(), currentMethod);
             const hop = await verdictOf(absolute.hostname, absolute.toString(), {
               method: nextMethod,
               headers: hopRequestHeaders,
@@ -2249,15 +2261,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               await deny(hop.reason ?? 'engine_error', hop.scope);
               return;
             }
-            // Only GET/HEAD enter this walker. HEAD stays HEAD, including 303;
-            // derive each hop from the current method, never the initial method.
+            // Route.fetch inherits the ORIGINAL request body when postData is
+            // omitted. Once Fetch rules drop it, use the same context's request
+            // jar without that fallback. A later 307 must never restore it.
             recordInjection(absolute.toString());
-            const next = await route.fetch({
-              ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
-              url: absolute.toString(),
-              method: nextMethod,
-              maxRedirects: 0,
-            });
+            const next = bodyDropped
+              ? await context.request.fetch(absolute.toString(), {
+                  headers: hopRequestHeaders,
+                  method: nextMethod,
+                  maxRedirects: 0,
+                  maxRetries: 0,
+                })
+              : await route.fetch({
+                  ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
+                  url: absolute.toString(),
+                  method: nextMethod,
+                  maxRedirects: 0,
+                });
             currentUrl = absolute.toString();
             currentMethod = nextMethod;
             const previous = current;

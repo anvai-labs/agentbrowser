@@ -14,12 +14,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - HEAD remains HEAD through 301/302/303 and mixed redirect chains. The bodyless
   walker follows only the browser redirect statuses, preserving each hop's
   current method. A Location field on 300 or 304 does not trigger another request.
-- Browser-supported methods other than GET/HEAD, including DELETE and OPTIONS,
-  use the native transport with the existing fail-closed redirect guard. Exact
-  request bodies survive 301/302/307/308 where browser semantics preserve them;
-  303 converts to GET without a later hop restoring the old method or body.
+- DELETE and OPTIONS keep their inspected transport and response-size floors.
+  Request bodies survive 301/302/307/308 where browser semantics preserve them;
+  303 converts to GET and clears body headers/data permanently. Converted hops use
+  the same browser context's request jar without inheriting the original body.
   Method, host, rate and budget denials remain enforced and ledgered. This repair
   prepares the transport for `page fetch`; the command remains unshipped.
+- Native macOS headed-locale tests wait for DOM readiness with a bounded wait
+  and allow a separate launch/setup/shutdown budget under parallel suite load.
+  Assertions and production timeouts are unchanged.
 
 ## [1.30.0] — 2026-11-01
 
