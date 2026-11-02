@@ -120,6 +120,41 @@ it('requires one-use approval for an unsafe method even when unknown actions are
   }
 });
 
+/** Prepare + dispatch stubs shared by the dispatched-probe tests. */
+function stubProbePage(
+  page: NonNullable<ReturnType<FakeEngine['getFakePage']>>,
+  dispatched: vi.Mock,
+  result: unknown = {
+    status: 200,
+    headers: [],
+    body: 'ok',
+    bodyBytes: 2,
+    truncated: false,
+    outcome: 'terminal',
+  }
+): void {
+  (page as EnginePage).prepareFetch = vi.fn(async () => ({
+    identity: 'document:loader:probe',
+    token: {},
+    dispose: () => {},
+  }));
+  const act = page.act.bind(page);
+  vi.spyOn(page, 'act').mockImplementation(async (action) => {
+    if (action.type !== 'fetch') return act(action);
+    (action.fetchAssertCurrent as () => void)();
+    await (action.fetchBeforeDispatch as () => Promise<void>)();
+    dispatched();
+    return {
+      actionId: 'probe',
+      startTimestamp: new Date().toISOString(),
+      endTimestamp: new Date().toISOString(),
+      oldRevision: 0,
+      newRevision: 0,
+      result,
+    };
+  });
+}
+
 it('allows a safe-method probe without approval and leaves the revision unchanged', async () => {
   const engine = new FakeEngine();
   const caps = await engine.capabilities();
@@ -130,33 +165,7 @@ it('allows a safe-method probe without approval and leaves the revision unchange
     const { sessionId } = await service.createSession({ tenantId: 'owner' });
     const { pageId } = await service.createPage(sessionId);
     const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
-    (page as EnginePage).prepareFetch = vi.fn(async () => ({
-      identity: 'document:loader:probe',
-      token: {},
-      dispose: () => {},
-    }));
-    const act = page.act.bind(page);
-    vi.spyOn(page, 'act').mockImplementation(async (action) => {
-      if (action.type !== 'fetch') return act(action);
-      (action.fetchAssertCurrent as () => void)();
-      await (action.fetchBeforeDispatch as () => Promise<void>)();
-      dispatched();
-      return {
-        actionId: 'probe',
-        startTimestamp: new Date().toISOString(),
-        endTimestamp: new Date().toISOString(),
-        oldRevision: 0,
-        newRevision: 0,
-        result: {
-          status: 200,
-          headers: [],
-          body: 'ok',
-          bodyBytes: 2,
-          truncated: false,
-          outcome: 'terminal',
-        },
-      };
-    });
+    stubProbePage(page, dispatched);
     const first = await service.act(
       sessionId,
       pageId,
@@ -187,31 +196,13 @@ it('redacts registered session secrets from the probe response before publicatio
     secrets.registerSessionSecret(sessionId, 'csrf-secret-0123456789');
     const { pageId } = await service.createPage(sessionId);
     const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
-    (page as EnginePage).prepareFetch = vi.fn(async () => ({
-      identity: 'document:loader:probe',
-      token: {},
-      dispose: () => {},
-    }));
-    const act = page.act.bind(page);
-    vi.spyOn(page, 'act').mockImplementation(async (action) => {
-      if (action.type !== 'fetch') return act(action);
-      (action.fetchAssertCurrent as () => void)();
-      await (action.fetchBeforeDispatch as () => Promise<void>)();
-      return {
-        actionId: 'probe',
-        startTimestamp: new Date().toISOString(),
-        endTimestamp: new Date().toISOString(),
-        oldRevision: 0,
-        newRevision: 0,
-        result: {
-          status: 400,
-          headers: [{ name: 'x-echo', value: 'csrf-1' }],
-          body: 'invalid token csrf-secret-0123456789',
-          bodyBytes: 32,
-          truncated: false,
-          outcome: 'terminal',
-        },
-      };
+    stubProbePage(page, vi.fn(), {
+      status: 400,
+      headers: [{ name: 'x-echo', value: 'csrf-secret-0123456789' }],
+      body: 'invalid token csrf-secret-0123456789',
+      bodyBytes: 32,
+      truncated: false,
+      outcome: 'terminal',
     });
     // GET needs no approval.
     const receipt = await service.act(
