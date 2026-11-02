@@ -62,7 +62,7 @@ describe('PageFetchLane', () => {
     expect(lane.allowsRedirect(claim, 'not a url')).toBe(false);
   });
 
-  it('notes and consumes denials by request shape', () => {
+  it('notes and consumes denials by request shape, newest first', () => {
     const lane = new PageFetchLane();
     lane.noteDenied(
       'PUT',
@@ -74,18 +74,69 @@ describe('PageFetchLane', () => {
       reason: 'egress_policy',
       scope: 'SCOPE_METHOD_DENIED',
     });
-    // Consumed: a second take (the claim settled) returns nothing.
+    // Consumed: a second take returns nothing for that shape.
     expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/1')).toBeUndefined();
     expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/2')).toBeUndefined();
   });
 
-  it('bounds live claims', () => {
+  it('keeps a recency list per shape so same-shape denials do not strip each other', () => {
+    const lane = new PageFetchLane();
+    lane.noteDenied('PUT', 'https://vinted.com/api/items/1', 'first', 'SCOPE_METHOD_DENIED');
+    lane.noteDenied('PUT', 'https://vinted.com/api/items/1', 'second', 'SCOPE_METHOD_DENIED');
+    // Newest note first: each concurrent same-shape probe consumes its own.
+    expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/1')).toMatchObject({
+      reason: 'second',
+    });
+    expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/1')).toMatchObject({
+      reason: 'first',
+    });
+    expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/1')).toBeUndefined();
+  });
+
+  it('bounds the denial registry without losing the newest notes to a spray', () => {
+    const lane = new PageFetchLane();
+    // A hostile spray of 32 distinct shapes fills the registry; the probe's
+    // own note is recorded last and must survive the eviction of the oldest.
+    for (let i = 0; i < 32; i += 1) {
+      lane.noteDenied('GET', `https://vinted.com/spray/${i}`, 'spray');
+    }
+    lane.noteDenied('PUT', 'https://vinted.com/api/items/7', 'real', 'SCOPE_METHOD_DENIED');
+    expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/7')).toMatchObject({
+      reason: 'real',
+      scope: 'SCOPE_METHOD_DENIED',
+    });
+    // The oldest sprayed note was evicted to make room.
+    expect(lane.takeDenial('GET', 'https://vinted.com/spray/0')).toBeUndefined();
+    expect(lane.takeDenial('GET', 'https://vinted.com/spray/31')).toMatchObject({
+      reason: 'spray',
+    });
+  });
+
+  it('settlement does not consume the denial note (the guard picks it up)', () => {
+    const lane = new PageFetchLane();
+    const claim = lane.register({
+      method: 'PUT',
+      url: 'https://vinted.com/api/items/3',
+      origin: 'https://vinted.com',
+    });
+    lane.noteDenied('PUT', 'https://vinted.com/api/items/3', 'kept', 'SCOPE_METHOD_DENIED');
+    lane.settle(claim, { kind: 'failed', detail: 'ended' });
+    expect(lane.takeDenial('PUT', 'https://vinted.com/api/items/3')).toMatchObject({
+      reason: 'kept',
+    });
+  });
+
+  it('bounds live claims with a typed, retryable engine error', () => {
     const lane = new PageFetchLane();
     for (let i = 0; i < 8; i += 1) {
       lane.register({ method: 'GET', url: `https://a.com/${i}`, origin: 'https://a.com' });
     }
-    expect(() =>
-      lane.register({ method: 'GET', url: 'https://a.com/9', origin: 'https://a.com' })
-    ).toThrow('PROBE_LANE_FULL');
+    let thrown: unknown;
+    try {
+      lane.register({ method: 'GET', url: 'https://a.com/9', origin: 'https://a.com' });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'SESSION_BUSY', retryable: true });
   });
 });

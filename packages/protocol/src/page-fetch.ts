@@ -47,11 +47,41 @@ export const FORBIDDEN_PROBE_HEADERS = [
   'upgrade',
   'user-agent',
   'via',
+  'x-agentbrowser-blocked',
   'x-agentbrowser-probe',
 ] as const;
 const FORBIDDEN = new Set<string>(FORBIDDEN_PROBE_HEADERS);
 
+/**
+ * Header name prefixes a caller may never supply. Method-tunneling families
+ * (`x-http-method*`, `x-method*`, …) would let a `read`-classified GET carry
+ * an effective write method past the method-based approval floor; forwarding
+ * and context families (`x-forwarded*`, `x-original-*`, `x-real-ip`, …)
+ * spoof request context the way the scope-marker refusal
+ * (`requestHeaderIssues`) already guards elsewhere; `sec-*`/`proxy-*` are
+ * fetch-spec forbidden prefixes the browser would silently drop, and a silent
+ * drop is a repair, not a refusal. Mirrors the exact-name list:
+ * case-insensitive, every match a refusal.
+ */
+export const FORBIDDEN_PROBE_HEADER_PREFIXES = [
+  'proxy-',
+  'sec-',
+  'x-forwarded',
+  'x-http-method',
+  'x-method',
+  'x-original-',
+  'x-override-method',
+  'x-real-ip',
+  'x-rest-method',
+  'x-rewrite-',
+] as const;
+const FORBIDDEN_PREFIXES = [...FORBIDDEN_PROBE_HEADER_PREFIXES].map(
+  (p) => [p, new RegExp(`^${p}`, 'i')] as const
+);
+
 export const MAX_PROBE_HEADERS = 16;
+/** Request URL length bound, in UTF-16 code units. */
+export const MAX_PROBE_URL_LENGTH = 2048;
 /** Aggregate supplied header bytes: names + values + separators. */
 export const MAX_PROBE_HEADER_BYTES = 8192;
 /** Request body bound, measured in UTF-8 bytes. */
@@ -91,7 +121,7 @@ export const FetchActionSchema = Type.Union([
         PROBE_METHODS.filter((m) => !BODY_METHOD_SET.has(m)).map((literal) => Type.Literal(literal))
       ),
       /** Absolute http(s) URL, no userinfo, no fragment; same-origin enforced at the engine. */
-      url: Type.String({ minLength: 8, maxLength: 2048 }),
+      url: Type.String({ minLength: 8, maxLength: MAX_PROBE_URL_LENGTH }),
       headers: Type.Optional(
         Type.Array(ProbeHeaderSchema, { minItems: 1, maxItems: MAX_PROBE_HEADERS })
       ),
@@ -103,7 +133,7 @@ export const FetchActionSchema = Type.Union([
       type: Type.Literal('fetch'),
       /** Uppercase; the engine canonicalizes and refuses unknown methods. */
       method: Type.Union(PROBE_BODY_METHODS.map((literal) => Type.Literal(literal))),
-      url: Type.String({ minLength: 8, maxLength: 2048 }),
+      url: Type.String({ minLength: 8, maxLength: MAX_PROBE_URL_LENGTH }),
       headers: Type.Optional(
         Type.Array(ProbeHeaderSchema, { minItems: 1, maxItems: MAX_PROBE_HEADERS })
       ),
@@ -219,10 +249,10 @@ export function fetchProbeIssues(input: {
           continue;
         }
         const lower = name.toLowerCase();
-        if (FORBIDDEN.has(lower)) {
+        if (FORBIDDEN.has(lower) || FORBIDDEN_PREFIXES.some(([, pattern]) => pattern.test(lower))) {
           issues.push({
             path: `${at}/name`,
-            message: `Header '${name}' is browser-controlled or credential-carrying and cannot be supplied`,
+            message: `Header '${name}' is browser-controlled, credential-carrying, method-tunneling or context-spoofing and cannot be supplied`,
           });
           continue;
         }
@@ -231,6 +261,23 @@ export function fetchProbeIssues(input: {
           continue;
         }
         seen.add(lower);
+        if (/[\r\n\0]/.test(record.value)) {
+          issues.push({
+            path: `${at}/value`,
+            message: `Header '${name}' value must not carry CR, LF or NUL`,
+          });
+          continue;
+        }
+        // fetch Header values are ByteStrings: a codepoint above U+00FF throws
+        // in the browser and would surface as an opaque engine error. Refuse
+        // it here with a typed message instead.
+        if ([...record.value].some((ch) => ch.charCodeAt(0) > 0xff)) {
+          issues.push({
+            path: `${at}/value`,
+            message: `Header '${name}' value must be Latin-1 encodable (U+00FF and below)`,
+          });
+          continue;
+        }
         bytes += byteLength(name) + byteLength(record.value) + 4;
         if (bytes > MAX_PROBE_HEADER_BYTES) {
           issues.push({
@@ -277,6 +324,22 @@ export function parseFetchAction(
     const issues: FetchProbeIssue[] = [];
     for (const error of Value.Errors(FetchActionSchema, input)) {
       issues.push({ path: error.path, message: error.message });
+    }
+    // A failed union reports an empty path and no usable field name. The
+    // semantic refusals name the offending field so a caller can self-correct;
+    // they run on any shape without throwing.
+    const semantic = fetchProbeIssues(
+      typeof input === 'object' && input !== null
+        ? (input as { method?: unknown; url?: unknown; headers?: unknown; body?: unknown })
+        : {}
+    );
+    issues.push(...semantic);
+    if (semantic.length === 0) {
+      issues.push({
+        path: '',
+        message:
+          'Not a valid fetch action: method must be one of GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS (uppercase), and envelope fields (approvalToken, operationId, executionRequirement) travel outside the action',
+      });
     }
     return { ok: false, issues };
   }

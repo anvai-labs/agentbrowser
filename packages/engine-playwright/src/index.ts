@@ -2034,8 +2034,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // ADR-030 P0-2: the probe claim registry for this context, and the guard
     // seam that admits native-lane (body-bearing) probe responses. Attribution
     // is the secret nonce header; the nonce never reaches the wire.
+    // Scoped sessions only: the lane is registered when the egress installs
+    // the redirect guard (an engagement scope). Any other egress shape leaves
+    // no lane, so `assertPageFetch` refuses and an unscoped session can never
+    // prepare a probe — a PUT there would execute at the receiver with no
+    // scope verdict and no settlement path (review finding).
     const fetchLane = new PageFetchLane();
-    pageFetchLanes.set(context, fetchLane);
+    if (egress.requireRedirectGuard === true) pageFetchLanes.set(context, fetchLane);
     const stripNonce = (headers: Record<string, string>): Record<string, string> => {
       const stripped = { ...headers };
       delete stripped[PROBE_NONCE_HEADER];
@@ -2372,9 +2377,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           fetchLane.hasLiveClaims() && ['fetch', 'xhr'].includes(request.resourceType())
             ? fetchLane.claimForHeaders(requestHeaders)
             : undefined;
-        // Native-lane probes are invisible here (the guard stripped the nonce
-        // before this handler ran), so their denials are noted by request
-        // shape for the guard's synthetic-denial detection to pick up.
+        // Native-lane (POST/PUT/PATCH) probes are invisible here — the guard
+        // claimed and stripped their nonce before this handler ran — so their
+        // denials are noted by request shape for the guard's synthetic-denial
+        // detection to pick up. Inspected-lane probes carry their nonce here
+        // and settle directly through probeClaim.
         const probeTraffic =
           probeClaim !== undefined ||
           (fetchLane.hasLiveClaims() && ['fetch', 'xhr'].includes(request.resourceType()));
@@ -2455,7 +2462,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // Explicit marker overrides must not pin the source host's cookies or
         // restore credentials after an origin-changing redirect. The context's
         // request transport selects fresh destination cookies when omitted.
-        let redirectHeaders = originalHeaders;
+        // A probe's nonce rides the original header set; the walk re-issues
+        // these headers on every hop, so it starts from the stripped set.
+        let redirectHeaders =
+          probeClaim !== undefined ? stripNonce(originalHeaders) : originalHeaders;
         let current = response;
         let currentUrl = url;
         let currentMethod = method;
@@ -2581,7 +2591,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                   maxRetries: 0,
                 })
               : await route.fetch({
-                  ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
+                  // A probe always re-issues explicit headers: an omitted set
+                  // would let route.fetch replay the browser's original
+                  // headers — nonce included — on the hop.
+                  ...(egress.headersForRequest || probeClaim !== undefined
+                    ? { headers: hopRequestHeaders }
+                    : {}),
                   url: absolute.toString(),
                   method: nextMethod,
                   maxRedirects: 0,

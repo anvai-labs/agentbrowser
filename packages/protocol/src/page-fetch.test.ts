@@ -83,6 +83,93 @@ describe('fetchProbeIssues', () => {
     ).toEqual(['/headers/1/name']);
   });
 
+  it('refuses method-tunneling, context-spoofing and fetch-spec prefix header families', () => {
+    // A 'read'-classified GET must not carry an effective write method past
+    // the method-based approval floor (mirror of scope-request-headers).
+    for (const name of [
+      'X-HTTP-Method-Override',
+      'X-HTTP-Method',
+      'X-Method-Override',
+      'X-Method',
+      'X-Override-Method',
+      'X-REST-Method',
+      'X-Forwarded-For',
+      'X-Forwarded-Host',
+      'X-Original-Method',
+      'X-Rewrite-URL',
+      'X-Real-IP',
+      'Sec-Fetch-Site',
+      'Proxy-Connection',
+    ]) {
+      expect(
+        fetchProbeIssues({ ...valid, headers: [{ name, value: 'DELETE' }] }).map((i) => i.path),
+        name
+      ).toEqual(['/headers/0/name']);
+    }
+    // The refusal is case-insensitive and never repairs.
+    expect(
+      fetchProbeIssues({
+        ...valid,
+        headers: [{ name: 'x-http-method-override', value: 'd' }],
+      }).map((i) => i.path)
+    ).toEqual(['/headers/0/name']);
+  });
+
+  it('refuses the synthetic-denial marker header a caller could self-denial with', () => {
+    expect(
+      fetchProbeIssues({
+        ...valid,
+        headers: [{ name: 'X-AgentBrowser-Blocked', value: '1' }],
+      }).map((i) => i.path)
+    ).toEqual(['/headers/0/name']);
+  });
+
+  it('still accepts the intended auth surface: CSRF-style custom headers', () => {
+    expect(
+      fetchProbeIssues({
+        ...valid,
+        headers: [
+          { name: 'X-CSRF-Token', value: 'csrf-secret-0123456789' },
+          { name: 'X-Auth-Token', value: 'ok' },
+          { name: 'X-Custom-Trace', value: 'id-1' },
+        ],
+      })
+    ).toEqual([]);
+  });
+
+  it('refuses header values carrying CR, LF, NUL or non-Latin-1 codepoints', () => {
+    const CR = String.fromCharCode(13);
+    const LF = String.fromCharCode(10);
+    const NUL = String.fromCharCode(0);
+    expect(
+      fetchProbeIssues({ ...valid, headers: [{ name: 'X-Safe', value: `a${CR}${LF}b` }] }).map(
+        (i) => i.path
+      )
+    ).toEqual(['/headers/0/value']);
+    expect(
+      fetchProbeIssues({ ...valid, headers: [{ name: 'X-Safe', value: `a${LF}b` }] }).map(
+        (i) => i.path
+      )
+    ).toEqual(['/headers/0/value']);
+    expect(
+      fetchProbeIssues({ ...valid, headers: [{ name: 'X-Safe', value: `a${NUL}b` }] }).map(
+        (i) => i.path
+      )
+    ).toEqual(['/headers/0/value']);
+    // A codepoint above U+00FF throws in the browser's Headers (ByteString);
+    // refuse it with a typed message instead of an opaque engine error.
+    expect(
+      fetchProbeIssues({
+        ...valid,
+        headers: [{ name: 'X-Safe', value: `token-${String.fromCharCode(0x2713)}` }],
+      }).map((i) => i.path)
+    ).toEqual(['/headers/0/value']);
+    // The Latin-1 supplement stays ByteString-encodable.
+    expect(fetchProbeIssues({ ...valid, headers: [{ name: 'X-Safe', value: 'café' }] })).toEqual(
+      []
+    );
+  });
+
   it('bounds aggregate header bytes', () => {
     const issues = fetchProbeIssues({
       ...valid,

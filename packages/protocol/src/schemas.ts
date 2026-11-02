@@ -1,5 +1,12 @@
 import { CoordinatePointSchema, ViewportCaptureSchema } from './coordinate.js';
-import { FetchActionSchema, PROBE_METHODS, ProbeHeaderSchema } from './page-fetch.js';
+import {
+  FetchActionSchema,
+  MAX_PROBE_BODY_BYTES,
+  MAX_PROBE_HEADERS,
+  MAX_PROBE_URL_LENGTH,
+  PROBE_METHODS,
+  ProbeHeaderSchema,
+} from './page-fetch.js';
 import { ScopeTraceModeSchema } from './scope-trace.js';
 /**
  * JSON Schema definitions for AgentBrowser v1 API
@@ -887,9 +894,11 @@ export const PlanStepSchema = Type.Object({
   amount: Type.Optional(Type.Number()),
   /** ADR-030 fetch probe: validated as a unit by parseFetchAction at the seams. */
   method: Type.Optional(Type.Union(PROBE_METHODS.map((literal) => Type.Literal(literal)))),
-  url: Type.Optional(Type.String({ minLength: 8, maxLength: 2048 })),
-  headers: Type.Optional(Type.Array(ProbeHeaderSchema)),
-  body: Type.Optional(Type.String({ maxLength: 65536 })),
+  url: Type.Optional(Type.String({ minLength: 8, maxLength: MAX_PROBE_URL_LENGTH })),
+  headers: Type.Optional(
+    Type.Array(ProbeHeaderSchema, { minItems: 1, maxItems: MAX_PROBE_HEADERS })
+  ),
+  body: Type.Optional(Type.String({ maxLength: MAX_PROBE_BODY_BYTES })),
   observe: Type.Optional(Type.Union([Type.Literal('after'), Type.Literal('none')])),
   expectedRevision: Type.Optional(Type.Integer({ minimum: 0 })),
   approvalToken: Type.Optional(Type.String()),

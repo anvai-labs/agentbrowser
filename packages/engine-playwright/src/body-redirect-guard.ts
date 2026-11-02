@@ -366,7 +366,22 @@ export class BodyRedirectGuard {
       // as REDIRECT_UNCHECKABLE. The probe's responses are handled by the
       // probe path at the response stage; the chain only satisfies track()
       // and end-of-life bookkeeping.
-      if (networkId !== undefined && this.options.probes !== undefined) {
+      //
+      // Native lane only: the guard claims body-bearing methods (POST/PUT/
+      // PATCH), whose requests bypass response inspection Node-side. Every
+      // other method keeps its nonce for the Playwright route handler — the
+      // inspected lane — which strips it in its own re-issue, refuses
+      // cross-origin redirect destinations and settles the claim itself.
+      // Claiming here regardless of method would strip the nonce before the
+      // route handler can attribute the request, silently disabling the
+      // inspected lane's probe rules (review finding: a GET/DELETE probe
+      // followed a scope-allowed cross-origin redirect with its supplied
+      // CSRF header on the wire).
+      if (
+        networkId !== undefined &&
+        this.options.probes !== undefined &&
+        BODY_METHODS.has(event.request.method.toUpperCase())
+      ) {
         const probeHeaders = this.options.probes.claimRequest(
           networkId,
           event.request.url,

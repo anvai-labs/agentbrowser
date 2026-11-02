@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { EngineError } from '@agentbrowser/engine';
 
 /**
  * ADR-030 trusted transport integration: the claim registry that ties exactly
@@ -21,6 +22,9 @@ export const PROBE_NONCE_HEADER = 'x-agentbrowser-probe';
 
 /** Live claims per context: a probe holds the page exclusively while in flight. */
 const MAX_LIVE_CLAIMS = 8;
+/** Denial notes per request shape and overall, so a spray cannot erase history. */
+const MAX_DENIAL_NOTES_PER_SHAPE = 4;
+const MAX_DENIAL_NOTES = 32;
 
 export type ProbeClaimOutcome =
   | {
@@ -59,9 +63,13 @@ export class PageFetchLane {
    * strips the nonce before the route handler can attribute the request, so a
    * denial is recorded by method+origin+path and the guard's synthetic-denial
    * detection picks it up. Failure bookkeeping only, never wire authority:
-   * a denial note cannot admit, skip or expand anything.
+   * a denial note cannot admit, skip or expand anything. A shape keeps a small
+   * recency-ordered list (concurrent same-shape probes each get their own
+   * note; a hostile same-shape spray cannot strip an older note it never
+   * matched), and the newest note is consumed first.
    */
-  private readonly denialNotes = new Map<string, { reason: string; scope?: string }>();
+  private readonly denialNotes = new Map<string, Array<{ reason: string; scope?: string }>>();
+  private denialNoteCount = 0;
 
   get liveCount(): number {
     return this.claims.size;
@@ -74,26 +82,38 @@ export class PageFetchLane {
   noteDenied(method: string, url: string, reason: string, scope?: string): void {
     try {
       const at = new URL(url);
-      if (this.denialNotes.size >= 32) {
-        const oldest = this.denialNotes.keys().next().value;
-        if (oldest !== undefined) this.denialNotes.delete(oldest);
+      const key = `${method.toUpperCase()} ${at.origin}${at.pathname}`;
+      const notes = this.denialNotes.get(key) ?? [];
+      notes.push({ reason, ...(scope !== undefined ? { scope } : {}) });
+      while (notes.length > MAX_DENIAL_NOTES_PER_SHAPE) {
+        notes.shift();
+        this.denialNoteCount -= 1;
       }
-      this.denialNotes.set(`${method.toUpperCase()} ${at.origin}${at.pathname}`, {
-        reason,
-        ...(scope !== undefined ? { scope } : {}),
-      });
+      this.denialNotes.set(key, notes);
+      this.denialNoteCount += 1;
+      while (this.denialNoteCount > MAX_DENIAL_NOTES) {
+        // Drop the oldest note overall (first shape in insertion order).
+        const oldest = this.denialNotes.entries().next();
+        if (oldest.done) break;
+        const [oldestKey, oldestNotes] = oldest.value;
+        if (oldestNotes.shift() !== undefined) this.denialNoteCount -= 1;
+        if (oldestNotes.length === 0) this.denialNotes.delete(oldestKey);
+      }
     } catch {
       /* an unparseable URL notes nothing; the claim settles fail-closed */
     }
   }
 
-  /** Consume the denial recorded for this request shape, if any. */
+  /** Consume the newest denial recorded for this request shape, if any. */
   takeDenial(method: string, url: string): { reason: string; scope?: string } | undefined {
     try {
       const at = new URL(url);
       const key = `${method.toUpperCase()} ${at.origin}${at.pathname}`;
-      const note = this.denialNotes.get(key);
-      if (note !== undefined) this.denialNotes.delete(key);
+      const notes = this.denialNotes.get(key);
+      if (notes === undefined || notes.length === 0) return undefined;
+      const note = notes.pop();
+      this.denialNoteCount -= 1;
+      if (notes.length === 0) this.denialNotes.delete(key);
       return note;
     } catch {
       return undefined;
@@ -101,7 +121,12 @@ export class PageFetchLane {
   }
 
   register(request: { method: string; url: string; origin: string }): ProbeClaim {
-    if (this.claims.size >= MAX_LIVE_CLAIMS) throw new Error('PROBE_LANE_FULL');
+    if (this.claims.size >= MAX_LIVE_CLAIMS)
+      throw new EngineError(
+        'SESSION_BUSY',
+        'Too many live probes for this context (PROBE_LANE_FULL)',
+        true
+      );
     let resolve!: (outcome: ProbeClaimOutcome) => void;
     const done = new Promise<ProbeClaimOutcome>((settle) => {
       resolve = settle;
@@ -162,7 +187,6 @@ export class PageFetchLane {
     if (claim.settled) return;
     claim.settled = true;
     this.forget(claim);
-    this.takeDenial(claim.method, claim.url);
     claim.resolve(outcome);
   }
 

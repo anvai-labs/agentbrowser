@@ -5085,6 +5085,8 @@
                     "type": "string"
                   },
                   "headers": {
+                    "minItems": 1,
+                    "maxItems": 16,
                     "type": "array",
                     "items": {
                       "additionalProperties": false,
@@ -12592,6 +12594,8 @@
             "type": "string"
           },
           "headers": {
+            "minItems": 1,
+            "maxItems": 16,
             "type": "array",
             "items": {
               "additionalProperties": false,
@@ -13420,6 +13424,8 @@
                   "type": "string"
                 },
                 "headers": {
+                  "minItems": 1,
+                  "maxItems": 16,
                   "type": "array",
                   "items": {
                     "additionalProperties": false,
