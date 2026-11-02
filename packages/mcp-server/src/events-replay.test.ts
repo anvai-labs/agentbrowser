@@ -35,7 +35,12 @@ describe('events_replay', () => {
       type: { type: 'string' },
       since: { type: 'integer', minimum: -1 },
       limit: { type: 'integer', minimum: 1, maximum: 1000 },
+      urlRegex: { type: 'string' },
+      method: { type: 'string' },
+      failedOnly: { type: 'boolean' },
     });
+    expect(tool?.inputSchema.properties.stream).toBeDefined();
+    expect(tool?.inputSchema.properties.statusClass).toBeDefined();
     expect(tool?.inputSchema.required).toEqual(['sessionId']);
   });
 
@@ -90,5 +95,82 @@ describe('events_replay', () => {
     const f = fixture();
     const result = await f.call({ sessionId: 'ses_1', since: 3 });
     expect(JSON.stringify(result)).toContain('type filter');
+  });
+
+  it('forwards request selectors without an explicit type or inferred stream', async () => {
+    const f = fixture();
+    f.events.mockResolvedValue({
+      events: [],
+      nextCursor: 9,
+      oldestSeq: 7,
+      gap: true,
+      filter: { version: 1, stream: 'request' },
+    });
+    const selector = {
+      urlRegex: 'api/(items|offers)',
+      method: 'GET',
+      statusClass: '4xx',
+      failedOnly: true,
+      since: -1,
+      limit: 2,
+    };
+    expect(await f.call({ sessionId: 'ses_1', ...selector })).toMatchObject({
+      events: [],
+      nextCursor: 9,
+      oldestSeq: 7,
+      gap: true,
+      filter: { version: 1, stream: 'request' },
+    });
+    expect(f.events).toHaveBeenCalledWith('ses_1', selector);
+  });
+
+  it('preserves explicit false rather than treating it as an omitted selector', async () => {
+    const f = fixture();
+    f.events.mockResolvedValue({
+      events: [],
+      nextCursor: 4,
+      filter: { version: 1, stream: 'request' },
+    });
+    expect(await f.call({ sessionId: 'ses_1', failedOnly: false })).toMatchObject({
+      filter: { version: 1, stream: 'request' },
+    });
+    expect(f.events).toHaveBeenCalledWith('ses_1', { failedOnly: false });
+  });
+
+  it('pages one selected other ledger without requiring an exact type', async () => {
+    const f = fixture();
+    f.events.mockResolvedValue({
+      events: [],
+      nextCursor: 4,
+      filter: { version: 1, stream: 'other' },
+    });
+    await f.call({ sessionId: 'ses_1', stream: 'other', since: -1, limit: 5 });
+    expect(f.events).toHaveBeenCalledWith('ses_1', { stream: 'other', since: -1, limit: 5 });
+  });
+
+  it.each([
+    { stream: 'other', method: 'GET' },
+    { type: 'console.log', statusClass: '5xx' },
+    { method: 'get' },
+    { failedOnly: 'false' },
+    { urlRegex: 'λ'.repeat(129) },
+    { type: '' },
+    { type: 'request.failed', unknown: 'PRIVATE_SELECTOR_VALUE' },
+  ])('rejects invalid selector arguments without invoking the client: %j', async (selector) => {
+    const f = fixture();
+    const response = await f.call({ sessionId: 'ses_1', ...selector });
+    expect(response).toBeDefined();
+    expect(f.events).not.toHaveBeenCalled();
+  });
+
+  it('retains the bound session identity with the same selector contract', async () => {
+    const f = fixture({ sessionId: 'ses_bound', mode: 'bounty' });
+    f.events.mockResolvedValue({
+      events: [],
+      nextCursor: 2,
+      filter: { version: 1, stream: 'request' },
+    });
+    await f.call({ urlRegex: 'api', failedOnly: true });
+    expect(f.events).toHaveBeenCalledWith('ses_bound', { urlRegex: 'api', failedOnly: true });
   });
 });

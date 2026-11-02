@@ -4,6 +4,17 @@ export interface JsonLedgerOptions {
   maxEntryBytes: number;
 }
 
+export type JsonLedgerScanDecision<T> =
+  | { action: 'skip' }
+  | { action: 'stop' }
+  | { action: 'emit'; value: T };
+
+export interface JsonLedgerWindow {
+  oldestSeq: number;
+  gap: boolean;
+  highWaterMark: number;
+}
+
 /** Count- and UTF-8-byte-bounded FIFO. Serialized ownership prevents mutation drift. */
 export class JsonLedger<T> {
   private readonly entries = new Map<number, { json: string; bytes: number }>();
@@ -74,6 +85,45 @@ export class JsonLedger<T> {
       const value = JSON.parse(entry.json) as T;
       if (predicate && !predicate(value)) continue;
       rows.push({ seq, value });
+      if (rows.length >= limit) break;
+    }
+    return { rows, lastScanned, oldestSeq, gap: since < oldestSeq - 1 };
+  }
+
+  /** Snapshot one retained window; stop keeps the current row eligible next time. */
+  scanPage<R>(
+    since: number,
+    limit: number,
+    inspect: (
+      value: T,
+      seq: number,
+      window: Readonly<JsonLedgerWindow>
+    ) => JsonLedgerScanDecision<R>
+  ): {
+    rows: { seq: number; value: R }[];
+    lastScanned: number;
+    oldestSeq: number;
+    gap: boolean;
+  } {
+    if (!Number.isSafeInteger(since) || since < -1 || !Number.isSafeInteger(limit) || limit < 1)
+      throw new Error('Invalid ledger paging arguments');
+    // Capture before callbacks: reentrant producers cannot extend this scan.
+    const retained = [...this.entries];
+    const oldestSeq = retained[0]?.[0] ?? this.sequence;
+    const window = Object.freeze({
+      oldestSeq,
+      gap: since < oldestSeq - 1,
+      highWaterMark: retained.at(-1)?.[0] ?? this.sequence - 1,
+    });
+    const rows: { seq: number; value: R }[] = [];
+    let lastScanned = since;
+    for (const [seq, entry] of retained) {
+      if (seq <= since) continue;
+      const decision = inspect(JSON.parse(entry.json) as T, seq, window);
+      if (decision.action === 'stop') break;
+      lastScanned = seq;
+      if (decision.action === 'skip') continue;
+      rows.push({ seq, value: decision.value });
       if (rows.length >= limit) break;
     }
     return { rows, lastScanned, oldestSeq, gap: since < oldestSeq - 1 };

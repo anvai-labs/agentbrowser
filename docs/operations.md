@@ -562,6 +562,28 @@ not engine-side queues, live DOM snapshots, serialization temporaries, or total
 process memory. Pending approval tokens have a hard admission cap; full capacity
 returns `QUOTA_EXCEEDED` until used or expired tokens can be reclaimed.
 
+**Filtered retained events (T10 P2-8).** `events` and `session events` share the
+same replay handler. For example:
+
+```bash
+agentbrowser events SESSION_ID --url-regex '/api/' --method GET --status-class 5xx --limit 100
+agentbrowser session events SESSION_ID --status-class denied --since 42
+agentbrowser events SESSION_ID --stream other --type console.log --limit 100
+```
+
+Filters combine with AND. URL matching uses published HTTP origin/path, with
+credentials, query and fragment removed. `--failed-only` includes recorded
+failures and completed 4xx/5xx; `denied` requires typed policy evidence, so an
+ordinary target 403 is not a scope denial. Passthrough intent without a terminal
+status stays unknown. Native POST/PUT/PATCH terminal outcomes do not yet have
+complete public replay coverage; consult the engagement ledger for those facts.
+Regex patterns use bounded RE2 syntax (256 UTF-8 bytes); unsupported syntax
+refuses. The new filtered path returns up to 200 matches by default (maximum
+1,000) within a 256 KiB response. Resume using `nextCursor` even when no rows
+match; `gap` reports evicted history. New clients refuse a server that does not
+acknowledge filtering, without falling back to an unfiltered response. Existing
+type-only replay behavior remains. See the [filter contract](spec/design/t10-event-replay-filters.md).
+
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
 - default TTL **4.375 hours**, default idle timeout **10 minutes** — both
@@ -620,6 +642,7 @@ agentbrowser session create --tenant local --no-headless --cookies-file /private
 agentbrowser session create --tenant local --cookies-file /private/path/cookies.txt --cookies-format netscape
 agentbrowser session create --tenant local --cookies-file /private/path/cookies.tsv --cookies-format chrome-devtools-tsv
 agentbrowser session cookies SESSION_ID --output /private/path/cookies-export.json
+agentbrowser session cookies SESSION_ID --output /private/path/seed-v1.json --with-provenance
 ```
 
 JSON is the default and uses the canonical cookie array. Netscape input has seven
@@ -637,6 +660,23 @@ with mode 0600, refuses existing paths and symlinks, and prints only `{count,pat
 Without `--output`, the existing export command prints cookie values to stdout.
 Importing cookies does not guarantee login; verify the authenticated page afterward.
 See the [format and refusal contract](spec/design/cli-cookie-file-handoff.md).
+
+`--with-provenance` stamps an optional `agentbrowser-cookie-seed/v1` private file
+with extraction time, source/context metadata and derived cookie classes. Ordinary
+session export records an unknown source context rather than inventing a default
+or incognito profile. `--cookies-file` accepts this envelope and legacy arrays;
+only canonical cookie rows go to session creation. Metadata is advisory and does
+not grant access or prove that a login transfers. Unknown fields, size bounds,
+whole-cookie partition refusal/omission and exclusive mode-0600 output still apply.
+
+Seeds containing `cf_clearance` or `datadome` emit a create/status warning: those
+fingerprint-bound cookies may fail in a different browser context even on the same
+machine. Google session seeds can also rotate or be invalidated independently.
+Extract immediately before reuse and verify identity using a fresh authorized
+response; a DOM that still looks logged in is insufficient. These hints never print
+cookie values and never bypass a challenge. Protected operator-cookie sessions
+retain export refusal. Live reseed and automated CDP extraction remain separate
+activation gates; see [ADR-033](adr/033-cookie-seed-provenance-and-reseed.md).
 
 Two engine-side behaviors worth knowing: an empty `cookies: []` is
 silently skipped (so exporting before the site has set anything yields

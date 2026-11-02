@@ -2630,7 +2630,7 @@
       "get": {
         "operationId": "getSessionEvents",
         "summary": "Replay the session event ledger",
-        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved). Paging: since/limit require a type filter (cursors are per-ledger entry sequences; the cursor is returned as nextCursor and advances past entries of other types). Paged rows match the type exactly. A cursor older than the retained window re-reads from the oldest kept entry; a paged response with since then reports gap: true and oldestSeq, the lowest retained sequence, so evicted entries are never silently skipped. limit defaults to 200 and is capped at 1000.",
+        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved). Legacy type-only and merged responses retain their shapes. New selectors (stream, urlRegex, method, statusClass, failedOnly) select a bounded page; request selectors imply stream=request and combine with AND. Regex uses RE2 syntax and at most 256 UTF-8 bytes, matching the credential-safe URL without userinfo, query or fragment. Status classes use actual terminal HTTP responses; missing status and passthrough are unknown. A target 403 is 4xx, while denied requires a typed policy denial. failedOnly includes request failures and terminal HTTP errors. Request selectors omit duplicate scope diagnostics unless type=scope.denied is explicit. New responses carry filter={version:1,stream} and fit a complete 256 KiB serialized envelope; an oversized first match refuses with OUTPUT_TRUNCATED. Paging requires a type or stream (cursors are per-ledger entry sequences; the cursor is returned as nextCursor and advances past skipped entries). When type is provided, paged rows match it exactly. A cursor older than the retained window re-reads from the oldest kept entry; a paged response with since then reports gap: true and oldestSeq, the lowest retained sequence, so evicted entries are never silently skipped. limit defaults to 200 and is capped at 1000.",
         "tags": [
           "sessions"
         ],
@@ -2670,6 +2670,71 @@
               "maximum": 1000
             },
             "description": "Paging cap (default 200, max 1000)."
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "request",
+                  "type": "string"
+                },
+                {
+                  "const": "other",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "name": "urlRegex",
+            "in": "query",
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "schema": {
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[!#$%&'*+.^_`|~0-9A-Z-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "statusClass",
+            "in": "query",
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "2xx",
+                  "type": "string"
+                },
+                {
+                  "const": "4xx",
+                  "type": "string"
+                },
+                {
+                  "const": "5xx",
+                  "type": "string"
+                },
+                {
+                  "const": "denied",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          {
+            "name": "failedOnly",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -2688,6 +2753,32 @@
                       "type": "array",
                       "items": {
                         "type": "object"
+                      }
+                    },
+                    "filter": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "version",
+                        "stream"
+                      ],
+                      "properties": {
+                        "version": {
+                          "const": 1,
+                          "type": "number"
+                        },
+                        "stream": {
+                          "anyOf": [
+                            {
+                              "const": "request",
+                              "type": "string"
+                            },
+                            {
+                              "const": "other",
+                              "type": "string"
+                            }
+                          ]
+                        }
                       }
                     },
                     "nextCursor": {

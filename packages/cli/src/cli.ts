@@ -91,6 +91,7 @@ import {
   TestCaseEvaluationReportSchema,
   UsageError,
   validateApplicationReview,
+  validateEventReplaySelector,
   validateOperatorApprovalDecision,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
@@ -1304,23 +1305,49 @@ export function buildCli(deps: CliDependencies): Cli {
           '--output <path>',
           'export JSON to a new private file (0600), never overwrite; print counts/path only'
         )
+        .option(
+          '--with-provenance',
+          'stamp a private versioned seed file with extraction time and cookie classes; requires --output'
+        )
         .action(
-          action(async (ctx, sessionId: string, options: { output?: string }) => {
-            const cookies = await ctx.client.sessions.cookies(sessionId).catch((error) => {
-              if (options.output !== undefined && !isCredentialSafeSeedError(error))
-                throw new UsageError('Cookie export failed; no credential details are displayed.');
-              throw error;
-            });
-            if (options.output !== undefined) {
-              const receipt = await writeCookieFile(options.output, cookies);
-              ctx.emit(receipt, () => [`Exported ${receipt.count} cookie(s) to ${receipt.path}`]);
-              return;
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: { output?: string; withProvenance?: boolean }
+            ) => {
+              if (options.withProvenance && options.output === undefined)
+                throw new UsageError('--with-provenance requires --output for a private seed file');
+              const cookies = await ctx.client.sessions.cookies(sessionId).catch((error) => {
+                if (options.output !== undefined && !isCredentialSafeSeedError(error))
+                  throw new UsageError(
+                    'Cookie export failed; no credential details are displayed.'
+                  );
+                throw error;
+              });
+              if (options.output !== undefined) {
+                const receipt = await writeCookieFile(
+                  options.output,
+                  cookies,
+                  options.withProvenance
+                    ? {
+                        source: 'agentbrowser-session',
+                        sourceContext: 'unknown',
+                        extractedAt: new Date().toISOString(),
+                        domainFilters: [],
+                        cookieClasses: [],
+                      }
+                    : undefined
+                );
+                ctx.emit(receipt, () => [`Exported ${receipt.count} cookie(s) to ${receipt.path}`]);
+                return;
+              }
+              ctx.emit(cookies, () => [
+                JSON.stringify(cookies),
+                `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,
+              ]);
             }
-            ctx.emit(cookies, () => [
-              JSON.stringify(cookies),
-              `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,
-            ]);
-          })
+          )
         );
 
       // TD-BROWSER-16 phase 7 (ADR-025 s3): the agent-side handoff. The first
@@ -1438,55 +1465,84 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // A3 + network summary: replay retained session events.
-      session
-        .command('events')
-        .description('replay retained session events (console + request ledgers)')
-        .argument('<sessionId>')
-        .option('--type <type>', 'filter by event type, e.g. request.finished or console.log')
-        .option('--since <n>', 'paging cursor: entries with a ledger sequence above this')
-        .option('--limit <n>', 'paging cap (default 200, max 1000)')
-        .action(
-          action(
-            async (
-              ctx,
-              sessionId: string,
-              options: { type?: string; since?: string; limit?: string }
-            ) => {
-              const describe = (event: Record<string, unknown>) =>
-                `${String(event.timestamp ?? '')} ${String(event.seq ?? '')} ${String(
-                  event.type ?? '?'
-                )} ${JSON.stringify(event.data ?? {})}`;
-              if (options.since !== undefined || options.limit !== undefined) {
-                if (options.type === undefined)
-                  throw new UsageError('--since/--limit require --type (cursors are per-ledger)');
+      const addEventReplay = (parent: Command) =>
+        parent
+          .command('events')
+          .description('replay retained session events (console + request ledgers)')
+          .argument('<sessionId>')
+          .option('--type <type>', 'filter by event type, e.g. request.finished or console.log')
+          .option('--since <n>', 'paging cursor: entries with a ledger sequence above this')
+          .option('--limit <n>', 'paging cap (default 200, max 1000)')
+          .option('--stream <stream>', 'select one ledger: request or other')
+          .option('--url-regex <pattern>', 'match published request URLs using bounded RE2 syntax')
+          .option('--method <method>', 'match one uppercase HTTP method')
+          .option('--status-class <class>', 'match recorded 2xx, 4xx, 5xx or typed denied facts')
+          .option('--failed-only', 'show recorded failures or completed HTTP 4xx/5xx')
+          .option('--no-failed-only', 'include requests without a recorded failure')
+          .action(
+            action(
+              async (
+                ctx,
+                sessionId: string,
+                options: {
+                  type?: string;
+                  since?: string;
+                  limit?: string;
+                  stream?: string;
+                  urlRegex?: string;
+                  method?: string;
+                  statusClass?: string;
+                  failedOnly?: boolean;
+                }
+              ) => {
+                const describe = (event: Record<string, unknown>) =>
+                  `${String(event.timestamp ?? '')} ${String(event.seq ?? '')} ${String(
+                    event.type ?? '?'
+                  )} ${JSON.stringify(event.data ?? {})}`;
+                const since =
+                  options.since === undefined
+                    ? undefined
+                    : options.since === '-1'
+                      ? -1 // the from-the-start cursor an empty page returns
+                      : captureInteger(options.since, '--since');
+                const limit =
+                  options.limit !== undefined
+                    ? captureInteger(options.limit, '--limit')
+                    : undefined;
+                // One call shape for every flag combination: the object selector
+                // always resolves to the paging envelope, including empty and
+                // type-only selectors. Legacy string selectors return an array.
+                const checked = validateEventReplaySelector({
+                  ...(options.type !== undefined ? { type: options.type } : {}),
+                  ...(since !== undefined ? { since } : {}),
+                  ...(limit !== undefined ? { limit } : {}),
+                  ...(options.stream !== undefined ? { stream: options.stream } : {}),
+                  ...(options.urlRegex !== undefined ? { urlRegex: options.urlRegex } : {}),
+                  ...(options.method !== undefined ? { method: options.method } : {}),
+                  ...(options.statusClass !== undefined
+                    ? { statusClass: options.statusClass }
+                    : {}),
+                  ...(options.failedOnly !== undefined ? { failedOnly: options.failedOnly } : {}),
+                });
+                if (!checked.ok)
+                  throw new UsageError(
+                    'Invalid event replay selector; paging requires a type filter or stream.'
+                  );
+                const envelope = await ctx.client.sessions.events(sessionId, checked.value);
+                ctx.emit(envelope, () => [
+                  `nextCursor: ${envelope.nextCursor}`,
+                  ...(envelope.gap
+                    ? [
+                        `gap: true (entries evicted before oldest retained seq ${envelope.oldestSeq})`,
+                      ]
+                    : []),
+                  ...envelope.events.map(describe),
+                ]);
               }
-              const since =
-                options.since === undefined
-                  ? undefined
-                  : options.since === '-1'
-                    ? -1 // the from-the-start cursor an empty page returns
-                    : captureInteger(options.since, '--since');
-              const limit =
-                options.limit !== undefined ? captureInteger(options.limit, '--limit') : undefined;
-              // One call shape for every flag combination: the object selector
-              // always resolves to the paging envelope. (The legacy string
-              // selector returned a bare array whose `.events` access crashed
-              // the formatted path for limit-only queries.)
-              const envelope = await ctx.client.sessions.events(sessionId, {
-                ...(options.type !== undefined ? { type: options.type } : {}),
-                ...(since !== undefined ? { since } : {}),
-                ...(limit !== undefined ? { limit } : {}),
-              });
-              ctx.emit(envelope, () => [
-                `nextCursor: ${envelope.nextCursor}`,
-                ...(envelope.gap
-                  ? [`gap: true (entries evicted before oldest retained seq ${envelope.oldestSeq})`]
-                  : []),
-                ...envelope.events.map(describe),
-              ]);
-            }
-          )
-        );
+            )
+          );
+      addEventReplay(session);
+      addEventReplay(program);
 
       // ---- application -------------------------------------------------------
       // Shared-infra slice 2: operator binding + delegated discovery,

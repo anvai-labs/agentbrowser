@@ -16,6 +16,9 @@ inject configured markers and record a ledger. The authenticated human operator
 can transfer selected program-origin cookies/localStorage once; profile files and
 other stores never move. See [ADR-027](../../adr/027-evidence-pass-state-transfer.md).
 
+Verify identity after cookie reuse; seeds may not transfer.
+[Seed details](../../adr/033-cookie-seed-provenance-and-reseed.md).
+
 ## Three-command workflow
 
 Configure private ledger storage, an operator key file and `cookie.seed`/

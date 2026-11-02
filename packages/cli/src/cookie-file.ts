@@ -1,5 +1,11 @@
 import { isIP } from 'node:net';
-import { assertCookieRequestSize, cookieKey, MAX_COOKIE_COUNT } from '@agentbrowser/core';
+import {
+  assertCookieRequestSize,
+  cookieKey,
+  cookieSeedClasses,
+  MAX_COOKIE_COUNT,
+} from '@agentbrowser/core';
+import { type CookieSeedProvenance, parseCookieSeedFile } from '@agentbrowser/protocol';
 import {
   AgentBrowserError,
   type SessionRequest,
@@ -31,6 +37,11 @@ export function isCredentialSafeSeedError(error: unknown): boolean {
 }
 
 type Cookie = NonNullable<SessionRequest['cookies']>[number];
+interface ParsedCookieInput {
+  cookies: Cookie[];
+  skipped: number;
+  provenance?: CookieSeedProvenance;
+}
 const keys = new Set([
   'name',
   'value',
@@ -159,15 +170,21 @@ export function parseCookieText(
   format = 'json',
   skipUnsupported = false,
   now = Date.now() / 1000
-) {
+): ParsedCookieInput {
   if (Buffer.byteLength(text, 'utf8') > MAX_JSON_INPUT_BYTES)
     throw new UsageError('Cookie input exceeds 1048576 bytes.');
   let value: unknown;
+  let provenance: CookieSeedProvenance | undefined;
   if (format === 'json') {
     try {
       value = JSON.parse(text);
     } catch {
       throw new UsageError('Cookie input must be valid JSON.');
+    }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const envelope = value as Record<string, unknown>;
+      provenance = parseCookieSeedFile({ ...envelope, cookies: [] }).provenance;
+      value = envelope.cookies;
     }
   } else if (format === 'netscape' || format === 'chrome-devtools-tsv') {
     const rows: unknown[] = [];
@@ -261,7 +278,16 @@ export function parseCookieText(
     }
     value = rows;
   } else throw new UsageError('Cookie format must be json, netscape or chrome-devtools-tsv.');
-  return validateCookies(value, skipUnsupported, now);
+  const normalized = validateCookies(value, skipUnsupported, now);
+  if (provenance) {
+    const canonical = parseCookieSeedFile({
+      format: 'agentbrowser-cookie-seed/v1',
+      cookies: normalized.cookies,
+      provenance: { ...provenance, cookieClasses: cookieSeedClasses(normalized.cookies) },
+    });
+    return { ...normalized, provenance: canonical.provenance };
+  }
+  return normalized;
 }
 
 export async function readCookieFile(path: string, format?: string, skipUnsupported = false) {
@@ -270,9 +296,20 @@ export async function readCookieFile(path: string, format?: string, skipUnsuppor
 }
 
 /** Validate before opening; exclusive creation prevents overwriting a credential file or symlink. */
-export async function writeCookieFile(path: string, value: unknown) {
+export async function writeCookieFile(
+  path: string,
+  value: unknown,
+  provenance?: CookieSeedProvenance
+) {
   const { cookies } = validateCookies(value, false, Date.now() / 1000);
-  const text = `${JSON.stringify(cookies, null, 2)}\n`;
+  const contents = provenance
+    ? parseCookieSeedFile({
+        format: 'agentbrowser-cookie-seed/v1',
+        cookies,
+        provenance: { ...provenance, cookieClasses: cookieSeedClasses(cookies) },
+      })
+    : cookies;
+  const text = `${JSON.stringify(contents, null, 2)}\n`;
   if (Buffer.byteLength(text, 'utf8') > MAX_JSON_INPUT_BYTES)
     throw new UsageError('Cookie export exceeds 1048576 bytes.');
   try {

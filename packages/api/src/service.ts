@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import {
+  compileEventReplayFilter,
+  cookieSeedWarnings,
   DenialTrace,
   type DeniedHostSummary,
   denialTraceLine,
+  EventReplayPatternError,
+  eventReplayUrl,
   hostMatchesPattern,
   PageCostHistory,
   ScopeTraffic,
@@ -12,6 +16,9 @@ import {
   summarizeDeniedHosts,
 } from '@agentbrowser/core';
 import {
+  EVENT_REPLAY_MAX_RESPONSE_BYTES,
+  eventReplayStream,
+  isFilteredEventReplay,
   isNavigationFailureReason,
   isScopeDenialCode,
   MAX_PLAN_STEPS,
@@ -20,6 +27,7 @@ import {
   parseScopeBudgetTopup,
   parseViewportCapture,
   sessionLeaseRemainingMs,
+  validateEventReplaySelector,
   validateScopeAssetAmendment,
   validateSessionRequest,
 } from '@agentbrowser/protocol';
@@ -164,6 +172,7 @@ import {
 } from '@agentbrowser/policy-engine';
 import type {
   ActionNavigationObservation,
+  EventReplaySelector,
   ObservationRequest,
   OperatorApprovalView,
   OutcomeRunReport,
@@ -882,6 +891,10 @@ export class AgentBrowserService {
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
   private readonly sessionUserAgents = new Map<string, string>();
+  private readonly sessionSeedWarnings = new Map<
+    string,
+    { owner: SessionContext; warnings: string[] }
+  >();
   /** Each scoped session's engagement scope, for status and dry-run checks (T10 M2). */
   private readonly assetClassified = new Set<string>();
   private readonly deniedHosts = new Map<
@@ -1198,6 +1211,7 @@ export class AgentBrowserService {
     }
     this.sessionScopes.delete(sessionId);
     this.sessionUserAgents.delete(sessionId);
+    this.sessionSeedWarnings.delete(sessionId);
     this.sessionApprovalPolicies.delete(sessionId);
     this.sessionCredentialSources.delete(sessionId);
     this.sessionHostAllowlists.delete(sessionId);
@@ -1517,15 +1531,20 @@ export class AgentBrowserService {
    * is not preserved, documented at the route).
    */
   getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[];
+  getSessionEvents(sessionId: string, options: EventReplaySelector): SessionEventPage;
   getSessionEvents(
     sessionId: string,
-    options: { type?: string; since?: number; limit?: number }
-  ): SessionEventPage;
-  getSessionEvents(
-    sessionId: string,
-    selector?: string | { type?: string; since?: number; limit?: number }
+    input?: string | EventReplaySelector
   ): EngineEvent[] | SessionEventPage {
     this.requireSession(sessionId);
+    let selector = input;
+    if (selector !== undefined && typeof selector !== 'string') {
+      const validated = validateEventReplaySelector(selector);
+      if (!validated.ok)
+        throw new ServiceError('INVALID_REQUEST', 'Invalid event replay selector.');
+      selector = validated.value;
+      if (isFilteredEventReplay(selector)) return this.filteredSessionEvents(sessionId, selector);
+    }
     // Paging (N1 G2) applies to one stream at a time — the cursors are
     // per-stream ledger sequences. Served before materializing either ledger.
     if (
@@ -1579,6 +1598,114 @@ export class AgentBrowserService {
       return { events: requests.filter((event) => event.type === typeFilter), nextCursor: -1 };
     }
     return { events: others.filter((event) => event.type === typeFilter), nextCursor: -1 };
+  }
+
+  /** One bounded retained stream, filtered only after captured-owner publication. */
+  private filteredSessionEvents(
+    sessionId: string,
+    selector: EventReplaySelector
+  ): SessionEventPage {
+    const owner = this.requireSession(sessionId);
+    const publication = this.captureOwnerPublication(sessionId);
+    const guard = this.controlledContexts.has(owner)
+      ? this.authority.outputGuard(sessionId)
+      : undefined;
+    const assertCurrent = () => {
+      guard?.();
+      if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted)
+        throw new ServiceError('CONTROL_REVOKED', 'Event replay owner changed.');
+    };
+    try {
+      assertCurrent();
+      const stream = eventReplayStream(selector);
+      if (!stream) throw new ServiceError('INVALID_REQUEST', 'Select one event replay stream.');
+      let matches: (event: EngineEvent) => boolean;
+      try {
+        matches = compileEventReplayFilter(selector);
+      } catch (error) {
+        if (error instanceof EventReplayPatternError)
+          throw new ServiceError('INVALID_REQUEST', 'Invalid event URL pattern.');
+        throw error;
+      }
+      assertCurrent();
+      const ledger =
+        stream === 'request'
+          ? this.requestHistory.get(sessionId)
+          : this.eventHistory.get(sessionId);
+      const since = selector.since ?? -1;
+      const filter = { version: 1 as const, stream };
+      let payloadBytes = 0;
+      let emitted = 0;
+      const overflow = () =>
+        new ServiceError('OUTPUT_TRUNCATED', 'Event replay exceeds the output budget.', false, {
+          rule: 'floor.events.output',
+        });
+      const page = ledger?.scanPage<EngineEvent & { seq: number }>(
+        since,
+        selector.limit ?? 200,
+        (value, seq, window) => {
+          assertCurrent();
+          const data = value.data === undefined ? undefined : publication.data(value.data);
+          if (
+            data !== undefined &&
+            (data === null || typeof data !== 'object' || Array.isArray(data))
+          )
+            throw publication.failure();
+          if (
+            data &&
+            (value.type.startsWith('request.') || value.type.startsWith('scope.')) &&
+            Object.hasOwn(data, 'url')
+          ) {
+            data.url = eventReplayUrl(data.url);
+          }
+          const safe: EngineEvent = {
+            type: value.type,
+            timestamp: publication.identifier(value.timestamp),
+            sessionId: publication.identifier(value.sessionId),
+            ...(value.pageId !== undefined ? { pageId: publication.identifier(value.pageId) } : {}),
+            ...(data !== undefined ? { data } : {}),
+          };
+          assertCurrent();
+          // Small fixed envelope serialization accounts for cursor digit growth
+          // even when the current row is skipped. Each candidate row is measured once.
+          const envelopeBytes = Buffer.byteLength(
+            JSON.stringify({
+              events: [],
+              nextCursor: seq,
+              oldestSeq: window.oldestSeq,
+              gap: selector.since !== undefined && window.gap,
+              filter,
+            }),
+            'utf8'
+          );
+          if (envelopeBytes + payloadBytes > EVENT_REPLAY_MAX_RESPONSE_BYTES) {
+            if (!emitted) throw overflow();
+            return { action: 'stop' };
+          }
+          if (!matches(safe)) return { action: 'skip' };
+          const row = { ...safe, seq };
+          const rowBytes = Buffer.byteLength(JSON.stringify(row), 'utf8');
+          const addition = rowBytes + (emitted ? 1 : 0);
+          if (envelopeBytes + payloadBytes + addition > EVENT_REPLAY_MAX_RESPONSE_BYTES) {
+            if (!emitted) throw overflow();
+            return { action: 'stop' };
+          }
+          payloadBytes += addition;
+          emitted++;
+          return { action: 'emit', value: row };
+        }
+      );
+      assertCurrent();
+      return {
+        events: (page?.rows ?? []).map(({ value }) => value),
+        nextCursor: page?.lastScanned ?? since,
+        oldestSeq: page?.oldestSeq ?? 0,
+        gap: selector.since !== undefined && (page?.gap ?? false),
+        filter,
+      };
+    } catch (error) {
+      throw this.publicationError(error, 'events.replay', publication);
+    }
   }
 
   private canPublishEvents(sessionId: string, owner: SessionContext): boolean {
@@ -2558,6 +2685,12 @@ export class AgentBrowserService {
           this.deniedHosts.set(session.sessionId, denied);
         if (request.userAgent !== undefined)
           this.sessionUserAgents.set(session.sessionId, request.userAgent);
+        const seedWarnings = cookieSeedWarnings(request.cookies);
+        if (seedWarnings.length)
+          this.sessionSeedWarnings.set(session.sessionId, {
+            owner: context,
+            warnings: seedWarnings,
+          });
         if (scopedPolicy instanceof EngagementScopePolicy)
           this.sessionScopes.set(session.sessionId, scopedPolicy);
         if (
@@ -2886,8 +3019,10 @@ export class AgentBrowserService {
     const userAgent = this.sessionUserAgents.get(context.id);
     const trace = this.scopeTraceModes.get(context.id);
     const traceDropped = this.scopeTraceDropped.get(context.id) ?? 0;
+    const seedWarnings = this.sessionSeedWarnings.get(context.id);
     const warnings = [
       ...(context.engineSession.warnings ?? []),
+      ...(seedWarnings?.owner === context ? seedWarnings.warnings : []),
       ...(scope ? scopeIdentityHints(scope) : []),
       ...(() => {
         const hint = scope
