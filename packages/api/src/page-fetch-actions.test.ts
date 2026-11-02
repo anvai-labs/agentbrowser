@@ -21,6 +21,35 @@ const fetchRequest = (over: Record<string, unknown> = {}): ServiceActRequest => 
   return request as unknown as ServiceActRequest;
 };
 
+/** A FakeEngine advertising the pageFetch capability, plus a service over it. */
+async function probeService(
+  overrides: Partial<ConstructorParameters<typeof AgentBrowserService>[0]> = {}
+): Promise<{ engine: FakeEngine; service: AgentBrowserService }> {
+  const engine = new FakeEngine();
+  const caps = await engine.capabilities();
+  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
+  const service = new AgentBrowserService({ engine, ...overrides });
+  return { engine, service };
+}
+
+/** Owner session + its first page + FakePage handle, shared by the probe tests. */
+async function probePage(
+  service: AgentBrowserService,
+  engine: FakeEngine,
+  scope?: { allowedHosts: string[]; allowedMethods: string[] }
+): Promise<{
+  sessionId: string;
+  pageId: string;
+  page: NonNullable<ReturnType<FakeEngine['getFakePage']>>;
+}> {
+  const { sessionId } = await service.createSession(
+    scope === undefined ? { tenantId: 'owner' } : { tenantId: 'owner', scope }
+  );
+  const { pageId } = await service.createPage(sessionId);
+  const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+  return { sessionId, pageId, page };
+}
+
 it('refuses a probe on an incapable engine', async () => {
   const service = new AgentBrowserService({ engine: new FakeEngine() });
   try {
@@ -35,17 +64,12 @@ it('refuses a probe on an incapable engine', async () => {
 });
 
 it('denies a scope-without-PUT probe before any browser work with SCOPE_METHOD_DENIED', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({ engine });
+  const { engine, service } = await probeService();
   try {
-    const { sessionId } = await service.createSession({
-      tenantId: 'owner',
-      scope: { allowedHosts: ['api.vinted.test'], allowedMethods: ['GET'] },
+    const { sessionId, pageId, page } = await probePage(service, engine, {
+      allowedHosts: ['api.vinted.test'],
+      allowedMethods: ['GET'],
     });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
     const prepareFetch = vi.fn();
     (page as EnginePage).prepareFetch = prepareFetch;
     const failure = await service.act(sessionId, pageId, fetchRequest()).catch((e) => e);
@@ -60,20 +84,14 @@ it('denies a scope-without-PUT probe before any browser work with SCOPE_METHOD_D
 });
 
 it('requires one-use approval for an unsafe method even when unknown actions are allowed', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({
-    engine,
+  const { engine, service } = await probeService({
     approvalGate: new ApprovalGate(),
     approvalPolicy: { unknownRisk: 'allow' },
   });
   const dispatched = vi.fn();
   const dispose = vi.fn();
   try {
-    const { sessionId } = await service.createSession({ tenantId: 'owner' });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const { sessionId, pageId, page } = await probePage(service, engine);
     (page as EnginePage).prepareFetch = vi.fn(async () => ({
       identity: 'document:loader:probe',
       token: {},
@@ -121,19 +139,13 @@ it('requires one-use approval for an unsafe method even when unknown actions are
 });
 
 it('binds the approval to the exact request: a mutated retry never dispatches', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({
-    engine,
+  const { engine, service } = await probeService({
     approvalGate: new ApprovalGate(),
     approvalPolicy: { unknownRisk: 'allow' },
   });
   const dispatched = vi.fn();
   try {
-    const { sessionId } = await service.createSession({ tenantId: 'owner' });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const { sessionId, pageId, page } = await probePage(service, engine);
     stubProbePage(page, dispatched);
     const denied = await service.act(sessionId, pageId, fetchRequest()).catch((e) => e);
     expect(denied).toMatchObject({ code: 'APPROVAL_REQUIRED' });
@@ -164,15 +176,10 @@ it('binds the approval to the exact request: a mutated retry never dispatches', 
 });
 
 it('refuses a method-tunneling header at the service boundary before any browser work', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({ engine, approvalPolicy: { unknownRisk: 'allow' } });
+  const { engine, service } = await probeService({ approvalPolicy: { unknownRisk: 'allow' } });
   const dispatched = vi.fn();
   try {
-    const { sessionId } = await service.createSession({ tenantId: 'owner' });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const { sessionId, pageId, page } = await probePage(service, engine);
     stubProbePage(page, dispatched);
     // A GET carries no approval floor: without the refusal this header would
     // let a read-classified probe perform a server-side write (review find).
@@ -194,17 +201,12 @@ it('refuses a method-tunneling header at the service boundary before any browser
 });
 
 it('reports an unparseable probe URL as INVALID_REQUEST, not a scope denial', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({ engine });
+  const { engine, service } = await probeService();
   try {
-    const { sessionId } = await service.createSession({
-      tenantId: 'owner',
-      scope: { allowedHosts: ['api.vinted.test'], allowedMethods: ['GET'] },
+    const { sessionId, pageId, page } = await probePage(service, engine, {
+      allowedHosts: ['api.vinted.test'],
+      allowedMethods: ['GET'],
     });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
     const prepareFetch = vi.fn();
     (page as EnginePage).prepareFetch = prepareFetch;
     await expect(
@@ -257,15 +259,10 @@ function stubProbePage(
 }
 
 it('allows a safe-method probe without approval and leaves the revision unchanged', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({ engine });
+  const { engine, service } = await probeService();
   const dispatched = vi.fn();
   try {
-    const { sessionId } = await service.createSession({ tenantId: 'owner' });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const { sessionId, pageId, page } = await probePage(service, engine);
     stubProbePage(page, dispatched);
     const first = await service.act(
       sessionId,
@@ -287,11 +284,8 @@ it('allows a safe-method probe without approval and leaves the revision unchange
 });
 
 it('redacts registered session secrets from the probe response before publication', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
   const secrets = new SecretManager();
-  const service = new AgentBrowserService({ engine, secretManager: secrets });
+  const { engine, service } = await probeService({ secretManager: secrets });
   try {
     const { sessionId } = await service.createSession({ tenantId: 'owner' });
     secrets.registerSessionSecret(sessionId, 'csrf-secret-0123456789');
@@ -320,14 +314,9 @@ it('redacts registered session secrets from the probe response before publicatio
 });
 
 it('refuses a probe when the session has no scope (the engine lane is scoped-only)', async () => {
-  const engine = new FakeEngine();
-  const caps = await engine.capabilities();
-  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
-  const service = new AgentBrowserService({ engine });
+  const { engine, service } = await probeService();
   try {
-    const { sessionId } = await service.createSession({ tenantId: 'owner' });
-    const { pageId } = await service.createPage(sessionId);
-    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const { sessionId, pageId, page } = await probePage(service, engine);
     // The real engine's prepareFetch refuses without an engagement scope;
     // mirror that contract so the service path is exercised end to end.
     (page as EnginePage).prepareFetch = vi.fn(async () => {

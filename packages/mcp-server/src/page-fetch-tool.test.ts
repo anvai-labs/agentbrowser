@@ -5,21 +5,10 @@
  * are the seam's only executable oracle — the catalog/annotation listings do
  * not exercise the handler. */
 import { beforeEach, expect, it, vi } from 'vitest';
-import { buildMcpServer } from './mcp-server';
+import { rpcHarness } from './test-support/rpc-harness.js';
 
 let sessions: Record<string, ReturnType<typeof vi.fn>>;
-let server: ReturnType<typeof buildMcpServer>;
-const call = async (name: string, args: Record<string, unknown>) =>
-  JSON.parse(
-    await server.handle(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: name,
-        method: 'tools/call',
-        params: { name, arguments: args },
-      })
-    )
-  ).result;
+let call: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 beforeEach(() => {
   sessions = {
@@ -38,10 +27,11 @@ beforeEach(() => {
       },
     }),
   };
-  server = buildMcpServer({
-    createClient: vi.fn().mockReturnValue({ sessions }),
-    serverInfo: { name: 'agentbrowser', version: '1.0.0' },
-  });
+  const harness = rpcHarness({ sessions });
+  call = async (name, args) => {
+    const response = await harness.exchange('tools/call', { name, arguments: args });
+    return response.result as Record<string, unknown>;
+  };
 });
 
 it('dispatches an approved unsafe probe with the token in the envelope, never the body', async () => {
