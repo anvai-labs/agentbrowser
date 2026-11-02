@@ -66,6 +66,7 @@ const delegatedTools = [
   'observe',
   'operation',
   'page_create',
+  'page_fetch',
   'pages',
   'pdf',
   'plan',

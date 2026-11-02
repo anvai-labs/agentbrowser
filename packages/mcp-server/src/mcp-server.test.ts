@@ -221,6 +221,7 @@ describe('AgentBrowser MCP server', () => {
         close: { readOnlyHint: false, idempotentHint: false },
         cookie_handoff: { readOnlyHint: false, idempotentHint: false },
         act: { readOnlyHint: false, idempotentHint: false },
+        page_fetch: { readOnlyHint: false, idempotentHint: false },
         finding_check: { readOnlyHint: true, idempotentHint: true },
         finding_sarif: { readOnlyHint: true, idempotentHint: true },
         autofill: { readOnlyHint: false, idempotentHint: false },

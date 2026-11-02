@@ -4939,6 +4939,10 @@
                         "type": "string"
                       },
                       {
+                        "const": "fetch",
+                        "type": "string"
+                      },
+                      {
                         "const": "goBack",
                         "type": "string"
                       },
@@ -5042,6 +5046,72 @@
                   },
                   "amount": {
                     "type": "number"
+                  },
+                  "method": {
+                    "anyOf": [
+                      {
+                        "const": "GET",
+                        "type": "string"
+                      },
+                      {
+                        "const": "HEAD",
+                        "type": "string"
+                      },
+                      {
+                        "const": "POST",
+                        "type": "string"
+                      },
+                      {
+                        "const": "PUT",
+                        "type": "string"
+                      },
+                      {
+                        "const": "PATCH",
+                        "type": "string"
+                      },
+                      {
+                        "const": "DELETE",
+                        "type": "string"
+                      },
+                      {
+                        "const": "OPTIONS",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "minLength": 8,
+                    "maxLength": 2048,
+                    "type": "string"
+                  },
+                  "headers": {
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "value"
+                      ],
+                      "properties": {
+                        "name": {
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "type": "string"
+                        },
+                        "value": {
+                          "minLength": 0,
+                          "maxLength": 8192,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "body": {
+                    "maxLength": 65536,
+                    "type": "string"
                   },
                   "observe": {
                     "anyOf": [
@@ -10442,6 +10512,10 @@
                     "maxLength": 253,
                     "pattern": "^[^\\x00-\\x1f\\x7f]*$",
                     "type": "string"
+                  },
+                  "probe": {
+                    "const": true,
+                    "type": "boolean"
                   }
                 }
               }
@@ -10688,6 +10762,9 @@
                   "coordinateInput": {
                     "type": "boolean"
                   },
+                  "pageFetch": {
+                    "type": "boolean"
+                  },
                   "supportsScreenshots": {
                     "type": "boolean"
                   },
@@ -10831,6 +10908,10 @@
                           "type": "string"
                         },
                         {
+                          "const": "fetch",
+                          "type": "string"
+                        },
+                        {
                           "const": "upload",
                           "type": "string"
                         },
@@ -10909,6 +10990,9 @@
             ],
             "properties": {
               "coordinateInput": {
+                "type": "boolean"
+              },
+              "pageFetch": {
                 "type": "boolean"
               },
               "supportsScreenshots": {
@@ -11054,6 +11138,10 @@
                       "type": "string"
                     },
                     {
+                      "const": "fetch",
+                      "type": "string"
+                    },
+                    {
                       "const": "upload",
                       "type": "string"
                     },
@@ -11106,6 +11194,9 @@
         ],
         "properties": {
           "coordinateInput": {
+            "type": "boolean"
+          },
+          "pageFetch": {
             "type": "boolean"
           },
           "supportsScreenshots": {
@@ -11248,6 +11339,10 @@
                 },
                 {
                   "const": "wait",
+                  "type": "string"
+                },
+                {
+                  "const": "fetch",
                   "type": "string"
                 },
                 {
@@ -12357,6 +12452,10 @@
                 "type": "string"
               },
               {
+                "const": "fetch",
+                "type": "string"
+              },
+              {
                 "const": "goBack",
                 "type": "string"
               },
@@ -12460,6 +12559,72 @@
           },
           "amount": {
             "type": "number"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "const": "GET",
+                "type": "string"
+              },
+              {
+                "const": "HEAD",
+                "type": "string"
+              },
+              {
+                "const": "POST",
+                "type": "string"
+              },
+              {
+                "const": "PUT",
+                "type": "string"
+              },
+              {
+                "const": "PATCH",
+                "type": "string"
+              },
+              {
+                "const": "DELETE",
+                "type": "string"
+              },
+              {
+                "const": "OPTIONS",
+                "type": "string"
+              }
+            ]
+          },
+          "url": {
+            "minLength": 8,
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "headers": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "name",
+                "value"
+              ],
+              "properties": {
+                "name": {
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "value": {
+                  "minLength": 0,
+                  "maxLength": 8192,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "body": {
+            "maxLength": 65536,
+            "type": "string"
           },
           "observe": {
             "anyOf": [
@@ -13117,6 +13282,10 @@
                       "type": "string"
                     },
                     {
+                      "const": "fetch",
+                      "type": "string"
+                    },
+                    {
                       "const": "goBack",
                       "type": "string"
                     },
@@ -13220,6 +13389,72 @@
                 },
                 "amount": {
                   "type": "number"
+                },
+                "method": {
+                  "anyOf": [
+                    {
+                      "const": "GET",
+                      "type": "string"
+                    },
+                    {
+                      "const": "HEAD",
+                      "type": "string"
+                    },
+                    {
+                      "const": "POST",
+                      "type": "string"
+                    },
+                    {
+                      "const": "PUT",
+                      "type": "string"
+                    },
+                    {
+                      "const": "PATCH",
+                      "type": "string"
+                    },
+                    {
+                      "const": "DELETE",
+                      "type": "string"
+                    },
+                    {
+                      "const": "OPTIONS",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "url": {
+                  "minLength": 8,
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                "headers": {
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "type": "array",
+                  "items": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "name",
+                      "value"
+                    ],
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "type": "string"
+                      },
+                      "value": {
+                        "minLength": 0,
+                        "maxLength": 8192,
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "body": {
+                  "maxLength": 65536,
+                  "type": "string"
                 },
                 "observe": {
                   "anyOf": [

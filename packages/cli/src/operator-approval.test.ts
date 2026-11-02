@@ -124,7 +124,7 @@ it.each([undefined, 'operator'] as const)(
       expect(err.join('\n')).toContain('session approval-decide');
     } else {
       expect(err.join('\n')).not.toContain('session approval');
-      expect(err.join('\n')).toContain('act --approval-token');
+      expect(err.join('\n')).toContain('repeat the same command with --approval-token');
     }
     expect(err.join('\n')).not.toContain('PRIVATE');
   }

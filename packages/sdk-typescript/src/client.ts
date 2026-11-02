@@ -156,7 +156,7 @@ export type ObservationResponse = import('@agentbrowser/protocol').PageState;
 export type DeliveredAction = (typeof DELIVERED_ACTION_TYPES)[number];
 
 export type ActionRequest = import('@agentbrowser/protocol').WireActionRequest;
-export { validateWireAction } from '@agentbrowser/protocol';
+export { parseFetchAction, validateWireAction } from '@agentbrowser/protocol';
 
 export interface ActionResult {
   status: string;
@@ -1104,6 +1104,36 @@ export class SessionsClient {
       method: 'POST',
       body,
     });
+  }
+
+  /**
+   * ADR-030: one scoped origin-context API probe — a typed fetch action
+   * through the same /act transport, with the page origin's cookie jar.
+   * Unsafe methods require a one-use approval token (see APPROVAL_REQUIRED).
+   */
+  async fetch(
+    sessionId: string,
+    pageId: string,
+    request: {
+      method: import('@agentbrowser/protocol').ProbeMethod;
+      url: string;
+      headers?: import('@agentbrowser/protocol').ProbeHeader[];
+      body?: string;
+      approvalToken?: string;
+    },
+    mutation: BrowserMutationOptions = {}
+  ): Promise<ActionResult> {
+    const { approvalToken, ...probe } = request;
+    return this.executeAction(
+      sessionId,
+      pageId,
+      {
+        action: 'fetch',
+        ...probe,
+        ...(approvalToken !== undefined ? { approvalToken } : {}),
+      } as ActionRequest,
+      mutation
+    );
   }
 
   async screenshot(

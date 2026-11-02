@@ -6,13 +6,13 @@ findings against the [1.11.0 release](consumer-field-handoff-2026-09-24.md)
 (verification table in that document; brew service restarted on v1.11.0 and
 every step re-driven live).
 **Related:** [v1 field handoff + 1.11.0 verification](consumer-field-handoff-2026-09-24.md),
-[ADR-006](adr/006-network-egress-policy-ssrf.md),
-[ADR-008](adr/008-process-container-isolation.md),
-[ADR-011](adr/011-safari-via-safaridriver-webdriver.md) (loud-refusal pattern),
-[ADR-013](adr/013-headed-sessions-and-walled-logins.md),
-[ADR-016](adr/016-branded-chrome-first-headed-launches.md),
-[ADR-017](adr/017-default-port-5709.md),
-[consumer research intake](spec/design/consumer-research-intake.md)
+[ADR-006](../adr/006-network-egress-policy-ssrf.md),
+[ADR-008](../adr/008-process-container-isolation.md),
+[ADR-011](../adr/011-safari-via-safaridriver-webdriver.md) (loud-refusal pattern),
+[ADR-013](../adr/013-headed-sessions-and-walled-logins.md),
+[ADR-016](../adr/016-branded-chrome-first-headed-launches.md),
+[ADR-017](../adr/017-default-port-5709.md),
+[consumer research intake](../spec/design/consumer-research-intake.md)
 
 ## Verification recap (what is already closed — do not re-implement)
 

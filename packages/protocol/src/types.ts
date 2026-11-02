@@ -259,6 +259,8 @@ export interface EngineCapabilities {
   requestRecording?: boolean;
   assetRequestClassification?: boolean;
   coordinateInput?: boolean;
+  /** ADR-030: scoped origin-context API probes (prepareFetch + fetch action). */
+  pageFetch?: boolean;
   requestHeaderInjection?: boolean;
   userAgentOverride?: boolean;
   supportedObservationModes: ObservationMode[];
@@ -302,6 +304,7 @@ export type ActionType =
   | 'uncheck'
   | 'scroll'
   | 'wait'
+  | 'fetch'
   | 'upload'
   | 'download'
   | 'goBack'
@@ -712,11 +715,30 @@ export type SupportedAction =
   | ScrollAction
   | PressAction
   | WaitAction
+  | FetchAction
   | GoBackAction
   | GoForwardAction
   | ReloadAction
   | AcceptDialogAction
   | DismissDialogAction;
+
+/**
+ * ADR-030: one controlled origin-context API probe. The engine issues it as
+ * a fixed same-origin/credentials browser fetch in an isolated world of the
+ * live page — cookies and CSRF-style headers apply; the scope, budget and
+ * ledger enforcement is the page's own egress choke point.
+ */
+export interface FetchAction extends Action {
+  type: 'fetch';
+  /** Uppercase probe method; see page-fetch.ts PROBE_METHODS. */
+  method: import('./page-fetch.js').ProbeMethod;
+  /** Absolute http(s) URL, no userinfo/fragment; must match the live document origin. */
+  url: string;
+  /** Supplied headers (CSRF tokens etc.); browser-controlled names refuse. */
+  headers?: import('./page-fetch.js').ProbeHeader[];
+  /** UTF-8 body (<= 64 KiB); refused for GET/HEAD. */
+  body?: string;
+}
 
 /**
  * Hover an element (non-mutating).
@@ -818,6 +840,7 @@ export const DELIVERED_ACTION_TYPES = [
   'scroll',
   'press',
   'wait',
+  'fetch',
   'goBack',
   'goForward',
   'reload',

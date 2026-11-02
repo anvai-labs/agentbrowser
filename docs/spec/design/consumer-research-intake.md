@@ -15,7 +15,7 @@ merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
  merged in PR #294 (`752da5e`) and shipped in 1.12.0.
  R5b2 [typed disconnect evidence](session-disconnect.md) is an unreleased source candidate
  with a qualified headed process-loss smoke across REST, SDK, CLI and MCP.
-Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
+Source: [consumer field report, 2026-09-24](../../agent-handoffs/consumer-field-handoff-2026-09-24.md).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations
 must not be attributed to that code revision without runtime evidence.

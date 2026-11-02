@@ -73,6 +73,43 @@ export interface BodyRedirectGuardOptions {
     type: 'request.finished' | 'request.failed';
     data: Record<string, unknown>;
   }): void;
+  /**
+   * ADR-030 P0-2: origin-context API probes on the native (body-bearing)
+   * lane. The guard attributes the probe's request by its secret nonce,
+   * strips the nonce before the wire, admits the terminal response and
+   * fulfills the exact admitted bytes. Probe requests bypass the chain
+   * machinery entirely: their hops are policy-checked here with the scope
+   * verdict plus the probe's same-origin redirect rule, and a claimed request
+   * that ends without admission settles the probe fail-closed.
+   */
+  probes?: GuardProbeLane;
+}
+
+/**
+ * The probe seam the choke-point wiring implements over the claim registry.
+ * Every method may be called with any network id; implementations decide
+ * cheaply whether the id (or the request's nonce header) is a live claim.
+ */
+export interface GuardProbeLane {
+  /**
+   * Request stage of a body-bearing request: the headers to continue with
+   * (nonce stripped) when this is a claimed probe — including redirect hops
+   * re-presenting the claim's network id — or undefined when it is not.
+   */
+  claimRequest(
+    networkId: string,
+    url: string,
+    method: string,
+    headers: Record<string, string>
+  ): Record<string, string> | undefined;
+  /**
+   * Response stage: true when a claimed probe's response was handled here
+   * (admitted + fulfilled, hop-checked + continued, or refused + failed).
+   * False leaves the request to the guard's ordinary paths.
+   */
+  handleResponse(cdp: CDPSession, event: PausedEvent): Promise<boolean>;
+  /** A claimed request ended without a response-stage settlement. */
+  requestEnded(networkId: string, failure?: { errorText?: string; canceled?: boolean }): void;
 }
 
 interface Chain {
@@ -256,12 +293,17 @@ export class BodyRedirectGuard {
     // A request that is aborted, hangs up or fails never reaches the response
     // stage; the Network domain reports its end, which frees its chain.
     const ended = (event: { requestId: string }) => {
+      this.options.probes?.requestEnded(event.requestId);
       const chain = target.chains.get(event.requestId);
       if (chain !== undefined) this.close(target, chain);
     };
     // A request aborted, hung up or failed before any response never reaches the
     // response stage: its only end is loadingFailed, which is its recorded outcome.
     const failed = (event: { requestId: string; errorText?: string; canceled?: boolean }) => {
+      this.options.probes?.requestEnded(event.requestId, {
+        ...(event.errorText !== undefined ? { errorText: event.errorText } : {}),
+        ...(event.canceled !== undefined ? { canceled: event.canceled } : {}),
+      });
       const chain = target.chains.get(event.requestId);
       if (chain === undefined) return;
       const at = new URL(chain.current.url);
@@ -318,6 +360,61 @@ export class BodyRedirectGuard {
     const { cdp } = target;
     const networkId = event.networkId;
     if (event.responseStatusCode === undefined && event.responseErrorReason === undefined) {
+      // A claimed probe is continued here — nonce stripped — and ALSO opens a
+      // chain: the route handler's track() refuses a body-bearing request it
+      // cannot correlate with a guard chain, and a probe must not be refused
+      // as REDIRECT_UNCHECKABLE. The probe's responses are handled by the
+      // probe path at the response stage; the chain only satisfies track()
+      // and end-of-life bookkeeping.
+      //
+      // Native lane only: the guard claims body-bearing methods (POST/PUT/
+      // PATCH), whose requests bypass response inspection Node-side. Every
+      // other method keeps its nonce for the Playwright route handler — the
+      // inspected lane — which strips it in its own re-issue, refuses
+      // cross-origin redirect destinations and settles the claim itself.
+      // Claiming here regardless of method would strip the nonce before the
+      // route handler can attribute the request, silently disabling the
+      // inspected lane's probe rules (review finding: a GET/DELETE probe
+      // followed a scope-allowed cross-origin redirect with its supplied
+      // CSRF header on the wire).
+      if (
+        networkId !== undefined &&
+        this.options.probes !== undefined &&
+        BODY_METHODS.has(event.request.method.toUpperCase())
+      ) {
+        const probeHeaders = this.options.probes.claimRequest(
+          networkId,
+          event.request.url,
+          event.request.method,
+          event.request.headers ?? {}
+        );
+        if (probeHeaders !== undefined) {
+          if (
+            !target.chains.has(networkId) &&
+            BODY_METHODS.has(event.request.method.toUpperCase()) &&
+            target.chains.size < (this.options.maxChains ?? MAX_TRACKED_CHAINS)
+          ) {
+            this.open(target, event, networkId);
+          }
+          try {
+            const headers =
+              this.options.headersForRequest?.(event.request.url, probeHeaders) ?? probeHeaders;
+            await cdp.send('Fetch.continueRequest', {
+              requestId: event.requestId,
+              headers: Object.entries(headers).map(([name, value]) => ({ name, value })),
+            });
+          } catch {
+            await cdp
+              .send('Fetch.failRequest', {
+                requestId: event.requestId,
+                errorReason: 'BlockedByClient',
+              })
+              .catch(() => {});
+            this.options.probes.requestEnded(networkId, { errorText: 'REQUEST_CONTINUE_FAILED' });
+          }
+          return;
+        }
+      }
       // A redirect follow-up keeps its network id: it belongs to the open chain.
       if (
         networkId !== undefined &&
@@ -390,6 +487,11 @@ export class BodyRedirectGuard {
     )?.value;
     const browserRedirect =
       [301, 302, 303, 307, 308].includes(responseStatus) && responseLocation !== undefined;
+    // A claimed probe's response is admitted and fulfilled (or hop-checked and
+    // continued) by the choke-point wiring; the ordinary paths below never see it.
+    if (networkId !== undefined && this.options.probes !== undefined) {
+      if (await this.options.probes.handleResponse(cdp, event)) return;
+    }
     const proceed = async () => {
       try {
         if (event.responseErrorReason !== undefined) {

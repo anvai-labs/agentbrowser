@@ -63,7 +63,7 @@ export class DenialTrace {
   }
 }
 export function denialTraceLine(data: ScopeDenialDetail & { timestamp: string }): string {
-  return `${data.timestamp} ${data.scope} ${data.method} ${data.url}`;
+  return `${data.timestamp} ${data.scope} ${data.method} ${data.url}${data.probe === true ? ' probe' : ''}`;
 }
 
 export function scopeDenialDetail(data: Record<string, unknown>): ScopeDenialDetail | undefined {
@@ -84,5 +84,6 @@ export function scopeDenialDetail(data: Record<string, unknown>): ScopeDenialDet
     method,
     url: `${url.origin}${url.pathname}`.slice(0, 2048),
     hostname: url.hostname.slice(0, 253),
+    ...(data.probe === true ? { probe: true } : {}),
   };
 }

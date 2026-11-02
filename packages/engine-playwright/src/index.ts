@@ -68,10 +68,16 @@ import {
   type Locator,
   type Page,
 } from 'playwright';
-import { BodyRedirectGuard, followMethod } from './body-redirect-guard.js';
+import { BodyRedirectGuard, followMethod, type GuardProbeLane } from './body-redirect-guard.js';
+import { admitPageFetchResponse } from './page-fetch-admission.js';
+import { PageFetchLane, PROBE_NONCE_HEADER, type ProbeClaim } from './page-fetch-lane.js';
+import { PageFetchController } from './page-fetch-probe.js';
 
 /** Each scoped context's redirect guard, so new pages wait until it is armed. */
 const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
+
+/** Each scoped context's probe claim registry (ADR-030 P0-2). */
+const pageFetchLanes = new WeakMap<BrowserContext, PageFetchLane>();
 
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import { ObservationReads } from './observation-read.js';
@@ -1260,6 +1266,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   readonly supportsCoordinateInput: boolean;
+  /** ADR-030: isolated-world probes need CDP worlds + Fetch interception. */
+  readonly supportsPageFetch: boolean;
   private readonly cdpEndpoint: string | undefined;
   private readonly operatorCdp: { endpoint: string; allowUnenforcedEgress: boolean } | undefined;
   private operatorAttachReserved = false;
@@ -1278,6 +1286,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.browserFamily = options.browser ?? 'chromium';
     this.supportsCoordinateInput =
       this.browserFamily === 'chromium' && options.coordinateInput !== false;
+    // CDP-compatible adapters (a foreign Chrome we do not launch) are not
+    // qualified for probes: their interception state is not ours to guarantee.
+    this.supportsPageFetch =
+      this.browserFamily === 'chromium' &&
+      this.cdpEndpoint === undefined &&
+      this.operatorCdp === undefined;
     this.cdpEndpoint = options.cdpEndpoint;
     this.operatorCdp =
       options.operatorCdp === undefined
@@ -1338,6 +1352,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       requestHeaderInjection: true,
       userAgentOverride: true,
       ...(this.supportsCoordinateInput ? { coordinateInput: true } : {}),
+      // Engine-family qualification (isolated worlds + dual interception);
+      // per-session availability is decided at prepareFetch — a session with
+      // no engagement scope refuses the probe before input.
+      ...(this.supportsPageFetch ? { pageFetch: true } : {}),
       ...(this.operatorCdp?.allowUnenforcedEgress &&
       this.browserFamily === 'chromium' &&
       this.cdpEndpoint === undefined
@@ -1348,7 +1366,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // impossible by construction.
       supportedActionTypes: DELIVERED_ACTION_TYPES.filter(
         (type) => this.supportsCoordinateInput || (type !== 'clickAt' && type !== 'uploadAt')
-      ),
+      ).filter((type) => this.supportsPageFetch || type !== 'fetch'),
     };
   }
 
@@ -2012,6 +2030,221 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // own limit is ~20. Ten keeps hostile chains bounded without breaking
     // ordinary login/logo chains.
     const MAX_REDIRECT_HOPS = 10;
+
+    // ADR-030 P0-2: the probe claim registry for this context, and the guard
+    // seam that admits native-lane (body-bearing) probe responses. Attribution
+    // is the secret nonce header; the nonce never reaches the wire.
+    // Scoped sessions only: the lane is registered when the egress installs
+    // the redirect guard (an engagement scope). Any other egress shape leaves
+    // no lane, so `assertPageFetch` refuses and an unscoped session can never
+    // prepare a probe — a PUT there would execute at the receiver with no
+    // scope verdict and no settlement path (review finding).
+    const fetchLane = new PageFetchLane();
+    if (egress.requireRedirectGuard === true) pageFetchLanes.set(context, fetchLane);
+    const stripNonce = (headers: Record<string, string>): Record<string, string> => {
+      const stripped = { ...headers };
+      delete stripped[PROBE_NONCE_HEADER];
+      return stripped;
+    };
+    const probeOutcome = (
+      type: 'request.finished' | 'request.failed',
+      data: Record<string, unknown>
+    ) =>
+      sink.record?.({ type, timestamp: new Date().toISOString(), data: { ...data, probe: true } });
+    const probeLane: GuardProbeLane = {
+      claimRequest: (networkId, _url, _method, headers) => {
+        const claim = fetchLane.claimForHeaders(headers) ?? fetchLane.claimForNetworkId(networkId);
+        if (claim === undefined) return undefined;
+        fetchLane.bindNetworkId(claim, networkId);
+        return stripNonce(headers);
+      },
+      requestEnded: (networkId, failure) => {
+        const claim = fetchLane.claimForNetworkId(networkId);
+        if (claim === undefined || claim.settled) return;
+        fetchLane.settle(claim, {
+          kind: 'failed',
+          detail: failure?.errorText ?? 'ended without an admitted response',
+        });
+      },
+      handleResponse: async (cdp, event) => {
+        const networkId = event.networkId;
+        if (networkId === undefined) return false;
+        const claim = fetchLane.claimForNetworkId(networkId);
+        if (claim === undefined) return false;
+        const method = event.request.method;
+        const at = new URL(event.request.url);
+        const base = { url: at.origin + at.pathname, hostname: at.hostname, method, probe: true };
+        const failClaim = async (detail: string, scope?: string) => {
+          probeOutcome('request.failed', {
+            ...base,
+            blocked: true,
+            reason: 'egress_policy',
+            detail,
+            ...(scope !== undefined ? { scope } : {}),
+          });
+          fetchLane.settle(
+            claim,
+            scope !== undefined
+              ? { kind: 'denied', reason: detail, scope }
+              : { kind: 'failed', detail }
+          );
+          await cdp
+            .send('Fetch.failRequest', {
+              requestId: event.requestId,
+              errorReason: 'BlockedByClient',
+            })
+            .catch(() => {});
+        };
+        if (event.responseErrorReason !== undefined) {
+          probeOutcome('request.failed', {
+            ...base,
+            reason: 'engine_error',
+            detail: event.responseErrorReason,
+          });
+          fetchLane.settle(claim, { kind: 'failed', detail: event.responseErrorReason });
+          await cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+          return true;
+        }
+        // The choke point's own synthetic denial is recognizable by its
+        // marker header: nothing from it is admitted, and the claim settles
+        // denied with the denial note the route handler recorded. (A server
+        // mimicking the marker can only turn its own response into a
+        // disclosed denial — fail-closed.)
+        if (
+          (event.responseHeaders ?? []).some(
+            (header) => header.name.toLowerCase() === 'x-agentbrowser-blocked'
+          )
+        ) {
+          const note = fetchLane.takeDenial(method, event.request.url) ?? {
+            reason: 'egress_policy',
+          };
+          // The route handler already recorded the denial itself; this row is
+          // the probe-attributed copy (the flag is what makes a denied probe
+          // greppable in the engagement ledger).
+          probeOutcome('request.failed', {
+            ...base,
+            blocked: true,
+            reason: 'egress_policy',
+            detail: note.reason,
+            ...(note.scope !== undefined ? { scope: note.scope } : {}),
+          });
+          fetchLane.settle(claim, {
+            kind: 'denied',
+            reason: note.reason,
+            ...(note.scope !== undefined ? { scope: note.scope } : {}),
+          });
+          await cdp.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+          return true;
+        }
+        const status = event.responseStatusCode ?? 0;
+        const location = event.responseHeaders?.find(
+          (header) => header.name.toLowerCase() === 'location'
+        )?.value;
+        if ([301, 302, 303, 307, 308].includes(status) && location !== undefined) {
+          // Redirect hop: full scope verdict on the destination plus the
+          // probe's own same-origin rule (a CSRF header never leaks to a
+          // second origin through a 307/308). The claim rides the network id.
+          claim.hops += 1;
+          let next: URL;
+          try {
+            next = new URL(location, event.request.url);
+          } catch {
+            await failClaim('PROBE_REDIRECT_LOCATION_INVALID');
+            return true;
+          }
+          const hopKey = next.origin + next.pathname + next.search;
+          if (claim.hops > MAX_REDIRECT_HOPS) {
+            await failClaim(`MAX_REDIRECTS (${claim.hops - 1} hops)`);
+            return true;
+          }
+          if (claim.seen.has(hopKey)) {
+            await failClaim('REDIRECT_LOOP');
+            return true;
+          }
+          claim.seen.add(hopKey);
+          if (!fetchLane.allowsRedirect(claim, next.href)) {
+            await failClaim('PROBE_CROSS_ORIGIN_REDIRECT', 'SCOPE_HOST_DENIED');
+            return true;
+          }
+          const verdict = await verdictOf(next.hostname, next.href, {
+            method: followMethod(status, method),
+            headers: stripNonce(event.request.headers ?? {}),
+          });
+          if (verdict.verdict === 'deny') {
+            await failClaim(verdict.reason ?? 'egress_policy', verdict.scope);
+            return true;
+          }
+          try {
+            await cdp.send('Fetch.continueResponse', { requestId: event.requestId });
+          } catch {
+            try {
+              await cdp.send('Fetch.continueRequest', { requestId: event.requestId });
+            } catch {
+              await failClaim('REDIRECT_UNCHECKABLE');
+              return true;
+            }
+          }
+          probeOutcome('request.finished', {
+            ...base,
+            status,
+            redirect: next.origin + next.pathname,
+          });
+          return true;
+        }
+        // Terminal or bodyless: authoritative admission (response policy,
+        // decoded bytes), then the exact admitted bytes fulfill the request —
+        // taking the stream irrevocably selects fulfillment over continuation.
+        try {
+          const admitted = await admitPageFetchResponse(
+            cdp,
+            {
+              requestId: event.requestId,
+              method,
+              status,
+              headers: event.responseHeaders ?? [],
+            },
+            egress,
+            { signal: new AbortController().signal, assertCurrent: () => {} }
+          );
+          await cdp.send('Fetch.fulfillRequest', {
+            requestId: event.requestId,
+            responseCode: status,
+            ...(event.responseStatusText !== undefined
+              ? { responsePhrase: event.responseStatusText }
+              : {}),
+            responseHeaders: admitted.headers,
+            ...(admitted.body !== undefined ? { body: admitted.body.toString('base64') } : {}),
+          });
+          probeOutcome('request.finished', { ...base, status, bytes: admitted.body?.length ?? 0 });
+          fetchLane.settle(claim, {
+            kind: 'admitted',
+            status,
+            headers: admitted.headers,
+            body: admitted.body,
+            outcome: admitted.kind === 'terminal' ? 'terminal' : 'bodyless',
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          probeOutcome('request.failed', {
+            ...base,
+            blocked: true,
+            reason: 'egress_policy',
+            detail: `PROBE_RESPONSE_UNADMITTABLE (${message})`,
+          });
+          fetchLane.settle(claim, {
+            kind: 'failed',
+            detail: `response could not be admitted: ${message}`,
+          });
+          await cdp
+            .send('Fetch.failRequest', {
+              requestId: event.requestId,
+              errorReason: 'BlockedByClient',
+            })
+            .catch(() => {});
+        }
+        return true;
+      },
+    };
     // Redirects after body-bearing requests (T10 M1): see body-redirect-guard.ts.
     // Only a policy that requires every hop checked (an engagement scope) gets
     // the guard, and it refuses a body-bearing request the guard did not see;
@@ -2019,6 +2252,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const redirectGuard =
       egress.requireRedirectGuard === true
         ? new BodyRedirectGuard(context, {
+            probes: probeLane,
             verdictOf: (hostname, url, hop) =>
               verdictOf(hostname, url, {
                 ...hop,
@@ -2107,6 +2341,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         await fulfill(BLOCKED_RESPONSE);
       };
 
+      // ADR-030: the probe claim this request may carry, assigned once the
+      // nonce is visible below (and settled on every terminal path, including
+      // the catch). Declared here so failure paths outside the try can see it.
+      let probeClaim: ProbeClaim | undefined;
+
       try {
         // Method and headers ride along so engagement-scope rules can
         // enforce methods and identity bindings; redirect hops reuse the
@@ -2131,12 +2370,37 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           headers: requestHeaders,
           ...classification,
         });
+        // ADR-030: attribute a probe by its secret nonce header (exact — a
+        // page timer's identical-URL request carries no nonce). Only fetch/XHR
+        // traffic is inspected, and only while a claim is live.
+        probeClaim =
+          fetchLane.hasLiveClaims() && ['fetch', 'xhr'].includes(request.resourceType())
+            ? fetchLane.claimForHeaders(requestHeaders)
+            : undefined;
+        // Native-lane (POST/PUT/PATCH) probes are invisible here — the guard
+        // claimed and stripped their nonce before this handler ran — so their
+        // denials are noted by request shape for the guard's synthetic-denial
+        // detection to pick up. Inspected-lane probes carry their nonce here
+        // and settle directly through probeClaim.
+        const probeTraffic =
+          probeClaim !== undefined ||
+          (fetchLane.hasLiveClaims() && ['fetch', 'xhr'].includes(request.resourceType()));
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, {
             blocked: true,
             reason: initial.reason,
             ...(initial.scope !== undefined ? { scope: initial.scope } : {}),
+            ...(probeClaim !== undefined ? { probe: true } : {}),
           });
+          if (probeClaim !== undefined) {
+            fetchLane.settle(probeClaim, {
+              kind: 'denied',
+              reason: initial.reason ?? 'egress_policy',
+              ...(initial.scope !== undefined ? { scope: initial.scope } : {}),
+            });
+          } else if (probeTraffic) {
+            fetchLane.noteDenied(method, url, initial.reason ?? 'egress_policy', initial.scope);
+          }
           await deny(initial.reason ?? 'engine_error', initial.scope);
           return;
         }
@@ -2156,14 +2420,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               blocked: true,
               reason: 'egress_policy',
               detail: 'REDIRECT_UNCHECKABLE',
+              ...(probeClaim !== undefined ? { probe: true } : {}),
             });
+            if (probeClaim !== undefined)
+              fetchLane.settle(probeClaim, { kind: 'failed', detail: 'REDIRECT_UNCHECKABLE' });
+            else if (probeTraffic)
+              fetchLane.noteDenied(method, url, 'REDIRECT_UNCHECKABLE', undefined);
             await deny('egress_policy');
             return;
           }
           emitRequest(
             'request.finished',
             request,
-            { passthrough: true },
+            { passthrough: true, ...(probeClaim !== undefined ? { probe: true } : {}) },
             redirectGuard === undefined
           );
           recordInjection(url);
@@ -2172,9 +2441,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         }
 
         recordInjection(url);
+        // A claimed probe's Node-side re-issue always carries explicit headers
+        // so the nonce cannot reach the wire (an undefined override would let
+        // route.fetch re-issue the browser's original header set verbatim).
         const response = await route.fetch({
           maxRedirects: 0,
-          ...(override !== undefined ? { headers: override } : {}),
+          ...(probeClaim !== undefined
+            ? { headers: stripNonce(requestHeaders) }
+            : override !== undefined
+              ? { headers: override }
+              : {}),
         });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop
@@ -2186,7 +2462,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // Explicit marker overrides must not pin the source host's cookies or
         // restore credentials after an origin-changing redirect. The context's
         // request transport selects fresh destination cookies when omitted.
-        let redirectHeaders = originalHeaders;
+        // A probe's nonce rides the original header set; the walk re-issues
+        // these headers on every hop, so it starts from the stripped set.
+        let redirectHeaders =
+          probeClaim !== undefined ? stripNonce(originalHeaders) : originalHeaders;
         let current = response;
         let currentUrl = url;
         let currentMethod = method;
@@ -2222,6 +2501,28 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               return;
             }
             seen.add(hopKey);
+            // ADR-030: a probe refuses cross-origin redirect destinations even
+            // when the scope allows them — a supplied CSRF/custom header must
+            // not leak to a second origin through a redirect.
+            if (
+              probeClaim !== undefined &&
+              !fetchLane.allowsRedirect(probeClaim, absolute.toString())
+            ) {
+              emitRequest('request.failed', request, {
+                blocked: true,
+                reason: 'egress_policy',
+                detail: 'PROBE_CROSS_ORIGIN_REDIRECT',
+                redirect: absolute.origin + absolute.pathname,
+                probe: true,
+              });
+              fetchLane.settle(probeClaim, {
+                kind: 'denied',
+                reason: 'PROBE_CROSS_ORIGIN_REDIRECT',
+                scope: 'SCOPE_HOST_DENIED',
+              });
+              await deny('egress_policy');
+              return;
+            }
             const nextMethod = followMethod(current.status(), currentMethod);
             if (nextMethod !== currentMethod && (nextMethod === 'GET' || nextMethod === 'HEAD')) {
               bodyDropped = true;
@@ -2266,7 +2567,15 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 reason: hop.reason,
                 ...(hop.scope !== undefined ? { scope: hop.scope } : {}),
                 redirect: absolute.origin + absolute.pathname,
+                ...(probeClaim !== undefined ? { probe: true } : {}),
               });
+              if (probeClaim !== undefined) {
+                fetchLane.settle(probeClaim, {
+                  kind: 'denied',
+                  reason: hop.reason ?? 'egress_policy',
+                  ...(hop.scope !== undefined ? { scope: hop.scope } : {}),
+                });
+              }
               await deny(hop.reason ?? 'engine_error', hop.scope);
               return;
             }
@@ -2282,7 +2591,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                   maxRetries: 0,
                 })
               : await route.fetch({
-                  ...(egress.headersForRequest ? { headers: hopRequestHeaders } : {}),
+                  // A probe always re-issues explicit headers: an omitted set
+                  // would let route.fetch replay the browser's original
+                  // headers — nonce included — on the hop.
+                  ...(egress.headersForRequest || probeClaim !== undefined
+                    ? { headers: hopRequestHeaders }
+                    : {}),
                   url: absolute.toString(),
                   method: nextMethod,
                   maxRedirects: 0,
@@ -2322,11 +2636,37 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
            * the document at the right address. Everything else is served the
            * verified terminal bytes directly: no synthetic redirect, no second
            * fetch, no terminal TOCTOU. */
+          /** Settle a claimed probe with the inspected lane's terminal witness. */
+          const settleProbe = async (
+            terminalMethod: string,
+            status: number,
+            terminalHeaders: Record<string, string>,
+            body: Buffer | undefined
+          ): Promise<void> => {
+            if (probeClaim === undefined) return;
+            const bodyless = terminalMethod === 'HEAD' || [204, 205, 304].includes(status);
+            fetchLane.settle(probeClaim, {
+              kind: 'admitted',
+              status,
+              headers: Object.entries(terminalHeaders).map(([name, value]) => ({ name, value })),
+              body: bodyless ? undefined : body,
+              outcome: bodyless ? 'bodyless' : 'terminal',
+            });
+          };
           const deliverTerminal = async (body?: Buffer): Promise<void> => {
             emitRequest('request.finished', request, {
               status: 302,
               redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
+              ...(probeClaim !== undefined ? { probe: true } : {}),
             });
+            if (probeClaim !== undefined) {
+              await settleProbe(
+                currentMethod,
+                current.status(),
+                await current.headers(),
+                body ?? (await current.body().catch(() => Buffer.alloc(0)))
+              );
+            }
             if (request.isNavigationRequest()) {
               const attributeSafe = currentUrl
                 .replace(/&/g, '&amp;')
@@ -2346,16 +2686,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
           // Playwright buffers route.fetch before this gate; this limits what
           // reaches the page, NOT peak transport memory (ADR-008 residual).
-          if (egress.checkBodySize !== undefined) {
+          if (egress.checkBodySize !== undefined || probeClaim !== undefined) {
             const body = await current.body();
             try {
-              await egress.checkBodySize(body.byteLength);
+              await egress.checkBodySize?.(body.byteLength);
             } catch {
               emitRequest('request.failed', request, {
                 blocked: true,
                 reason: 'egress_policy',
                 detail: 'RESPONSE_TOO_LARGE (actual-byte cap)',
+                ...(probeClaim !== undefined ? { probe: true } : {}),
               });
+              if (probeClaim !== undefined)
+                fetchLane.settle(probeClaim, { kind: 'failed', detail: 'RESPONSE_TOO_LARGE' });
               await deny('egress_policy');
               return;
             }
@@ -2366,7 +2709,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             emitRequest('request.finished', request, {
               status: current.status(),
               bytes: body.byteLength,
+              ...(probeClaim !== undefined ? { probe: true } : {}),
             });
+            await settleProbe(method, current.status(), headers, body);
             await fulfill({ response: current, body });
             return;
           }
@@ -2388,7 +2733,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         emitRequest('request.failed', request, {
           blocked: false,
           reason: classifyNavigationFailure(error, 'transport'),
+          ...(probeClaim !== undefined ? { probe: true } : {}),
         });
+        if (probeClaim !== undefined && !probeClaim.settled) {
+          fetchLane.settle(probeClaim, {
+            kind: 'failed',
+            detail: classifyNavigationFailure(error, 'transport'),
+          });
+        }
         if (!terminalStarted && request.isNavigationRequest()) {
           let mainNavigation = false;
           try {
@@ -2898,6 +3250,7 @@ function navigationEvidenceUrl(value: string): string {
  */
 class PlaywrightPage implements EnginePage {
   private coordinateController: CoordinateController | undefined;
+  private pageFetchController: PageFetchController | undefined;
   private ordinaryInput = 0;
   private assertCoordinateInput(): void {
     if (!this.engine.supportsCoordinateInput)
@@ -2922,6 +3275,41 @@ class PlaywrightPage implements EnginePage {
       return Promise.reject(new EngineError('SESSION_BUSY', 'Another input owns this page', false));
     return this.coordinates().prepare(action, authority);
   }
+  private assertPageFetch(): PageFetchLane {
+    if (!this.engine.supportsPageFetch)
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'This engine is not qualified for origin-context probes',
+        false
+      );
+    const lane = pageFetchLanes.get(this.page.context());
+    if (lane === undefined)
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Origin-context probes require a scoped session (an engagement scope at the egress choke point)',
+        false
+      );
+    return lane;
+  }
+  private probes(): PageFetchController {
+    const lane = this.assertPageFetch();
+    if (this.pageFetchController === undefined)
+      this.pageFetchController = new PageFetchController(
+        this.page,
+        () => this.disclosureCdp(),
+        lane
+      );
+    return this.pageFetchController;
+  }
+  async prepareFetch(
+    action: EngineAction,
+    authority?: import('@agentbrowser/engine').CoordinateAuthority
+  ) {
+    this.assertPageFetch();
+    if (this.ordinaryInput || this.coordinateController?.busy)
+      throw new EngineError('SESSION_BUSY', 'Another input owns this page', false);
+    return this.probes().prepare(action, authority);
+  }
   private actionDispatches = 0;
   private navigationDispatches = 0;
   private actionNavigationEpoch: object = {};
@@ -2940,6 +3328,7 @@ class PlaywrightPage implements EnginePage {
   private readonly onFrameNavigated = (frame: import('playwright').Frame) => {
     if (frame === this.page.mainFrame()) {
       this.coordinateController?.invalidate();
+      this.pageFetchController?.invalidate();
       this.enqueueEvent({
         type: 'page.navigated',
         timestamp: new Date().toISOString(),
@@ -4999,22 +5388,30 @@ class PlaywrightPage implements EnginePage {
 
   async act(action: EngineAction): Promise<ActionEffect> {
     const coordinate = action.type === 'clickAt' || action.type === 'uploadAt';
+    const probe = action.type === 'fetch';
     if (coordinate) this.assertCoordinateInput();
+    if (probe) this.assertPageFetch();
     if (
       (coordinate && this.ordinaryInput > 0) ||
-      (this.coordinateController?.busy && !this.coordinateController.owns(action.coordinateToken))
+      (this.coordinateController?.busy &&
+        !this.coordinateController.owns(action.coordinateToken)) ||
+      (probe && (this.ordinaryInput > 0 || this.coordinateController?.busy)) ||
+      (this.pageFetchController?.busy && !this.pageFetchController.owns(action.fetchToken)) ||
+      (!coordinate && !probe && this.pageFetchController?.busy)
     )
       throw new EngineError('SESSION_BUSY', 'Another input owns this page', false);
-    if (!coordinate) this.ordinaryInput++;
+    if (!coordinate && !probe) this.ordinaryInput++;
     try {
       return await this.actInternal(action);
     } finally {
-      if (!coordinate) this.ordinaryInput--;
+      if (!coordinate && !probe) this.ordinaryInput--;
     }
   }
   private async actInternal(action: EngineAction): Promise<ActionEffect> {
     if (this.coordinateController?.busy && !this.coordinateController.owns(action.coordinateToken))
       throw new EngineError('SESSION_BUSY', 'A prepared coordinate gesture owns this page', false);
+    if (this.pageFetchController?.busy && !this.pageFetchController.owns(action.fetchToken))
+      throw new EngineError('SESSION_BUSY', 'A prepared probe owns this page', false);
     try {
       return await this.performAction(action);
     } catch (error) {
@@ -5359,6 +5756,40 @@ class PlaywrightPage implements EnginePage {
         }
       );
       this.bumpRevision();
+      return {
+        actionId,
+        startTimestamp,
+        endTimestamp: new Date().toISOString(),
+        oldRevision,
+        newRevision: this.revision,
+        result,
+      };
+    }
+    if (action.type === 'fetch') {
+      // One prepared, consent-bound probe: no DOM mutation, so the page
+      // revision is unchanged. The hidden transport fields arrive via the
+      // service adapter, exactly as coordinate input's do.
+      const assertCurrent = action.fetchAssertCurrent;
+      const beforeDispatch = action.fetchBeforeDispatch;
+      if (
+        typeof assertCurrent !== 'function' ||
+        typeof beforeDispatch !== 'function' ||
+        typeof action.fetchToken !== 'object' ||
+        action.fetchToken === null
+      )
+        throw new EngineError(
+          'INVALID_REQUEST',
+          'A fetch probe requires a prepared, approved request',
+          false
+        );
+      const result = await this.probes().perform(
+        action.fetchToken,
+        assertCurrent as () => void,
+        async () => {
+          await (beforeDispatch as () => Promise<void>)();
+          onDispatch();
+        }
+      );
       return {
         actionId,
         startTimestamp,
@@ -5902,12 +6333,14 @@ class PlaywrightPage implements EnginePage {
 
   private closeDisclosureCdp(): void {
     this.coordinateController?.invalidate();
+    this.pageFetchController?.invalidate();
     void this.disclosureCdpSession?.detach().catch(() => {});
     this.disclosureCdpSession = undefined;
   }
 
   async close(): Promise<void> {
     this.coordinateController?.close();
+    this.pageFetchController?.close();
     this.eventsClosed = true;
     this.closeDisclosureCdp();
     this.releaseRefs();

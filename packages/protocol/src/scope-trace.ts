@@ -8,6 +8,8 @@ export const ScopeDenialDetailSchema = Type.Object(
     method: Type.String({ minLength: 1, maxLength: 32, pattern: '^(?:[A-Z][A-Z0-9-]{0,31}|\\?)$' }),
     url: Type.String({ maxLength: 2048, pattern: '^https?://[^\\s\\x00-\\x1f]*$' }),
     hostname: Type.String({ maxLength: 253, pattern: '^[^\\x00-\\x1f\\x7f]*$' }),
+    /** Present when the denied request was an origin-context probe (ADR-030). */
+    probe: Type.Optional(Type.Literal(true)),
   },
   { additionalProperties: false }
 );

@@ -1,8 +1,9 @@
 # ADR-030: Controlled origin-context API probes
 
-Status: Accepted for the approved T10 handoff P0-2 increment; independent review
-required before merge. Initial design 2026-10-30; preparation/lifetime refinements
-2026-11-01 from [ADR-031](031-coordinate-interaction-and-visual-evidence.md).
+Status: Accepted and implemented (1.32.0); independent review before merge.
+Initial design 2026-10-30; preparation/lifetime refinements 2026-11-01 from
+[ADR-031](031-coordinate-interaction-and-visual-evidence.md); activation
+2026-11-02. Live Vinted/Wolt acceptance remains pending operator verification.
 Related: [ADR-006](006-network-egress-policy-ssrf.md),
 [ADR-007](007-approval-tokens-side-effects.md),
 [ADR-015](015-cross-package-contract-single-source-of-truth.md).
@@ -193,4 +194,14 @@ Live Vinted/Wolt verification remains pending operator verification.
 
 Transport semantics follow the [Fetch standard](https://fetch.spec.whatwg.org/),
 including its forbidden request headers and redirect method rules. Additional
-credential and method-tunneling header refusals are deliberate product limits.
+refusals are deliberate product limits, enforced at the protocol contract so
+every surface refuses identically: credential headers (`Authorization`,
+`Proxy-Authorization` — the page origin's cookie jar is the credential surface);
+the method-tunneling and request-context families (`x-http-method*`, `x-method*`,
+`x-override-method`, `x-rest-method`, `x-forwarded*`, `x-original-*`,
+`x-rewrite-*`, `x-real-ip` — a `read`-classified GET must never carry an
+effective write method past the method-based consent floor, the same refusal
+the scope-marker path applies); the fetch-spec `sec-*`/`proxy-*` prefixes (the
+browser would silently drop them, and a silent drop is a repair, not a refusal);
+the synthetic-denial marker; and header values that are not ByteString-encodable
+or carry CR/LF/NUL.
