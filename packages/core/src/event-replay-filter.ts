@@ -2,7 +2,7 @@ import type { EngineEvent } from '@agentbrowser/engine';
 import { type EventReplaySelector, isScopeDenialCode } from '@agentbrowser/protocol';
 import { RE2JS } from 're2js';
 
-export const EVENT_REPLAY_MAX_PATTERN_PROGRAM = 1024;
+const EVENT_REPLAY_MAX_PATTERN_PROGRAM = 1024;
 
 export class EventReplayPatternError extends Error {
   constructor() {
