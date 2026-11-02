@@ -345,6 +345,7 @@ const LEDGER_REQUEST_FIELDS = [
   'redirect',
   'detail',
   'passthrough',
+  'probe',
 ] as const;
 
 function ledgerRecord(ledger: EngagementLedger, record: EngineRequestRecord): void {
@@ -5482,7 +5483,8 @@ export class AgentBrowserService {
       request = { ...fields, action: type } as unknown as ServiceActRequest;
     }
     const coordinate = request.action === 'clickAt' || request.action === 'uploadAt';
-    if (coordinate || this.usesOperatorReview(sessionId)) {
+    const probe = request.action === 'fetch';
+    if (coordinate || probe || this.usesOperatorReview(sessionId)) {
       try {
         request = JSON.parse(canonicalJson(request)) as ServiceActRequest;
       } catch {
@@ -5629,7 +5631,123 @@ export class AgentBrowserService {
           },
         };
       }
-      const adapter = new RefTranslatingPage(page.enginePage, page, coordinateBinding);
+      // ADR-030 P0-2: the fetch probe binding. Same shape as coordinate
+      // consent: prepare pins the document, the approval commits exactly once
+      // at the engine's dispatch boundary, and the scope preflight denies
+      // before any browser work (the wire-level checks still apply — this is
+      // a clean failure mode, never a bypass).
+      let fetchBinding: ConstructorParameters<typeof RefTranslatingPage>[2];
+      let fetchApproval: Awaited<ReturnType<AgentBrowserService['prepareApproval']>> | undefined;
+      if (probe) {
+        const sessionOwner = this.requireSession(sessionId);
+        const controlledOwner = this.controlledContexts.has(sessionOwner)
+          ? this.capturePageOwnerInScope(sessionId, pageId)
+          : undefined;
+        const owner = {
+          assertAuthority: () => {
+            if (controlledOwner) controlledOwner.assertAuthority();
+            else {
+              this.assertAuthority(sessionId);
+              if (
+                this.requireSession(sessionId) !== sessionOwner ||
+                this.pages.get(pageId) !== page ||
+                page.sessionId !== sessionId
+              )
+                throw new ServiceError('CONTROL_REVOKED', 'Probe page owner changed');
+            }
+          },
+        };
+        const capabilities = await this.requireSession(sessionId).engine.capabilities();
+        owner.assertAuthority();
+        if (capabilities.pageFetch !== true || !page.enginePage.prepareFetch)
+          throw new ServiceError(
+            'ENGINE_UNSUPPORTED',
+            'Origin-context probes require a qualified engine and a scoped session'
+          );
+        const probeAction = actionValidation.value as import('@agentbrowser/protocol').FetchAction;
+        const scope = this.sessionScopes.get(sessionId);
+        if (scope !== undefined) {
+          try {
+            const scoped = scope as unknown as {
+              preflightCheck?: (request: {
+                hostname: string;
+                url: string;
+                method?: string;
+                headers?: Record<string, string>;
+              }) => Promise<void>;
+            };
+            const headers = Object.fromEntries(
+              (probeAction.headers ?? []).map((header) => [header.name, header.value])
+            );
+            if (typeof scoped.preflightCheck === 'function') {
+              await scoped.preflightCheck({
+                hostname: new URL(probeAction.url).hostname,
+                url: probeAction.url,
+                method: probeAction.method,
+                headers,
+              });
+            } else {
+              await scope.checkRequest({
+                hostname: new URL(probeAction.url).hostname,
+                url: probeAction.url,
+                method: probeAction.method,
+                headers,
+              });
+            }
+          } catch (error) {
+            const scopeCode = (error as { details?: { scope?: unknown } }).details?.scope;
+            const detail = this.secretManager.redact(
+              error instanceof Error ? error.message : String(error)
+            );
+            this.traceScopeDenial(sessionId, {
+              method: probeAction.method,
+              url: probeAction.url,
+              ...(isScopeDenialCode(scopeCode) ? { scope: scopeCode } : {}),
+              detail,
+            });
+            throw this.redactedError(
+              new ServiceError(
+                'POLICY_DENIED',
+                `The engagement scope denied this probe: ${detail}`,
+                false,
+                isScopeDenialCode(scopeCode) ? { scope: scopeCode } : undefined
+              )
+            );
+          }
+        }
+        const prepared = await page.enginePage.prepareFetch(
+          { ...actionValidation.value },
+          {
+            signal: controlledOwner?.ownerSignal ?? sessionOwner.signal,
+            assertCurrent: owner.assertAuthority,
+          }
+        );
+        try {
+          owner.assertAuthority();
+        } catch (error) {
+          prepared.dispose();
+          throw error;
+        }
+        fetchBinding = {
+          prepared,
+          assertCurrent: owner.assertAuthority,
+          beforeDispatch: async () => {
+            owner.assertAuthority();
+            if (!fetchApproval)
+              throw new ServiceError('POLICY_DENIED', 'Probe approval was not prepared');
+            await fetchApproval.revalidate();
+            owner.assertAuthority();
+            await fetchApproval.commit();
+            owner.assertAuthority();
+          },
+        };
+      }
+      const adapter = new RefTranslatingPage(
+        page.enginePage,
+        page,
+        coordinateBinding,
+        fetchBinding
+      );
       const result = await this.executor
         .execute(
           {
@@ -5642,7 +5760,24 @@ export class AgentBrowserService {
             observation: this.lastObservationOf(page),
             currentRevision: page.revision,
             beforeAction: async (resolved) => {
-              if (coordinateBinding) {
+              if (fetchBinding) {
+                fetchBinding.assertCurrent();
+                fetchApproval = await this.prepareApproval(
+                  sessionId,
+                  pageId,
+                  page,
+                  request,
+                  fetchBinding.prepared.identity,
+                  span
+                );
+                fetchBinding.assertCurrent();
+                if (this.authority.browserGuardPendingInScope(sessionId))
+                  this.authority.captureBrowserDispatchInScope(sessionId, async () => {
+                    fetchBinding?.assertCurrent();
+                    await fetchApproval?.revalidate();
+                    fetchBinding?.assertCurrent();
+                  });
+              } else if (coordinateBinding) {
                 coordinateBinding.assertCurrent();
                 coordinateApproval = await this.prepareApproval(
                   sessionId,
@@ -5716,7 +5851,10 @@ export class AgentBrowserService {
               : {}),
           }
         )
-        .finally(() => coordinateBinding?.prepared.dispose());
+        .finally(() => {
+          coordinateBinding?.prepared.dispose();
+          fetchBinding?.prepared.dispose();
+        });
 
       if (result.error) {
         // A crash inside the executor surfaces as an INTERNAL whose message
@@ -5808,6 +5946,15 @@ export class AgentBrowserService {
             : {}),
           ...((request.action === 'upload' || coordinate) && result.result != null
             ? { result: result.result }
+            : {}),
+          ...(probe && result.result != null
+            ? {
+                // ADR-030: the probe response is untrusted page-adjacent
+                // content; redact body and header values with the owning
+                // session's secret registry (seeded-cookie secrets included —
+                // global-only redaction is insufficient) before publication.
+                result: this.redactFetchResult(result.result, sessionId),
+              }
             : {}),
         };
         // Follow-up waits or reads could mask the completed action and its observed
@@ -7624,14 +7771,30 @@ export class AgentBrowserService {
       ...(element ? { element } : {}),
     });
     const coordinate = request.action === 'clickAt' || request.action === 'uploadAt';
-    const risk = coordinate ? 'transaction' : classification.effect;
+    // ADR-030: a probe's effect follows its HTTP method — GET/HEAD/OPTIONS are
+    // method-convention reads (credential-review floors still apply); every
+    // other method is a transaction requiring exact one-use consent, even when
+    // generic unknown actions are allowed.
+    const probeMethod =
+      request.action === 'fetch'
+        ? String((request as unknown as { method?: unknown }).method ?? '').toUpperCase()
+        : undefined;
+    const unsafeProbe =
+      probeMethod !== undefined && !['GET', 'HEAD', 'OPTIONS'].includes(probeMethod);
+    const risk = coordinate
+      ? 'transaction'
+      : probeMethod !== undefined
+        ? unsafeProbe
+          ? 'transaction'
+          : 'read'
+        : classification.effect;
     let decision = tightenApprovalMode(
-      classification.effect,
-      approvalModeOf(this.approvalAuthorizerFor(sessionId), classification),
+      risk,
+      approvalModeOf(this.approvalAuthorizerFor(sessionId), { ...classification, effect: risk }),
       this.sessionApprovalPolicies.get(sessionId)
     );
-    // Preserve an existing deny before applying the stricter untargeted-input floor.
-    if (coordinate && decision !== 'deny') {
+    // Preserve an existing deny before applying the stricter exact-consent floor.
+    if ((coordinate || unsafeProbe) && decision !== 'deny') {
       const floorDecision = tightenApprovalMode(
         risk,
         approvalModeOf(this.approvalAuthorizerFor(sessionId), { ...classification, effect: risk }),
@@ -7853,6 +8016,35 @@ export class AgentBrowserService {
     }
   }
 
+  /**
+   * ADR-030: reduce a probe result through the session's secret registry.
+   * Response bodies can echo request secrets (a CSRF token reflected in an
+   * error message, a seeded cookie value); every published byte is redacted,
+   * headers included.
+   */
+  private redactFetchResult(value: unknown, sessionId: string): unknown {
+    if (value === null || typeof value !== 'object') return value;
+    const result = value as {
+      body?: unknown;
+      headers?: Array<{ name: string; value: string }>;
+      [key: string]: unknown;
+    };
+    const scrub = (text: string): string =>
+      this.secretManager.redactUntrustedScoped(text, sessionId) as string;
+    return {
+      ...result,
+      ...(typeof result.body === 'string' ? { body: scrub(result.body) } : {}),
+      ...(Array.isArray(result.headers)
+        ? {
+            headers: result.headers.map((header) => ({
+              name: header.name,
+              value: scrub(header.value),
+            })),
+          }
+        : {}),
+    };
+  }
+
   /** Strip registered secret values from an error before it leaves the service. */
   private redactedError(
     error: ServiceError,
@@ -7920,6 +8112,11 @@ class RefTranslatingPage implements EnginePage {
       prepared: import('@agentbrowser/engine').PreparedCoordinateAction;
       assertCurrent(): void;
       beforeDispatch(): Promise<void>;
+    },
+    private readonly fetchBinding?: {
+      prepared: import('@agentbrowser/engine').PreparedCoordinateAction;
+      assertCurrent(): void;
+      beforeDispatch(): Promise<void>;
     }
   ) {
     this.id = inner.id;
@@ -7948,6 +8145,13 @@ class RefTranslatingPage implements EnginePage {
             coordinateBeforeDispatch: this.coordinateBinding.beforeDispatch,
           }
         : {}),
+      ...(this.fetchBinding
+        ? {
+            fetchToken: this.fetchBinding.prepared.token,
+            fetchAssertCurrent: this.fetchBinding.assertCurrent,
+            fetchBeforeDispatch: this.fetchBinding.beforeDispatch,
+          }
+        : {}),
     };
     if (action.target !== undefined) {
       const engineRef = this.page.lastObservation?.refMap.get(action.target.ref);
@@ -7963,6 +8167,8 @@ class RefTranslatingPage implements EnginePage {
       action.type === 'navigate' ||
       action.type === 'hover' ||
       action.type === 'wait' ||
+      // A probe does not touch the document; the page revision stands.
+      action.type === 'fetch' ||
       action.type === 'acceptDialog' ||
       action.type === 'dismissDialog';
     const newRevision = nonMutating ? this.page.revision : this.page.revision + 1;
