@@ -61,6 +61,13 @@ vi.mock('@agentbrowser/core', async (importOriginal) => {
     override redact<T>(input: T): T {
       return sabotage.redactionDisabled ? input : super.redact(input);
     }
+
+    override captureRegisteredScopedRedactor(sessionId: string) {
+      const captured = super.captureRegisteredScopedRedactor(sessionId);
+      if (!captured) return undefined;
+      return (input: unknown, redactKeys = true) =>
+        sabotage.redactionDisabled ? input : captured(input, redactKeys);
+    }
   }
   return { ...actual, SecretManager: UnredactingSecretManager };
 });

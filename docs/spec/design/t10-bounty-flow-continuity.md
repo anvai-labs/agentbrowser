@@ -5,6 +5,12 @@ Foundation release 1.29.0 shipped; maintenance release 1.29.1 shipped.
 Coordinate mode (A1) shipped in [1.30.0](../evidence/release-1.30.0.md).
 The redirect method/body prerequisite shipped in
 [1.30.1](../evidence/release-1.30.1.md).
+Research-marker transport and initial seed lifecycle fixes shipped in
+[1.30.2](../evidence/release-1.30.2.md); ordinary publication privacy and fetch
+activation remain separate qualification gates.
+The owner-bound ordinary publication foundation is a
+[1.30.3 maintenance candidate](../evidence/release-1.30.3.md); delivery gates
+remain open. It does not activate fetch, resources, live reseed or submit helpers.
 The updated external handoff/kickoff define acceptance. Their revised order takes
 precedence over the kickoff's older numbered list:
 P0-1 → P0-3 → P1-4 → A1 → P0-2 → P1-5/P1-6+A4 → P1-7+A2/A3 → P2-8 → A5 → A6.
@@ -26,8 +32,8 @@ changes back into develop while retaining develop's 1.29.0 evidence record.
 | A1 | Released in 1.30.0: public closed-shadow picker/search/select/upload/one-submit fixture; DPR 1/2, controlled durable no-replay and method/host/rate/budget denial ledgers; full checks, exact-head independent review and release delivery passed. Live program verification pending |
 | P0-2 | In progress and disabled. Redirect method/body repairs released in 1.30.1; response-admission helper qualified locally, with activation/controlled-service gates still open |
 | P1-5/P1-6+A4; P1-7+A2/A3; P2-8; A5; A6 | Planned in the approved order; not completed by the published hotfix |
-| Header hostSuffix pass-through | Ported and qualified in #676 after exact review, full 6,491-test hooks and green protected CI; maintenance 1.30.2 candidate, delivery pending |
-| Initial seed privacy prerequisite | Reserved-owner registration, generation-bound redaction/cleanup and fail-closed recorder faults are in the 1.30.2 candidate; independently reviewed, combined release gates pending. This does not implement live reseed |
+| Header hostSuffix pass-through | Released in 1.30.2 after #676, combined release review, full 6,511-test hooks, green protected CI and package/tap delivery |
+| Initial seed privacy prerequisite | Released in 1.30.2: reserved-owner registration, generation-bound redaction/cleanup and fail-closed recorder faults. This does not implement live reseed or ordinary observe/console output privacy |
 | Scope host suggestions | Helpers/tests exist in 1.29.1; no public call site found, so this is not a delivered resource-host workflow |
 
 Main's #664 also disabled four unused-code Biome rules globally. The back-sync

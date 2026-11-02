@@ -37,6 +37,7 @@ import {
   SCOPE_SERVICE_WORKERS,
   withMetadataFloor,
 } from './floor.js';
+import { type OwnerPublication, ownerPublication } from './owner-publication.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { SessionAuthority } from './session-authority.js';
 /**
@@ -1219,23 +1220,47 @@ export class AgentBrowserService {
    * Run an operation under a span: success ends it with outcome ok, failure
    * marks it error with the protocol code. Children link to the span.
    */
+  private captureOwnerPublication(sessionId?: string): OwnerPublication {
+    const owner =
+      sessionId === undefined ? undefined : this.coordinator.captureForCleanup(sessionId);
+    const scopeOwner = sessionId === undefined ? undefined : this.sessionScopes.get(sessionId);
+    const ledgerOwner = sessionId === undefined ? undefined : this.sessionLedgers.get(sessionId);
+    return ownerPublication(
+      () =>
+        owner && sessionId !== undefined
+          ? this.secretManager.captureRegisteredScopedRedactor(sessionId)
+          : (input, keys = true) =>
+              keys ? this.secretManager.redactUntrusted(input) : this.secretManager.redact(input),
+      () => {
+        scopeOwner?.stop('redaction unavailable');
+        ledgerOwner?.append('recording.failed', { reason: 'redaction_unavailable' });
+      }
+    );
+  }
+
+  private publicationError(
+    error: unknown,
+    operation: string,
+    publication: OwnerPublication
+  ): ServiceError {
+    try {
+      return this.mapError(error, operation, undefined, (value, keys = true) =>
+        keys ? publication.data(value) : publication.values(value)
+      );
+    } catch {
+      const fixed = publication.failure();
+      return new ServiceError(fixed.code, fixed.message, false, fixed.details);
+    }
+  }
+
   private traced<T>(
     name: string,
     attributes: Record<string, unknown>,
     operation: (span: Span | undefined) => Promise<T>
   ): Promise<T> {
     const secretScope = typeof attributes.sessionId === 'string' ? attributes.sessionId : undefined;
-    const ownerRedactor =
-      secretScope === undefined
-        ? undefined
-        : this.secretManager.captureRegisteredScopedRedactor(secretScope);
-    const redact = <V>(value: V): V =>
-      ownerRedactor
-        ? (ownerRedactor(value, false) as V)
-        : secretScope === undefined
-          ? this.secretManager.redact(value)
-          : this.secretManager.redactScoped(value, secretScope);
-    const span = this.tracer?.startSpan(name, redact(attributes));
+    const publication = this.captureOwnerPublication(secretScope);
+    const span = this.tracer?.startSpan(name, publication.values(attributes));
     const startedAt = Date.now();
     return operation(span).then(
       (value) => {
@@ -1246,19 +1271,27 @@ export class AgentBrowserService {
         return value;
       },
       (error) => {
-        const mapped = this.mapError(error, name, secretScope, ownerRedactor);
+        const mapped = this.publicationError(error, name, publication);
         const code = mapped.code;
-        this.telemetry(name, 'error', attributes, startedAt, code);
-        if (span) {
-          this.tracer?.failSpan(
-            span,
-            code,
-            redact(error instanceof Error ? error.message : String(error))
+        try {
+          this.telemetry(name, 'error', attributes, startedAt, code);
+          if (span) {
+            this.tracer?.failSpan(
+              span,
+              code,
+              publication.values(error instanceof Error ? error.message : String(error))
+            );
+            this.tracer?.endSpan(span);
+          }
+        } catch {
+          const fixed = publication.failure();
+          throw carryAfterEffect(
+            error,
+            new ServiceError(fixed.code, fixed.message, false, fixed.details)
           );
-          this.tracer?.endSpan(span);
         }
         // The mapped, redacted error keeps a post-effect mark (T5 B-dur, B2).
-        throw carryAfterEffect(error, this.redactedError(mapped, secretScope, ownerRedactor));
+        throw carryAfterEffect(error, mapped);
       }
     );
   }
@@ -1558,19 +1591,35 @@ export class AgentBrowserService {
 
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
     const owner = this.requireSession(sessionId);
+    let publication: OwnerPublication;
+    try {
+      publication = this.captureOwnerPublication(sessionId);
+    } catch {
+      return;
+    }
+    let redactionLost = false;
+    const redactEvent = (event: EngineEvent): EngineEvent | undefined => {
+      try {
+        return {
+          type: event.type,
+          timestamp: publication.identifier(event.timestamp),
+          sessionId: publication.identifier(sessionId),
+          pageId: publication.identifier(pageId),
+          ...(event.data !== undefined ? { data: publication.data(event.data) } : {}),
+        };
+      } catch {
+        redactionLost = true;
+        publication.failure();
+        return undefined;
+      }
+    };
     void (async () => {
       let sawDestroyed = false;
       try {
         for await (const event of enginePage.events()) {
           if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted) break;
-          let stamped: EngineEvent = this.secretManager.redact({
-            ...event,
-            sessionId,
-            pageId,
-            ...(event.data !== undefined
-              ? { data: this.secretManager.redactUntrusted(event.data) }
-              : {}),
-          });
+          let stamped = redactEvent(event);
+          if (!stamped) break;
           if (stamped.type === 'page.created') {
             const adopted = await this.adoptPopupSerialized(sessionId, event.data).catch(
               () => undefined
@@ -1620,17 +1669,18 @@ export class AgentBrowserService {
       // deleted ledger with a lone synthetic event.
       if (
         !sawDestroyed &&
+        !redactionLost &&
         this.eventHistory.has(sessionId) &&
         this.canPublishEvents(sessionId, owner)
       ) {
-        const synthesized: EngineEvent = this.secretManager.redact({
+        const synthesized = redactEvent({
           type: 'page.destroyed',
           timestamp: new Date().toISOString(),
           sessionId,
           pageId,
           data: { reason: 'streamEnded' },
         });
-        if (this.recordEvent(sessionId, synthesized)) {
+        if (synthesized && this.recordEvent(sessionId, synthesized)) {
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
@@ -4951,20 +5001,43 @@ export class AgentBrowserService {
     pageId: string,
     request: PartialObservation
   ): Promise<PageState> {
-    const observation = await this.observeInternal(sessionId, pageId, request);
-    if (request.sinceRevision !== undefined) {
-      // The diff path accepts maxBytes but previously returned unbounded;
-      // paginateObservation applies the same byte budget to the diff result.
-      // The full observation rides along so a projection scope can resolve
-      // against the whole page, not just the changed subset.
-      const page = this.requirePage(sessionId, pageId);
-      return this.paginateObservation(
-        this.diffObservation(page, observation, request.sinceRevision),
-        request,
-        observation
-      );
+    const publication = this.captureOwnerPublication(sessionId);
+    try {
+      // Preserve request-validation precedence before capturing read authority.
+      if (!validateObservationRequest(request).ok)
+        return await this.observeInternal(sessionId, pageId, request);
+      const sessionOwner = this.requireSession(sessionId);
+      const pageOwner = this.requirePage(sessionId, pageId);
+      const control = this.controlledContexts.has(sessionOwner)
+        ? this.capturePageOwnerInScope(sessionId, pageId)
+        : undefined;
+      const assertCurrent = () => {
+        control?.assertAuthority();
+        if (
+          this.coordinator.get(sessionId) !== sessionOwner ||
+          sessionOwner.signal.aborted ||
+          this.pages.get(pageId) !== pageOwner ||
+          pageOwner.sessionId !== sessionId
+        )
+          throw new ServiceError('CONTROL_REVOKED', 'Observation owner changed');
+      };
+      assertCurrent();
+      const observation = await this.observeInternal(sessionId, pageId, request, {
+        publication,
+        assertCurrent,
+      });
+      assertCurrent();
+      if (request.sinceRevision !== undefined)
+        return this.paginateObservation(
+          this.diffObservation(pageOwner, observation, request.sinceRevision),
+          request,
+          publication,
+          observation
+        );
+      return this.paginateObservation(observation, request, publication);
+    } catch (error) {
+      throw this.publicationError(error, 'observe', publication);
     }
-    return this.paginateObservation(observation, request);
   }
 
   /**
@@ -4979,7 +5052,8 @@ export class AgentBrowserService {
   private async observeInternal(
     sessionId: string,
     pageId: string,
-    request: PartialObservation
+    request: PartialObservation,
+    owner?: { publication: OwnerPublication; assertCurrent(): void }
   ): Promise<PageState> {
     const checked = validateObservationRequest(request);
     if (!checked.ok)
@@ -4990,6 +5064,7 @@ export class AgentBrowserService {
         { issues: checked.issues, validIncludes: [...DELIVERED_INCLUDES].sort() }
       );
     const page = this.requirePage(sessionId, pageId);
+    owner?.assertCurrent();
     this.coordinator.updateActivity(sessionId);
 
     // Capture schemas validate delivered modes and enrichments before any browser work.
@@ -4999,6 +5074,7 @@ export class AgentBrowserService {
     // as empty. Omitting `wait` keeps the fast default path unchanged.
     if (request.wait !== undefined) {
       await this.waitFor(page.enginePage, request.wait);
+      owner?.assertCurrent();
     }
     const observationRequest: ObservationRequest = {
       ...(checked.value.mode !== undefined ? { mode: checked.value.mode } : {}),
@@ -5007,11 +5083,14 @@ export class AgentBrowserService {
     let raw: Awaited<ReturnType<EnginePage['observe']>>;
     try {
       raw = await page.enginePage.observe(observationRequest);
+      owner?.assertCurrent();
     } catch (error) {
+      owner?.assertCurrent();
       if (this.isCrash(error)) {
-        const errorDetail = this.secretManager.redact(
-          error instanceof Error ? error.message : String(error)
-        );
+        const message = error instanceof Error ? error.message : String(error);
+        const errorDetail = owner
+          ? owner.publication.values(message)
+          : this.secretManager.redact(message);
         await this.recoverFromCrash(sessionId, 'observe: engine crashed', errorDetail);
         throw new ServiceError(
           'ENGINE_CRASHED',
@@ -5023,7 +5102,9 @@ export class AgentBrowserService {
       // Same mapping hop `act` gets via traced(): without it a driver-side
       // timeout (e.g. a stalled first metadata read on a mid-navigation page)
       // surfaces as HTTP 500 INTERNAL instead of the typed timeout code.
-      throw this.mapError(error, 'observe');
+      throw owner
+        ? this.publicationError(error, 'observe', owner.publication)
+        : this.mapError(error, 'observe');
     }
 
     if (
@@ -5170,10 +5251,11 @@ export class AgentBrowserService {
   private paginateObservation(
     observation: PageState,
     request: PartialObservation,
+    publication: OwnerPublication,
     full?: PageState
   ): PageState {
     try {
-      const redacted = this.secretManager.redact(observation);
+      const redacted = publication.pageState(observation);
       const projection = {
         ...(request.roles !== undefined ? { roles: request.roles } : {}),
         ...(request.name !== undefined ? { name: request.name } : {}),
@@ -5184,7 +5266,7 @@ export class AgentBrowserService {
       };
       const projected = projectionActive(projection)
         ? projectObservation(redacted, projection, {
-            ...(full !== undefined ? { full: this.secretManager.redact(full) } : {}),
+            ...(full !== undefined ? { full: publication.pageState(full) } : {}),
             ...(request.continueFrom !== undefined ? { continueFrom: request.continueFrom } : {}),
           })
         : redacted;
@@ -5192,7 +5274,10 @@ export class AgentBrowserService {
         projected !== redacted
           ? projected.elements.map((element) => parseRef(element.ref)?.ordinal ?? 0)
           : undefined;
-      const budgeted = budgetObservation(projected, {
+      // Projection echoes contain caller strings too. Reapply owner redaction
+      // before counting output bytes, retaining refs and fixed DTO metadata.
+      const safeProjected = projected === redacted ? redacted : publication.pageState(projected);
+      const budgeted = budgetObservation(safeProjected, {
         maxBytes: request.maxBytes,
         maxElements: request.maxElements,
         // Under projection the continueFrom floor already applied to the

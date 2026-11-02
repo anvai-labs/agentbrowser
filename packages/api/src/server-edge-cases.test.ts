@@ -1029,12 +1029,17 @@ describe('server edge branches', () => {
       });
       const lines: string[] = [];
       const engine = new FakeEngine();
-      vi.spyOn(engine, 'createSession').mockRejectedValue(new Error('PRIVATE_ENGINE_DIAGNOSTIC'));
       const server = await buildServer({
         engine,
         secretManager,
         logger: new StructuredLogger({ sink: (line) => lines.push(line) }),
       });
+      // Exercise a fault escaping the service boundary so the route wrapper's
+      // own error serialization still reaches Fastify's safe fallback.
+      const service = (server as unknown as { service: AgentBrowserService }).service;
+      vi.spyOn(service, 'createSession').mockRejectedValue(
+        new ServiceError('INTERNAL', 'An unexpected engine error occurred', false)
+      );
       try {
         const response = await server.inject({
           method: 'POST',
@@ -1053,6 +1058,44 @@ describe('server edge branches', () => {
           code: 'INTERNAL',
           status: 500,
         });
+        expect(lines.join('\n')).not.toContain('PRIVATE_');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('contains service publication faults before route serialization without private diagnostics', async () => {
+      const secretManager = new SecretManager();
+      const redact = secretManager.redact.bind(secretManager);
+      vi.spyOn(secretManager, 'redact').mockImplementation((value) => {
+        if (value === 'An unexpected engine error occurred')
+          throw new Error('PRIVATE_PUBLICATION_CALLBACK_DIAGNOSTIC');
+        return redact(value);
+      });
+      const lines: string[] = [];
+      const engine = new FakeEngine();
+      vi.spyOn(engine, 'createSession').mockRejectedValue(new Error('PRIVATE_ENGINE_DIAGNOSTIC'));
+      const server = await buildServer({
+        engine,
+        secretManager,
+        logger: new StructuredLogger({ sink: (line) => lines.push(line) }),
+      });
+      try {
+        const response = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          payload: { tenantId: 't1' },
+        });
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual({
+          error: {
+            code: 'INTERNAL',
+            message: 'Credential-safe operation publication failed',
+            retryable: false,
+            details: { rule: 'floor.secret.redaction' },
+          },
+        });
+        expect(response.body).not.toContain('PRIVATE_');
         expect(lines.join('\n')).not.toContain('PRIVATE_');
       } finally {
         await server.close();
