@@ -10,19 +10,17 @@ exclude_docs: |
   # Leading slash anchors each pattern to docs/ top level; unanchored
   # gitignore-style patterns match at any depth and would silently drop
   # spec/evidence/, spec/tasks/README.md and spec/design/consumer-*.
+  # Dated internal handoff/investigation notes are consolidated under
+  # agent-handoffs/ (one excluded archive); the ADR template and the agent
+  # skill file stay excluded where they live.
   /README.md
   /agent-handoffs/
   /research/
   /evidence/
-  /consumer-*.md
   /coexistence-*.md
-  /HANDOFF-*.md
   /phase0-summary.md
   /phase1-progress.md
   /hygiene-audit.md
-  # Dated internal handoff/investigation notes, the ADR template and the agent skill file.
-  /AGENTBROWSER_*.md
-  /SESSION_HANDOFF_*.md
   /adr/000-template.md
   /skills/
 
@@ -149,6 +147,7 @@ nav:
   - Security & trust:
     - 'Threat model': threat-model.md
     - 'Policy': policy.md
+    - 'LAN CIDR allowlist policy': lan-cidr-policy.md
     - 'Egress transport design': egress-transport-design.md
     - 'Egress transport feasibility': egress-transport-feasibility.md
     - 'Egress transport reassessment': egress-transport-reassessment.md
