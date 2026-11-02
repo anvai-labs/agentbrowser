@@ -28,6 +28,7 @@ import {
   pruneArtifactCache,
 } from '@agentbrowser/core/local-artifacts';
 import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
+import { MAX_PROBE_BODY_BYTES } from '@agentbrowser/protocol';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -4036,7 +4037,10 @@ export function buildCli(deps: CliDependencies): Cli {
           },
           []
         )
-        .option('--body <text>', 'UTF-8 request body (not with GET/HEAD)')
+        .option(
+          '--body <text>',
+          'UTF-8 request body (refused on GET/HEAD/OPTIONS; allowed on POST/PUT/PATCH/DELETE)'
+        )
         .option(
           '--body-file <file>',
           'read the UTF-8 request body from a file (private evidence; takes precedence over --body)'
@@ -4069,8 +4073,8 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.bodyFile !== undefined) {
                 const { readFile } = await import('node:fs/promises');
                 const bytes = await readFile(options.bodyFile);
-                if (bytes.byteLength > 65536)
-                  throw new UsageError('Probe body exceeds 65536 UTF-8 bytes');
+                if (bytes.byteLength > MAX_PROBE_BODY_BYTES)
+                  throw new UsageError(`Probe body exceeds ${MAX_PROBE_BODY_BYTES} UTF-8 bytes`);
                 body = bytes.toString('utf8');
               } else if (options.body !== undefined) {
                 body = options.body;
@@ -4590,7 +4594,7 @@ function formatError(error: unknown): string {
       const guidance =
         approval.details?.review === 'operator'
           ? 'Inspect with session approval, then decide with session approval-decide.'
-          : 'For legacy confirmation, review the action and repeat it with act --approval-token.';
+          : 'For legacy confirmation, review the action and repeat the same command with --approval-token.';
       return `${formatErrorForUser(error)}\nApproval token: ${tokenId}\n${guidance}`;
     }
   }

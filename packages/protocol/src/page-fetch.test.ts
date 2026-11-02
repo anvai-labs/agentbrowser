@@ -229,6 +229,7 @@ describe('boundFetchResult', () => {
       body: '{"ok":true}',
       bodyBytes: 10,
       truncated: false,
+      untrustedContent: true,
     });
   });
 

@@ -120,6 +120,107 @@ it('requires one-use approval for an unsafe method even when unknown actions are
   }
 });
 
+it('binds the approval to the exact request: a mutated retry never dispatches', async () => {
+  const engine = new FakeEngine();
+  const caps = await engine.capabilities();
+  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
+  const service = new AgentBrowserService({
+    engine,
+    approvalGate: new ApprovalGate(),
+    approvalPolicy: { unknownRisk: 'allow' },
+  });
+  const dispatched = vi.fn();
+  try {
+    const { sessionId } = await service.createSession({ tenantId: 'owner' });
+    const { pageId } = await service.createPage(sessionId);
+    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    stubProbePage(page, dispatched);
+    const denied = await service.act(sessionId, pageId, fetchRequest()).catch((e) => e);
+    expect(denied).toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    const approvalToken = denied.details.tokenId;
+    // Parameter mutation is a different request: the minted token does not
+    // satisfy it, and no dispatch happens (ADR-030 approval binding).
+    await expect(
+      service.act(
+        sessionId,
+        pageId,
+        fetchRequest({ approvalToken, url: 'https://api.vinted.test/api/items/9999999999' })
+      )
+    ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    await expect(
+      service.act(sessionId, pageId, fetchRequest({ approvalToken, body: '{"price_cents":1}' }))
+    ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    await expect(
+      service.act(
+        sessionId,
+        pageId,
+        fetchRequest({ approvalToken, headers: [{ name: 'X-CSRF-Token', value: 'csrf-2' }] })
+      )
+    ).rejects.toMatchObject({ code: 'APPROVAL_REQUIRED' });
+    expect(dispatched).not.toHaveBeenCalled();
+  } finally {
+    await service.shutdown();
+  }
+});
+
+it('refuses a method-tunneling header at the service boundary before any browser work', async () => {
+  const engine = new FakeEngine();
+  const caps = await engine.capabilities();
+  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
+  const service = new AgentBrowserService({ engine, approvalPolicy: { unknownRisk: 'allow' } });
+  const dispatched = vi.fn();
+  try {
+    const { sessionId } = await service.createSession({ tenantId: 'owner' });
+    const { pageId } = await service.createPage(sessionId);
+    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    stubProbePage(page, dispatched);
+    // A GET carries no approval floor: without the refusal this header would
+    // let a read-classified probe perform a server-side write (review find).
+    await expect(
+      service.act(
+        sessionId,
+        pageId,
+        fetchRequest({
+          method: 'GET',
+          body: undefined,
+          headers: [{ name: 'X-HTTP-Method-Override', value: 'DELETE' }],
+        })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(dispatched).not.toHaveBeenCalled();
+  } finally {
+    await service.shutdown();
+  }
+});
+
+it('reports an unparseable probe URL as INVALID_REQUEST, not a scope denial', async () => {
+  const engine = new FakeEngine();
+  const caps = await engine.capabilities();
+  vi.spyOn(engine, 'capabilities').mockResolvedValue({ ...caps, pageFetch: true });
+  const service = new AgentBrowserService({ engine });
+  try {
+    const { sessionId } = await service.createSession({
+      tenantId: 'owner',
+      scope: { allowedHosts: ['api.vinted.test'], allowedMethods: ['GET'] },
+    });
+    const { pageId } = await service.createPage(sessionId);
+    const page = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const prepareFetch = vi.fn();
+    (page as EnginePage).prepareFetch = prepareFetch;
+    await expect(
+      service.act(
+        sessionId,
+        pageId,
+        fetchRequest({ method: 'GET', url: 'not a url', body: undefined, headers: undefined })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    // The refusal precedes any browser work: nothing was ever prepared.
+    expect(prepareFetch).not.toHaveBeenCalled();
+  } finally {
+    await service.shutdown();
+  }
+});
+
 /** Prepare + dispatch stubs shared by the dispatched-probe tests. */
 function stubProbePage(
   page: NonNullable<ReturnType<FakeEngine['getFakePage']>>,

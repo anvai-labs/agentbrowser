@@ -65,6 +65,8 @@ it('reads the body from a file and passes the approval token', async () => {
       'fetch',
       's',
       'p',
+      // The CLI surface uppercases typed input before the strict validation;
+      // the protocol parser itself refuses lowercase without repair.
       'put',
       'https://vinted.test/api/items/1',
       '--body-file',
@@ -98,13 +100,43 @@ it('discloses a truncated response in the human output', async () => {
 });
 
 it.each([
-  ['page', 'fetch', 's', 'p', 'TRACE', 'https://vinted.test/x'],
-  ['page', 'fetch', 's', 'p', 'GET', 'https://vinted.test/x', '--body', '{}'],
-  ['page', 'fetch', 's', 'p', 'PUT', 'https://vinted.test/x', '--header', 'Cookie=a=b'],
-  ['page', 'fetch', 's', 'p', 'PUT', 'https://vinted.test/x', '--header', 'no-equals'],
-])('refuses invalid probes before the network: %j', async (...argv) => {
+  // The URL carries a query string: a refusal message must never echo it back
+  // (queries can carry tokens; ledger rows reduce to origin+path).
+  ['page', 'fetch', 's', 'p', 'TRACE', 'https://vinted.test/x?token=secret-query-1'],
+  ['page', 'fetch', 's', 'p', 'GET', 'https://vinted.test/x?token=secret-query-2', '--body', '{}'],
+  [
+    'page',
+    'fetch',
+    's',
+    'p',
+    'PUT',
+    'https://vinted.test/x?token=secret-query-3',
+    '--header',
+    'Cookie=a=b',
+  ],
+  [
+    'page',
+    'fetch',
+    's',
+    'p',
+    'PUT',
+    'https://vinted.test/x?token=secret-query-4',
+    '--header',
+    'no-equals',
+  ],
+  [
+    'page',
+    'fetch',
+    's',
+    'p',
+    'GET',
+    'https://vinted.test/x?token=secret-query-5',
+    '--header',
+    'X-HTTP-Method-Override=DELETE',
+  ],
+])('refuses invalid probes before the network, never echoing the query: %j', async (...argv) => {
   const f = fixture();
   expect(await f.cli.run(argv)).not.toBe(0);
   expect(f.executeAction).not.toHaveBeenCalled();
-  expect(f.err.join('\n')).not.toContain('https://vinted.test/x?'); // the URL never echoes with a query
+  expect(f.err.join('\n')).not.toContain('?token=secret-query-');
 });

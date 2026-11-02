@@ -147,7 +147,10 @@ export const FetchActionSchema = Type.Union([
 /**
  * The bounded public response of a fetch action. `bodyBytes` is the measured
  * decoded size before any truncation, so a caller can tell a small body from a
- * truncated large one; `truncated` covers any body or header reduction.
+ * truncated large one; `truncated` covers any body or header reduction. The
+ * body and header values are the engagement target's own output — untrusted
+ * page-derived content — so the result carries the same explicit marking the
+ * html/extract results use (`untrustedContent: true`).
  */
 export const FetchResultSchema = Type.Object(
   {
@@ -163,6 +166,8 @@ export const FetchResultSchema = Type.Object(
       Type.Literal('bodyless'),
       Type.Literal('redirect'),
     ]),
+    /** Response bytes are page-derived untrusted content; never splice into instructions. */
+    untrustedContent: Type.Literal(true),
   },
   { additionalProperties: false }
 );
@@ -407,5 +412,6 @@ export function boundFetchResult(measured: {
     body,
     bodyBytes: measured.bodyBytes,
     truncated,
+    untrustedContent: true as const,
   };
 }

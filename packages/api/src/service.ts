@@ -16,6 +16,7 @@ import {
   summarizeDeniedHosts,
 } from '@agentbrowser/core';
 import {
+  boundFetchResult,
   EVENT_REPLAY_MAX_RESPONSE_BYTES,
   eventReplayStream,
   isFilteredEventReplay,
@@ -24,6 +25,7 @@ import {
   MAX_PLAN_STEPS,
   type NavigationFailureReason,
   navigationFailureDetailFromParts,
+  parseFetchAction,
   parseScopeBudgetTopup,
   parseViewportCapture,
   sessionLeaseRemainingMs,
@@ -5478,7 +5480,14 @@ export class AgentBrowserService {
     // awaits, including nested target/values/paths. Legacy input semantics stay intact.
     let request = input;
     const legacy = input as unknown as Record<string, unknown>;
-    if (!('action' in legacy) && (legacy.type === 'clickAt' || legacy.type === 'uploadAt')) {
+    if (
+      !('action' in legacy) &&
+      (legacy.type === 'clickAt' || legacy.type === 'uploadAt' || legacy.type === 'fetch')
+    ) {
+      // Normalize the deprecated `type` alias for the reviewed actions too: a
+      // `{type: 'fetch'}` caller must reach the probe gates, not the legacy
+      // act path (review finding: alias input skipped probe detection and died
+      // deep in the engine instead of being refused or prepared here).
       const { type, ...fields } = legacy;
       request = { ...fields, action: type } as unknown as ServiceActRequest;
     }
@@ -5488,7 +5497,12 @@ export class AgentBrowserService {
       try {
         request = JSON.parse(canonicalJson(request)) as ServiceActRequest;
       } catch {
-        throw new ServiceError('INVALID_REQUEST', 'Reviewed actions require bounded JSON data');
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          probe
+            ? 'Reviewed actions require bounded JSON data: a probe body near the 64 KiB schema bound overflows the reviewed-action JSON envelope — keep it under ~65,300 UTF-8 bytes'
+            : 'Reviewed actions require bounded JSON data'
+        );
       }
     }
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
@@ -5665,6 +5679,18 @@ export class AgentBrowserService {
             'Origin-context probes require a qualified engine and a scoped session'
           );
         const probeAction = actionValidation.value as import('@agentbrowser/protocol').FetchAction;
+        // Semantic refusal before any scope work: an unparseable-but-schema-
+        // valid URL must surface as a typed INVALID_REQUEST with its issue
+        // list, not as a phantom scope denial from the preflight's own
+        // `new URL` (review finding). The engine revalidates at prepare.
+        {
+          const semantics = parseFetchAction({ ...probeAction, type: 'fetch' });
+          if (!semantics.ok)
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              `Invalid probe: ${semantics.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
+            );
+        }
         const scope = this.sessionScopes.get(sessionId);
         if (scope !== undefined) {
           try {
@@ -5702,6 +5728,7 @@ export class AgentBrowserService {
             this.traceScopeDenial(sessionId, {
               method: probeAction.method,
               url: probeAction.url,
+              probe: true,
               ...(isScopeDenialCode(scopeCode) ? { scope: scopeCode } : {}),
               detail,
             });
@@ -8020,7 +8047,11 @@ export class AgentBrowserService {
    * ADR-030: reduce a probe result through the session's secret registry.
    * Response bodies can echo request secrets (a CSRF token reflected in an
    * error message, a seeded cookie value); every published byte is redacted,
-   * headers included.
+   * header names and values included. Redaction replaces each match with a
+   * marker that can be LONGER than the secret it removed, so the public
+   * bounds are reapplied after redaction ("reapply bounds after redaction"):
+   * a bounded result can never publish past the contract's caps, and any
+   * redaction-driven cut is disclosed through `truncated`.
    */
   private redactFetchResult(value: unknown, sessionId: string): unknown {
     if (value === null || typeof value !== 'object') return value;
@@ -8031,17 +8062,44 @@ export class AgentBrowserService {
     };
     const scrub = (text: string): string =>
       this.secretManager.redactUntrustedScoped(text, sessionId) as string;
-    return {
+    const redacted: {
+      body?: unknown;
+      headers?: Array<{ name: string; value: string }>;
+      [key: string]: unknown;
+    } = {
       ...result,
       ...(typeof result.body === 'string' ? { body: scrub(result.body) } : {}),
       ...(Array.isArray(result.headers)
         ? {
+            // Header names can carry a secret too (a hostile endpoint echoing
+            // a token-charset CSRF value as a name); scrub both sides.
             headers: result.headers.map((header) => ({
-              name: header.name,
+              name: scrub(header.name),
               value: scrub(header.value),
             })),
           }
         : {}),
+    };
+    if (
+      typeof redacted.body !== 'string' ||
+      !Array.isArray(redacted.headers) ||
+      typeof redacted.status !== 'number' ||
+      typeof redacted.bodyBytes !== 'number' ||
+      (redacted.outcome !== 'terminal' &&
+        redacted.outcome !== 'bodyless' &&
+        redacted.outcome !== 'redirect')
+    ) {
+      return redacted;
+    }
+    return {
+      ...redacted,
+      ...boundFetchResult({
+        status: redacted.status,
+        outcome: redacted.outcome,
+        headers: redacted.headers,
+        body: redacted.body,
+        bodyBytes: redacted.bodyBytes,
+      }),
     };
   }
 

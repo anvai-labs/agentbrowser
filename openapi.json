@@ -10512,6 +10512,10 @@
                     "maxLength": 253,
                     "pattern": "^[^\\x00-\\x1f\\x7f]*$",
                     "type": "string"
+                  },
+                  "probe": {
+                    "const": true,
+                    "type": "boolean"
                   }
                 }
               }
