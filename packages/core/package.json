@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/core",
-  "version": "1.30.3",
+  "version": "1.31.0",
   "private": true,
   "description": "Core session management, action execution, and observation normalization",
   "main": "./dist/index.js",
@@ -19,6 +19,7 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
+    "re2js": "2.9.1",
     "tldts": "7.4.18"
   },
   "devDependencies": {

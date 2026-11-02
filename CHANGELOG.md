@@ -7,6 +7,31 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.31.0] — 2026-11-02
+
+### Added — retained event filters (T10 P2-8 increment)
+
+- Filter one retained stream by published URL pattern, HTTP method, completed
+  status class or typed denial/failure facts through REST, SDK, CLI and MCP.
+  `events` aliases `session events`. Patterns use bounded RE2 syntax; matching
+  runs after captured-owner redaction and removes URL credentials/query/fragment.
+- Bound filtered pages by matching rows and total UTF-8 response bytes. Snapshot
+  cursors advance across skipped rows and retain a row that would overflow the
+  current page. Clients require a filter acknowledgment and refuse older servers
+  that silently ignore selectors. Legacy type-only call shapes remain supported.
+- Status predicates use recorded terminal facts. Native POST/PUT/PATCH terminal
+  outcomes still lack complete public replay coverage; use the engagement ledger.
+
+### Added — cookie seed metadata (T10 A4 increment)
+
+- Optional versioned private cookie files record advisory source/context,
+  extraction time and derived cookie classes. `session cookies --output FILE
+  --with-provenance` exports them; existing cookie imports accept both envelopes
+  and arrays with the same size, partition and private-file refusal rules.
+- Create/status provide fixed value-free warnings for known fingerprint-bound
+  and independently rotating session cookies. Metadata grants no authority or
+  login portability. Live reseed and automated CDP extraction remain unshipped.
+
 ## [1.30.3] — 2026-11-02
 
 ### Fixed — owner-bound publication (T10 foundation)
