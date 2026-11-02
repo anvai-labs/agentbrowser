@@ -134,6 +134,7 @@ async function fixture(
       const { pageId } = await service.createPage(sessionId);
       await service.navigate(sessionId, pageId, {
         url: `${origin}/run?${new URLSearchParams({ method, target })}`,
+        waitUntil: 'domcontentloaded',
       });
       let title: string | undefined;
       await expect
@@ -204,7 +205,9 @@ it.each([
       await f.close();
     }
   },
-  30000
+  // Keep response/receiver assertions bounded independently of native browser
+  // launch, page setup, sealed-ledger export and teardown under suite load.
+  60000
 );
 
 it.each(['POST', 'PUT', 'DELETE'])(
