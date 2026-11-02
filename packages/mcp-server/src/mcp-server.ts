@@ -33,6 +33,7 @@ import {
   EventReplaySelectorSchema,
   ExtractMaxBytesSchema,
   ExtractOutcomeSchema,
+  FetchResultSchema,
   formatErrorForUser,
   formatSessionTerminalFailure,
   INTERACTION_GUIDANCE,
@@ -49,9 +50,11 @@ import {
   PlanActionsSchema,
   PlanReportSchema,
   PolicyToolResultSchema,
+  PROBE_METHODS,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytes,
+  parseFetchAction,
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
@@ -200,7 +203,7 @@ function operationOptions(args: Record<string, unknown>): [] | [MutationOptions]
  * T5 B-dur: act, plan and autofill take `executionRequirement`. Omitted means unchanged (the SDK
  * call is exactly the one before this field existed); any other value is refused before a call.
  */
-const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill'] as const);
+const BROWSER_DURABLE_TOOLS = Object.freeze(['act', 'plan', 'autofill', 'page_fetch'] as const);
 function browserOptions(
   args: Record<string, unknown>
 ): [] | [MutationOptions & { executionRequirement?: 'ephemeral' | 'durable' }] {
@@ -221,6 +224,7 @@ const OPERATION_ID_TOOLS = Object.freeze([
   'autofill',
   'navigate',
   'page_create',
+  'page_fetch',
 ] as const);
 
 /** Shared by finding_check and finding_sarif: both read ledger + findings from the server host. */
@@ -887,6 +891,62 @@ export function buildTools(
           sessionId,
           pageId,
           validated.value,
+          ...browserOptions(args)
+        );
+      },
+      annotations: { readOnlyHint: false, idempotentHint: false },
+    },
+
+    {
+      name: 'page_fetch',
+      requiredCapabilities: ['page.interact'],
+      outputSchema: advertisedOutputSchema({
+        type: 'object',
+        required: ['actionId', 'result'],
+        properties: {
+          actionId: { type: 'string' },
+          newRevision: { type: 'number' },
+          result: FetchResultSchema,
+        },
+      }),
+      description:
+        "One scoped origin-context API probe: an authenticated method+URL+body request issued from the LIVE PAGE's own origin (its cookie jar and CSRF headers apply — supply them in `headers`), through the session's engagement scope (method/host/path/rate/budget enforced and ledgered; a denied probe returns details.scope like SCOPE_METHOD_DENIED). Same-origin only; the URL must match the page origin. Methods GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS; body is UTF-8 text (<= 64 KiB, not on GET/HEAD); browser-controlled and credential header names (cookie, authorization, user-agent, ...) refuse. Unsafe methods (POST/PUT/PATCH/DELETE) always require a one-use approvalToken from the returned APPROVAL_REQUIRED error. Response body/headers are bounded (1 MiB/32 headers) with a disclosed `truncated` flag and `bodyBytes`. Never auto-retry an uncertain outcome — reconcile the operationId first.",
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+          method: { type: 'string', enum: [...PROBE_METHODS] },
+          url: { type: 'string', minLength: 8, maxLength: 2048 },
+          headers: {
+            type: 'array',
+            maxItems: 16,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['name', 'value'],
+              properties: { name: { type: 'string' }, value: { type: 'string' } },
+            },
+          },
+          body: { type: 'string' },
+          approvalToken: { type: 'string' },
+        },
+        required: ['sessionId', 'pageId', 'method', 'url'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        const { sessionId: _session, pageId: _page, ...probe } = args;
+        const validated = parseFetchAction({ ...probe, type: 'fetch' });
+        if (!validated.ok)
+          throw new UsageError(
+            `Invalid probe: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}.`
+          );
+        const { type: _type, ...wire } = validated.value;
+        return await client.sessions.executeAction(
+          sessionId,
+          pageId,
+          { action: 'fetch', ...wire },
           ...browserOptions(args)
         );
       },

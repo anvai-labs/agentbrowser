@@ -80,6 +80,7 @@ import {
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytesText,
+  parseFetchAction,
   parseObservationRequest,
   parseOperatorApprovalView,
   parseOutcomeRunRequest,
@@ -4009,6 +4010,131 @@ export function buildCli(deps: CliDependencies): Cli {
                 if (usage) throw usage;
                 emitTypedFailure(ctx, downloadFailureDetail(error), false);
               }
+            }
+          )
+        );
+
+      // ADR-030 P0-2: the scoped origin-context probe, one command.
+      const pageFetch = page
+        .command('fetch')
+        .description(
+          'one scoped origin-context API probe from the page (its cookies apply); method/host/path/rate/budget enforced and ledgered'
+        );
+      pageFetch
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<method>', 'GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS')
+        .argument('<url>', 'absolute http(s) URL matching the live page origin')
+        .option(
+          '--header <header>',
+          'supplied header k=v (repeatable: CSRF tokens etc.)',
+          (value: string, previous: Array<{ name: string; value: string }>) => {
+            const split = value.indexOf('=');
+            if (split <= 0) throw new UsageError(`--header expects name=value, got '${value}'`);
+            previous.push({ name: value.slice(0, split), value: value.slice(split + 1) });
+            return previous;
+          },
+          []
+        )
+        .option('--body <text>', 'UTF-8 request body (not with GET/HEAD)')
+        .option(
+          '--body-file <file>',
+          'read the UTF-8 request body from a file (private evidence; takes precedence over --body)'
+        )
+        .option(
+          '--approval-token <token>',
+          'consume a previously approved probe token; does not grant approval'
+        )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable: journal this call as one browser operation'
+        )
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              method: string,
+              url: string,
+              options: {
+                header: Array<{ name: string; value: string }>;
+                body?: string;
+                bodyFile?: string;
+                approvalToken?: string;
+                executionRequirement?: string;
+              }
+            ) => {
+              let body: string | undefined;
+              if (options.bodyFile !== undefined) {
+                const { readFile } = await import('node:fs/promises');
+                const bytes = await readFile(options.bodyFile);
+                if (bytes.byteLength > 65536)
+                  throw new UsageError('Probe body exceeds 65536 UTF-8 bytes');
+                body = bytes.toString('utf8');
+              } else if (options.body !== undefined) {
+                body = options.body;
+              }
+              const input = {
+                action: 'fetch',
+                method: method.toUpperCase(),
+                url,
+                ...(options.header.length > 0 ? { headers: options.header } : {}),
+                ...(body !== undefined ? { body } : {}),
+                ...(options.approvalToken !== undefined
+                  ? { approvalToken: options.approvalToken }
+                  : {}),
+              };
+              // Two gates, both before the network: the wire envelope's
+              // structural shape, then the probe contract's semantic refusals
+              // (forbidden/duplicate headers, GET/HEAD bodies, byte bounds).
+              const validated = validateWireAction(input);
+              if (!validated.ok)
+                throw new UsageError(
+                  `Invalid probe: ${validated.issues
+                    .map((issue) => `${issue.path}: ${issue.message}`)
+                    .join('; ')}`
+                );
+              const semantics = parseFetchAction({
+                ...(body !== undefined ? { body } : {}),
+                ...(options.header.length > 0 ? { headers: options.header } : {}),
+                method: method.toUpperCase(),
+                type: 'fetch',
+                url,
+              });
+              if (!semantics.ok)
+                throw new UsageError(
+                  `Invalid probe: ${semantics.issues
+                    .map((issue) => `${issue.path}: ${issue.message}`)
+                    .join('; ')}`
+                );
+              const execution = browserExecution(options.executionRequirement);
+              const result =
+                execution.executionRequirement === undefined
+                  ? await ctx.client.sessions.executeAction(sessionId, pageId, validated.value)
+                  : await ctx.client.sessions.executeAction(
+                      sessionId,
+                      pageId,
+                      validated.value,
+                      execution
+                    );
+              const probe =
+                result.result && typeof result.result === 'object'
+                  ? (result.result as {
+                      status?: number;
+                      truncated?: boolean;
+                      bodyBytes?: number;
+                      body?: string;
+                      headers?: Array<{ name: string; value: string }>;
+                    })
+                  : undefined;
+              ctx.emit(result, () => [
+                `fetch ${method.toUpperCase()} ${url}: ${probe?.status ?? result.status ?? 'unknown'}`,
+                `  revision: ${result.newRevision ?? 'unchanged'}`,
+                ...(probe?.truncated
+                  ? [`  response truncated: ${probe.bodyBytes ?? '?'} decoded bytes`]
+                  : []),
+              ]);
             }
           )
         );

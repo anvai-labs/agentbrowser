@@ -7,6 +7,37 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.32.0] — 2026-11-02
+
+### Added — scoped origin-context API probes, `page fetch` (T10 P0-2, ADR-030)
+
+- A delivered `fetch` action: one authenticated method+URL+body request from
+  the live page's own origin (its cookie jar and CSRF-style headers apply),
+  through the engagement scope — method/host/path/rate/budget enforced at the
+  egress choke point and every outcome ledgered with `probe: true`. The
+  item-modification authorization test is one command:
+  `agentbrowser page fetch <sid> <pid> PUT <url> --header 'X-CSRF-Token=…' --body …`.
+- Protocol contract as one source: methods GET/HEAD/POST/PUT/PATCH/DELETE/
+  OPTIONS; browser-controlled and credential header names, duplicate and
+  malformed headers, GET/HEAD bodies and >64 KiB bodies refuse; responses are
+  bounded (1 MiB body, 32 headers) with a disclosed `truncated` flag and the
+  true `bodyBytes`.
+- Trusted transport: a fixed same-origin/credentials/no-store browser fetch in
+  a CDP isolated world pinned to the prepared document; per-dispatch secret
+  nonce attribution (stripped before the wire on both lanes); authoritative
+  response admission with the exact admitted bytes fulfilled to the page;
+  same-origin-only redirect destinations (a 307 cannot leak a CSRF header to a
+  second origin); scope verdicts on every hop.
+- Controlled admission: GET/HEAD/OPTIONS classify read; POST/PUT/PATCH/DELETE
+  always require exact one-use consent bound to the prepared probe. A scope
+  preflight denies before any browser work — a scope without PUT answers
+  `SCOPE_METHOD_DENIED` in one round trip with zero receiver hits. Published
+  results are redacted with the owning session's secret registry.
+- Surfaces: MCP `page_fetch` tool (and `act` with `action: "fetch"`), SDK
+  `sessions.fetch`, CLI `page fetch` with `--header/--body/--body-file/
+  --approval-token`. FakeEngine and non-Chromium engines refuse (unqualified).
+
+
 ## [1.31.0] — 2026-11-02
 
 ### Added — retained event filters (T10 P2-8 increment)

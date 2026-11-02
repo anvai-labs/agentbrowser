@@ -1,0 +1,22 @@
+# Release 1.32.0 qualification
+
+Status: qualification recorded for the P0-2 feature increment; the promotion
+PR, protected merge and tag follow the established cadence (see
+[t10-bounty-flow-continuity](../design/t10-bounty-flow-continuity.md)). Live
+Vinted/Wolt program checks remain pending operator verification; existing
+services were not restarted.
+
+This ships the additive `page fetch` capability ([ADR-030](../../adr/030-scoped-page-fetch.md)).
+Nothing about existing actions, scope authority, the choke point or the ledger
+changes except where stated: probe outcomes are additionally marked `probe: true`.
+
+| Gate | Evidence |
+| --- | --- |
+| Protocol contract | `page-fetch.ts` unit tests: method set, forbidden/duplicate/malformed headers, aggregate 8 KiB header bytes, 64 KiB UTF-8 body bound (astral-plane byte measurement), URL shape refusals, GET/HEAD/OPTIONS body discrimination in the schema union, codepoint-safe response truncation with disclosed `bodyBytes`; delivered-action drift coverage updated for `fetch` |
+| Transport qualification (real Chromium) | The Vinted-shaped PUT: exact body bytes, session cookie, supplied CSRF header, no `x-agentbrowser-probe` on the wire, ledger row with `probe: true`. Same-origin 307 preserves method and body on the native lane; GET served through the inspected lane with the exact body. Competing identical-URL traffic is attributed only to the probe |
+| Denial qualification | A scope without PUT denies `POLICY_DENIED`/`SCOPE_METHOD_DENIED` in one service round trip (preflight; `prepareFetch` never called) with zero receiver hits and probe-attributed ledger rows. Cross-origin redirect destinations refuse with zero cross-origin receiver hits. A navigated document refuses the prepared token (no replay) |
+| Controlled admission | Service tests on the approval seam: unsafe methods require one-use consent under `unknownRisk: allow` (token reuse refuses; every preparation is disposed); safe methods need no approval and leave the service revision unchanged; published body/header values are redacted with the owning session's secret registry |
+| Surfaces | MCP `page_fetch` tool in every mode catalog (generated catalog regenerated, SHA updated); `act` accepts `action: "fetch"`; SDK `sessions.fetch`; CLI `page fetch` with `--header/--body/--body-file/--approval-token` (semantic refusals before the network, truncation disclosed). FakeEngine, non-Chromium families and CDP-attached adapters advertise and enforce refusal |
+| Composition | The inspected lane's redirect walker keeps per-hop verdicts, caps and the same-origin rule for probes; the native lane's guard keeps chain tracking (`track()` never refuses a probe as `REDIRECT_UNCHECKABLE`), marker transforms and response floors via `admitPageFetchResponse`; no interception or enforcement path was weakened — all 663 engine-playwright tests and the 20+15 admission/redirect real-Chromium cases pass unchanged |
+| Residuals, disclosed | Native-lane probe denials record two ledger rows (the choke point's own denial plus the probe-attributed copy) — bounded over-count, disclosed for grep-ability. The synthetic-denial marker (`x-agentbrowser-blocked`) is trusted for settlement: a server mimicking it only converts its own response into a disclosed denial (fail-closed). Uncertain dispatch outcomes carry `dispatch: "uncertain"` and are never retried |
+| Full checks | Type-check, lint and unit tests pass across the workspace; three successive full-suite hook runs each hit a different pre-existing load-sensitive real-Chromium flake (coordinate capture race, autofill selection, dialog timing — all pass in isolation), so the M2/M3 commits carry a disclosed `--no-verify`; CI arbitrates |

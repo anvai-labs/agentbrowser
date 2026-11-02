@@ -31,7 +31,7 @@ beforeEach(() => {
   });
 });
 
-it('advertises executionRequirement on exactly act, plan and autofill', async () => {
+it('advertises executionRequirement on exactly the browser-durable act, plan, autofill and page_fetch', async () => {
   const tools = JSON.parse(
     await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
   ).result.tools as Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>;
@@ -39,7 +39,7 @@ it('advertises executionRequirement on exactly act, plan and autofill', async ()
     .filter((tool) => 'executionRequirement' in tool.inputSchema.properties)
     .map((tool) => tool.name)
     .sort();
-  expect(carrying).toEqual(['act', 'autofill', 'plan']);
+  expect(carrying).toEqual(['act', 'autofill', 'page_fetch', 'plan']);
   expect(
     tools.find((tool) => tool.name === 'act')?.inputSchema.properties.executionRequirement
   ).toMatchObject({ enum: ['ephemeral', 'durable'] });

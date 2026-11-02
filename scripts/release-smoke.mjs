@@ -21,6 +21,7 @@ export const EXPECTED_TOOLS = Object.freeze([
   'navigate',
   'observe',
   'act',
+  'page_fetch',
   'extract',
   'html',
   'pdf',
