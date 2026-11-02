@@ -91,38 +91,47 @@ describe('PlaywrightChromiumEngine', () => {
       }
     );
 
+    // Native window launch, context setup and shutdown share the per-case
+    // budget; document readiness below has its own shorter bound.
     it.runIf(headedSupported).each([
       { locale: undefined, expected: ['en-US', 'en'] },
       { locale: 'fr-CA', expected: ['fr-CA', 'fr'] },
       { locale: 'en', expected: ['en'] },
       { locale: 'zh-Hant-TW', expected: ['zh-Hant-TW', 'zh'] },
-    ])('sets headed page languages for locale $locale', async ({ locale, expected }) => {
-      const session = await engine.createSession({ headless: false, locale });
-      try {
-        const page = await (session as unknown as Ctx).context.newPage();
-        await page.goto(
-          'data:text/html,<script>window.initialLanguages = navigator.languages</script>'
-        );
-        expect(
-          await page.evaluate(() => ({
-            language: navigator.language,
-            languages: navigator.languages,
-            initialLanguages: (window as unknown as { initialLanguages: string[] })
-              .initialLanguages,
-            frozen: Object.isFrozen(navigator.languages),
-            webdriver: navigator.webdriver,
-          }))
-        ).toEqual({
-          language: expected[0],
-          languages: expected,
-          initialLanguages: expected,
-          frozen: true,
-          webdriver: false,
-        });
-      } finally {
-        await session.close();
-      }
-    });
+    ])(
+      'sets headed page languages for locale $locale',
+      async ({ locale, expected }) => {
+        const session = await engine.createSession({ headless: false, locale });
+        try {
+          const page = await (session as unknown as Ctx).context.newPage();
+          await page.goto(
+            'data:text/html,<script>window.initialLanguages = navigator.languages</script>',
+            // Init-script state requires document readiness rather than full
+            // resource loading; no rendering or fixed delay is needed.
+            { waitUntil: 'domcontentloaded', timeout: 10000 }
+          );
+          expect(
+            await page.evaluate(() => ({
+              language: navigator.language,
+              languages: navigator.languages,
+              initialLanguages: (window as unknown as { initialLanguages: string[] })
+                .initialLanguages,
+              frozen: Object.isFrozen(navigator.languages),
+              webdriver: navigator.webdriver,
+            }))
+          ).toEqual({
+            language: expected[0],
+            languages: expected,
+            initialLanguages: expected,
+            frozen: true,
+            webdriver: false,
+          });
+        } finally {
+          await session.close();
+        }
+      },
+      60000
+    );
 
     it('headless sessions still share one browser (performance anchor)', async () => {
       const a = await engine.createSession({ headless: true });
