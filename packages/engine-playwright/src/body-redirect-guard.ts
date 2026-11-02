@@ -113,9 +113,9 @@ const keyOf = (method: string, url: string): string => `${method.toUpperCase()} 
 
 /** The method the browser uses for the next hop (Fetch standard, 4.4). */
 export function followMethod(status: number, method: string): string {
-  if (status === 307 || status === 308) return method;
-  if (status === 303) return method === 'HEAD' ? 'HEAD' : 'GET';
-  return method === 'POST' ? 'GET' : method;
+  if ((status === 301 || status === 302) && method === 'POST') return 'GET';
+  if (status === 303 && method !== 'GET' && method !== 'HEAD') return 'GET';
+  return method;
 }
 
 export class BodyRedirectGuard {

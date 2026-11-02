@@ -480,6 +480,31 @@ describe('BodyRedirectGuard unit rules', () => {
     expect(JSON.stringify(outcomes)).not.toContain('private marker');
   });
 
+  it('does not inject research markers into browser-generated preflights', async () => {
+    let transformed = 0;
+    const { pageCdp } = await harness(undefined, {
+      headersForRequest: (_url, headers) => {
+        transformed++;
+        return { ...headers, 'x-research': 'private-marker' };
+      },
+    });
+    pageCdp.emit('Fetch.requestPaused', {
+      requestId: 'preflight',
+      networkId: 'preflight-network',
+      resourceType: 'Preflight',
+      request: {
+        url: 'http://localhost/probe',
+        method: 'OPTIONS',
+        headers: { Origin: 'http://127.0.0.1', 'Access-Control-Request-Method': 'PUT' },
+      },
+    });
+    await settle();
+    expect(transformed).toBe(0);
+    expect(pageCdp.sent.find((call) => call.method === 'Fetch.continueRequest')?.params).toEqual({
+      requestId: 'preflight',
+    });
+  });
+
   it('claims a request only after the guard saw it (fail closed)', async () => {
     const { guard, pageCdp, main, request, seen } = await harness();
     expect(guard.track(request(main) as never)).toBe(false);
