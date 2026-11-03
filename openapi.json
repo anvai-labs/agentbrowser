@@ -7786,6 +7786,26 @@
               }
             }
           },
+          "authRotation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "refreshUrlPattern",
+              "identityUrlPattern",
+              "suspected"
+            ],
+            "properties": {
+              "refreshUrlPattern": {
+                "type": "string"
+              },
+              "identityUrlPattern": {
+                "type": "string"
+              },
+              "suspected": {
+                "type": "boolean"
+              }
+            }
+          },
           "stopped": {
             "type": "string"
           },
@@ -9778,6 +9798,26 @@
                       }
                     }
                   },
+                  "authRotation": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "refreshUrlPattern",
+                      "identityUrlPattern"
+                    ],
+                    "properties": {
+                      "refreshUrlPattern": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      },
+                      "identityUrlPattern": {
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "type": "string"
+                      }
+                    }
+                  },
                   "allowedHosts": {
                     "minItems": 1,
                     "type": "array",
@@ -10078,6 +10118,26 @@
                         }
                       ]
                     }
+                  }
+                }
+              },
+              "authRotation": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "refreshUrlPattern",
+                  "identityUrlPattern"
+                ],
+                "properties": {
+                  "refreshUrlPattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "identityUrlPattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
                   }
                 }
               },

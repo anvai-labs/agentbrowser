@@ -158,6 +158,7 @@ import {
   SchemaExtractor,
 } from '@agentbrowser/extraction';
 import {
+  compileUrlPattern as compileSharedUrlPattern,
   EngagementScopePolicy,
   type EngagementScopeStatus,
   type NetworkPolicy,
@@ -365,6 +366,20 @@ function ledgerRecord(ledger: EngagementLedger, record: EngineRequestRecord): vo
   for (const key of LEDGER_REQUEST_FIELDS)
     if (record.data[key] !== undefined) out[key] = record.data[key];
   ledger.append('request', out);
+}
+
+/**
+ * P1-6a (ADR-033): the rotation advisory as a ledger-feed entry — not a
+ * request record, but queued and flushed alongside them when the ledger opens
+ * late. Origin+path only; the query never reaches it.
+ */
+interface RotationLedgerEntry {
+  type: 'auth.rotation-suspected';
+  data: { refresh: string; identity: string; status: number };
+}
+
+function rotationLedgerRecord(ledger: EngagementLedger, entry: RotationLedgerEntry): void {
+  ledger.append(entry.type, entry.data);
 }
 
 export interface ServicePageView {
@@ -2441,7 +2456,7 @@ export class AgentBrowserService {
         request.scope?.ledger === true
           ? {
               ledger: undefined as EngagementLedger | undefined,
-              pending: [] as EngineRequestRecord[],
+              pending: [] as Array<EngineRequestRecord | RotationLedgerEntry>,
             }
           : undefined;
       if (traceMode === 'denials' && capabilities.requestRecording !== true)
@@ -2502,6 +2517,27 @@ export class AgentBrowserService {
               );
           if (currentOwner && traceSessionId && record.type === 'request.failed')
             this.traceScopeDenial(traceSessionId, redacted.data);
+          // P1-6a (ADR-033): advisory rotation detection. One event per
+          // session when a refresh bounce is followed by a 401/403 on the
+          // identity endpoint; the status hint is set either way, the ledger
+          // event only when a ledger runs.
+          if (currentOwner && traceSessionId && record.type !== 'request.headersInjected') {
+            const advisory = this.sessionScopes
+              .get(traceSessionId)
+              ?.noteOutcome(record.type, redacted.data);
+            if (advisory !== undefined) {
+              const entry: RotationLedgerEntry = {
+                type: advisory.event,
+                data: {
+                  refresh: advisory.refresh,
+                  identity: advisory.identity,
+                  status: advisory.status,
+                },
+              };
+              if (ledgerFeed?.ledger) rotationLedgerRecord(ledgerFeed.ledger, entry);
+              else if (ledgerFeed) ledgerFeed.pending.push(entry);
+            }
+          }
           for (const entry of summarizeDeniedHosts([redacted]).hosts) {
             const previous = denied.hosts.find((row) => row.hostname === entry.hostname);
             if (previous) {
@@ -2736,7 +2772,10 @@ export class AgentBrowserService {
           }
           this.sessionLedgers.set(session.sessionId, ledger);
           if (ledgerFeed !== undefined) {
-            for (const record of ledgerFeed.pending.splice(0)) ledgerRecord(ledger, record);
+            for (const entry of ledgerFeed.pending.splice(0)) {
+              if (entry.type === 'auth.rotation-suspected') rotationLedgerRecord(ledger, entry);
+              else ledgerRecord(ledger, entry);
+            }
             ledgerFeed.ledger = ledger;
           }
         }
@@ -6200,23 +6239,19 @@ export class AgentBrowserService {
     }
   }
 
-  /** Glob (`*` = within one path segment, `**` = anything) or `/regex/`. */
+  /**
+   * Glob (`*` = within one path segment, `**` = anything) or `/regex/` —
+   * delegated to the product's one shared compiler (scope-rotation) so the
+   * wait and rotation spellings cannot drift apart.
+   */
   private compileUrlPattern(pattern: string): RegExp {
-    const regexForm = /^\/(.*)\/([a-z]*)$/.exec(pattern);
-    if (regexForm) {
-      try {
-        return new RegExp(regexForm[1] ?? '', regexForm[2] ?? '');
-      } catch {
-        // Caller-supplied regex bodies can be syntactically invalid; that is
-        // a bad request, not a mid-wait engine failure.
-        throw new ServiceError('INVALID_REQUEST', `Wait 'urlPattern' regex is invalid: ${pattern}`);
-      }
+    try {
+      return compileSharedUrlPattern(pattern);
+    } catch {
+      // Caller-supplied regex bodies can be syntactically invalid; that is
+      // a bad request, not a mid-wait engine failure.
+      throw new ServiceError('INVALID_REQUEST', `Wait 'urlPattern' regex is invalid: ${pattern}`);
     }
-    const source = pattern
-      .split('*')
-      .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join(pattern.includes('**') ? '[\\s\\S]*' : '[^/]*');
-    return new RegExp(`^${source}$`);
   }
 
   /** Poll helper shared by the deadline-bounded F6/F7 conditions. */

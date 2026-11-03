@@ -10,6 +10,7 @@ import {
   STATIC_ASSET_TYPES,
 } from '@agentbrowser/core';
 import { NetworkPolicyError } from './network-policy.js';
+import { RotationAdvisor, type RotationAdvisory } from './scope-rotation.js';
 
 /**
  * T7 slice 2: engagement scope enforcement for authorized security
@@ -78,6 +79,11 @@ export interface EngagementScopeOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Longest a request may wait for a rate-limit slot, queue included (default 15 s). */
   maxPaceMs?: number;
+  /**
+   * P1-6a (ADR-033): advisory rotation detection; absent = no detection (no
+   * guessing). Both patterns required, operator-configured, never inferred.
+   */
+  authRotation?: { refreshUrlPattern: string; identityUrlPattern: string };
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */
@@ -113,6 +119,8 @@ export interface EngagementScopeStatus {
   program?: ScopeProgram;
   /** The rate limit in effect and how many requests waited for a slot. */
   rateLimit?: { requests: number; perSeconds: number; paced: number };
+  /** P1-6a (ADR-033): present only when configured; `suspected` sticks once the advisory fires. */
+  authRotation?: { refreshUrlPattern: string; identityUrlPattern: string; suspected: boolean };
 }
 
 const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 };
@@ -313,6 +321,10 @@ export class EngagementScopePolicy {
   private readonly ports: Set<number> | undefined;
   private readonly program: ScopeProgram | undefined;
   private readonly rate: { requests: number; perSeconds: number } | undefined;
+  private readonly authRotation:
+    | { refreshUrlPattern: string; identityUrlPattern: string }
+    | undefined;
+  private readonly rotation: RotationAdvisor | undefined;
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   private readonly maxPaceMs: number;
   /** Aborted by stop(): waiting requests wake at once and are denied. */
@@ -413,6 +425,23 @@ export class EngagementScopePolicy {
     this.ports = scope.allowedPorts !== undefined ? new Set(scope.allowedPorts) : undefined;
     this.program = scope.program !== undefined ? { ...scope.program } : undefined;
     this.rate = scope.rateLimit !== undefined ? { ...scope.rateLimit } : undefined;
+    this.authRotation = scope.authRotation !== undefined ? { ...scope.authRotation } : undefined;
+    if (scope.authRotation !== undefined) {
+      // Refused at create time: a pattern that cannot compile would otherwise
+      // be a detection config that silently never matches.
+      try {
+        this.rotation = new RotationAdvisor(scope.authRotation);
+      } catch (error) {
+        throw new NetworkPolicyError(
+          'POLICY_DENIED',
+          `authRotation: ${error instanceof Error ? error.message : 'invalid patterns'}`,
+          false,
+          { rule: 'scope.authRotation.invalid' }
+        );
+      }
+    } else {
+      this.rotation = undefined;
+    }
     this.sleep =
       scope.sleep ??
       ((ms: number, signal: AbortSignal) =>
@@ -695,6 +724,19 @@ export class EngagementScopePolicy {
     return this.status();
   }
 
+  /**
+   * P1-6a (ADR-033): feed one request outcome (the engine's request-record
+   * data) to the rotation advisor. Returns the advisory exactly once — when a
+   * refresh bounce is followed by a 401/403 on the identity endpoint — for
+   * the caller to ledger. Strictly observational: it never gates traffic.
+   */
+  noteOutcome(
+    type: 'request.finished' | 'request.failed' | 'request.headersInjected',
+    data: Record<string, unknown>
+  ): RotationAdvisory | undefined {
+    return this.rotation?.noteOutcome(type, data);
+  }
+
   /** The scope in effect, budget and denials; marker values are never reported. */
   status(): EngagementScopeStatus {
     return {
@@ -737,6 +779,9 @@ export class EngagementScopePolicy {
       ...(this.ports !== undefined ? { allowedPorts: [...this.ports] } : {}),
       ...(this.program !== undefined ? { program: { ...this.program } } : {}),
       ...(this.rate !== undefined ? { rateLimit: { ...this.rate, paced: this.paced } } : {}),
+      ...(this.authRotation !== undefined && this.rotation !== undefined
+        ? { authRotation: { ...this.authRotation, suspected: this.rotation.suspected() } }
+        : {}),
     };
   }
 

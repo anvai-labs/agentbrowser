@@ -1013,6 +1013,15 @@ function readFileInputNames(el: unknown): string[] | null {
     : null;
 }
 
+/**
+ * P1-6a (ADR-033): stable per-page keys for same-page request correlation
+ * (rotation detection). Opaque small integers assigned on first sight; keyed
+ * by the Playwright Page object so a page keeps its key for life. Never part
+ * of the ledger allowlist — the value carries no page identity.
+ */
+const pageKeys = new WeakMap<object, number>();
+let nextPageKey = 0;
+
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
   /** T10 M2: every request outcome, before page attribution (the engagement ledger). */
@@ -1977,11 +1986,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // URLs carry query-string tokens (spec 14.2): record origin + path,
       // never the query. Deterministic engine-side, no secret registry needed.
       const parsed = new URL(request.url());
+      // Same-page attribution for rotation detection (P1-6a); omitted when the
+      // frame is gone mid-flight (worker, detached) — those records stay
+      // unattributed and detection ignores them.
+      let pageKey: number | undefined;
+      try {
+        const page = request.frame().page();
+        pageKey = pageKeys.get(page);
+        if (pageKey === undefined) {
+          pageKey = nextPageKey += 1;
+          pageKeys.set(page, pageKey);
+        }
+      } catch {
+        pageKey = undefined;
+      }
       const data = {
         url: `${parsed.origin}${parsed.pathname}`,
         hostname: parsed.hostname,
         method: request.method(),
         resourceType: request.resourceType(),
+        ...(pageKey !== undefined ? { pageKey } : {}),
         ...extra,
       };
       const timestamp = new Date().toISOString();

@@ -59,13 +59,22 @@ poisons the browser's CORS credentials check.
 ## P1-6a — rotation detection (advisory)
 
 A scope may carry `authRotation: { refreshUrlPattern, identityUrlPattern }` —
-both required bounded patterns, operator-configured, never inferred. When the
-choke point sees a navigation matching the refresh pattern followed (within the
-same page, bounded window of 20 requests) by a 401/403 response on the identity
-pattern, the engine emits one advisory ledger event (`auth.rotation-suspected`)
-and the session surfaces a reseed-needed hint. Advisory only: no DOM identity
-inference, no automatic login, no scope change, no auto-reseed. Without the
-scope field there is no detection (no guessing).
+both required bounded patterns, operator-configured, never inferred (a pattern
+that cannot compile is refused at session creation, never a silently-never-
+matching detection config). When the choke-point records show a navigation
+matching the refresh pattern followed (within the same page, bounded window of
+20 requests) by a 401/403 response on the identity pattern, exactly one
+advisory ledger event (`auth.rotation-suspected`, origin+path only) is appended
+and the scope status carries the sticky `authRotation.suspected` hint (the
+reseed-needed signal; it sticks until the session ends). Same-page correlation
+uses a stable per-page key the engine adds to request records (never part of
+the ledger allowlist); unattributed records — redirect-walker hops, probes —
+are ignored rather than guessed at. Advisory only: no DOM identity inference,
+no automatic login, no scope change, no auto-reseed, and detection never gates
+traffic. Without the scope field there is no detection (no guessing). The
+pattern syntax is the product's one URL-pattern convention (glob or
+`/regex/flags`), shared with the wait `urlPattern` so the spellings cannot
+drift.
 
 ## P1-6c — `seed-from-cdp` (operator-side utility)
 

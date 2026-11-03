@@ -207,9 +207,23 @@ export const ScopeAssetHostSchema = Type.Object(
   { additionalProperties: false }
 );
 
+// P1-6a (ADR-033): operator-configured auth-rotation advisory. Both patterns
+// required, never inferred; without the field there is no detection. Syntax is
+// the shared URL-pattern convention — glob (`*` within one path segment, `**`
+// anything) or `/regex/flags` — matched against origin+path (query never
+// reaches the matcher, spec 14.2).
+export const ScopeAuthRotationSchema = Type.Object(
+  {
+    refreshUrlPattern: Type.String({ minLength: 1, maxLength: 512 }),
+    identityUrlPattern: Type.String({ minLength: 1, maxLength: 512 }),
+  },
+  { additionalProperties: false }
+);
+
 export const EngagementScopeSchema = Type.Object(
   {
     assetHosts: Type.Optional(Type.Array(ScopeAssetHostSchema, { minItems: 1, maxItems: 128 })),
+    authRotation: Type.Optional(ScopeAuthRotationSchema),
     // Exhaustive when set: exact hosts and ".suffix" entries in scope.
     allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
     pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
@@ -295,6 +309,18 @@ export const EngagementScopeStatusSchema = Type.Object(
     ),
     // Denials on the wire and in the navigation preflight, by sub-code.
     denials: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+    // P1-6a (ADR-033): present only when the scope configures rotation
+    // detection; `suspected` sticks once the advisory fires (until reseed).
+    authRotation: Type.Optional(
+      Type.Object(
+        {
+          refreshUrlPattern: Type.String(),
+          identityUrlPattern: Type.String(),
+          suspected: Type.Boolean(),
+        },
+        { additionalProperties: false }
+      )
+    ),
     // T10 M2: why all traffic stopped (ledger full or failed, session closing).
     stopped: Type.Optional(Type.String()),
     // T10 M3: present only when set on the scope.

@@ -169,6 +169,11 @@ export interface EngagementScope {
   program?: ScopeProgram;
   /** T10 M3: at most `requests` per `perSeconds`; paced (waits for a slot), never denied. */
   rateLimit?: { requests: number; perSeconds: number };
+  /**
+   * P1-6a (ADR-033): advisory rotation detection config; absent = no detection.
+   * Both patterns required, operator-configured, never inferred.
+   */
+  authRotation?: { refreshUrlPattern: string; identityUrlPattern: string };
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */
