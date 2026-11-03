@@ -3,6 +3,13 @@ import { sharedEngine } from './test-support/shared-engine.js';
 
 const engine = sharedEngine();
 
+type Page = Awaited<ReturnType<Awaited<ReturnType<typeof engine.createSession>>['newPage']>>;
+
+async function controlContexts(page: Page): Promise<string[]> {
+  const { elements } = await page.observe({ include: ['formControls'] });
+  return elements.filter((e) => e.role === 'control').map((e) => e.context);
+}
+
 /**
  * G1 (docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md): custom menu
  * controls with generic, duplicated accessible names ("Access: No access"
@@ -10,6 +17,10 @@ const engine = sharedEngine();
  * an agent can address them without HTML forensics.
  */
 describe('formControls row context (G1)', () => {
+  /**
+   * Observe with formControls and return the custom-widget contexts only
+   * (the shared assertion base of the context tests).
+   */
   it('mints context from the enclosing row label and section heading', async () => {
     let session: EngineSession | undefined;
     try {
@@ -71,8 +82,7 @@ describe('formControls row context (G1)', () => {
             '</ul></main></body>'
         )}`,
       });
-      const { elements } = await page.observe({ include: ['formControls'] });
-      const contexts = elements.filter((e) => e.role === 'control').map((e) => e.context);
+      const contexts = await controlContexts(page);
       expect(contexts).toContain('Contents');
       expect(contexts).toContain('Pull requests');
       // The generic inner <strong> never becomes the context.
@@ -141,8 +151,7 @@ describe('formControls row context (G1)', () => {
             '</ul></main></body>'
         )}`,
       });
-      const { elements } = await page.observe({ include: ['formControls'] });
-      const contexts = elements.filter((e) => e.role === 'control').map((e) => e.context);
+      const contexts = await controlContexts(page);
       // The labelledby span repeats the generic name: skipped, the row's
       // <strong> supplies the label instead.
       expect(contexts).toContain('Contents');
