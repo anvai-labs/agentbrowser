@@ -155,6 +155,19 @@ describe('extractSeedFromCdp (P1-6c)', () => {
     ).rejects.toThrow(/No incognito context matches/);
   });
 
+  it('refuses an ambiguous --browser-context prefix instead of selecting the first match (F4)', async () => {
+    const a: Page = { ...INCOGNITO_TAB, targetId: 't-a' };
+    const b: Page = { ...INCOGNITO_TAB, targetId: 't-b', browserContextId: '24AF0099AABB0000' };
+    const { client } = fakeClient([DEFAULT_TAB, a, b], []);
+    await expect(
+      extractSeedFromCdp(client, {
+        domains: ['vinted.com'],
+        context: 'incognito',
+        browserContext: '24AF',
+      })
+    ).rejects.toThrow(/matches 2 incognito contexts/);
+  });
+
   it('refuses when no tab matches, no incognito pages exist, or the filters are invalid', async () => {
     const unrelated: Page = { type: 'page', targetId: 't-x', url: 'https://other.example/' };
     const none = fakeClient([unrelated, INCOGNITO_TAB], []);

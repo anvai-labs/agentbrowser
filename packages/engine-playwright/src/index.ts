@@ -88,6 +88,21 @@ const pageFetchLanes = new WeakMap<BrowserContext, PageFetchLane>();
  */
 const inFlightByContext = new WeakMap<BrowserContext, Set<import('playwright').Request>>();
 
+/**
+ * Each routed context's admission gate (ADR-033 review F1): a cookie
+ * replacement freezes new admissions for the duration of the write, so the
+ * window between the last quiescence read and the write cannot be raced by a
+ * request that was admitted but uncounted.
+ */
+const admissionByContext = new WeakMap<
+  BrowserContext,
+  {
+    frozen: Promise<void> | null;
+    release: (() => void) | null;
+    parked: Set<import('playwright').Request>;
+  }
+>();
+
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import { ObservationReads } from './observation-read.js';
 import {
@@ -2350,13 +2365,34 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         .catch(() => {})
         .finally(() => inFlight.delete(request));
     };
+    // ADR-033 review F1: the admission gate. While a cookie replacement
+    // holds the freeze, NEW requests park before any dispatch — they can
+    // neither carry old credentials nor deliver a Set-Cookie onto the jar
+    // being written. Parked requests are excluded from the drain criterion:
+    // undispatched means unable to race the write.
+    const admission = {
+      frozen: null as Promise<void> | null,
+      release: null as (() => void) | null,
+      parked: new Set<import('playwright').Request>(),
+    };
+    admissionByContext.set(context, admission);
     await context.route('**', async (route) => {
       const request = route.request();
       const url = request.url();
       const hostname = new URL(url).hostname;
       const method = request.method();
 
+      // Tracked BEFORE the freeze check: whichever way the interleaving goes,
+      // the request is either visible to the drain or parked behind the gate.
       trackInFlight(request);
+      if (admission.frozen !== null) {
+        admission.parked.add(request);
+        try {
+          await admission.frozen;
+        } finally {
+          admission.parked.delete(request);
+        }
+      }
 
       emitRequest('request.started', request, {});
 
@@ -2514,6 +2550,21 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // route.fetch does not inherit it from the intercepted request in
         // that composition (the inspected-lane workaround above).
         const crossOriginPostData = crossOriginBody ? request.postDataBuffer() : undefined;
+        // Review F6c: an unrecoverable body must fail loudly, never re-issue
+        // as a silent bodiless POST (data loss the receiver would 400 anyway).
+        if (
+          crossOriginBody &&
+          crossOriginPostData === null &&
+          !['GET', 'HEAD'].includes(request.method())
+        ) {
+          emitRequest('request.failed', request, {
+            blocked: false,
+            reason: 'engine_error',
+            detail: 'request body unavailable for the cross-origin re-issue',
+          });
+          await route.abort('failed');
+          return;
+        }
         const response = await route.fetch({
           maxRedirects: 0,
           ...(probeClaim !== undefined
@@ -3202,14 +3253,56 @@ class PlaywrightSession implements EngineSession {
   }
 
   /**
-   * ADR-033 live reseed: the qualified replacement — clear every cookie in
-   * the live context and install the given set as one engine-owned step.
-   * Callers gate this behind quiescence (inFlightRequests); a failure may
-   * leave the jar cleared, which the caller treats as loss of old authority.
+   * ADR-033 live reseed (review F1): the qualified replacement — freeze new
+   * admissions, DRAIN every dispatched request to a full settle, then clear
+   * and install as one engine-owned step, then unfreeze. The freeze closes
+   * the admission window between the caller's last quiescence read and this
+   * write: a request admitted after that read parks undispatched (unable to
+   * carry old credentials or land a Set-Cookie on the new jar) and proceeds
+   * under the new jar once unfrozen. The drain is bounded (10 s); a timeout
+   * throws with the jar untouched — the caller stops the session's authority
+   * rather than replaying. A failure may leave the jar cleared; callers treat
+   * that as loss of old authority. Single-caller (the service serializes
+   * reseeds on its handoff lock).
    */
   async replaceCookies(cookies: NormalizedCookie[]): Promise<void> {
-    await this.context.clearCookies();
-    if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+    const admission = admissionByContext.get(this.context);
+    const inFlight = inFlightByContext.get(this.context);
+    if (admission === undefined || inFlight === undefined) {
+      // An unrouted context has no admissions to freeze; plain replace.
+      await this.context.clearCookies();
+      if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+      return;
+    }
+    if (admission.frozen !== null) await admission.frozen; // never two writers
+    admission.frozen = new Promise((resolve) => {
+      admission.release = resolve;
+    });
+    const release = admission.release;
+    try {
+      const deadline = Date.now() + 10_000;
+      // Drain: every DISPATCHED request must settle. Parked (frozen) ones are
+      // excluded — they have not touched the network and cannot race the write.
+      for (;;) {
+        let dispatched = 0;
+        for (const request of inFlight) if (!admission.parked.has(request)) dispatched += 1;
+        if (dispatched === 0) break;
+        if (Date.now() >= deadline)
+          throw new EngineError(
+            'ACTION_TIMEOUT',
+            'In-flight requests did not settle for the cookie replacement',
+            false,
+            { rule: 'reseed.drain' }
+          );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await this.context.clearCookies();
+      if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+    } finally {
+      release?.();
+      admission.frozen = null;
+      admission.release = null;
+    }
   }
 
   /** ADR-033 live reseed: requests admitted but not yet fully settled. */

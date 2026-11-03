@@ -239,7 +239,17 @@ export async function extractSeedFromCdp(
     ];
     if (request.browserContext !== undefined) {
       const wanted = request.browserContext;
-      contextId = ids.find((id) => id === wanted || id.startsWith(wanted));
+      // Review F4: an ambiguous prefix refuses — silently selecting the first
+      // match could extract the wrong incognito profile and stamp its digest.
+      const matches = ids.filter((id) => id === wanted || id.startsWith(wanted));
+      if (matches.length > 1)
+        throw new UsageError(
+          `--browser-context '${wanted}' matches ${matches.length} incognito contexts; use a longer prefix (open: ${matches
+            .slice(0, 3)
+            .map((id) => id.slice(0, 8))
+            .join(', ')}).`
+        );
+      contextId = matches[0];
       if (contextId === undefined)
         throw new UsageError(
           `No incognito context matches '${request.browserContext}' (open: ${

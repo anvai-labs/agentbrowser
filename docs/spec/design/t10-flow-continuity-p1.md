@@ -56,6 +56,20 @@ hardening also landed: the transform's explicit empty Cookie (a route.fetch-ism)
 is no longer injected on the guard's native continues, where it independently
 poisons the browser's CORS credentials check.
 
+Adversarial-review disclosures on this lane (F6): the Node-side re-issue
+attaches the context jar's cookies for the destination host (a credential-flow
+widening for cross-origin requests the browser would send cookie-free —
+pre-existing for GETs, now covering bodies); fulfilled responses bypass
+Chromium's CORS check, so pages can READ cross-origin resource-host responses
+regardless of ACAO; an unrecoverable request body (postDataBuffer null on a
+body-bearing method) now fails loudly instead of re-issuing bodiless; a frame
+gone at handler time falls back to the native continue and its documented
+failure; and cross-origin DELETE-with-body remains unfixed. Also noted (F8):
+`ping`/`eventsource` resource types are not admitted (sendBeacon telemetry
+will not flow on the resource lane yet), and the resource class's OPTIONS
+method is effectively inert because this lane re-issues without CORS
+preflights.
+
 ## P1-6a — rotation detection (advisory)
 
 A scope may carry `authRotation: { refreshUrlPattern, identityUrlPattern }` —

@@ -244,6 +244,34 @@ describe('live reseed (ADR-033)', () => {
     await f.service.createPage(f.sessionId);
   });
 
+  it('enforces the handoff floors: usable domains, coverage of the session hosts (F3)', async () => {
+    const f = await reseedFixture();
+    const revision = f.service.getScopeStatus(f.sessionId).revision ?? 0;
+    // A wrong-domain reseed would silently strip the session's auth.
+    await expect(
+      f.service.reseedSession(
+        f.sessionId,
+        {
+          expectedRevision: revision,
+          cookies: [{ ...freshCookies[0], domain: 'other-example.com' }],
+        },
+        operator()
+      )
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { rule: 'reseed.coverage' } });
+    // Unusable cookie domains refuse as invalid.
+    await expect(
+      f.service.reseedSession(
+        f.sessionId,
+        { expectedRevision: revision, cookies: [{ ...freshCookies[0], domain: '127.0.0.1' }] },
+        operator()
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    // Floors precede the durable authorization: nothing was recorded.
+    expect((await ledgerLines()).some((line) => line.type === 'auth.reseed.authorized')).toBe(
+      false
+    );
+  });
+
   it('a pinned in-flight request refuses the reseed with nothing changed', async () => {
     const f = await reseedFixture();
     const session = f.engine.getFakeSession(f.engine.getSessionIds()[0] ?? '');

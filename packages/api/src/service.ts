@@ -2294,6 +2294,45 @@ export class AgentBrowserService {
       const domains = [...new Set(cookies.map((c) => c.domain.replace(/^\./, '').toLowerCase()))]
         .sort()
         .slice(0, 100);
+      // Review F3: the same floors the handoff runs (ADR-033: seeding
+      // retains all existing policy and protected-credential floors) —
+      // domains usable, the session's own host entries within the reseeded
+      // domains (a wrong-domain reseed would silently strip the session's
+      // auth), and one policy decision per domain.
+      for (const domain of domains) {
+        const usable = usableHost(domain);
+        if (!usable.ok)
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            `Reseed domain '${domain}' is not a usable host`
+          );
+      }
+      const facts = this.sessionHandoffFacts.get(sessionId);
+      if (facts !== undefined) {
+        for (const entry of [...facts.allowedHosts, ...facts.scopeAllowedHosts]) {
+          const usable = usableHost(entry);
+          if (!usable.ok || !domains.some((domain) => entry === domain || covers(domain, entry).ok))
+            throw new ServiceError(
+              'POLICY_DENIED',
+              `Host entry '${entry}' does not lie within the reseeded domains`,
+              false,
+              { rule: 'reseed.coverage' }
+            );
+        }
+      }
+      for (const domain of domains) {
+        const decision = this.authorizer.decide({
+          action: 'cookie.handoff',
+          context: { domain, tenantId: principal.tenant },
+        });
+        if (!decision.allowed)
+          throw new ServiceError(
+            'POLICY_DENIED',
+            `Policy denies reseeding cookies for '${domain}'.`,
+            false,
+            { domain, rule: 'reseed.policy' }
+          );
+      }
       const evidence = {
         expectedRevision: request.expectedRevision,
         seedSha256,
@@ -2330,7 +2369,7 @@ export class AgentBrowserService {
             ledger.append('auth.reseed.aborted', { ...evidence, stage: 'quiescence' });
             throw new ServiceError(
               'POLICY_DENIED',
-              'Network quiescence was not reached; the reseed changed nothing',
+              'Network quiescence was not reached; the reseed changed nothing. A never-settling request (e.g. a long-poll) keeps quiescence away — close the offending page and retry.',
               false,
               { scope: 'RESEED_QUIESCENCE' }
             );
@@ -3787,6 +3826,30 @@ export class AgentBrowserService {
       return undefined;
     };
     for (const [index, step] of steps.entries()) {
+      // ADR-033 review F2: re-admit at every step boundary, not just at plan
+      // entry — a reseed that starts mid-plan must not let later steps write
+      // browser input across the cookie replacement.
+      try {
+        this.assertInputAdmitted(sessionId);
+      } catch {
+        results.push({
+          step: index,
+          ok: false,
+          error: 'A live reseed excluded new browser input; the plan stopped at this step.',
+        });
+        return {
+          ok: false as const,
+          completed: index,
+          results,
+          mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
+          error: {
+            code: 'SESSION_BUSY',
+            message:
+              'A live reseed excluded new browser input; remaining steps were not attempted.',
+          },
+        };
+      }
       // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
       // prior step. A caller cannot know the ref of an element that does
       // not exist yet at plan-authoring time, so waitForLabel resolves the
@@ -6018,6 +6081,9 @@ export class AgentBrowserService {
             observation: this.lastObservationOf(page),
             currentRevision: page.revision,
             beforeAction: async (resolved) => {
+              // ADR-033 review F2: re-admit right before dispatch — the entry
+              // check can be seconds stale by the time approvals settle.
+              this.assertInputAdmitted(sessionId);
               if (fetchBinding) {
                 fetchBinding.assertCurrent();
                 fetchApproval = await this.prepareApproval(
@@ -7559,10 +7625,14 @@ export class AgentBrowserService {
     }
   }
 
+  /** ADR-033 review F5: no new authority is minted inside a reseed window. */
   async grantActionLease(
     sessionId: string,
     input: { hosts: string[]; expiresInMs: number; maxActions: number }
   ): Promise<import('@agentbrowser/protocol').ActionLease> {
+    // Review F5: authority minted inside a reseed window would be post-bump
+    // power derived from pre-bump knowledge; refuse until it completes.
+    this.assertInputAdmitted(sessionId);
     if (this.coordinator.inspect(sessionId) === undefined)
       throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
     if (this.sessionCredentialSources.get(sessionId) !== 'operator')
