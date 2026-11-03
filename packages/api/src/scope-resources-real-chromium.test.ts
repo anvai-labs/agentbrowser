@@ -2,13 +2,9 @@
 // page-initiated GET fetch to a resource-class host is admitted without
 // markers or credentials, while navigations and disallowed methods refuse.
 //
-// KNOWN ENGINE LIMITATION (pre-existing, reproduced independent of the
-// resource class): a page-initiated CROSS-ORIGIN BODY-BEARING fetch through
-// the scoped choke point dies with net::ERR_FAILED (same-origin POSTs work;
-// cross-origin program-host POSTs fail identically). Until that transport
-// bug is fixed, the POST lane of the resource class is exercised at the
-// policy layer only (scope-assets.test.ts); this test pins the working
-// GET lane and the refusals.
+// The resource POST lane rides the engine's inspected-lane workaround for
+// the Chromium continue bug on cross-origin bodies (see the engine's route
+// handler); policy-layer admission lives in scope-assets.test.ts.
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
@@ -20,6 +16,7 @@ interface Hit {
   host: string;
   path: string;
   method: string;
+  body: string;
   marker?: string;
   cookie?: string;
 }
@@ -36,6 +33,7 @@ it('resource-class hosts admit page-initiated GET fetches and refuse navigations
         host,
         path: req.url ?? '/',
         method: req.method ?? 'GET',
+        body: Buffer.concat(chunks).toString(),
         marker: req.headers['x-research'] as string | undefined,
         cookie: req.headers.cookie,
       });
@@ -49,6 +47,7 @@ it('resource-class hosts admit page-initiated GET fetches and refuse navigations
       res.end(
         `<body><h1>program</h1><script>
 fetch('http://localhost:${port}/ping').catch(() => {});
+fetch('http://localhost:${port}/beacon', {method: 'POST', body: '{"t":1}', headers: {'content-type': 'text/plain'}}).catch(() => {});
 fetch('http://localhost:${port}/mutate', {method: 'PUT', body: '{}'}).catch(() => {});
 </script></body>`
       );
@@ -75,9 +74,11 @@ fetch('http://localhost:${port}/mutate', {method: 'PUT', body: '{}'}).catch(() =
     const { pageId } = await service.createPage(session.sessionId);
     await service.navigate(session.sessionId, pageId, { url: `http://127.0.0.1:${port}/` });
 
-    // The GET fetch lands on the resource host — no marker, no cookie (the
-    // same hygiene as the asset class).
-    await expect.poll(() => hits.filter((h) => h.host === 'localhost').length).toBe(1);
+    // The GET fetch and the POST beacon both land on the resource host —
+    // no marker, no credential (the same hygiene as the asset class).
+    await expect.poll(() => hits.filter((h) => h.host === 'localhost').length).toBe(2);
+    const beacon = hits.find((h) => h.path === '/beacon');
+    expect(beacon).toMatchObject({ method: 'POST', body: '{"t":1}' });
     const ping = hits.find((h) => h.path === '/ping');
     expect(ping).toMatchObject({ method: 'GET' });
     expect(ping?.marker).toBeUndefined();

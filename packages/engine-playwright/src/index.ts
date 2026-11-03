@@ -2356,8 +2356,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         const override = headersFor(hostname, originalHeaders);
         const requestHeaders = override ?? originalHeaders;
         let initiatorHost: string | undefined;
+        let crossOriginBody = false;
         try {
-          initiatorHost = new URL(request.frame().url()).hostname;
+          const frameUrl = new URL(request.frame().url());
+          initiatorHost = frameUrl.hostname;
+          crossOriginBody = new URL(url).origin !== frameUrl.origin;
         } catch {
           /* Unknown frames never authorize assets; scoped document CSP blocks workers. */
         }
@@ -2429,21 +2432,36 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             await deny('egress_policy');
             return;
           }
-          emitRequest(
-            'request.finished',
-            request,
-            { passthrough: true, ...(probeClaim !== undefined ? { probe: true } : {}) },
-            redirectGuard === undefined
-          );
-          recordInjection(url);
-          await continueRequest(override);
-          return;
+          // Playwright's route.continue() cannot release a CROSS-ORIGIN
+          // body-bearing request: Chromium answers it with net::ERR_FAILED —
+          // reproduced with plain program hosts, no transforms and a bare
+          // immediate continue (same-origin bodies and cross-origin GETs are
+          // unaffected; raw Playwright without the engine passes, so the
+          // trigger is the engine's interception composition). These requests
+          // fall through to the inspected lane below: a Node-side re-issue
+          // (byte fidelity caveat as documented) that WORKS, where the native
+          // path is a guaranteed failure today.
+          if (!crossOriginBody) {
+            emitRequest(
+              'request.finished',
+              request,
+              { passthrough: true, ...(probeClaim !== undefined ? { probe: true } : {}) },
+              redirectGuard === undefined
+            );
+            recordInjection(url);
+            await continueRequest(override);
+            return;
+          }
         }
 
         recordInjection(url);
         // A claimed probe's Node-side re-issue always carries explicit headers
         // so the nonce cannot reach the wire (an undefined override would let
         // route.fetch re-issue the browser's original header set verbatim).
+        // Cross-origin bodies additionally carry their postData explicitly:
+        // route.fetch does not inherit it from the intercepted request in
+        // that composition (the inspected-lane workaround above).
+        const crossOriginPostData = crossOriginBody ? request.postDataBuffer() : undefined;
         const response = await route.fetch({
           maxRedirects: 0,
           ...(probeClaim !== undefined
@@ -2451,6 +2469,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             : override !== undefined
               ? { headers: override }
               : {}),
+          ...(crossOriginPostData != null && crossOriginPostData.length > 0
+            ? { postData: crossOriginPostData }
+            : {}),
         });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop

@@ -42,17 +42,19 @@ the POSTing endpoints (`geo.captcha-delivery.com`, `api.hcaptcha.com`, DataDome
 collector hosts) become `resource`; static CDNs stay `asset`. Bundles remain
 suggestions, never authorization.
 
-**Known transport limitation (pre-existing, discovered during this increment's
-qualification):** a page-initiated CROSS-ORIGIN BODY-BEARING fetch through the
-scoped choke point dies with `net::ERR_FAILED` — reproduced with plain program
-hosts and no resource class involved (same-origin POSTs work; cross-origin GETs
-work). The guard's native continue of the Playwright-paused cross-origin POST
-is the suspected path; a related hardening landed (the transform's explicit
-empty Cookie — a route.fetch-ism — is no longer injected on native continues,
-where it independently poisons the browser's CORS credentials check). Until the
-transport bug is fixed, the resource class's POST lane is enforced and tested at
-the policy layer; the engine test pins the GET lane, the refusals and the
-credential hygiene.
+**Transport note (resolved in this increment):** during qualification a
+pre-existing engine bug surfaced: a page-initiated CROSS-ORIGIN BODY-BEARING
+fetch died with `net::ERR_FAILED` under the choke point — reproduced with plain
+program hosts, no transforms, and even a bare immediate `route.continue()`
+(same-origin bodies and cross-origin GETs were unaffected; raw Playwright
+passes, so the trigger is the engine's interception composition). Fix:
+cross-origin bodies now ride the inspected lane (Node-side `route.fetch`
+re-issue with the original `postDataBuffer` forwarded explicitly, redirect
+walk, response caps) — strictly better than the guaranteed failure, with the
+S3-style byte-fidelity caveat applying to this lane as documented. A related
+hardening also landed: the transform's explicit empty Cookie (a route.fetch-ism)
+is no longer injected on the guard's native continues, where it independently
+poisons the browser's CORS credentials check.
 
 ## P1-6a — rotation detection (advisory)
 
