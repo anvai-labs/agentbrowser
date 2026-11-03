@@ -16,26 +16,14 @@ view with a 64 KiB complete-context ceiling. A task whose hard dependency is not
 complete is rejected. `--list` and `--check` expose selection metadata and validate all
 declared files and budgets without contacting a service.
 
-```mermaid
-flowchart TD
-    T0['T0 contract catalog ✔'] --> T1['T1 context profiles ●']
-    T0 --> T2['T2 shared execution ✔']
-    T2 --> T3['T3 QA regressions ✔']
-    T2 --> T4['T4 application parity ●']
-    T2 --> T5['T5 durable recovery ●']
-    T2 --> T6['T6 widget strategies ●']
-    T3 --> T7['T7 audit & security ✔']
-    T4 -. parity condition .-> T7
-    T7 --> T10['T10 engagements ●<br/>bounty-flow continuation']
-    T5 -. automation runs .-> T10
-    T0 --> T8['T8 harness qualification ●']
-    T1 -. profiles .-> T8
-    T3 -. slices .-> T8
-    T0 --> T9['T9 release hardening ↻']
-    style T7 fill:#0f766e,color:#fff
-    style T10 fill:#0f766e,color:#fff
 ```
-Legend: ✔ complete · ● active (owner-gated follow-ons in the rows below) · ↻ recurring.
+T0 ✔ ─ T1 ● ─ T8 ●        (T9 ↻ recurs each release)
+ └─ T2 ✔ ─ T3 ✔ ─ T7 ✔ ─ T10 ● bounty continuation
+         ├─ T4 ● ─┘ (parity condition)
+         ├─ T5 ● ─┘ (automation runs)
+         └─ T6 ●
+```
+✔ complete · ● active · ↻ recurring
 
 | Task | Current state | Delivered or next gate | Hard task dependencies |
 | --- | --- | --- | --- |
@@ -48,21 +36,16 @@ Legend: ✔ complete · ● active (owner-gated follow-ons in the rows below) ·
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses, C3c synthetic submission, E0a/E0b eligibility, N0 document read, first E0c listing-capture slice delivered; W1 #491, W2 #502, W3a #511, W3b #507 delivered; remaining: business/job identity and gates owned by the consuming workflow (E0c/E1 private policy, live workflow qualification) | T2 |
 | [T7](t7-audit-security.md) | **Complete** | ALL slices delivered (the appsec/bounty parity condition on T4 stays open): 2a scope enforcement (primitive + surface, 12 real-Chromium gates plus 14 policy unit tests), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates; audit suite 53 tests after the 2026-10-15 labelling and role-access work | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor gated on aiserver1's gateway, not TLS (owner reconciliation 2026-10-15). MCP cancellation (#485, bridge side; no CLI can script a provider-path cancel) and the Q1 re-qualification on both CLIs (#497) delivered; open: the inline-screenshot decision | T0; profile/full-run slices also require T1/T3 |
-| [T9](t9-release-hardening.md) | Recurring | 1.32.0 released 2026-11-03 (npm environment gate, Homebrew tap automation; the tag-ancestry gate #475 holds); 1.27.1 was the 2026-10-20 baseline (run 39419989960); least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closed 2026-10-16 (tag ruleset + `npm` environment protection) | T0; each release also requires its changed tasks' acceptance |
-| [T10](t10-engagements.md) | Active | M1–M4 released 1.21.0–1.27.1. The 2026-10-30 bounty-flow continuation then shipped through 1.32.0: P0-1/P0-3/P1-4 in 1.29.x, A1 coordinate interaction in 1.30.0, the redirect prerequisite 1.30.1, marker/seed fixes 1.30.2, publication privacy 1.30.3, event filters 1.31.0, and P0-2 scoped origin-context probes in 1.32.0. Remaining ordered items: P1-5, P1-6+A4 (partially: seed metadata in 1.31.0), P1-7+A2/A3, the P2-8 remainder (retention, no-cache auth checks), A5, A6 — see the [continuity plan](../design/t10-bounty-flow-continuity.md) | T7; T5 for automation runs |
+| [T9](t9-release-hardening.md) | Recurring | 1.32.0 released 2026-11-03 (npm gate + tap automation; tag-ancestry gate #475 holds); least-privilege permissions and SHA-pinned actions delivered (#481); the CI runner-minutes baseline is recorded (#504); runner-use improvements open. Every release needs fresh promotion evidence. R14 closed 2026-10-16 (tag ruleset + `npm` environment protection) | T0; each release also requires its changed tasks' acceptance |
+| [T10](t10-engagements.md) | Active | M1–M4 in 1.21.0–1.27.1; the 2026-10-30 bounty continuation shipped P0-1/P0-3/P1-4 (1.29.x), A1 (1.30.0), the probe prerequisite (1.30.1), marker/seed fixes (1.30.2), publication privacy (1.30.3), event filters (1.31.0) and P0-2 scoped API probes (1.32.0). Remaining: P1-5, P1-6+A4 (part), P1-7+A2/A3, P2-8 remainder, A5, A6 — [continuity plan](../design/t10-bounty-flow-continuity.md) | T7; T5 for automation runs |
 
 ## Current continuation (2026-11-03)
 
-Published baseline **1.32.0** (2026-11-03). The bounty-flow arc since 1.28.0 delivered:
-scoped response admission and redirect method/body fidelity (1.30.1), research-marker
-transport and initial seed lifecycle (1.30.2), owner-bound publication privacy (1.30.3),
-bounded event filters with cookie-seed metadata (1.31.0, #683), and scoped origin-context
-API probes — `page fetch`, ADR-030 — with method-based one-use consent, nonce-attributed
-transport, session-secret redaction and `probe`-marked ledgers (1.32.0, #684/#685), each
-under pre-merge adversarial review. Records in ../evidence/release-1.28.0.md through
-release-1.32.0.md. Remaining work is ordered in the
-[continuity plan](../design/t10-bounty-flow-continuity.md); live program acceptance
-(Vinted/Wolt) stays pending operator verification.
+Baseline **1.32.0**: the bounty-flow arc (redirect prerequisite, markers/seed,
+publication privacy, event filters, P0-2 scoped probes) shipped 1.30.1–1.32.0 under
+pre-merge adversarial review; records in ../evidence/release-1.30.1.md through
+release-1.32.0.md. Remaining order and live-acceptance status:
+[continuity plan](../design/t10-bounty-flow-continuity.md).
 
 ## Earlier continuation (2026-10-20)
 
