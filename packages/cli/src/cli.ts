@@ -15,6 +15,7 @@ import { adoptScopeAssets } from './scope-assets-file.js';
 import { isAbsolute } from 'node:path';
 import {
   assertCookieRequestSize,
+  cookieSeedWarnings,
   denialTraceLine,
   importProgramScope,
   loadTldts,
@@ -108,11 +109,13 @@ import {
 import { observationReceipt, writeObservationFile } from './observation-file.js';
 import { PrivateFileError, writePrivateFile } from './private-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
+import { connectLoopbackCdp, extractSeedFromCdp } from './seed-from-cdp.js';
 import {
   COOKIE_USAGE,
   NAVIGATION_USAGE,
   PLAN_USAGE,
   ROOT_USAGE,
+  SEED_FROM_CDP_USAGE,
   SESSION_CREATE_USAGE,
   type UsageGuidance,
 } from './usage-guidance.js';
@@ -1337,7 +1340,6 @@ export function buildCli(deps: CliDependencies): Cli {
                         sourceContext: 'unknown',
                         extractedAt: new Date().toISOString(),
                         domainFilters: [],
-                        cookieClasses: [],
                       }
                     : undefined
                 );
@@ -3026,6 +3028,77 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const artifact = await ctx.client.sessions.pdf(sessionId, pageId, request);
               await emitCapture(ctx, sessionId, artifact, options);
+            }
+          )
+        );
+
+      // P1-6c (ADR-033): operator-side extraction from an already-open
+      // operator Chrome over loopback CDP into a versioned, exclusive-0600
+      // seed file. Local-only: no server, no session, no client call.
+      withUsage(program.command('seed-from-cdp'), SEED_FROM_CDP_USAGE)
+        .description(
+          'extract a v1 cookie seed from an open operator Chrome over loopback CDP (operator-side; never starts a browser)'
+        )
+        .requiredOption('--domain <host...>', 'domain filter(s): a hostname or .suffix entry')
+        .requiredOption('--out <file>', 'seed file to create exclusively (mode 0600)')
+        .option('--port <port>', 'loopback CDP port of the operator Chrome', '9222')
+        .option('--context <kind>', "'default' or 'incognito' browser context", 'default')
+        .option(
+          '--browser-context <id>',
+          'explicit incognito context id (or its unique prefix) when several are open'
+        )
+        .action(
+          action(
+            async (
+              ctx,
+              options: {
+                domain: string[];
+                out: string;
+                port: string;
+                context: string;
+                browserContext?: string;
+              }
+            ) => {
+              if (options.context !== 'default' && options.context !== 'incognito')
+                throw new UsageError("--context must be 'default' or 'incognito'.");
+              const client = await connectLoopbackCdp(Number.parseInt(options.port, 10));
+              try {
+                const extracted = await extractSeedFromCdp(client, {
+                  domains: options.domain,
+                  context: options.context,
+                  ...(options.browserContext !== undefined
+                    ? { browserContext: options.browserContext }
+                    : {}),
+                });
+                // Strict normalization, v1 envelope with derived classes, and
+                // the exclusive 0600 write all live in writeCookieFile.
+                const written = await writeCookieFile(
+                  options.out,
+                  extracted.cookies,
+                  extracted.provenance
+                );
+                const warnings = cookieSeedWarnings(extracted.cookies);
+                ctx.emit(
+                  {
+                    context: extracted.provenance.sourceContext,
+                    ...(extracted.provenance.sourceContextSha256 !== undefined
+                      ? { browserContext: extracted.provenance.sourceContextSha256.slice(0, 8) }
+                      : {}),
+                    tab: extracted.selectedTabOrigin,
+                    domains: extracted.provenance.domainFilters,
+                    cookies: written.count,
+                    path: written.path,
+                    ...(warnings.length ? { warnings } : {}),
+                  },
+                  () => [
+                    `Extracted ${written.count} cookie(s) for ${extracted.provenance.domainFilters.join(', ')} from ${extracted.selectedTabOrigin} (${extracted.provenance.sourceContext} context).`,
+                    `Seed file: ${written.path} (mode 0600, created exclusively).`,
+                    ...warnings,
+                  ]
+                );
+              } finally {
+                client.close();
+              }
             }
           )
         );

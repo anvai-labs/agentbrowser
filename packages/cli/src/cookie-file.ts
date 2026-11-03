@@ -299,7 +299,7 @@ export async function readCookieFile(path: string, format?: string, skipUnsuppor
 export async function writeCookieFile(
   path: string,
   value: unknown,
-  provenance?: CookieSeedProvenance
+  provenance?: Omit<CookieSeedProvenance, 'cookieClasses'>
 ) {
   const { cookies } = validateCookies(value, false, Date.now() / 1000);
   const contents = provenance

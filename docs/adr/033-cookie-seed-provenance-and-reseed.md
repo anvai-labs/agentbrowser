@@ -1,7 +1,8 @@
 # ADR-033: Cookie seed provenance and explicit auth renewal
 
-Status: Accepted and implemented — the A4 metadata/diagnostic increment shipped in 1.31.0 (live reseed remains follow-up work);
-independent review required before merge. Live reseed remains proposed and
+Status: Accepted and implemented — the A4 metadata/diagnostic increment shipped in 1.31.0; the
+`seed-from-cdp` extraction utility and advisory rotation detection (P1-6a/P1-6c) implemented on
+the P1 flow-continuity branch (2026-11-03). Live reseed remains follow-up work, proposed and
 disabled until the quiescence, generation and accounting gates below qualify.
 Design 2026-11-01.
 Related: [ADR-025](025-operator-cookie-handoff.md),
@@ -28,7 +29,8 @@ not expose cookie values, arbitrary cookie names or storage keys. Cookie classes
 are derived from actual imported rows rather than trusted from metadata.
 Seeding retains all existing policy, scope and protected-credential floors.
 
-The future `session seed-from-cdp` utility is explicitly an operator-side export
+The `seed-from-cdp` utility (shipped as the top-level `agentbrowser seed-from-cdp`
+CLI command, P1-6c) is explicitly an operator-side export
 from an already-open, unenforced browser, not the protected login-browser handoff
 in ADR-025. It selects a default or explicitly identified incognito context,
 attaches only matching page targets, and reads tab-context `Network.getCookies`
@@ -78,9 +80,11 @@ the operator browser automatically or authorize reseeding.
 The first increment covers fingerprint warnings in create/status without values,
 strict metadata/legacy file round trips, malformed/oversized/unknown fields,
 partition refusal, private/no-follow files, source-context metadata and provider
-warning-domain tests. CDP extraction is not implemented in this increment.
-A future extraction implementation must qualify default vs incognito
-tab session cookies with receiver-independent canaries and bounded error output.
+warning-domain tests. CDP extraction (P1-6c) is qualified with receiver-independent
+canaries: fake-client suites for default vs incognito context selection, explicit
+multi-context selection, tab matching, tab-context-only cookie reads, domain
+filtering, seed mapping, provenance and the loopback/non-redirecting guards, plus
+the exclusive-0600 write round trip through the shared strict normalizer.
 
 Live reseed qualification additionally needs same-id auth recovery (or an explicitly
 documented accounting-preserving clone), unchanged pages/ledger where claimed,

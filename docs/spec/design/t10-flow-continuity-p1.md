@@ -78,12 +78,17 @@ drift.
 
 ## P1-6c — `seed-from-cdp` (operator-side utility)
 
-CLI-only, per ADR-033's bounded design: read an already-open operator Chrome over
-loopback CDP, select default or an explicitly identified incognito context, read
-tab-context `Network.getCookies` for the selected domains (never browser-wide
+CLI-only (`agentbrowser seed-from-cdp`), per ADR-033's bounded design: read an
+already-open operator Chrome over loopback CDP (bounded, non-redirecting version
+probe; the reported browser WebSocket must itself be loopback `ws://`), select
+default or an explicitly identified incognito context, attach only to a
+tab whose host matches the domain filters, and read tab-context
+`Network.getCookies` for the selected domains (never browser-wide
 `Storage.getCookies`), domain-filter, classify, and write the versioned seed file
-mode 0600. It never starts a browser, reads profile storage, or touches a
-service. Multiple candidate incognito contexts require explicit selection.
+exclusively, mode 0600. It never starts a browser, reads profile storage, or
+touches a service. Multiple candidate incognito contexts require explicit
+selection (`--browser-context`, id or unique prefix; the provenance carries the
+context digest, not the id).
 
 ## P1-6b — live reseed (the ADR-033 activation gates)
 
