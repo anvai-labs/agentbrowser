@@ -1,8 +1,11 @@
 # T10: engagements and automation runs
 
-Status: ACTIVE (approved 2026-10-16). Repository: agentbrowser.
+Status: ACTIVE (approved 2026-10-16; bounty-flow continuation from the 2026-10-30
+handoff is in progress). Repository: agentbrowser.
 Depends on: T7 (scope primitive, audit adapters); T5 (durable classification) for M4 runs.
 Inputs: core, the selected appsec/bounty/operations/qa mode, security, contracts, quality-ci.
+Current delivered state and the remaining ordered items live in the
+[continuity plan](../design/t10-bounty-flow-continuity.md).
 
 ## Goal
 
@@ -29,9 +32,17 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 
 ## Milestones and acceptance
 
-```
-1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 ✔ M2 denial reporting
-  ─▶ 1.25.0 ✔ M3 program scope + findings ─▶ 1.26.0 ✔ M4 automation runs
+```mermaid
+flowchart LR
+    M1['1.21.0<br/>M1 scope<br/>without holes'] --> M2a['1.22.0–1.24.0<br/>M2 status,<br/>ledger, denials']
+    M2a --> M3['1.25.0<br/>M3 program scope<br/>+ findings']
+    M3 --> M4['1.26.0<br/>M4 automation runs']
+    M4 --> M5['1.28.0<br/>M5 workflow polish']
+    M5 --> BC['1.29.x<br/>handoff arc opens<br/>P0-1 · P0-3 · P1-4']
+    BC --> A1R['1.30.0–1.30.3<br/>A1 coordinate mode<br/>redirect · markers · privacy']
+    A1R --> EF['1.31.0<br/>event filters<br/>seed metadata']
+    EF --> PF['1.32.0<br/>P0-2 page fetch<br/>scoped API probes']
+    style PF fill:#0f766e,color:#fff
 ```
 
 | Milestone | Release | Acceptance (each test-first; real Chromium where traffic is involved) |
@@ -41,6 +52,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 | M3 program scope and findings | 1.25.0 | restrictive fields (excludes, ports, schemes, rate limit, program metadata); an importer for published program scope that maps `*.host` to subdomains only (the apex is in scope only when listed), refuses ambiguous wildcards and anything else it cannot express; findings bound to the engagement (out-of-scope evidence refused, confirmations cite ledger entries), SARIF draft export |
 | M4 automation runs | 1.26.0 | a saved plan file runs from the CLI with label targets, optional durable classification and JUnit/JSON results; the CI action accepts it. Released alongside: T6 rollback and async/recycled-option coverage, owned and recorded by [T6](t6-widget-strategies.md) |
 | M5 bounty workflow polish | 1.28.0 ([record](../evidence/release-1.28.0.md)) | explicit subrequest sizing and warnings, page-local navigation denial counts, session pacing/budget facts, private forced re-export, validated per-hop research markers and UA overrides with ledger evidence; local Chromium fixtures cover redirect stripping and re-injection |
+| Bounty-flow continuation (2026-10-30 handoff) | 1.29.0–1.32.0 ([continuity plan](../design/t10-bounty-flow-continuity.md)) | ordered P0-1 → P0-3 → P1-4 → A1 → P0-2 → …: navigation classification and live denial diagnostics (1.29.x), coordinate interaction with verified bytes (1.30.0), redirect method/body fidelity — the probe prerequisite (1.30.1), research-marker transport and seed lifecycle (1.30.2), owner-bound publication privacy (1.30.3), bounded event filters and cookie-seed metadata (1.31.0), and scoped origin-context API probes with one-use method-based consent, nonce attribution, scope preflight and probe-marked ledgers (1.32.0); every increment pre-merge adversarially reviewed; live Vinted/Wolt acceptance pending operator verification |
 
 ## Not in T10
 

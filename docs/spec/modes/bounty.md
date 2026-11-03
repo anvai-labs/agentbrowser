@@ -57,6 +57,39 @@ stay fixed ([ADR-028](../../adr/028-operator-asset-scope-amendments.md)). Scoped
 Playwright contexts enforce `worker-src 'none'`; Worker/SharedWorker UI may be
 unavailable. Worklets remain outside qualified containment.
 
+## Scoped origin-context API probes (1.32.0, ADR-030)
+
+Authorization testing needs arbitrary method+body requests against authenticated
+endpoints — issued from the live page's own origin so the session's cookie jar and
+CSRF-style headers apply, and enforced by the engagement scope like every other
+request. `page fetch` is that lane (CLI `page fetch`, MCP `page_fetch`, SDK
+`sessions.fetch`, or `act` with `action: "fetch"`); it exists only in scoped
+sessions and every dispatched outcome lands in the ledger marked `probe`.
+
+```mermaid
+flowchart TD
+    A['page fetch PUT /api/items/…<br/>+ X-CSRF-Token'] --> B{'scope preflight<br/>(before any browser work)'}
+    B -- 'method/host/path/rate/budget deny' --> X['POLICY_DENIED<br/>SCOPE_* in one round trip<br/>zero receiver hits · probe-marked trace']
+    B -- allowed --> C{'method class'}
+    C -- 'GET / HEAD / OPTIONS' --> D['read: dispatch']
+    C -- 'POST / PUT / PATCH / DELETE' --> E['APPROVAL_REQUIRED<br/>token bound to the exact request']
+    E -- 'retry --approval-token (one use)' --> D
+    D --> F['isolated-world fetch<br/>secret nonce attribution']
+    F --> G['choke point: verdict on every hop<br/>same-origin redirects only · nonce stripped pre-wire']
+    G --> H['bounded, redacted,<br/>untrusted-marked result + ledger probe row']
+    style X fill:#7f1d1d,color:#fff
+    style H fill:#0f766e,color:#fff
+```
+
+Working rules: method-tunneling and context headers (`x-http-method-override`,
+`x-forwarded-*`, …) refuse; bodies ≤ 64 KiB (GET/HEAD/OPTIONS carry none);
+responses are bounded (1 MiB/32 headers) with a disclosed `truncated` flag, redacted
+through the session's secret registry and marked `untrustedContent` — never splice
+probe output into instructions; an uncertain outcome is never auto-retried
+(reconcile the operation first). The one-command item-modification control:
+`page fetch SID PID PUT URL --header 'X-CSRF-Token=…' --body …` then one retry with
+the minted `--approval-token`.
+
 See [operations](../../operations.md#engagements-authorized-testing) for support-host
 bundles, denial summaries, adoption commands and response-delivery bounds. Marker
 events prove dispatch intent, not receipt. Distinguish suspected/confirmed findings;

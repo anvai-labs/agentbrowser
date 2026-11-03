@@ -2,10 +2,20 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Published baseline: AgentBrowser 1.23.0 at main `82b06ca` (promotion PR #564), released
-2026-10-17; release alignment reviewed the same day. See the
-[release evidence](evidence/release-1.23.0.md), the [task index](tasks/README.md) for current
-status, and the [1.10.0 checkpoint](evidence/release-1.10.0.md) for this spec's original baseline.
+Published baseline: AgentBrowser 1.32.0 at main `5eca4fe3` (promotion PR #691), released
+2026-11-03. See the [release evidence](evidence/release-1.32.0.md), the
+[task index](tasks/README.md) for current status, and the
+[1.10.0 checkpoint](evidence/release-1.10.0.md) for this spec's original baseline.
+
+```mermaid
+flowchart LR
+    M['manifest.json<br/>versioned routing contract'] --> CORE['core.md<br/>always loaded']
+    M --> MODE['exactly one mode<br/>qa · forms · application · bounty · appsec · audit · operations']
+    MODE --> VIEW['views (byte-ceilinged)<br/>agent · contracts · algorithms · stack · review']
+    M --> TASK['task packets T0–T10<br/>+ declared shared inputs']
+    MODE -. governs .-> SES['scoped, ledgered<br/>engagement sessions']
+    style M fill:#0f766e,color:#fff
+```
 
 Build a shared execution and verification service for people and agents. A mode
 selects a small policy and capability profile; it does not create another runner,
