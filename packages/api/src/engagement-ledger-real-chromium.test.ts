@@ -114,6 +114,21 @@ const readLedger = async (dir: string) => {
 };
 
 describe('engagement ledger (T10 M2)', () => {
+  /** Ledgered engagement service over a fresh engine, plus its first page. */
+  async function ledgeredService(dir: string) {
+    const service = new AgentBrowserService({
+      engine: new PlaywrightChromiumEngine(),
+      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
+      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
+    });
+    const session = await service.createSession({
+      tenantId: 'one',
+      scope: { allowedHosts: ['127.0.0.1'], ledger: true },
+    });
+    const { pageId } = await service.createPage(session.sessionId);
+    return { service, session, pageId };
+  }
+
   it('is refused when the operator configured no engagement directory', async () => {
     const app = await buildServer({ engine: new FakeEngine() });
     try {
@@ -243,17 +258,8 @@ describe('engagement ledger (T10 M2)', () => {
   it("records a popup's first navigation (not yet adopted as a page)", async () => {
     const dir = await engagementDir();
     const site = await fixture();
-    const service = new AgentBrowserService({
-      engine: new PlaywrightChromiumEngine(),
-      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
-      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
-    });
+    const { service, session, pageId } = await ledgeredService(dir);
     try {
-      const session = await service.createSession({
-        tenantId: 'one',
-        scope: { allowedHosts: ['127.0.0.1'], ledger: true },
-      });
-      const { pageId } = await service.createPage(session.sessionId);
       await service.navigate(session.sessionId, pageId, { url: site.url('/opener') });
       await new Promise((resolve) => setTimeout(resolve, 800));
       await service.closeSession(session.sessionId);
@@ -302,17 +308,8 @@ describe('engagement ledger (T10 M2)', () => {
   it('records each response of a POST chain: the 303 and its allowed redirect, then the landing', async () => {
     const dir = await engagementDir();
     const site = await fixture();
-    const service = new AgentBrowserService({
-      engine: new PlaywrightChromiumEngine(),
-      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
-      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
-    });
+    const { service, session, pageId } = await ledgeredService(dir);
     try {
-      const session = await service.createSession({
-        tenantId: 'one',
-        scope: { allowedHosts: ['127.0.0.1'], ledger: true },
-      });
-      const { pageId } = await service.createPage(session.sessionId);
       await service.navigate(session.sessionId, pageId, { url: site.url('/form') }).catch(() => {});
       await new Promise((resolve) => setTimeout(resolve, 800));
       await service.closeSession(session.sessionId);
@@ -393,17 +390,8 @@ describe('engagement ledger (T10 M2)', () => {
   it('records a POST the page aborts after sending (no response ever arrives)', async () => {
     const dir = await engagementDir();
     const site = await fixture();
-    const service = new AgentBrowserService({
-      engine: new PlaywrightChromiumEngine(),
-      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
-      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
-    });
+    const { service, session, pageId } = await ledgeredService(dir);
     try {
-      const session = await service.createSession({
-        tenantId: 'one',
-        scope: { allowedHosts: ['127.0.0.1'], ledger: true },
-      });
-      const { pageId } = await service.createPage(session.sessionId);
       await service.navigate(session.sessionId, pageId, { url: site.url('/aborter') });
       await new Promise((resolve) => setTimeout(resolve, 900));
       await service.closeSession(session.sessionId);
@@ -430,17 +418,8 @@ describe('engagement ledger (T10 M2)', () => {
   async function ledgerAfter(path: string) {
     const dir = await engagementDir();
     const site = await fixture();
-    const service = new AgentBrowserService({
-      engine: new PlaywrightChromiumEngine(),
-      networkPolicy: new NetworkPolicy({ blockLoopback: false }),
-      engagement: { directory: dir, maxBytes: 4 * 1024 * 1024 },
-    });
+    const { service, session, pageId } = await ledgeredService(dir);
     try {
-      const session = await service.createSession({
-        tenantId: 'one',
-        scope: { allowedHosts: ['127.0.0.1'], ledger: true },
-      });
-      const { pageId } = await service.createPage(session.sessionId);
       await service.navigate(session.sessionId, pageId, { url: site.url(path) });
       await new Promise((resolve) => setTimeout(resolve, 900));
       await service.closeSession(session.sessionId);

@@ -17,6 +17,33 @@ async function replaceFileInput(page: EnginePage) {
 }
 
 describe('real action wire semantics', () => {
+  /**
+   * A fresh engine + page over a Spin input whose ArrowDown handler counts hits
+   * (the shared press fixture): click-focuses the input and returns the live ref.
+   */
+  async function spinFocus(url: string): Promise<{
+    engine: PlaywrightChromiumEngine;
+    page: Awaited<
+      ReturnType<Awaited<ReturnType<PlaywrightChromiumEngine['createSession']>>['newPage']>
+    >;
+    focused: { ref: string };
+    before: number;
+  }> {
+    const engine = new PlaywrightChromiumEngine();
+    const session = await engine.createSession({ headless: true });
+    const page = await session.newPage();
+    await page.navigate({ url });
+    const input = (await page.observe({})).elements.find((element) => element.name === 'Spin');
+    if (!input) throw new Error('Missing fixture input');
+    await page.act({ type: 'click', target: { ref: input.ref } });
+    // The click bumped the revision; re-observe so the press targets a
+    // live ref (the same rhythm a real form automation follows).
+    const focused = (await page.observe({})).elements.find((element) => element.name === 'Spin');
+    if (!focused) throw new Error('Missing fixture input after click');
+    const before = (await page.observe({})).revision;
+    return { engine, page, focused, before };
+  }
+
   it('delivers directional scroll and untargeted keyboard input', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {
@@ -49,21 +76,10 @@ describe('real action wire semantics', () => {
   });
 
   it('repeats targeted keypresses with count under a single revision bump', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    const spin =
+      'data:text/html,<input aria-label="Spin" onkeydown="if(event.key===\'ArrowDown\'){window.hits=(window.hits||0)+1;this.value=window.hits}">';
+    const { engine, page, focused, before } = await spinFocus(spin);
     try {
-      const session = await engine.createSession({ headless: true });
-      const page = await session.newPage();
-      await page.navigate({
-        url: 'data:text/html,<input aria-label="Spin" onkeydown="if(event.key===\'ArrowDown\'){window.hits=(window.hits||0)+1;this.value=window.hits}">',
-      });
-      const input = (await page.observe({})).elements.find((element) => element.name === 'Spin');
-      if (!input) throw new Error('Missing fixture input');
-      await page.act({ type: 'click', target: { ref: input.ref } });
-      // The click bumped the revision; re-observe so the press targets a
-      // live ref (the same rhythm a real form automation follows).
-      const focused = (await page.observe({})).elements.find((element) => element.name === 'Spin');
-      if (!focused) throw new Error('Missing fixture input after click');
-      const before = (await page.observe({})).revision;
       const effect = await page.act({
         type: 'press',
         key: 'ArrowDown',
@@ -82,21 +98,12 @@ describe('real action wire semantics', () => {
   });
 
   it('bumps the revision when a counted press run fails partway, and not when the first press fails', async () => {
-    const engine = new PlaywrightChromiumEngine();
+    // The input removes itself on the 2nd ArrowDown: presses 1-2 land,
+    // press 3 fails, and the partial run must still bump the revision.
+    const vanish =
+      'data:text/html,<input aria-label="Spin" onkeydown="if(event.key===\'ArrowDown\'){window.hits=(window.hits||0)+1;if(window.hits>=2){this.remove()}}">';
+    const { engine, page, focused, before } = await spinFocus(vanish);
     try {
-      const session = await engine.createSession({ headless: true });
-      const page = await session.newPage();
-      // The input removes itself on the 2nd ArrowDown: presses 1-2 land,
-      // press 3 fails, and the partial run must still bump the revision.
-      await page.navigate({
-        url: 'data:text/html,<input aria-label="Spin" onkeydown="if(event.key===\'ArrowDown\'){window.hits=(window.hits||0)+1;if(window.hits>=2){this.remove()}}">',
-      });
-      const input = (await page.observe({})).elements.find((element) => element.name === 'Spin');
-      if (!input) throw new Error('Missing fixture input');
-      await page.act({ type: 'click', target: { ref: input.ref } });
-      const focused = (await page.observe({})).elements.find((element) => element.name === 'Spin');
-      if (!focused) throw new Error('Missing fixture input after click');
-      const before = (await page.observe({})).revision;
       await expect(
         page.act({ type: 'press', key: 'ArrowDown', target: { ref: focused.ref }, count: 5 })
       ).rejects.toThrow();
