@@ -7,7 +7,12 @@ it('adds explicit retail support-host classes without changing program targets',
   if (!result.ok) return;
   expect(result.scope.allowedHosts).toEqual(['app.example.com']);
   expect(result.scope.assetHosts?.length).toBeGreaterThan(0);
-  expect(result.scope.assetHosts?.every((host) => host.class === 'asset')).toBe(true);
+  // Static delivery stays 'asset'; the vendors' functional endpoints the
+  // target's scripts call are 'resource' (P1-5).
+  expect(
+    result.scope.assetHosts?.every((host) => host.class === 'asset' || host.class === 'resource')
+  ).toBe(true);
+  expect(result.scope.assetHosts?.some((host) => host.class === 'resource')).toBe(true);
   expect(new Set(result.scope.assetHosts?.map((host) => host.category))).toEqual(
     new Set(['consent', 'captcha', 'asset'])
   );

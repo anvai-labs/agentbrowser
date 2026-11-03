@@ -141,7 +141,8 @@ export interface ScopeIdentityBinding {
 export interface EngagementScope {
   assetHosts?: Array<{
     host: string;
-    class: 'asset';
+    /** 'asset': static delivery (GET/HEAD). 'resource': functional dependency (GET/HEAD/OPTIONS/POST, fetch/XHR included). */
+    class: 'asset' | 'resource';
     category?: 'asset' | 'consent' | 'captcha' | 'sso';
   }>;
   /** Exhaustive when set: exact hosts and ".suffix" entries in scope. */

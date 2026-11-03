@@ -187,10 +187,14 @@ export const ScopeProgramSchema = Type.Object(
 // T7 slice 2: engagement scope (authorized security testing). Enforced
 // per request and per redirect hop by EngagementScopePolicy over the
 // session's base policy; restrict-only — the base always runs.
+// P1-5 (ADR-028 resource class): `asset` = static delivery hosts (GET/HEAD,
+// attributed static subresources); `resource` = functional dependency hosts the
+// target's own flow calls (GET/HEAD/OPTIONS/POST, page-initiated fetch/XHR
+// included). Both are disjoint from program hosts and never finding targets.
 export const ScopeAssetHostSchema = Type.Object(
   {
     host: Type.String({ minLength: 1, maxLength: 253, pattern: SCOPE_HOST_PATTERN }),
-    class: Type.Literal('asset'),
+    class: Type.Union([Type.Literal('asset'), Type.Literal('resource')]),
     category: Type.Optional(
       Type.Union([
         Type.Literal('asset'),

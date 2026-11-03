@@ -18,9 +18,16 @@ export const STATIC_ASSET_TYPES = Object.freeze({
 });
 export interface ScopeAssetHost {
   host: string;
-  class: 'asset';
+  /** 'asset': static delivery (GET/HEAD). 'resource': functional dependency (GET/HEAD/OPTIONS/POST, fetch/XHR included). */
+  class: 'asset' | 'resource';
   category?: 'asset' | 'consent' | 'captcha' | 'sso';
 }
+
+/** Methods a resource-class host admits (ADR-028 resource extension, P1-5). */
+export const RESOURCE_HOST_METHODS = Object.freeze(['GET', 'HEAD', 'OPTIONS', 'POST']);
+
+/** Resource types a resource-class host admits beyond the static set. */
+export const RESOURCE_FUNCTIONAL_TYPES = Object.freeze(['xhr', 'fetch']);
 export interface DeniedHostSummary {
   hostname: string;
   count: number;

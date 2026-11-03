@@ -7664,8 +7664,16 @@
                   "type": "string"
                 },
                 "class": {
-                  "const": "asset",
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "category": {
                   "anyOf": [
@@ -9736,8 +9744,16 @@
                           "type": "string"
                         },
                         "class": {
-                          "const": "asset",
-                          "type": "string"
+                          "anyOf": [
+                            {
+                              "const": "asset",
+                              "type": "string"
+                            },
+                            {
+                              "const": "resource",
+                              "type": "string"
+                            }
+                          ]
                         },
                         "category": {
                           "anyOf": [
@@ -10031,8 +10047,16 @@
                       "type": "string"
                     },
                     "class": {
-                      "const": "asset",
-                      "type": "string"
+                      "anyOf": [
+                        {
+                          "const": "asset",
+                          "type": "string"
+                        },
+                        {
+                          "const": "resource",
+                          "type": "string"
+                        }
+                      ]
                     },
                     "category": {
                       "anyOf": [
@@ -10338,8 +10362,16 @@
                   "type": "string"
                 },
                 "class": {
-                  "const": "asset",
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "const": "asset",
+                      "type": "string"
+                    },
+                    {
+                      "const": "resource",
+                      "type": "string"
+                    }
+                  ]
                 },
                 "category": {
                   "anyOf": [

@@ -240,6 +240,7 @@ nav:
     - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
     - 'T10 Bounty Operator Workflow': spec/design/t10-bounty-operator-workflow.md
     - 'T10 Bounty Flow Continuity': spec/design/t10-bounty-flow-continuity.md
+    - 'T10 Flow Continuity P1 (resource hosts, auth lifecycle)': spec/design/t10-flow-continuity-p1.md
     - 'T10 Owner-bound Publication': spec/design/t10-owner-publication.md
     - 'T10 Event Replay Filters': spec/design/t10-event-replay-filters.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md

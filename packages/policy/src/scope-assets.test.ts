@@ -96,3 +96,102 @@ it('refuses userinfo that the HTTP transport would otherwise turn into Basic aut
     })
   ).rejects.toMatchObject({ details: { scope: 'SCOPE_HOST_DENIED' } });
 });
+
+const resourceScope = () =>
+  new EngagementScopePolicy(
+    { checkRequest: vi.fn(async () => {}) },
+    {
+      allowedHosts: ['app.test'],
+      assetHosts: [
+        { host: 'cdn.test', class: 'asset' },
+        { host: 'beacon.test', class: 'resource', category: 'captcha' },
+      ],
+      allowedMethods: ['GET'],
+      requestBudget: 100,
+    }
+  );
+it('resource-class hosts admit the functional lane: page-initiated fetch/XHR with GET/HEAD/OPTIONS/POST', async () => {
+  const policy = resourceScope();
+  for (const lane of [
+    { resourceType: 'xhr', method: 'POST' },
+    { resourceType: 'fetch', method: 'POST' },
+    { resourceType: 'fetch', method: 'GET' },
+    { resourceType: 'fetch', method: 'OPTIONS' },
+    { resourceType: 'script', method: 'GET' },
+  ]) {
+    await expect(
+      policy.checkRequest({
+        url: 'https://beacon.test/collect',
+        hostname: 'beacon.test',
+        initiatorHost: 'app.test',
+        ...lane,
+      }),
+      JSON.stringify(lane)
+    ).resolves.toBeUndefined();
+  }
+});
+it('resource-class hosts still refuse navigations, mutations beyond POST, missing or foreign attribution, and credential URLs', async () => {
+  const policy = resourceScope();
+  for (const extra of [
+    { resourceType: 'document', method: 'GET' },
+    { resourceType: 'xhr', method: 'PUT' },
+    { resourceType: 'xhr', method: 'DELETE' },
+    { resourceType: 'xhr', method: 'POST', initiatorHost: 'evil.test' },
+    { resourceType: 'xhr', method: 'POST', initiatorHost: undefined },
+    { resourceType: 'websocket', method: 'GET' },
+  ]) {
+    await expect(
+      policy.checkRequest({
+        url: 'https://beacon.test/collect',
+        hostname: 'beacon.test',
+        initiatorHost: 'app.test',
+        method: 'GET',
+        resourceType: 'fetch',
+        ...extra,
+      }),
+      JSON.stringify(extra)
+    ).rejects.toMatchObject({ details: { scope: 'SCOPE_HOST_DENIED' } });
+  }
+  await expect(
+    policy.checkRequest({
+      url: 'https://user:pass@beacon.test/collect',
+      hostname: 'beacon.test',
+      method: 'POST',
+      resourceType: 'xhr',
+      initiatorHost: 'app.test',
+    })
+  ).rejects.toMatchObject({ details: { scope: 'SCOPE_HOST_DENIED' } });
+});
+it('a resource host’s POST is governed by its class, not the program method list (P1-5)', async () => {
+  const policy = resourceScope();
+  // Program methods are GET-only; the vendor beacon still POSTs.
+  await expect(
+    policy.checkRequest({
+      url: 'https://beacon.test/collect',
+      hostname: 'beacon.test',
+      method: 'POST',
+      resourceType: 'xhr',
+      initiatorHost: 'app.test',
+    })
+  ).resolves.toBeUndefined();
+  // The program method floor still governs program hosts.
+  await expect(
+    policy.checkRequest({
+      url: 'https://app.test/api',
+      hostname: 'app.test',
+      method: 'POST',
+    })
+  ).rejects.toMatchObject({ details: { scope: 'SCOPE_METHOD_DENIED' } });
+});
+it('resource-class traffic consumes budget and is scrubbed like asset traffic', async () => {
+  const policy = resourceScope();
+  for (let i = 0; i < 3; i += 1)
+    await policy.checkRequest({
+      url: 'https://beacon.test/collect',
+      hostname: 'beacon.test',
+      method: 'POST',
+      resourceType: 'xhr',
+      initiatorHost: 'app.test',
+    });
+  expect(policy.status().budget.spent).toBeGreaterThanOrEqual(3);
+});
