@@ -2,7 +2,7 @@
 // order, input exclusion, bounded quiescence, generation invalidation, the
 // qualified replacement, accounting preservation and the failure semantics
 // (stop, never replay). Values never appear in results or errors.
-import { chmod, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApprovalGate } from '@agentbrowser/core';
@@ -10,6 +10,7 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service.js';
 import type { SessionPrincipal } from './session-authority.js';
+import { readEngagementLedgerLines } from './test-support/engagement-ledger-lines.js';
 
 const operator = (tenant = 'owner'): SessionPrincipal => ({ actor: 'human-operator', tenant });
 const refused = async (promise: Promise<unknown>): Promise<{ code: string; details: unknown }> => {
@@ -98,18 +99,7 @@ const freshCookies = [
   },
 ];
 
-async function ledgerLines(): Promise<Array<Record<string, unknown>>> {
-  if (!dir) throw new Error('no engagement dir');
-  // Tenant segments are hashed (engagementPath); scan every tenant dir.
-  const lines: Array<Record<string, unknown>> = [];
-  for (const tenant of await readdir(dir)) {
-    const names = await readdir(join(dir, tenant)).catch(() => []);
-    for (const name of names.filter((n) => n.endsWith('.jsonl')))
-      for (const line of (await readFile(join(dir, tenant, name), 'utf8')).split('\n'))
-        if (line.trim() !== '') lines.push(JSON.parse(line));
-  }
-  return lines;
-}
+const ledgerLines = () => readEngagementLedgerLines(dir as string);
 
 describe('live reseed (ADR-033)', () => {
   it('replaces the jar under the gates and preserves scope accounting verbatim', async () => {

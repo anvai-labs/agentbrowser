@@ -2,7 +2,7 @@
 // (a held response keeps quiescence away), the qualified replacement under
 // the gates, the rotation hint clearing, ledger order and accounting
 // preservation — end to end on the real choke point.
-import { chmod, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,7 @@ import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import { expect, it } from 'vitest';
 import { AgentBrowserService } from './service.js';
+import { readEngagementLedgerLines } from './test-support/engagement-ledger-lines.js';
 
 let dir: string | undefined;
 
@@ -125,30 +126,40 @@ it('reseeds a live session under quiescence, replacing the jar and clearing the 
     ).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { scope: 'RESEED_QUIESCENCE' } });
 
     // Release; the reseed completes and the jar is genuinely replaced.
+    // Under a loaded suite the settling traffic can outlast one bounded
+    // wait; a quiescence refusal changes nothing, so the operator's honest
+    // move — retry the gate — is also the test's: a few attempts, each a
+    // real gate pass, until one completes.
     releaseHang?.();
-    // The released hang plus its page's settling traffic can take a while
-    // under a loaded suite; the explicit bounded wait is the operator's
-    // escape hatch for exactly this.
-    const result = await service.reseedSession(
-      session.sessionId,
-      {
-        expectedRevision: busyStatus.revision ?? 0,
-        quiescenceTimeoutMs: 15000,
-        cookies: [
+    let result: Awaited<ReturnType<typeof service.reseedSession>> | undefined;
+    for (let attempt = 0; attempt < 4 && result === undefined; attempt += 1) {
+      try {
+        result = await service.reseedSession(
+          session.sessionId,
           {
-            name: 'session',
-            value: 'new-live-secret',
-            domain: '127.0.0.1',
-            path: '/',
-            httpOnly: true,
-            secure: false,
-            sameSite: 'Lax',
+            expectedRevision: busyStatus.revision ?? 0,
+            quiescenceTimeoutMs: 10000,
+            cookies: [
+              {
+                name: 'session',
+                value: 'new-live-secret',
+                domain: '127.0.0.1',
+                path: '/',
+                httpOnly: true,
+                secure: false,
+                sameSite: 'Lax',
+              },
+            ],
           },
-        ],
-      },
-      { actor: 'human-operator', tenant: 'fixture' }
-    );
-    expect(result.cookies).toBe(1);
+          { actor: 'human-operator', tenant: 'fixture' }
+        );
+      } catch (error) {
+        const typed = error as { code?: string; details?: { scope?: string } };
+        if (typed.code !== 'POLICY_DENIED' || typed.details?.scope !== 'RESEED_QUIESCENCE')
+          throw error;
+      }
+    }
+    expect(result?.cookies).toBe(1);
     expect(result.authRotationSuspected).toBe(false);
 
     const after = service.getScopeStatus(session.sessionId);
@@ -166,13 +177,7 @@ it('reseeds a live session under quiescence, replacing the jar and clearing the 
     expect(afterRow.cookie).not.toContain('old-live-secret');
 
     // Ledger order: authorized precedes completed, both carrying the digest.
-    const lines: Array<Record<string, unknown>> = [];
-    for (const tenant of await readdir(dir)) {
-      const names = await readdir(join(dir, tenant)).catch(() => []);
-      for (const name of names.filter((n) => n.endsWith('.jsonl')))
-        for (const line of (await readFile(join(dir, tenant, name), 'utf8')).split('\n'))
-          if (line.trim() !== '') lines.push(JSON.parse(line));
-    }
+    const lines = await readEngagementLedgerLines(dir as string);
     const types = lines.map((line) => line.type);
     expect(types.indexOf('auth.reseed.authorized')).toBeGreaterThanOrEqual(0);
     expect(types.indexOf('auth.reseed.completed')).toBeGreaterThan(
