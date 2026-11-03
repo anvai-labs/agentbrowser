@@ -79,6 +79,15 @@ const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
 /** Each scoped context's probe claim registry (ADR-030 P0-2). */
 const pageFetchLanes = new WeakMap<BrowserContext, PageFetchLane>();
 
+/**
+ * Each routed context's not-yet-settled requests (ADR-033 live reseed). A
+ * request enters at choke-point admission and leaves only when its response
+ * has fully completed — so an outstanding response that could still deliver a
+ * late Set-Cookie keeps the count above zero exactly as long as it can
+ * overwrite a freshly reseeded jar.
+ */
+const inFlightByContext = new WeakMap<BrowserContext, Set<import('playwright').Request>>();
+
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import { ObservationReads } from './observation-read.js';
 import {
@@ -2324,11 +2333,30 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           })
         : undefined;
     if (redirectGuard !== undefined) redirectGuards.set(context, redirectGuard);
+    const inFlight = new Set<import('playwright').Request>();
+    inFlightByContext.set(context, inFlight);
+    const trackInFlight = (request: import('playwright').Request): void => {
+      // Only real Playwright requests carry the settle chain; handler-level
+      // test stubs (and any odd request shape) are not network to await.
+      if (typeof request.response !== 'function') return;
+      inFlight.add(request);
+      // Settle = the response fully received: response() resolves at headers
+      // (null when the request failed or was intercepted away), finished()
+      // when the body completes. Until then an outstanding Set-Cookie can
+      // still land, so the request stays counted.
+      void request
+        .response()
+        .then((response) => (response === null ? null : response.finished()))
+        .catch(() => {})
+        .finally(() => inFlight.delete(request));
+    };
     await context.route('**', async (route) => {
       const request = route.request();
       const url = request.url();
       const hostname = new URL(url).hostname;
       const method = request.method();
+
+      trackInFlight(request);
 
       emitRequest('request.started', request, {});
 
@@ -3171,6 +3199,22 @@ class PlaywrightSession implements EngineSession {
   async addCookies(cookies: NormalizedCookie[]): Promise<void> {
     if (cookies.length === 0) return;
     await this.context.addCookies(playwrightCookieWrite(cookies));
+  }
+
+  /**
+   * ADR-033 live reseed: the qualified replacement — clear every cookie in
+   * the live context and install the given set as one engine-owned step.
+   * Callers gate this behind quiescence (inFlightRequests); a failure may
+   * leave the jar cleared, which the caller treats as loss of old authority.
+   */
+  async replaceCookies(cookies: NormalizedCookie[]): Promise<void> {
+    await this.context.clearCookies();
+    if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+  }
+
+  /** ADR-033 live reseed: requests admitted but not yet fully settled. */
+  async inFlightRequests(): Promise<number> {
+    return inFlightByContext.get(this.context)?.size ?? 0;
   }
 
   /** TD-BROWSER-16 phase 6 (ADR-025 §3): all-frames init script on the live context. */

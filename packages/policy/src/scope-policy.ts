@@ -324,7 +324,8 @@ export class EngagementScopePolicy {
   private readonly authRotation:
     | { refreshUrlPattern: string; identityUrlPattern: string }
     | undefined;
-  private readonly rotation: RotationAdvisor | undefined;
+  /** Replaced wholesale by noteReseeded (the advisory re-arms); never null when configured. */
+  private rotation: RotationAdvisor | undefined;
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   private readonly maxPaceMs: number;
   /** Aborted by stop(): waiting requests wake at once and are denied. */
@@ -735,6 +736,17 @@ export class EngagementScopePolicy {
     data: Record<string, unknown>
   ): RotationAdvisory | undefined {
     return this.rotation?.noteOutcome(type, data);
+  }
+
+  /**
+   * ADR-033 live reseed: a completed reseed answers the advisory — the
+   * suspected hint clears and detection re-arms for the new credentials.
+   * Scope accounting (budget, pacing, expiry, exclusions) is deliberately
+   * untouched: renewal is never a fresh grant.
+   */
+  noteReseeded(): void {
+    if (this.authRotation === undefined) return;
+    this.rotation = new RotationAdvisor(this.authRotation);
   }
 
   /** The scope in effect, budget and denials; marker values are never reported. */

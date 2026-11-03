@@ -452,6 +452,42 @@ export const ScopeAssetAmendmentSchema = Type.Object(
 );
 export type ScopeAssetAmendment = Static<typeof ScopeAssetAmendmentSchema>;
 
+/**
+ * ADR-033 live reseed: the operator-authenticated renewal request. Cookie
+ * values ride only the human-operator route (operator key); there is no agent
+ * surface. The digest the ledger records is computed server-side over the
+ * canonical cookie set. Scope accounting (budget, pacing, expiry, exclusions)
+ * is never part of the request — renewal is not a fresh grant.
+ */
+export const SessionReseedRequestSchema = Type.Object(
+  {
+    /** Re-read the scope before deciding; recorded in the authorization ledger entry. */
+    expectedRevision: Type.Integer({ minimum: 0 }),
+    /** Bounded wait for network quiescence before the cookie write; refuse otherwise. */
+    quiescenceTimeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 30000 })),
+    cookies: Type.Array(SessionCookieSchema, { minItems: 1, maxItems: 1000 }),
+  },
+  { additionalProperties: false }
+);
+export type SessionReseedRequest = Static<typeof SessionReseedRequestSchema>;
+
+/** What one completed reseed reports: facts only, never values. */
+export const SessionReseedResultSchema = Type.Object(
+  {
+    seedSha256: Type.String({ pattern: '^[0-9a-f]{64}$' }),
+    cookies: Type.Integer({ minimum: 1, maximum: 1000 }),
+    domains: Type.Array(Type.String(), { maxItems: 100 }),
+    invalidated: Type.Object(
+      { approvals: Type.Integer({ minimum: 0 }), lease: Type.Boolean() },
+      { additionalProperties: false }
+    ),
+    /** The rotation advisory after the reseed: false once it re-arms. */
+    authRotationSuspected: Type.Boolean(),
+  },
+  { additionalProperties: false }
+);
+export type SessionReseedResult = Static<typeof SessionReseedResultSchema>;
+
 /** ADR-027: authenticated operator input; raw browser state is never a wire field. */
 export const EvidencePassRequestSchema = Type.Object(
   {

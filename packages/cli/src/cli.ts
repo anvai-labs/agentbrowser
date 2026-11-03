@@ -732,6 +732,86 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
       session
+        .command('reseed <sessionId>')
+        .description(
+          "Human operator: replace a live session's cookies under the ADR-033 gates (durable ledger record, input exclusion, network quiescence, auth-generation invalidation)"
+        )
+        .requiredOption(
+          '--cookies-file <path>',
+          'v1 seed file (seed-from-cdp or session cookies --output); read no-follow'
+        )
+        .requiredOption('--expected-revision <revision>', 'reviewed current scope revision')
+        .option(
+          '--quiescence-timeout-ms <ms>',
+          'bounded network-quiescence wait before refusing (1000-30000)',
+          '5000'
+        )
+        .option(
+          '--cookies-format <format>',
+          'json (a v1 seed), netscape or chrome-devtools-tsv',
+          'json'
+        )
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: {
+                cookiesFile: string;
+                expectedRevision: string;
+                quiescenceTimeoutMs: string;
+                cookiesFormat: string;
+              }
+            ) => {
+              const revision = Number(options.expectedRevision);
+              const timeoutMs = Number(options.quiescenceTimeoutMs);
+              if (
+                !Number.isSafeInteger(revision) ||
+                revision < 0 ||
+                !Number.isSafeInteger(timeoutMs) ||
+                timeoutMs < 1000 ||
+                timeoutMs > 30000
+              )
+                throw new UsageError(
+                  'A valid expected revision and quiescence timeout (1000-30000ms) are required'
+                );
+              const key = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
+              if (!key) throw new UsageError('Live reseed requires a human operator key');
+              const seed = await readCookieFile(options.cookiesFile, options.cookiesFormat);
+              if (seed.cookies.length === 0)
+                throw new UsageError('The seed file contains no cookies');
+              const response = await fetchOrUsageError(
+                'live reseed',
+                `${ctx.baseUrl}/v1/operator/sessions/${encodeURIComponent(sessionId)}/reseed`,
+                30000,
+                {
+                  method: 'POST',
+                  headers: {
+                    authorization: `Bearer ${key}`,
+                    'content-type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    expectedRevision: revision,
+                    quiescenceTimeoutMs: timeoutMs,
+                    cookies: seed.cookies,
+                  }),
+                }
+              );
+              const result =
+                (await response.json()) as import('@agentbrowser/protocol').SessionReseedResult;
+              ctx.emit(result, () => [
+                `Reseeded ${result.cookies} cookie(s) for ${result.domains.join(', ')} (seed ${result.seedSha256.slice(0, 12)}…).`,
+                `Invalidated: ${result.invalidated.approvals} approval(s)${
+                  result.invalidated.lease ? ', action lease' : ''
+                }.`,
+                `Rotation advisory: ${
+                  result.authRotationSuspected ? 'still suspected' : 're-armed'
+                }.`,
+              ]);
+            }
+          )
+        );
+      session
         .command('scope-amend <sessionId>')
         .description(
           'Operator-only: append static asset hosts to the live scope without replacing program targets or limits'

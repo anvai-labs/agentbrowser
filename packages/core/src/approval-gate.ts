@@ -480,6 +480,28 @@ export class ApprovalGate {
   }
 
   /**
+   * ADR-033 live reseed: expire every token of one session at once — the auth
+   * generation bump. Pending approvals and unused leases die even on an
+   * unchanged document; already-used history stays intact for audit.
+   */
+  invalidateSessionTokens(sessionId: string): number {
+    const tokenIds = this.sessionIndex.get(sessionId);
+    if (!tokenIds) return 0;
+    const now = Date.now();
+    let invalidated = 0;
+    for (const tokenId of tokenIds) {
+      const record = this.tokens.get(tokenId);
+      const token = record?.kind === 'confirmation' ? record.token : undefined;
+      if (token && token.status === 'pending') {
+        token.status = 'expired';
+        token.usedAt = now;
+        invalidated += 1;
+      }
+    }
+    return invalidated;
+  }
+
+  /**
    * Get current token count
    */
   getTokenCount(): number {

@@ -66,7 +66,8 @@ matching the refresh pattern followed (within the same page, bounded window of
 20 requests) by a 401/403 response on the identity pattern, exactly one
 advisory ledger event (`auth.rotation-suspected`, origin+path only) is appended
 and the scope status carries the sticky `authRotation.suspected` hint (the
-reseed-needed signal; it sticks until the session ends). Same-page correlation
+reseed-needed signal; it sticks until a completed reseed clears it — P1-6b).
+Same-page correlation
 uses a stable per-page key the engine adds to request records (never part of
 the ledger allowlist); unattributed records — redirect-walker hops, probes —
 are ignored rather than guessed at. Advisory only: no DOM identity inference,
@@ -93,17 +94,28 @@ context digest, not the id).
 ## P1-6b — live reseed (the ADR-033 activation gates)
 
 An operator-authenticated route (`POST /v1/operator/sessions/:id/reseed`, operator
-key only; CLI `session reseed`), bound to tenant + live context + seed digest.
-Sequence: durably ledger the authorization (expected scope revision, seed digest)
-→ exclude new browser input → establish network quiescence (no in-flight
-requests; bounded wait, refuse otherwise) → bump the auth generation (prepared
-actions, approval tokens and input leases die even on an unchanged document) →
-engine cookie replacement (clear + add under quiescence) → register new secrets
-for redaction → ledger completion. Old scope accounting (budget spent, pacing
-history, expiry, exclusions, ledger limits) is preserved verbatim — renewal is
-never a fresh grant. Unknown/partial outcomes leave the session unable to write
-under old authority; no auto-replay. A documented clone fallback is out of scope
-for this increment (refuse instead).
+key only; CLI `session reseed <id> --cookies-file seed.json --expected-revision N`),
+bound to tenant + live context + seed digest (canonical, order-insensitive,
+computed server-side). Sequence, each gate in the ADR's order: durably ledger
+the authorization (appendCritical: expected scope revision, seed digest, domains)
+→ exclude new browser input (act/plan/autofill/navigate/page-create refuse for
+the window; a draining admitted operation refuses the reseed) → establish
+network quiescence — the ENGINE counts requests whose response has not fully
+settled (a held response keeps the count above zero; a late Set-Cookie cannot
+land on the new jar); bounded wait (`quiescenceTimeoutMs` 1000-30000, default
+5000), refuse otherwise with an `auth.reseed.aborted` record → the auth
+generation: pending approval tokens, prepared reviewed operations and action
+leases die BEFORE the write (the delegated agent binding survives) → new values
+register as session secrets and the operator-credential mark lands (exports
+refuse) before the write → the engine's QUALIFIED replacement
+(`replaceCookies`: clear + add as one engine-owned step) → completion
+(appendCritical) before success, and the rotation advisory re-arms
+(`noteReseeded`). Old scope accounting (budget spent, pacing history, expiry,
+exclusions, ledger limits, revision) is preserved verbatim — renewal is never a
+fresh grant. A failed or undurable replacement stops the scope
+(`reseed incomplete`): the session cannot act under old authority, and nothing
+auto-replays. A clone fallback is out of scope for this increment (refuse
+instead).
 
 ## Qualification
 

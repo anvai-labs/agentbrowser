@@ -2215,6 +2215,193 @@ export class AgentBrowserService {
     });
   }
 
+  /**
+   * ADR-033 live reseed: replace a live session's cookies under the activation
+   * gates. Human-operator only, tenant-bound, ledger-durable. Order is the
+   * ADR's: authorization is recorded (synced) BEFORE any state change; new
+   * browser input is excluded; network quiescence is established or the
+   * reseed refuses with nothing changed; the auth generation kills pending
+   * approvals, prepared reviewed operations and action leases BEFORE the
+   * engine write; new values register as secrets before the write; completion
+   * is recorded before success. Scope accounting (budget, pacing, expiry,
+   * exclusions, ledger limits) is preserved verbatim — renewal is never a
+   * fresh grant. A failed or undurable replacement stops the scope: the
+   * session cannot act under old authority, and nothing auto-replays.
+   */
+  async reseedSession(
+    sessionId: string,
+    input: import('@agentbrowser/protocol').SessionReseedRequest,
+    principal: SessionPrincipal
+  ): Promise<import('@agentbrowser/protocol').SessionReseedResult> {
+    if (principal.actor !== 'human-operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+    const owner = this.coordinator.inspect(sessionId)?.context;
+    if (!owner || owner.metadata.tenantId !== principal.tenant)
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+    const request = structuredClone(input);
+    if (request.cookies.length > MAX_COOKIE_COUNT)
+      throw new ServiceError('INVALID_REQUEST', 'Reseed exceeds the 1000-cookie bound');
+    assertCookieRequestSize({ cookies: request.cookies });
+    // The engine's NormalizedCookie requires explicit flags; absent wire
+    // fields normalize to false / no sameSite the way every seed path does.
+    const cookies: import('@agentbrowser/engine').NormalizedCookie[] = request.cookies.map(
+      (cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        ...(cookie.expires !== undefined && cookie.expires !== -1
+          ? { expires: cookie.expires }
+          : {}),
+        httpOnly: cookie.httpOnly ?? false,
+        secure: cookie.secure ?? false,
+        // Absent sameSite normalizes to Lax, the handoff's convention.
+        sameSite: cookie.sameSite ?? 'Lax',
+      })
+    );
+    return this.serializeHandoff(sessionId, async () => {
+      const current = () => {
+        if (owner.signal.aborted || this.coordinator.inspect(sessionId)?.context !== owner)
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during reseed');
+      };
+      current();
+      const engineSession = this.coordinator.get(sessionId)?.engineSession;
+      if (
+        engineSession === undefined ||
+        engineSession.replaceCookies === undefined ||
+        engineSession.inFlightRequests === undefined
+      )
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The engine cannot reseed this session live',
+          false,
+          {
+            rule: 'reseed.engine',
+          }
+        );
+      // The engagement ledger is mandatory: an unrecordable reseed never runs.
+      const { scope, ledger } = this.scopeAmendmentState(sessionId, request.expectedRevision);
+      const seedSha256 = createHash('sha256')
+        .update(
+          canonicalJson(
+            [...cookies].sort((a, b) =>
+              `${a.name}\u0000${a.domain}\u0000${a.path}`.localeCompare(
+                `${b.name}\u0000${b.domain}\u0000${b.path}`
+              )
+            )
+          )
+        )
+        .digest('hex');
+      const domains = [...new Set(cookies.map((c) => c.domain.replace(/^\./, '').toLowerCase()))]
+        .sort()
+        .slice(0, 100);
+      const evidence = {
+        expectedRevision: request.expectedRevision,
+        seedSha256,
+        cookieCount: cookies.length,
+        domains,
+        authorizedBy: 'human-operator',
+        tenantId: principal.tenant,
+        policyVersion: this.policyVersion ?? 'legacy',
+      };
+      // Gate 1: durable authorization before any state change.
+      await ledger.appendCritical('auth.reseed.authorized', evidence);
+      let generationDone = false;
+      const release = this.suspendBrowserInput(sessionId);
+      try {
+        current();
+        // Gate 2: no admitted operation may still be draining.
+        if (this.authority.busy(sessionId)) {
+          ledger.append('auth.reseed.aborted', { ...evidence, stage: 'busy' });
+          throw new ServiceError(
+            'SESSION_BUSY',
+            'An operation is still draining; retry the reseed',
+            false,
+            {
+              rule: 'reseed.busy',
+            }
+          );
+        }
+        // Gate 3: network quiescence, bounded; a refusal changes nothing.
+        const deadline = Date.now() + (request.quiescenceTimeoutMs ?? 5000);
+        for (;;) {
+          current();
+          if ((await engineSession.inFlightRequests()) === 0) break;
+          if (Date.now() >= deadline) {
+            ledger.append('auth.reseed.aborted', { ...evidence, stage: 'quiescence' });
+            throw new ServiceError(
+              'POLICY_DENIED',
+              'Network quiescence was not reached; the reseed changed nothing',
+              false,
+              { scope: 'RESEED_QUIESCENCE' }
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        // Gate 4: the auth generation — prepared authority dies BEFORE the write.
+        const invalidated = this.approvalGate.invalidateSessionTokens(sessionId);
+        const leaseInvalidated = this.actionLeases.delete(sessionId);
+        this.authority.invalidatePrepared(sessionId);
+        generationDone = true;
+        current();
+        // Gate 5: new values are secrets before the write; old ones stay for
+        // history. The renewal is operator-provided credential, exactly like
+        // the handoff: the mark lands before the write, so a racing cookie
+        // export is refused, never served unmarked.
+        this.secretManager.registerSessionSecrets(
+          sessionId,
+          cookies.map((cookie) => cookie.value)
+        );
+        this.markOperatorCredentialSource(sessionId);
+        // Gate 6: the qualified replacement. A failure here may leave the jar
+        // cleared — old authority is already gone, so the scope stops.
+        try {
+          await engineSession.replaceCookies(cookies);
+        } catch (error) {
+          scope.stop('reseed incomplete');
+          try {
+            await ledger.appendCritical('auth.reseed.failed', { ...evidence, stage: 'replace' });
+          } catch {
+            // The scope is already stopped; the original failure is the answer.
+          }
+          throw this.mapError(error);
+        }
+        current();
+        // Gate 7: the advisory answers the renewal; completion before success.
+        scope.noteReseeded();
+        const suspectedAfter = scope.status().authRotation?.suspected ?? false;
+        try {
+          await ledger.appendCritical('auth.reseed.completed', {
+            ...evidence,
+            invalidatedApprovals: invalidated,
+            leaseInvalidated,
+            suspectedAfter,
+          });
+        } catch {
+          scope.stop('reseed incomplete');
+          throw new ServiceError(
+            'POLICY_DENIED',
+            'The reseed could not be durably completed; the session was stopped',
+            false,
+            { scope: 'SCOPE_LEDGER_UNAVAILABLE', rule: 'reseed.commit' }
+          );
+        }
+        return {
+          seedSha256,
+          cookies: cookies.length,
+          domains,
+          invalidated: { approvals: invalidated, lease: leaseInvalidated },
+          authRotationSuspected: suspectedAfter,
+        };
+      } finally {
+        release();
+        // A failure before the generation bump changed no authority: nothing
+        // to reconcile. After it, success paths have recorded completion and
+        // failure paths stopped the scope — both durable, neither replayed.
+        if (generationDone) this.coordinator.updateActivity(sessionId);
+      }
+    });
+  }
+
   getScopeTraffic(sessionId: string): import('@agentbrowser/protocol').ScopeTrafficSummary {
     this.requireSession(sessionId);
     this.scopeOf(sessionId);
@@ -3447,6 +3634,7 @@ export class AgentBrowserService {
 
   /** Structured, scoped native form filling under the caller’s existing admission. */
   async autofill(sessionId: string, pageId: string, input: unknown) {
+    this.assertInputAdmitted(sessionId);
     this.requirePage(sessionId, pageId);
     // ADR-025 §5: autofill in a marked session runs only within an active
     // lease covering the page's host — refused up front, before any field
@@ -3541,6 +3729,7 @@ export class AgentBrowserService {
     pageId: string,
     steps: ServiceActRequest[]
   ): Promise<PlanReport & { mode: 'stable' | 'verified'; newRevision: number }> {
+    this.assertInputAdmitted(sessionId);
     // T0 aggregate input limit, enforced here as well as on every surface so that outcome runs
     // and embedders cannot bypass it. Nothing executes for an over-limit plan.
     if (steps.length > MAX_PLAN_STEPS)
@@ -4835,6 +5024,7 @@ export class AgentBrowserService {
   // ---- pages --------------------------------------------------------------
 
   async createPage(sessionId: string, request?: { url?: string }): Promise<ServicePageView> {
+    this.assertInputAdmitted(sessionId);
     const session = this.requireSession(sessionId);
     this.coordinator.updateActivity(sessionId);
 
@@ -5003,6 +5193,7 @@ export class AgentBrowserService {
     request: { url: string; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | undefined }
   ): Promise<import('@agentbrowser/engine').NavigationResult> {
     return this.traced('navigate', { sessionId, pageId }, async (span) => {
+      this.assertInputAdmitted(sessionId);
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
 
@@ -5545,6 +5736,7 @@ export class AgentBrowserService {
       }
     }
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
+      this.assertInputAdmitted(sessionId);
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
 
@@ -7465,6 +7657,29 @@ export class AgentBrowserService {
       run.catch(() => undefined)
     );
     return run;
+  }
+
+  /**
+   * ADR-033 live reseed: while suspended, every browser-input entry point
+   * (act, plan, autofill, navigate, page create) refuses. The suspension is
+   * short — from the durable authorization to the completed replacement —
+   * and always released (finally), never left set by a failure.
+   */
+  private readonly inputSuspends = new Set<string>();
+
+  private suspendBrowserInput(sessionId: string): () => void {
+    this.inputSuspends.add(sessionId);
+    return () => this.inputSuspends.delete(sessionId);
+  }
+
+  private assertInputAdmitted(sessionId: string): void {
+    if (this.inputSuspends.has(sessionId))
+      throw new ServiceError(
+        'SESSION_BUSY',
+        'A live reseed excludes new browser input; retry when it completes',
+        false,
+        { rule: 'reseed.input' }
+      );
   }
 
   /** The cookie's host with the scope dot stripped ('.example.com' -> 'example.com'). */

@@ -109,6 +109,26 @@ What it does — and refuses to do:
 The port is **not** a credential boundary — anything that can reach it can read that browser's
 state, exactly as ADR-025 explains for the login browser. Fingerprint-bound cookies
 (`cf_clearance`, `datadome`) may not transfer to another browser context: extract immediately
-before use and verify authentication; cookie presence is not a challenge bypass. If the seed
-goes stale mid-session, configure `authRotation` on the scope (P1-6a) and the scope status will
-surface the reseed-needed hint when a refresh bounce is followed by an auth rejection.
+before use and verify authentication; cookie presence is not a challenge bypass.
+
+## Reseeding a live session whose login went stale
+
+If the seed goes stale mid-session, configure `authRotation` on the scope (P1-6a) and the scope
+status will surface the reseed-needed hint when a refresh bounce is followed by an auth
+rejection. The answer is a **live reseed** (ADR-033 / P1-6b) — the operator renews the cookies
+without destroying the session:
+
+```bash
+agentbrowser session reseed SESSION --cookies-file ~/.config/agentbrowser/vinted-seed.json   --expected-revision 3
+```
+
+What the server does, in order: records the authorization durably in the engagement ledger
+(expected revision, seed digest, domains) → refuses new browser input for the window → waits
+(bounded, `--quiescence-timeout-ms`, default 5 s) until no request has an unsettled response —
+a held long-poll refuses the reseed with nothing changed → invalidates pending approvals,
+prepared operations and action leases **before** the write → registers the new values as
+secrets and marks the session operator-credentialed (cookie export refuses from then on) →
+clears and installs the jar as one engine-owned step → records completion and re-arms the
+rotation advisory. Scope accounting (budget spent, pacing, expiry, exclusions, revision) is
+preserved verbatim — renewal is never a fresh grant. A failed replacement stops the session's
+traffic rather than replaying anything under old authority.

@@ -2386,6 +2386,119 @@
         }
       }
     },
+    "/v1/operator/sessions/{sessionId}/reseed": {
+      "post": {
+        "operationId": "reseedSession",
+        "summary": "Replace the live cookies of a session under the ADR-033 activation gates",
+        "tags": [
+          "operator"
+        ],
+        "description": "ADR-033 / P1-6b. Human-operator key, same tenant, live ledger and exact revision required. Durable authorization precedes any change; browser input is excluded; network quiescence (no unsettled response) is required within a bounded wait or the reseed refuses; pending approvals, prepared operations and action leases die BEFORE the write; new values are session secrets and the session is marked operator-credentialed (exports refuse). Scope accounting is preserved verbatim; a failed replacement stops the scope.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionReseedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Facts only: digest, count, domains, invalidations, advisory state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionReseedResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator credential required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human operator, tenant, revision or ledger admission refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An admitted operation is still draining.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The engine cannot reseed this session live.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/scope/check": {
       "get": {
         "operationId": "checkSessionScope",
@@ -10716,6 +10829,129 @@
             "minimum": 1,
             "maximum": 10000000,
             "type": "integer"
+          }
+        }
+      },
+      "SessionReseedRequest": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "cookies"
+        ],
+        "properties": {
+          "expectedRevision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "quiescenceTimeoutMs": {
+            "minimum": 1000,
+            "maximum": 30000,
+            "type": "integer"
+          },
+          "cookies": {
+            "minItems": 1,
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value",
+                "domain",
+                "path"
+              ],
+              "properties": {
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "domain": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "expires": {
+                  "type": "number"
+                },
+                "httpOnly": {
+                  "type": "boolean"
+                },
+                "secure": {
+                  "type": "boolean"
+                },
+                "sameSite": {
+                  "anyOf": [
+                    {
+                      "const": "Strict",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Lax",
+                      "type": "string"
+                    },
+                    {
+                      "const": "None",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "SessionReseedResult": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "seedSha256",
+          "cookies",
+          "domains",
+          "invalidated",
+          "authRotationSuspected"
+        ],
+        "properties": {
+          "seedSha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "cookies": {
+            "minimum": 1,
+            "maximum": 1000,
+            "type": "integer"
+          },
+          "domains": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "invalidated": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "approvals",
+              "lease"
+            ],
+            "properties": {
+              "approvals": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "lease": {
+                "type": "boolean"
+              }
+            }
+          },
+          "authRotationSuspected": {
+            "type": "boolean"
           }
         }
       },

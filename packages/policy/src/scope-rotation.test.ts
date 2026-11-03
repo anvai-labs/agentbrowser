@@ -148,3 +148,32 @@ it('the scope policy surfaces the config and the sticky hint, and refuses bad pa
       })
   ).toThrow(/authRotation/);
 });
+
+// A completed reseed answers the advisory: the hint clears and detection
+// re-arms for the new credentials (ADR-033).
+it('noteReseeded clears the sticky hint and re-arms detection', () => {
+  const policy = new EngagementScopePolicy(
+    { checkRequest: vi.fn(async () => {}) },
+    {
+      allowedHosts: ['app.test'],
+      authRotation: {
+        refreshUrlPattern: 'https://sso.test/auth/refresh',
+        identityUrlPattern: 'https://app.test/api/*',
+      },
+    }
+  );
+  policy.noteOutcome('request.finished', { url: REFRESH, pageKey: 1, resourceType: 'document' });
+  expect(
+    policy.noteOutcome('request.finished', { url: IDENTITY, pageKey: 1, status: 401 })
+  ).toMatchObject({ event: 'auth.rotation-suspected' });
+  expect(policy.status().authRotation).toMatchObject({ suspected: true });
+  policy.noteReseeded();
+  expect(policy.status().authRotation).toMatchObject({ suspected: false });
+  // Re-armed: a fresh signature fires again.
+  policy.noteOutcome('request.finished', { url: REFRESH, pageKey: 2, resourceType: 'document' });
+  expect(
+    policy.noteOutcome('request.finished', { url: IDENTITY, pageKey: 2, status: 403 })
+  ).toMatchObject({ event: 'auth.rotation-suspected', status: 403 });
+});
+
+// Without the field there is no detection at all (no guessing).
