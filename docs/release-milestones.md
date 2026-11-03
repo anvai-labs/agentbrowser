@@ -3,12 +3,17 @@
 ## Release history and plan (current)
 
 ```
-1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ─ 1.25 ─ 1.26 ✔ ─ 1.27 ✔ ─ 1.28 ✔ ─▶ 1.29 ✔
-journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2     M3 ✔   M4     B1–B6
+1.14 ─ 1.15.x ─ 1.16.x ─ 1.17.x ─ 1.18 ─ 1.19 ─ 1.20 ─ 1.21 ─ 1.22 ─ 1.23 ─ 1.24 ─ 1.25 ─ 1.26 ✔ ─ 1.27 ✔ ─ 1.28 ✔ ─ 1.29.x ✔ ─ 1.30.x ✔ ─ 1.31 ✔ ─▶ 1.32 ✔
+journal  frames   compact   security  handoff  durable  policy   T10 M1  T10 M2  T10 M2    M2     M3 ✔   M4     B1–B6    nav/dx   A1·prereq   filters  P0-2 probes
 ```
 
 | Version | GitHub release | main | Headline | Record |
 | --- | --- | --- | --- | --- |
+| 1.32.0 | 2026-11-03 | `5eca4fe3` | P0-2: scoped origin-context API probes (`page fetch`, ADR-030) — one-use method-based consent, nonce-attributed transport, scope preflight, redacted untrusted-marked results, probe-marked ledgers; four-pass adversarial review before merge | [record](spec/evidence/release-1.32.0.md) |
+| 1.31.0 | 2026-11-02 | `b2ac5d37` | Bounded retained-event filters (REST/SDK/CLI/MCP) and A4 cookie-seed metadata | [record](spec/evidence/release-1.31.0.md) |
+| 1.30.3 | 2026-11-02 | `55c2cbdf` | Owner-bound ordinary publication maintenance | [record](spec/evidence/release-1.30.3.md) |
+| 1.30.2 | 2026-11-02 | `db76126a` | Research-marker transport and initial seed lifecycle repairs | [record](spec/evidence/release-1.30.2.md) |
+| 1.30.1 | 2026-11-01 | — | Redirect method/body fidelity — the P0-2 prerequisite | [record](spec/evidence/release-1.30.1.md) |
 | 1.30.0 | 2026-11-01 | `d686cd4b` | A1: approved coordinate interaction and verified attachment for closed-shadow workflows; strict lint hygiene | [record](spec/evidence/release-1.30.0.md) |
 | 1.29.1 | 2026-10-31 | `c2b4550e` | Maintenance: HTTP-error navigation classification and scoped interception repairs; header host-scoping remains separate local work | [record](spec/evidence/release-1.29.1.md) |
 | 1.29.0 | 2026-10-31 | `9cb443e9` | T10 B1–B6: operator evidence sessions and asset scope amendments; live denial diagnostics, budget top-up and scope round-trip | [record](spec/evidence/release-1.29.0.md) |

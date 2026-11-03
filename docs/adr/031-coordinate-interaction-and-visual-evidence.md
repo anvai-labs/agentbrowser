@@ -1,6 +1,6 @@
 # ADR-031: Coordinate interaction and capture-bound visual evidence
 
-Status: Accepted for the approved T10 A1 increment (2026-10-31); independent
+Status: Accepted and implemented (1.30.0); independent
 review required before merge. Related: [ADR-007](007-approval-tokens-side-effects.md),
 [ADR-015](015-cross-package-contract-single-source-of-truth.md),
 [ADR-018](018-upload-action.md), [ADR-028](028-operator-asset-scope-amendments.md).

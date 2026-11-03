@@ -1,6 +1,6 @@
 # ADR-028: Operator-approved live asset scope amendments
 
-Status: Accepted for T10 B4 implementation (2026-10-30); merge requires independent review.
+Status: Accepted and implemented (1.29.x); independent review.
 Related: [ADR-006](006-network-egress-policy-ssrf.md),
 [ADR-026](026-policy-reload-without-restart.md),
 [ADR-027](027-evidence-pass-state-transfer.md),
