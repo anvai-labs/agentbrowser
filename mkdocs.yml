@@ -212,7 +212,7 @@ nav:
     - 'Execution': spec/execution.md
     - 'Grounding': spec/grounding.md
     - 'Interfaces': spec/interfaces.md
-    - 'Quality Ci': spec/quality-ci.md
+    - 'Quality & CI': spec/quality-ci.md
     - 'Review': spec/review.md
     - 'Security': spec/security.md
     - 'State Memory': spec/state-memory.md

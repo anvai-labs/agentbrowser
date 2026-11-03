@@ -1,6 +1,6 @@
 # ADR-033: Cookie seed provenance and explicit auth renewal
 
-Status: A4 metadata/diagnostic increment accepted for the approved handoff;
+Status: Accepted and implemented — the A4 metadata/diagnostic increment shipped in 1.31.0 (live reseed remains follow-up work);
 independent review required before merge. Live reseed remains proposed and
 disabled until the quiescence, generation and accounting gates below qualify.
 Design 2026-11-01.

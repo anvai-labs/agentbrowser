@@ -11,7 +11,14 @@ server — with safety enforced *in the service*, not in the prompt.
 
 [![AgentBrowser launch overview video](https://img.youtube.com/vi/1ZEtWKqpxQI/maxresdefault.jpg)](https://youtu.be/1ZEtWKqpxQI)
 
-> **New in 1.21–1.26 — engagements and automation:** saved plans run end to end (`run`, the `plan-run` CI action, durable runs), program scopes import, findings bind to the ledger, and a scope enforced before every request: a scope checked on every
+> **New in 1.32 — scoped origin-context API probes (ADR-030):** one authenticated
+> method+URL+body request from the live page's own origin — its cookie jar and CSRF
+> headers apply — through the engagement scope, with one-use approval tokens on unsafe
+> methods, bounded redacted results and probe-marked ledgers. The item-modification
+> authorization test is one command: `agentbrowser page fetch … PUT … --header 'X-CSRF-Token=…'`.
+> [Scoped probes →](operations.md#scoped-origin-context-api-probes-page-fetch)
+>
+> **Earlier — engagements and automation (1.21–1.26):** saved plans run end to end (`run`, the `plan-run` CI action, durable runs), program scopes import, findings bind to the ledger, and a scope enforced before every request: a scope checked on every
 > request and redirect hop, lanes it cannot check refused, live scope status and a dry run,
 > and an opt-in hash-chained metadata ledger you export and verify offline.
 > [Engagements →](operations.md#engagements-authorized-testing)
@@ -36,7 +43,7 @@ server — with safety enforced *in the service*, not in the prompt.
 
 ```mermaid
 flowchart LR
-    A[observe<br/>narrow: roles · name · scope-ref] -->|refs @ revision| B[act / autofill / plan]
+    A[observe<br/>narrow: roles · name · scope-ref] -->|refs @ revision| B[act / autofill / plan / fetch]
     B -->|STALE_TARGET?| A
     B --> C{mutation?}
     C -->|operation-id| D[reconcile on lost response]
@@ -97,7 +104,7 @@ agentbrowser --json observe SESSION PAGE --roles dialog --name policy   # compac
 
     | Complete | In progress | Gated on owner or infrastructure |
     | --- | --- | --- |
-    | T0 · T2 · T3 · T7 | T10 engagements (automation runs ✔ 1.26.0) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
+    | T0 · T2 · T3 · T7 | T10 engagements (P0-2 probes ✔ 1.32.0) | T1 · T4 · T5 · T6 · T8 · T9 (recurs each release) |
 
 - Every claim is adversarially reviewable via the [evidence index](spec/evidence/t0-foundation.md).
 - Defaults (1.26): session TTL **4.4 h**, idle **10 min**, observation window **300 elements**.

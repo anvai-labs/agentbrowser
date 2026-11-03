@@ -57,6 +57,29 @@ stay fixed ([ADR-028](../../adr/028-operator-asset-scope-amendments.md)). Scoped
 Playwright contexts enforce `worker-src 'none'`; Worker/SharedWorker UI may be
 unavailable. Worklets remain outside qualified containment.
 
+## Scoped origin-context API probes (1.32.0, ADR-030)
+
+Arbitrary method+body requests against authenticated endpoints, from the live
+page's own origin (cookies and CSRF headers apply) and enforced by the scope:
+`page fetch` (CLI/MCP/SDK). Scoped sessions only; every outcome ledgered `probe`.
+Semantics: [scoped probes](../../operations.md#scoped-origin-context-api-probes-page-fetch).
+
+```mermaid
+flowchart TD
+    A['page fetch PUT …<br/>+ CSRF header'] --> B{'scope preflight'}
+    B -- deny --> X['SCOPE_* denial<br/>zero receiver hits<br/>probe-marked trace']
+    B -- pass --> C{'method class'}
+    C -- 'GET/HEAD/OPTIONS' --> D['dispatch']
+    C -- unsafe --> E['APPROVAL_REQUIRED<br/>token bound to request']
+    E -- 'retry --approval-token' --> D
+    D --> F['isolated-world fetch<br/>secret nonce']
+    F --> G['choke point: every hop<br/>same-origin redirects only']
+    G --> H['bounded · redacted · untrusted<br/>+ ledger probe row']
+    style X fill:#7f1d1d,color:#fff
+    style H fill:#0f766e,color:#fff
+```
+
+
 See [operations](../../operations.md#engagements-authorized-testing) for support-host
 bundles, denial summaries, adoption commands and response-delivery bounds. Marker
 events prove dispatch intent, not receipt. Distinguish suspected/confirmed findings;

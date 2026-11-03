@@ -1,6 +1,6 @@
 # ADR-027: Operator-approved evidence-pass state transfer
 
-Status: Accepted for T10 B2 implementation (2026-10-30); merge requires independent review.
+Status: Accepted and implemented (T10 B2 evidence-pass transfer, shipped with the 1.29.x engagement arc); merge requires independent review.
 Related: [ADR-025](025-operator-cookie-handoff.md),
 [T10 operator workflow](../spec/design/t10-bounty-operator-workflow.md).
 
