@@ -2328,12 +2328,20 @@ export class AgentBrowserService {
           false,
           { rule: 'reseed.floors' }
         );
-      for (const entry of [...facts.allowedHosts, ...facts.scopeAllowedHosts]) {
-        const usable = usableHost(entry);
-        if (!usable.ok || !domains.some((domain) => entry === domain || covers(domain, entry).ok))
+      // Live-acceptance refinement: coverage is judged against the domains
+      // that ACTUALLY hold cookies in the current jar — the auth a wrong
+      // reseed would strip. Requiring every scope host would make a
+      // multi-registrable scope (e.g. vinted.com + vinted.net) forever
+      // unreseedable, since image-CDN registrables carry no credentials.
+      const jar = await this.coordinator.cookies(sessionId).catch(() => []);
+      const held = [
+        ...new Set(jar.map((cookie) => cookie.domain.replace(/^\./, '').toLowerCase())),
+      ];
+      for (const entry of held) {
+        if (!domains.some((domain) => entry === domain || covers(domain, entry).ok))
           throw new ServiceError(
             'POLICY_DENIED',
-            `Host entry '${entry}' does not lie within the reseeded domains`,
+            `The session holds cookies for '${entry}' outside the reseeded domains; renewal would silently strip them`,
             false,
             { rule: 'reseed.coverage' }
           );
