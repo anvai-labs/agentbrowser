@@ -1,8 +1,12 @@
 # ADR-033: Cookie seed provenance and explicit auth renewal
 
-Status: Accepted and implemented — the A4 metadata/diagnostic increment shipped in 1.31.0 (live reseed remains follow-up work);
-independent review required before merge. Live reseed remains proposed and
-disabled until the quiescence, generation and accounting gates below qualify.
+Status: Accepted and implemented — the A4 metadata/diagnostic increment shipped in 1.31.0; the
+`seed-from-cdp` extraction utility, advisory rotation detection and live reseed
+(P1-6a/P1-6b/P1-6c) implemented on the P1 flow-continuity branch (2026-11-03),
+qualified against the gates below (durable ledger order, input exclusion,
+engine-measured quiescence with a held response, generation invalidation before
+the write, accounting preservation, stop-not-replay on failure). Live
+Vinted/Google verification remains pending operator verification.
 Design 2026-11-01.
 Related: [ADR-025](025-operator-cookie-handoff.md),
 [ADR-027](027-evidence-pass-state-transfer.md),
@@ -28,7 +32,8 @@ not expose cookie values, arbitrary cookie names or storage keys. Cookie classes
 are derived from actual imported rows rather than trusted from metadata.
 Seeding retains all existing policy, scope and protected-credential floors.
 
-The future `session seed-from-cdp` utility is explicitly an operator-side export
+The `seed-from-cdp` utility (shipped as the top-level `agentbrowser seed-from-cdp`
+CLI command, P1-6c) is explicitly an operator-side export
 from an already-open, unenforced browser, not the protected login-browser handoff
 in ADR-025. It selects a default or explicitly identified incognito context,
 attaches only matching page targets, and reads tab-context `Network.getCookies`
@@ -48,7 +53,7 @@ jar, and unused prepared actions/approval tokens can retain the old identity's
 authority while URL and document stay unchanged. This increment does not silently
 relax ADR-025's fresh-context handoff requirements.
 
-Any future reseed route is a separate authenticated human-operator operation,
+The reseed route is a separate authenticated human-operator operation,
 same-tenant and bound to the exact live context, domains, seed digest and policy.
 Ordinary API/agent principals cannot commit it. Before cookie writes it must
 exclude new browser input, preserve the old scope's expiry, methods, exclusions,
@@ -61,7 +66,10 @@ changes invalidate prepared actions, approval grants and action leases even on a
 unchanged document. Unknown/partial outcomes are reconciled, never auto-replayed.
 
 An engine must supply a qualified cookie replacement operation with bounded
-quiescence/cancellation behavior. If a failure leaves auth state uncertain, the
+quiescence/cancellation behavior. The Playwright engine supplies both:
+`replaceCookies` (clear + add as one engine-owned step) and `inFlightRequests`
+(requests admitted whose response has not fully settled — a held response keeps
+the count above zero, so a late Set-Cookie cannot land on the new jar). If a failure leaves auth state uncertain, the
 session cannot resume writes under its old authority. A clone fallback is allowed
 only if documented and ledger-linked, preserves accumulated budget/rate/storage
 accounting, and never turns renewal into a fresh grant. A new session id is not
@@ -78,9 +86,11 @@ the operator browser automatically or authorize reseeding.
 The first increment covers fingerprint warnings in create/status without values,
 strict metadata/legacy file round trips, malformed/oversized/unknown fields,
 partition refusal, private/no-follow files, source-context metadata and provider
-warning-domain tests. CDP extraction is not implemented in this increment.
-A future extraction implementation must qualify default vs incognito
-tab session cookies with receiver-independent canaries and bounded error output.
+warning-domain tests. CDP extraction (P1-6c) is qualified with receiver-independent
+canaries: fake-client suites for default vs incognito context selection, explicit
+multi-context selection, tab matching, tab-context-only cookie reads, domain
+filtering, seed mapping, provenance and the loopback/non-redirecting guards, plus
+the exclusive-0600 write round trip through the shared strict normalizer.
 
 Live reseed qualification additionally needs same-id auth recovery (or an explicitly
 documented accounting-preserving clone), unchanged pages/ledger where claimed,

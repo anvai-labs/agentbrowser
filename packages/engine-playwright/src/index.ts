@@ -79,6 +79,30 @@ const redirectGuards = new WeakMap<BrowserContext, BodyRedirectGuard>();
 /** Each scoped context's probe claim registry (ADR-030 P0-2). */
 const pageFetchLanes = new WeakMap<BrowserContext, PageFetchLane>();
 
+/**
+ * Each routed context's not-yet-settled requests (ADR-033 live reseed). A
+ * request enters at choke-point admission and leaves only when its response
+ * has fully completed — so an outstanding response that could still deliver a
+ * late Set-Cookie keeps the count above zero exactly as long as it can
+ * overwrite a freshly reseeded jar.
+ */
+const inFlightByContext = new WeakMap<BrowserContext, Set<import('playwright').Request>>();
+
+/**
+ * Each routed context's admission gate (ADR-033 review F1): a cookie
+ * replacement freezes new admissions for the duration of the write, so the
+ * window between the last quiescence read and the write cannot be raced by a
+ * request that was admitted but uncounted.
+ */
+const admissionByContext = new WeakMap<
+  BrowserContext,
+  {
+    frozen: Promise<void> | null;
+    release: (() => void) | null;
+    parked: Set<import('playwright').Request>;
+  }
+>();
+
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import { ObservationReads } from './observation-read.js';
 import {
@@ -1012,6 +1036,15 @@ function readFileInputNames(el: unknown): string[] | null {
     ? Array.from(input.files, (f) => String(f.name))
     : null;
 }
+
+/**
+ * P1-6a (ADR-033): stable per-page keys for same-page request correlation
+ * (rotation detection). Opaque small integers assigned on first sight; keyed
+ * by the Playwright Page object so a page keeps its key for life. Never part
+ * of the ledger allowlist — the value carries no page identity.
+ */
+const pageKeys = new WeakMap<object, number>();
+let nextPageKey = 0;
 
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
@@ -1977,11 +2010,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // URLs carry query-string tokens (spec 14.2): record origin + path,
       // never the query. Deterministic engine-side, no secret registry needed.
       const parsed = new URL(request.url());
+      // Same-page attribution for rotation detection (P1-6a); omitted when the
+      // frame is gone mid-flight (worker, detached) — those records stay
+      // unattributed and detection ignores them.
+      let pageKey: number | undefined;
+      try {
+        const page = request.frame().page();
+        pageKey = pageKeys.get(page);
+        if (pageKey === undefined) {
+          pageKey = nextPageKey += 1;
+          pageKeys.set(page, pageKey);
+        }
+      } catch {
+        pageKey = undefined;
+      }
       const data = {
         url: `${parsed.origin}${parsed.pathname}`,
         hostname: parsed.hostname,
         method: request.method(),
         resourceType: request.resourceType(),
+        ...(pageKey !== undefined ? { pageKey } : {}),
         ...extra,
       };
       const timestamp = new Date().toISOString();
@@ -2300,11 +2348,51 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           })
         : undefined;
     if (redirectGuard !== undefined) redirectGuards.set(context, redirectGuard);
+    const inFlight = new Set<import('playwright').Request>();
+    inFlightByContext.set(context, inFlight);
+    const trackInFlight = (request: import('playwright').Request): void => {
+      // Only real Playwright requests carry the settle chain; handler-level
+      // test stubs (and any odd request shape) are not network to await.
+      if (typeof request.response !== 'function') return;
+      inFlight.add(request);
+      // Settle = the response fully received: response() resolves at headers
+      // (null when the request failed or was intercepted away), finished()
+      // when the body completes. Until then an outstanding Set-Cookie can
+      // still land, so the request stays counted.
+      void request
+        .response()
+        .then((response) => (response === null ? null : response.finished()))
+        .catch(() => {})
+        .finally(() => inFlight.delete(request));
+    };
+    // ADR-033 review F1: the admission gate. While a cookie replacement
+    // holds the freeze, NEW requests park before any dispatch — they can
+    // neither carry old credentials nor deliver a Set-Cookie onto the jar
+    // being written. Parked requests are excluded from the drain criterion:
+    // undispatched means unable to race the write.
+    const admission = {
+      frozen: null as Promise<void> | null,
+      release: null as (() => void) | null,
+      parked: new Set<import('playwright').Request>(),
+    };
+    admissionByContext.set(context, admission);
     await context.route('**', async (route) => {
       const request = route.request();
       const url = request.url();
       const hostname = new URL(url).hostname;
       const method = request.method();
+
+      // Tracked BEFORE the freeze check: whichever way the interleaving goes,
+      // the request is either visible to the drain or parked behind the gate.
+      trackInFlight(request);
+      if (admission.frozen !== null) {
+        admission.parked.add(request);
+        try {
+          await admission.frozen;
+        } finally {
+          admission.parked.delete(request);
+        }
+      }
 
       emitRequest('request.started', request, {});
 
@@ -2356,8 +2444,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         const override = headersFor(hostname, originalHeaders);
         const requestHeaders = override ?? originalHeaders;
         let initiatorHost: string | undefined;
+        let crossOriginBody = false;
         try {
-          initiatorHost = new URL(request.frame().url()).hostname;
+          const frameUrl = new URL(request.frame().url());
+          initiatorHost = frameUrl.hostname;
+          crossOriginBody = new URL(url).origin !== frameUrl.origin;
         } catch {
           /* Unknown frames never authorize assets; scoped document CSP blocks workers. */
         }
@@ -2429,21 +2520,55 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             await deny('egress_policy');
             return;
           }
-          emitRequest(
-            'request.finished',
-            request,
-            { passthrough: true, ...(probeClaim !== undefined ? { probe: true } : {}) },
-            redirectGuard === undefined
-          );
-          recordInjection(url);
-          await continueRequest(override);
-          return;
+          // Playwright's route.continue() cannot release a CROSS-ORIGIN
+          // body-bearing request: Chromium answers it with net::ERR_FAILED —
+          // reproduced with plain program hosts, no transforms and a bare
+          // immediate continue (same-origin bodies and cross-origin GETs are
+          // unaffected; raw Playwright without the engine passes, so the
+          // trigger is the engine's interception composition). These requests
+          // fall through to the inspected lane below: a Node-side re-issue
+          // (byte fidelity caveat as documented) that WORKS, where the native
+          // path is a guaranteed failure today.
+          if (!crossOriginBody) {
+            emitRequest(
+              'request.finished',
+              request,
+              { passthrough: true, ...(probeClaim !== undefined ? { probe: true } : {}) },
+              redirectGuard === undefined
+            );
+            recordInjection(url);
+            await continueRequest(override);
+            return;
+          }
         }
 
         recordInjection(url);
         // A claimed probe's Node-side re-issue always carries explicit headers
         // so the nonce cannot reach the wire (an undefined override would let
         // route.fetch re-issue the browser's original header set verbatim).
+        // Cross-origin bodies additionally carry their postData explicitly:
+        // route.fetch does not inherit it from the intercepted request in
+        // that composition (the inspected-lane workaround above).
+        const crossOriginPostData = crossOriginBody ? request.postDataBuffer() : undefined;
+        // Review F6c (round 2): an UNRECOVERABLE body must fail loudly, never
+        // re-issue as a silent bodiless POST. postDataBuffer() is null both
+        // for a lost body AND for a request that never had one — the request's
+        // own headers say which — and bodiless methods (DELETE, OPTIONS,
+        // beacons) are legitimate cross-origin traffic this lane must carry.
+        const declaredLength = request.headers()['content-length'];
+        const expectsBody =
+          ['POST', 'PUT', 'PATCH'].includes(request.method()) &&
+          ((declaredLength !== undefined && declaredLength !== '' && declaredLength !== '0') ||
+            request.headers()['transfer-encoding'] !== undefined);
+        if (crossOriginBody && expectsBody && crossOriginPostData === null) {
+          emitRequest('request.failed', request, {
+            blocked: false,
+            reason: 'engine_error',
+            detail: 'request body unavailable for the cross-origin re-issue',
+          });
+          await route.abort('failed');
+          return;
+        }
         const response = await route.fetch({
           maxRedirects: 0,
           ...(probeClaim !== undefined
@@ -2451,6 +2576,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             : override !== undefined
               ? { headers: override }
               : {}),
+          ...(crossOriginPostData != null && crossOriginPostData.length > 0
+            ? { postData: crossOriginPostData }
+            : {}),
         });
         // All-hop enforcement: the browser never sees an UNCHECKED hop.
         // The chain is walked Node-side — fresh verdict, hop cap, and loop
@@ -3126,6 +3254,92 @@ class PlaywrightSession implements EngineSession {
   async addCookies(cookies: NormalizedCookie[]): Promise<void> {
     if (cookies.length === 0) return;
     await this.context.addCookies(playwrightCookieWrite(cookies));
+  }
+
+  /**
+   * ADR-033 live reseed (review F1): the qualified replacement — freeze new
+   * admissions, DRAIN every dispatched request to a full settle, then clear
+   * and install as one engine-owned step, then unfreeze. The freeze closes
+   * the admission window between the caller's last quiescence read and this
+   * write: a request admitted after that read parks undispatched (unable to
+   * carry old credentials or land a Set-Cookie on the new jar) and proceeds
+   * under the new jar once unfrozen. The drain is bounded (10 s); a timeout
+   * throws with the jar untouched — the caller stops the session's authority
+   * rather than replaying. A failure may leave the jar cleared; callers treat
+   * that as loss of old authority. Single-caller (the service serializes
+   * reseeds on its handoff lock).
+   */
+  async replaceCookies(cookies: NormalizedCookie[]): Promise<void> {
+    const admission = admissionByContext.get(this.context);
+    const inFlight = inFlightByContext.get(this.context);
+    if (admission === undefined || inFlight === undefined) {
+      // An unrouted context has no admissions to freeze; plain replace.
+      await this.context.clearCookies();
+      if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+      return;
+    }
+    if (admission.frozen !== null) await admission.frozen; // never two writers
+    admission.frozen = new Promise((resolve) => {
+      admission.release = resolve;
+    });
+    const release = admission.release;
+    try {
+      const deadline = Date.now() + 10_000;
+      // Drain: every DISPATCHED request must settle. Parked (frozen) ones are
+      // excluded — they have not touched the network and cannot race the write.
+      for (;;) {
+        let dispatched = 0;
+        for (const request of inFlight) if (!admission.parked.has(request)) dispatched += 1;
+        if (dispatched === 0) break;
+        if (Date.now() >= deadline)
+          throw new EngineError(
+            'ACTION_TIMEOUT',
+            'In-flight requests did not settle for the cookie replacement',
+            false,
+            { rule: 'reseed.drain' }
+          );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      // Review round 2 (F4): the write itself is bounded too — a wedged CDP
+      // connection must not park every future admission forever. A timed-out
+      // write still releases the freeze; a late-arriving CDP completion then
+      // lands new cookies late, a degraded-but-live failure, never a hang.
+      let writeTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          (async () => {
+            await this.context.clearCookies();
+            if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+          })(),
+          new Promise<never>((_, reject) => {
+            writeTimer = setTimeout(
+              () =>
+                reject(
+                  new EngineError(
+                    'ACTION_TIMEOUT',
+                    'The cookie write did not complete in time',
+                    false,
+                    { rule: 'reseed.write' }
+                  )
+                ),
+              10_000
+            );
+            writeTimer.unref?.();
+          }),
+        ]);
+      } finally {
+        clearTimeout(writeTimer);
+      }
+    } finally {
+      release?.();
+      admission.frozen = null;
+      admission.release = null;
+    }
+  }
+
+  /** ADR-033 live reseed: requests admitted but not yet fully settled. */
+  async inFlightRequests(): Promise<number> {
+    return inFlightByContext.get(this.context)?.size ?? 0;
   }
 
   /** TD-BROWSER-16 phase 6 (ADR-025 §3): all-frames init script on the live context. */

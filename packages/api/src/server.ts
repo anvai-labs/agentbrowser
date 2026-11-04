@@ -4,6 +4,7 @@ import {
   parseScopeBudgetTopup,
   validateEvidencePassRequest,
   validateScopeAssetAmendment,
+  validateSessionReseedRequest,
 } from '@agentbrowser/protocol';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
@@ -1823,6 +1824,22 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             throw new ServiceError('INVALID_REQUEST', 'Invalid scope asset amendment');
           const { sessionId } = request.params as { sessionId: string };
           return reply.send(await service.amendScopeAssets(sessionId, checked.value, principal));
+        },
+        { operatorRoute: true }
+      );
+
+      // ADR-033 live reseed: human-operator only, tenant-bound, ledger-durable.
+      onTransport(
+        'POST',
+        '/operator/sessions/:sessionId/reseed',
+        async (request, reply) => {
+          const principal = principals.get(request);
+          if (principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          const checked = validateSessionReseedRequest(request.body);
+          if (!checked.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid reseed request');
+          const { sessionId } = request.params as { sessionId: string };
+          return reply.send(await service.reseedSession(sessionId, checked.value, principal));
         },
         { operatorRoute: true }
       );

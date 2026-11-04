@@ -135,6 +135,8 @@ describe('route contract metadata', () => {
       ['POST /v1/operator/sessions/:sourceId/evidence', 'lifecycle'],
       ['POST /v1/operator/sessions/:sessionId/scope/assets', 'lifecycle'],
       ['POST /v1/operator/sessions/:sessionId/scope/budget', 'lifecycle'],
+      // ADR-033: human-operator live reseed, outside delegated envelopes.
+      ['POST /v1/operator/sessions/:sessionId/reseed', 'lifecycle'],
       ['GET /v1/sessions/:sessionId/scope/trace', 'stream'],
       ['POST /v1/operator/login/open', 'lifecycle'],
       ['POST /v1/operator/login/close', 'lifecycle'],

@@ -141,7 +141,8 @@ export interface ScopeIdentityBinding {
 export interface EngagementScope {
   assetHosts?: Array<{
     host: string;
-    class: 'asset';
+    /** 'asset': static delivery (GET/HEAD). 'resource': functional dependency (GET/HEAD/OPTIONS/POST, fetch/XHR included). */
+    class: 'asset' | 'resource';
     category?: 'asset' | 'consent' | 'captcha' | 'sso';
   }>;
   /** Exhaustive when set: exact hosts and ".suffix" entries in scope. */
@@ -168,6 +169,11 @@ export interface EngagementScope {
   program?: ScopeProgram;
   /** T10 M3: at most `requests` per `perSeconds`; paced (waits for a slot), never denied. */
   rateLimit?: { requests: number; perSeconds: number };
+  /**
+   * P1-6a (ADR-033): advisory rotation detection config; absent = no detection.
+   * Both patterns required, operator-configured, never inferred.
+   */
+  authRotation?: { refreshUrlPattern: string; identityUrlPattern: string };
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */

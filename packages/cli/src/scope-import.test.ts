@@ -133,9 +133,16 @@ it('imports explicit asset bundles without extending program targets or restorin
   expect(result.code).toBe(0);
   const parsed = JSON.parse(result.out);
   expect(parsed.scope.allowedHosts).toEqual(['app.example.com']);
-  expect(parsed.scope.assetHosts.every((entry: { class: string }) => entry.class === 'asset')).toBe(
-    true
-  );
+  // Support hosts carry their class: static delivery 'asset', the vendors'
+  // functional endpoints 'resource' (P1-5).
+  expect(
+    parsed.scope.assetHosts.every(
+      (entry: { class: string }) => entry.class === 'asset' || entry.class === 'resource'
+    )
+  ).toBe(true);
+  expect(
+    parsed.scope.assetHosts.some((entry: { class: string }) => entry.class === 'resource')
+  ).toBe(true);
   expect(
     parsed.scope.assetHosts.some((entry: { host: string }) => entry.host === 'cdn.cookielaw.org')
   ).toBe(false);

@@ -25,6 +25,7 @@ import {
   ScopeAssetAmendmentSchema,
   ScreenshotRequestSchema,
   SessionRequestSchema,
+  SessionReseedRequestSchema,
 } from './schemas.js';
 import type {
   CookieHandoffRequest,
@@ -49,6 +50,20 @@ export type Validated<T> =
 
 const sessionRequest = TypeCompiler.Compile(SessionRequestSchema);
 const scopeAmendment = TypeCompiler.Compile(ScopeAssetAmendmentSchema);
+const sessionReseed = TypeCompiler.Compile(SessionReseedRequestSchema);
+export function validateSessionReseedRequest(
+  body: unknown
+): Validated<Static<typeof SessionReseedRequestSchema>> {
+  if (sessionReseed.Check(body))
+    return { ok: true, value: body as Static<typeof SessionReseedRequestSchema> };
+  return {
+    ok: false,
+    issues: [...sessionReseed.Errors(body)].map((error) => ({
+      path: error.path,
+      message: error.message,
+    })),
+  };
+}
 export function validateScopeAssetAmendment(
   body: unknown
 ): Validated<Static<typeof ScopeAssetAmendmentSchema>> {

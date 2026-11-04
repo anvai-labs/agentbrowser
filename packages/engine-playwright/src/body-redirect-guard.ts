@@ -445,12 +445,22 @@ export class BodyRedirectGuard {
       // Playwright route.continue({headers}) persists overrides across redirects
       // and would reapply an old marker after this guard stripped it.
       try {
-        const headers = chain
+        let headers = chain
           ? this.options.headersForRequest?.(
               event.request.url,
               event.request.headers ?? chain.headers
             )
           : undefined;
+        // The transform's explicit empty Cookie is a route.fetch-ism (it stops
+        // the Node-side re-issue reattaching the jar). Continued natively on a
+        // cross-origin CORS request it poisons the browser's credentials check
+        // and the request dies with net::ERR_FAILED — the browser's own cookie
+        // policy already governs what a native continue sends (the strip above
+        // removed any explicit credentials). Drop it for the native lane.
+        if (headers !== undefined && headers.cookie === '') {
+          const { cookie: _empty, ...rest } = headers;
+          headers = rest;
+        }
         if (headers && chain) chain.headerOverrides = true;
         if (headers && chain && chain.hops > 0) this.options.onInjection?.(event.request.url);
         await cdp.send('Fetch.continueRequest', {

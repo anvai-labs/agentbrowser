@@ -264,6 +264,11 @@ export class SessionControl {
       throw new ControlError('CONTROL_REVOKED', 'Operation authority was revoked');
   }
 
+  /** ADR-033 live reseed: is an admitted operation still draining? */
+  hasActiveOperation(): boolean {
+    return this.active !== undefined;
+  }
+
   dispatched(ticket: ControlTicket): void {
     this.check(ticket);
     if (this.finalized)

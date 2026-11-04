@@ -1,6 +1,8 @@
 import type { ScopeAssetHost } from './scope-assets.js';
 
-/** Optional static-host suggestions, not live program policy or authorization. */
+/** Optional support-host suggestions, not live program policy or authorization.
+ * `asset` entries are static delivery; `resource` entries are the functional
+ * endpoints the vendors' own scripts call (POST beacons, challenge delivery). */
 const categories: Record<string, ScopeAssetHost[]> = {
   consent: [
     { host: 'cdn.cookielaw.org', class: 'asset', category: 'consent' },
@@ -8,8 +10,12 @@ const categories: Record<string, ScopeAssetHost[]> = {
   ],
   captcha: [
     { host: '.hcaptcha.com', class: 'asset', category: 'captcha' },
+    { host: 'api.hcaptcha.com', class: 'resource', category: 'captcha' },
     { host: '.hcaptcha.net', class: 'asset', category: 'captcha' },
     { host: 'www.recaptcha.net', class: 'asset', category: 'captcha' },
+    { host: 'www.google.com', class: 'resource', category: 'captcha' },
+    { host: 'geo.captcha-delivery.com', class: 'resource', category: 'captcha' },
+    { host: 'challenges.cloudflare.com', class: 'resource', category: 'captcha' },
   ],
   assets: [
     { host: 'images.ctfassets.net', class: 'asset', category: 'asset' },

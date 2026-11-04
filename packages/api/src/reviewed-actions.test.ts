@@ -529,6 +529,8 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
           'human operator only; finite increasing limit, exact revision and durable ledger; retains credential marking/action floors and grants no lease',
         'POST /v1/operator/sessions/:sessionId/scope/assets':
           'human operator only; exact revision, static asset hosts only, ledger required; retains credential marking and action floors',
+        'POST /v1/operator/sessions/:sessionId/reseed':
+          'human operator only; exact revision, ledger required; input excluded, quiescence-gated, approvals/leases die BEFORE the cookie write; it MARKS the session (operator credentials never export)',
         'POST /v1/sessions/:sessionId/pages/:pageId/act':
           'high-risk and unknown need act.reviewed; a live lease admits unknown on its hosts',
         'POST /v1/sessions/:sessionId/pages/:pageId/plan':

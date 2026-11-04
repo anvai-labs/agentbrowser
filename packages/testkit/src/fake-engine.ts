@@ -121,6 +121,11 @@ export class FakeEngine implements BrowserEngine {
   getSessionIds(): string[] {
     return Array.from(this.sessions.keys());
   }
+
+  /** The fake session object, for tests asserting engine-side state (cookies). */
+  getFakeSession(sessionId: string) {
+    return this.sessions.get(sessionId);
+  }
 }
 
 /**
@@ -179,17 +184,49 @@ class FakeSession implements EngineSession {
 
   /** TD-BROWSER-16 phase 6: the operator handoff's writes, recorded. */
   private readonly _cookies: NormalizedCookie[] = [];
+  /** ADR-033: once replaced, the create-time seed is gone like a cleared jar. */
+  private seedReplaced = false;
   /** TD-BROWSER-16 phase 6: init scripts applied to the live session. */
   readonly initScripts: string[] = [];
 
   async cookies(): Promise<NormalizedCookie[]> {
     // Create-time seeds (previously dropped) and live handoff writes, so the
-    // cookie floor checks and the handoff tests observe real state.
-    return [...(this.options.cookies ?? []), ...this._cookies];
+    // cookie floor checks and the handoff tests observe real state. After a
+    // reseed the jar was CLEARED — the seeds are gone.
+    return [...(this.seedReplaced ? [] : (this.options.cookies ?? [])), ...this._cookies];
   }
 
   async addCookies(cookies: NormalizedCookie[]): Promise<void> {
     this._cookies.push(...cookies.map((cookie) => ({ ...cookie })));
+  }
+
+  /** ADR-033 live reseed: replacement semantics — the jar is cleared first. */
+  private replaceFailures = 0;
+  /** Test hook: make the next replaceCookies throw AFTER clearing (the ADR's
+   * partial-outcome case: old authority must die, nothing replays). */
+  failNextReplace(): void {
+    this.replaceFailures += 1;
+  }
+
+  async replaceCookies(cookies: NormalizedCookie[]): Promise<void> {
+    this._cookies.length = 0;
+    this.seedReplaced = true;
+    if (this.replaceFailures > 0) {
+      this.replaceFailures -= 1;
+      throw new Error('fake replace failed after clearing');
+    }
+    this._cookies.push(...cookies.map((cookie) => ({ ...cookie })));
+  }
+
+  /** ADR-033: zero unless a test pins an in-flight count. */
+  private pinnedInFlight = 0;
+
+  pinInFlightRequests(count: number): void {
+    this.pinnedInFlight = count;
+  }
+
+  async inFlightRequests(): Promise<number> {
+    return this.pinnedInFlight;
   }
 
   async addInitScript(script: string): Promise<void> {

@@ -78,3 +78,57 @@ the profile's on-disk secrecy beyond file permissions; zero-day browser escape.
 The handoff is a one-time copy into one session: no local storage of credentials anywhere, no
 re-seeding from an export (exports refuse), and a second handoff for other domains needs its own
 decision. Close the login browser when you are done; session cookies drop with it.
+
+## Extracting a seed from your own Chrome (`seed-from-cdp`)
+
+ADR-033 / P1-6c. When the flow you need is not the protected handoff but a plain seed file you
+control, `agentbrowser seed-from-cdp` exports one from an **already-open** operator Chrome:
+
+```bash
+# open your Chrome with a debugging port, sign in, then:
+agentbrowser seed-from-cdp --domain vinted.com --out ~/.config/agentbrowser/vinted-seed.json
+agentbrowser seed-from-cdp --context incognito --browser-context 24AF --domain vinted.com --out seed.json
+```
+
+What it does — and refuses to do:
+
+- Connects only to a **loopback** CDP port (`--port`, default 9222); the version probe is
+  bounded and never follows a redirect.
+- Selects the **default** context or one explicitly identified **incognito** context — several
+  open incognito contexts require `--browser-context`; it attaches only to a tab whose host
+  matches your domain filters, and reads **tab-context `Network.getCookies`** (browser-wide
+  storage reads miss session cookies and are never used as a substitute).
+- Never starts a browser, never reads the profile database, never touches
+  passwords/localStorage/IndexedDB, and never widens past your domain filters.
+- Writes a versioned `agentbrowser-cookie-seed/v1` file **created exclusively with mode 0600**
+  (an existing path is refused), with provenance (source, context, context digest for incognito,
+  extraction time, domain filters) and derived cookie classes. Bounded to 1 MiB / 1000 cookies;
+  expired rows are omitted with a counted warning. Import it with
+  `session create --cookies-file`.
+
+The port is **not** a credential boundary — anything that can reach it can read that browser's
+state, exactly as ADR-025 explains for the login browser. Fingerprint-bound cookies
+(`cf_clearance`, `datadome`) may not transfer to another browser context: extract immediately
+before use and verify authentication; cookie presence is not a challenge bypass.
+
+## Reseeding a live session whose login went stale
+
+If the seed goes stale mid-session, configure `authRotation` on the scope (P1-6a) and the scope
+status will surface the reseed-needed hint when a refresh bounce is followed by an auth
+rejection. The answer is a **live reseed** (ADR-033 / P1-6b) — the operator renews the cookies
+without destroying the session:
+
+```bash
+agentbrowser session reseed SESSION --cookies-file ~/.config/agentbrowser/vinted-seed.json   --expected-revision 3
+```
+
+What the server does, in order: records the authorization durably in the engagement ledger
+(expected revision, seed digest, domains) → refuses new browser input for the window → waits
+(bounded, `--quiescence-timeout-ms`, default 5 s) until no request has an unsettled response —
+a held long-poll refuses the reseed with nothing changed → invalidates pending approvals,
+prepared operations and action leases **before** the write → registers the new values as
+secrets and marks the session operator-credentialed (cookie export refuses from then on) →
+clears and installs the jar as one engine-owned step → records completion and re-arms the
+rotation advisory. Scope accounting (budget spent, pacing, expiry, exclusions, revision) is
+preserved verbatim — renewal is never a fresh grant. A failed replacement stops the session's
+traffic rather than replaying anything under old authority.
