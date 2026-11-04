@@ -228,6 +228,25 @@ export async function extractSeedFromCdp(
       t !== null && typeof t === 'object' && (t as CdpTargetInfo).type === 'page'
   ) as Array<{ type: string; targetId: string; url: string; browserContextId?: string }>;
 
+  // Context classification: Chrome 156+ stamps EVERY target with a
+  // browserContextId, default context included, so "undefined" no longer
+  // identifies default. The authoritative split is Target.getBrowserContexts
+  // — it lists exactly the NON-default contexts (verified against a live
+  // Chrome 156: default-context targets carry an id absent from that list).
+  let nonDefaultIds: string[] = [];
+  try {
+    const contexts = (await client.send('Target.getBrowserContexts')) as {
+      browserContextIds?: unknown;
+    };
+    nonDefaultIds = Array.isArray(contexts.browserContextIds)
+      ? contexts.browserContextIds.filter((id): id is string => typeof id === 'string')
+      : [];
+  } catch {
+    throw new UsageError('Could not list the operator Chrome contexts over CDP.');
+  }
+  const inDefaultContext = (page: { browserContextId?: string }): boolean =>
+    page.browserContextId === undefined || !nonDefaultIds.includes(page.browserContextId);
+
   let contextId: string | undefined;
   if (request.context === 'incognito') {
     const ids = [
@@ -273,9 +292,7 @@ export async function extractSeedFromCdp(
     }
   }
   const matchingContext = pages.filter((p) =>
-    request.context === 'default'
-      ? p.browserContextId === undefined
-      : p.browserContextId === contextId
+    request.context === 'default' ? inDefaultContext(p) : p.browserContextId === contextId
   );
 
   const tabHost = (url: string): string | undefined => {
@@ -311,11 +328,19 @@ export async function extractSeedFromCdp(
   try {
     // Tab-context cookies only: the browser-wide Storage.getCookies call
     // misses session cookies and is never used as a substitute (ADR-033).
-    result = (await client.send(
-      'Network.getCookies',
-      { urls: domains.map((d) => `https://${d.replace(/^\./, '')}/`) },
-      sessionId
-    )) as { cookies?: unknown };
+    // The URL list covers every filter AND the matched tab's own origin:
+    // login-session cookies are frequently host-scoped to the www host the
+    // tab is actually on (verified live on Vinted: 39 cookies for
+    // https://www.vinted.com/ vs 22 for the bare apex).
+    const urls = [
+      ...new Set([
+        ...domains.map((d) => `https://${d.replace(/^\./, '')}/`),
+        ...(tabOrigin.startsWith('https://') ? [tabOrigin] : []),
+      ]),
+    ];
+    result = (await client.send('Network.getCookies', { urls }, sessionId)) as {
+      cookies?: unknown;
+    };
   } catch {
     throw new UsageError('Could not read cookies from the selected tab.');
   }
