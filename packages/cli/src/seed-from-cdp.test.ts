@@ -18,13 +18,18 @@ interface Page {
   browserContextId?: string;
 }
 
-function fakeClient(pages: Page[], cookies: Array<Record<string, unknown>>) {
+function fakeClient(
+  pages: Page[],
+  cookies: Array<Record<string, unknown>>,
+  nonDefaultContexts: string[] = []
+) {
   const calls: string[] = [];
   let sessionId: string | undefined;
   const client: CdpClient = {
     async send(method, params, session) {
       calls.push(method);
       if (method === 'Target.getTargets') return { targetInfos: pages };
+      if (method === 'Target.getBrowserContexts') return { browserContextIds: nonDefaultContexts };
       if (method === 'Target.attachToTarget') {
         sessionId = 'sess-1';
         return { sessionId: 'sess-1' };
@@ -81,7 +86,8 @@ describe('extractSeedFromCdp (P1-6c)', () => {
         },
         // Never enters the file: outside the domain filters (defense in depth).
         { name: 'evil', value: 'x', domain: 'evil.example', path: '/' },
-      ]
+      ],
+      [INCOGNITO_TAB.browserContextId ?? '']
     );
     const extracted = await extractSeedFromCdp(client, {
       domains: ['vinted.net', 'vinted.com'],
@@ -89,7 +95,12 @@ describe('extractSeedFromCdp (P1-6c)', () => {
       now: () => new Date('2026-11-03T12:00:00.000Z'),
     });
     // Attached to the DEFAULT tab (the incognito one is a different context).
-    expect(calls).toEqual(['Target.getTargets', 'Target.attachToTarget', 'Network.getCookies']);
+    expect(calls).toEqual([
+      'Target.getTargets',
+      'Target.getBrowserContexts',
+      'Target.attachToTarget',
+      'Network.getCookies',
+    ]);
     expect(extracted.selectedTabOrigin).toBe('https://www.vinted.com');
     expect(extracted.cookies).toEqual([
       // Session cookie: expires omitted; Unspecified sameSite omitted.
@@ -117,6 +128,24 @@ describe('extractSeedFromCdp (P1-6c)', () => {
       extractedAt: '2026-11-03T12:00:00.000Z',
       domainFilters: ['vinted.com', 'vinted.net'],
     });
+  });
+
+  it('classifies the default context when Chrome stamps every target with a context id (156+)', async () => {
+    // Real Chrome 156 shape: default-context targets carry a browserContextId
+    // that Target.getBrowserContexts does NOT list.
+    const stamped: Page = { ...DEFAULT_TAB, browserContextId: 'A0FD5180E54583F8' };
+    const { client } = fakeClient(
+      [stamped, INCOGNITO_TAB],
+      [{ name: 's', value: 'v', domain: '.vinted.com', path: '/' }],
+      [INCOGNITO_TAB.browserContextId ?? '']
+    );
+    const extracted = await extractSeedFromCdp(client, {
+      domains: ['vinted.com'],
+      context: 'default',
+    });
+    expect(extracted.selectedTabOrigin).toBe('https://www.vinted.com');
+    expect(extracted.provenance.sourceContext).toBe('default');
+    expect(extracted.cookies).toHaveLength(1);
   });
 
   it('selects the single incognito context and stamps its digest; a prefix selects among several', async () => {
@@ -170,7 +199,7 @@ describe('extractSeedFromCdp (P1-6c)', () => {
 
   it('refuses when no tab matches, no incognito pages exist, or the filters are invalid', async () => {
     const unrelated: Page = { type: 'page', targetId: 't-x', url: 'https://other.example/' };
-    const none = fakeClient([unrelated, INCOGNITO_TAB], []);
+    const none = fakeClient([unrelated, INCOGNITO_TAB], [], [INCOGNITO_TAB.browserContextId ?? '']);
     await expect(
       extractSeedFromCdp(none.client, { domains: ['vinted.com'], context: 'default' })
     ).rejects.toThrow(/No open tab in the default context/);
