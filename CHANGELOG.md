@@ -7,6 +7,69 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.33.0] — 2026-11-04
+
+### Added — T10 P1 flow continuity: resource hosts, rotation advisory, `seed-from-cdp`, live reseed (ADR-028/033)
+
+- **Resource-class hosts** (`assetHosts[].class: 'resource'`): functional
+  dependencies the target's own flow calls (DataDome collectors, captcha and
+  consent vendors) get GET/HEAD/OPTIONS/POST including page-initiated
+  fetch/XHR — always program-initiator-attributed, disjoint from program
+  hosts, never navigation destinations or finding targets, budget-counted.
+  Starter bundles label the POSTing endpoints per host.
+- **Cross-origin body transport fix**: a page-initiated CROSS-ORIGIN
+  body-bearing fetch no longer dies `net::ERR_FAILED` at the egress choke
+  point (a pre-existing Chromium/interception interaction, reproduced with a
+  bare `route.continue()`). Such requests now ride the inspected lane — the
+  Node-side re-issue with per-hop verdicts, redirect walk and response caps,
+  the original body forwarded explicitly. Bodiless cross-origin methods and
+  same-origin traffic are unchanged; the lane's byte-fidelity and CORS
+  caveats are disclosed in the design doc.
+- **Advisory rotation detection** (P1-6a): a scope may carry
+  `authRotation {refreshUrlPattern, identityUrlPattern}` (operator-configured,
+  never inferred). A refresh-bounce navigation followed within the same page
+  by a 401/403 on the identity endpoint emits exactly one
+  `auth.rotation-suspected` ledger event and surfaces the sticky
+  `authRotation.suspected` status hint. Advisory only — no DOM inference, no
+  automatic login, no scope change. The URL-pattern compiler is now shared
+  product-wide.
+- **`agentbrowser seed-from-cdp`** (P1-6c): operator-side extraction from an
+  already-open Chrome over loopback CDP — non-redirecting probe, loopback-only
+  browser WebSocket, default or explicitly selected incognito context (an
+  ambiguous prefix refuses), tab-context `Network.getCookies` only, domain-
+  filtered into an exclusive 0600 v1 seed file with provenance.
+- **Live reseed** (P1-6b): `POST /v1/operator/sessions/:id/reseed`
+  (human-operator key; CLI `session reseed <id> --cookies-file …`) renews a
+  live session's cookies under the full ADR-033 gate sequence: durable ledger
+  authorization before any change, browser input excluded, engine-measured
+  network quiescence (unsettled responses count; a never-settling request
+  refuses with nothing changed), the auth generation kills pending approvals,
+  prepared operations and leases before the write, new values register as
+  secrets and mark the session operator-credentialed, the engine's qualified
+  replacement runs under an ADMISSION FREEZE (a racing Set-Cookie cannot
+  poison the new jar), completion is recorded before success, and the
+  rotation advisory re-arms. Scope accounting is preserved verbatim; a failed
+  or undurable replacement stops the scope — never replays.
+- Reseed floors mirror the cookie handoff: registrable cookie domains, the
+  session's host entries must lie within the reseeded domains, and one policy
+  decision per domain — all before the durable authorization.
+
+### Fixed
+
+- The redirect guard no longer injects the transform's empty Cookie on native
+  continues, where it independently poisoned Chromium's CORS credentials
+  check.
+- Bodiless cross-origin DELETE/POST ride the inspected lane unchanged; an
+  unrecoverable body (headers declare one, the buffer is gone) fails loudly
+  instead of re-issuing silently bodiless.
+
+### Changed
+
+- Engine `replaceCookies`/`inFlightRequests` qualify a live reseed; FakeEngine
+  models the replacement semantics. The reseed lane's gates are enforced in
+  the engine, not the service loop. Plans re-admit input at every step; acts
+  re-admit immediately before dispatch.
+
 ## [1.32.0] — 2026-11-02
 
 ### Added — scoped origin-context API probes, `page fetch` (T10 P0-2, ADR-030)
