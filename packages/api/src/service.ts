@@ -2291,10 +2291,18 @@ export class AgentBrowserService {
           )
         )
         .digest('hex');
-      const domains = [...new Set(cookies.map((c) => c.domain.replace(/^\./, '').toLowerCase()))]
-        .sort()
-        .slice(0, 100);
-      // Review F3: the same floors the handoff runs (ADR-033: seeding
+      const domains = [
+        ...new Set(cookies.map((c) => c.domain.replace(/^\./, '').toLowerCase())),
+      ].sort();
+      // Review round 2: never SILENTLY truncate — every installed domain must
+      // pass the floors, the policy decision and the durable evidence. A
+      // wider renewal refuses (the handoff bounds its domain list too).
+      if (domains.length > 100)
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Reseed spans ${domains.length} distinct domains; the bound is 100 — split the renewal`
+        );
+      // Review F3: the handoff's domain floors (ADR-033: seeding
       // retains all existing policy and protected-credential floors) —
       // domains usable, the session's own host entries within the reseeded
       // domains (a wrong-domain reseed would silently strip the session's
@@ -2308,17 +2316,27 @@ export class AgentBrowserService {
           );
       }
       const facts = this.sessionHandoffFacts.get(sessionId);
-      if (facts !== undefined) {
-        for (const entry of [...facts.allowedHosts, ...facts.scopeAllowedHosts]) {
-          const usable = usableHost(entry);
-          if (!usable.ok || !domains.some((domain) => entry === domain || covers(domain, entry).ok))
-            throw new ServiceError(
-              'POLICY_DENIED',
-              `Host entry '${entry}' does not lie within the reseeded domains`,
-              false,
-              { rule: 'reseed.coverage' }
-            );
-        }
+      // Review round 2 (F3): fail CLOSED on missing floor facts, and the
+      // handoff's delegated-session refusal — a delegated session's operator
+      // cookie renewal goes through its owner, not a direct reseed.
+      if (facts === undefined || facts.controlMode === 'delegated')
+        throw new ServiceError(
+          'POLICY_DENIED',
+          facts === undefined
+            ? 'Reseed floor facts are unavailable for this session'
+            : 'A delegated session cannot be reseeded directly',
+          false,
+          { rule: 'reseed.floors' }
+        );
+      for (const entry of [...facts.allowedHosts, ...facts.scopeAllowedHosts]) {
+        const usable = usableHost(entry);
+        if (!usable.ok || !domains.some((domain) => entry === domain || covers(domain, entry).ok))
+          throw new ServiceError(
+            'POLICY_DENIED',
+            `Host entry '${entry}' does not lie within the reseeded domains`,
+            false,
+            { rule: 'reseed.coverage' }
+          );
       }
       for (const domain of domains) {
         const decision = this.authorizer.decide({

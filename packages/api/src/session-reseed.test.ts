@@ -40,7 +40,10 @@ interface Fixture {
   scope: import('@agentbrowser/protocol').EngagementScope;
 }
 
-async function reseedFixture(scopeOverrides: Record<string, unknown> = {}): Promise<Fixture> {
+async function reseedFixture(
+  scopeOverrides: Record<string, unknown> = {},
+  createOverrides: Record<string, unknown> = {}
+): Promise<Fixture> {
   dir = await mkdtemp(join(tmpdir(), 'eng-reseed-'));
   await chmod(dir, 0o700);
   const engine = new FakeEngine();
@@ -63,6 +66,7 @@ async function reseedFixture(scopeOverrides: Record<string, unknown> = {}): Prom
   };
   const { sessionId } = await service.createSession({
     tenantId: 'owner',
+    ...createOverrides,
     cookies: [
       {
         name: 'old-session',
@@ -237,6 +241,16 @@ describe('live reseed (ADR-033)', () => {
     expect(await refused(f.service.createPage(f.sessionId))).toMatchObject({
       code: 'SESSION_BUSY',
     });
+    // Review round 2 (F5): no NEW authority is minted inside the window.
+    expect(
+      await refused(
+        f.service.grantActionLease(f.sessionId, {
+          hosts: ['example.com'],
+          expiresInMs: 60000,
+          maxActions: 10,
+        })
+      )
+    ).toMatchObject({ code: 'SESSION_BUSY', details: { rule: 'reseed.input' } });
     session?.pinInFlightRequests(0);
     const result = await attempt; // quiescence reached well inside the 5s bound
     expect(result.cookies).toBe(2);
@@ -270,6 +284,38 @@ describe('live reseed (ADR-033)', () => {
     expect((await ledgerLines()).some((line) => line.type === 'auth.reseed.authorized')).toBe(
       false
     );
+  });
+
+  it('refuses more than 100 distinct domains instead of silently truncating the floors (round 2)', async () => {
+    const f = await reseedFixture();
+    const revision = f.service.getScopeStatus(f.sessionId).revision ?? 0;
+    const many = Array.from({ length: 101 }, (_, i) => ({
+      ...freshCookies[0],
+      name: `c${i}`,
+      domain: `d${i}.example.com`,
+    }));
+    await expect(
+      f.service.reseedSession(
+        f.sessionId,
+        { expectedRevision: revision, cookies: many },
+        operator()
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect((await ledgerLines()).some((line) => line.type === 'auth.reseed.authorized')).toBe(
+      false
+    );
+  });
+
+  it('refuses a delegated session, failing closed (round 2)', async () => {
+    const delegated = await reseedFixture({}, { controlMode: 'delegated' });
+    const revision = delegated.service.getScopeStatus(delegated.sessionId).revision ?? 0;
+    await expect(
+      delegated.service.reseedSession(
+        delegated.sessionId,
+        { expectedRevision: revision, cookies: freshCookies },
+        operator()
+      )
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { rule: 'reseed.floors' } });
   });
 
   it('a pinned in-flight request refuses the reseed with nothing changed', async () => {

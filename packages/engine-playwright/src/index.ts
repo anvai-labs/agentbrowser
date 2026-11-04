@@ -2550,13 +2550,17 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         // route.fetch does not inherit it from the intercepted request in
         // that composition (the inspected-lane workaround above).
         const crossOriginPostData = crossOriginBody ? request.postDataBuffer() : undefined;
-        // Review F6c: an unrecoverable body must fail loudly, never re-issue
-        // as a silent bodiless POST (data loss the receiver would 400 anyway).
-        if (
-          crossOriginBody &&
-          crossOriginPostData === null &&
-          !['GET', 'HEAD'].includes(request.method())
-        ) {
+        // Review F6c (round 2): an UNRECOVERABLE body must fail loudly, never
+        // re-issue as a silent bodiless POST. postDataBuffer() is null both
+        // for a lost body AND for a request that never had one — the request's
+        // own headers say which — and bodiless methods (DELETE, OPTIONS,
+        // beacons) are legitimate cross-origin traffic this lane must carry.
+        const declaredLength = request.headers()['content-length'];
+        const expectsBody =
+          ['POST', 'PUT', 'PATCH'].includes(request.method()) &&
+          ((declaredLength !== undefined && declaredLength !== '' && declaredLength !== '0') ||
+            request.headers()['transfer-encoding'] !== undefined);
+        if (crossOriginBody && expectsBody && crossOriginPostData === null) {
           emitRequest('request.failed', request, {
             blocked: false,
             reason: 'engine_error',
@@ -3296,8 +3300,36 @@ class PlaywrightSession implements EngineSession {
           );
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      await this.context.clearCookies();
-      if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+      // Review round 2 (F4): the write itself is bounded too — a wedged CDP
+      // connection must not park every future admission forever. A timed-out
+      // write still releases the freeze; a late-arriving CDP completion then
+      // lands new cookies late, a degraded-but-live failure, never a hang.
+      let writeTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          (async () => {
+            await this.context.clearCookies();
+            if (cookies.length > 0) await this.context.addCookies(playwrightCookieWrite(cookies));
+          })(),
+          new Promise<never>((_, reject) => {
+            writeTimer = setTimeout(
+              () =>
+                reject(
+                  new EngineError(
+                    'ACTION_TIMEOUT',
+                    'The cookie write did not complete in time',
+                    false,
+                    { rule: 'reseed.write' }
+                  )
+                ),
+              10_000
+            );
+            writeTimer.unref?.();
+          }),
+        ]);
+      } finally {
+        clearTimeout(writeTimer);
+      }
     } finally {
       release?.();
       admission.frozen = null;

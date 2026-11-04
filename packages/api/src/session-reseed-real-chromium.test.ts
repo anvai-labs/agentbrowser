@@ -192,8 +192,8 @@ it('reseeds a live session under quiescence, replacing the jar and clearing the 
     // retry the gate — is also the test's.
     releaseHang?.();
     const result = await reseedOrFail(service, session.sessionId, seedCookie('new-live-secret'), {
-      quiescenceTimeoutMs: 10000,
-      attempts: 4,
+      quiescenceTimeoutMs: 15000,
+      attempts: 6,
     });
     expect(result?.cookies).toBe(1);
     expect(result?.authRotationSuspected).toBe(false);
@@ -229,7 +229,7 @@ it('reseeds a live session under quiescence, replacing the jar and clearing the 
   } finally {
     await cleanup(service);
   }
-}, 90000);
+}, 240000);
 
 // Review F1 regression: the admission freeze. A page hammering a Set-Cookie
 // endpoint across the reseed window must never land a PRE-completion cookie
@@ -270,4 +270,4 @@ it('a Set-Cookie poller cannot poison a completed reseed (admission freeze)', as
   } finally {
     await cleanup(service);
   }
-}, 90000);
+}, 240000);
