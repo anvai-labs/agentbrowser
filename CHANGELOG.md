@@ -7,6 +7,29 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.33.1] — 2026-11-04
+
+### Fixed — three defects found by the live Vinted acceptance run (PR #700)
+
+- `seed-from-cdp` matched no tab in the DEFAULT context on Chrome 156+:
+  every target now carries a `browserContextId`, default context included,
+  so the "undefined id" heuristic is dead. Contexts are classified against
+  `Target.getBrowserContexts` (exactly the non-default set).
+- The cookie URL list missed host-scoped login sessions: querying the bare
+  apex returned 22 Vinted cookies while the matched tab's origin holds 39 —
+  including the login session and OAuth tokens. The URL list now includes
+  the matched tab's own origin.
+- The reseed coverage floor judged every scope HOST, making a
+  multi-registrable scope (e.g. vinted.com + vinted.net) unreseedable since
+  image-CDN registrables carry no credentials. Coverage is now judged
+  against the domains that actually hold cookies in the live jar — the
+  auth a wrong reseed would strip (the wrong-domain refusal still fires).
+
+Live-verified during the acceptance run: the full reseed loop on the real
+target with durable ledger order (authorized → aborted on quiescence, with
+Vinted's long-poll holding the gate → authorized → completed), revision
+unchanged, budget accounting preserved verbatim, advisory re-armed.
+
 ## [1.33.0] — 2026-11-04
 
 ### Added — T10 P1 flow continuity: resource hosts, rotation advisory, `seed-from-cdp`, live reseed (ADR-028/033)
