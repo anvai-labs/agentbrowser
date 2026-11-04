@@ -23,6 +23,36 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentBrowserService, ServiceError } from './service';
 
+/** Session + first page navigated to `url`, with the first interactive ref observed. */
+async function preparedPage(svc: AgentBrowserService, url = 'https://example.com/') {
+  const session = await svc.createSession({ tenantId: 't1' });
+  const pageId = (await svc.createPage(session.sessionId)).pageId;
+  await svc.navigate(session.sessionId, pageId, { url });
+  const obs = (await svc.observe(session.sessionId, pageId, {
+    mode: 'interactive',
+  })) as unknown as { elements: Array<{ ref: string }> };
+  return { session, pageId, ref: obs.elements[0].ref };
+}
+
+/** Prepared page whose engine side is additionally seeded with `elements`. */
+async function seededPage(
+  svc: AgentBrowserService,
+  engine: FakeEngine,
+  elements: Array<{ role: string; name: string }>,
+  url = 'https://example.com/'
+) {
+  const session = await svc.createSession({ tenantId: 't1' });
+  const pageId = (await svc.createPage(session.sessionId)).pageId;
+  await svc.navigate(session.sessionId, pageId, { url });
+  const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+  const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+  fakePage?.setElements(elements);
+  const obs = (await svc.observe(session.sessionId, pageId, {
+    mode: 'interactive',
+  })) as unknown as { elements: Array<{ ref: string }> };
+  return { session, pageId, fakePage, obs };
+}
+
 describe('AgentBrowserService', () => {
   let engine: FakeEngine;
   let service: AgentBrowserService;
@@ -106,13 +136,7 @@ describe('AgentBrowserService', () => {
 
   describe('action plans (TD-BROWSER-8)', () => {
     it('executes a multi-step plan in one call', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
+      const { session, pageId, ref } = await preparedPage(service);
 
       const result = await service.executePlan(session.sessionId, pageId, [
         { action: 'click', target: { ref } },
@@ -124,13 +148,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('refuses a plan over MAX_PLAN_STEPS before executing any step (embedders and outcomes included)', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
+      const { session, pageId, ref } = await preparedPage(service);
       const act = vi.spyOn(service, 'act');
       await expect(
         service.executePlan(
@@ -264,16 +282,9 @@ describe('AgentBrowserService', () => {
       // every step still finds the correct element by role+label - never
       // guessing under a re-rendering list - and the session stays pinned
       // in verified mode throughout, not just for one lucky step.
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Item' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
+      const { session, pageId, obs } = await seededPage(service, engine, [
+        { role: 'button', name: 'Item' },
+      ]);
       const staleRef = obs.elements[0].ref;
 
       const churnKey = `${session.sessionId}:${pageId}`;
@@ -333,16 +344,9 @@ describe('AgentBrowserService', () => {
     });
 
     it('waitForLabel waits for a click-revealed field before the next step runs (TD-BROWSER-8 Phase 2)', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-
-      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
-      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
-      fakePage?.setElements([{ role: 'button', name: 'Continue' }]);
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
+      const { session, pageId, fakePage, obs } = await seededPage(service, engine, [
+        { role: 'button', name: 'Continue' },
+      ]);
       const continueRef = obs.elements[0].ref;
 
       // The password field is NOT present yet; it appears asynchronously
@@ -444,13 +448,7 @@ describe('AgentBrowserService', () => {
     });
 
     it('does not leak a churn-tracking entry after page/session teardown (TD-BROWSER-9, A8)', async () => {
-      const session = await service.createSession({ tenantId: 't1' });
-      const pageId = (await service.createPage(session.sessionId)).pageId;
-      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-      const obs = (await service.observe(session.sessionId, pageId, {
-        mode: 'interactive',
-      })) as unknown as { elements: Array<{ ref: string }> };
-      const ref = obs.elements[0].ref;
+      const { session, pageId, ref } = await preparedPage(service);
 
       // Reusing the same ref across two steps forces the second step's ref
       // to go stale after the first step advances the revision, exercising

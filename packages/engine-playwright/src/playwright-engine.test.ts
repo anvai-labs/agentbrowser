@@ -9,6 +9,18 @@ import http from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { extraChromiumArgs, PlaywrightChromiumEngine, resolveContextViewport } from './index';
 
+/** Egress that allows only the local probe fixture host (the WS deny-all shape). */
+function localOnlyEgress() {
+  return {
+    egress: {
+      async checkRequest(request: { hostname: string }) {
+        if (request.hostname === '127.0.0.1') return;
+        throw new Error('denied');
+      },
+    },
+  };
+}
+
 describe('PlaywrightChromiumEngine', () => {
   let engine: PlaywrightChromiumEngine;
 
@@ -1238,14 +1250,7 @@ describe('in-page download interception (spec 10)', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as { port: number }).port;
 
-    const engine = new PlaywrightChromiumEngine({
-      egress: {
-        async checkRequest(request: { hostname: string }) {
-          if (request.hostname === '127.0.0.1') return;
-          throw new Error('denied');
-        },
-      },
-    });
+    const engine = new PlaywrightChromiumEngine(localOnlyEgress());
     try {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();
@@ -1375,14 +1380,7 @@ describe('WebSocket upgrade interception (residual R2)', () => {
 
   it('should close upgrades cleanly when egress is on (default deny-all)', async () => {
     const fixture = await probeServer();
-    const engine = new PlaywrightChromiumEngine({
-      egress: {
-        async checkRequest(request: { hostname: string }) {
-          if (request.hostname === '127.0.0.1') return;
-          throw new Error('denied');
-        },
-      },
-    });
+    const engine = new PlaywrightChromiumEngine(localOnlyEgress());
     try {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();

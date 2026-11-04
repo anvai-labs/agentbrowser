@@ -1151,6 +1151,20 @@ item) is now one command instead of a hand-written CDP script.
   destinations must stay same-origin — a 307 to a second origin is refused
   on every method even when the scope allows it, so a CSRF header (or a 307
   body) cannot leak.
+```mermaid
+flowchart LR
+    subgraph page['the live page (scoped session)']
+        IW['isolated-world fetch<br/>fixed · same-origin · credentials · no-store<br/>+ secret nonce header']
+    end
+    IW --> |'POST / PUT / PATCH'| N['native lane<br/>CDP guard strips nonce pre-wire<br/>byte-exact body · guarded redirects<br/>authoritative response admission']
+    IW --> |'GET / HEAD / DELETE / OPTIONS'| I['inspected lane<br/>route handler strips nonce<br/>Node-side redirect walk · verified terminal']
+    N --> SCOPE['engagement scope choke point<br/>method · host · path · rate · budget<br/>every hop · SCOPE_* denials']
+    I --> SCOPE
+    SCOPE --> LEDGER['engagement ledger<br/>outcomes marked probe: true']
+    SCOPE --> RESULT['bounded result<br/>1 MiB · 32 headers · truncated flag<br/>secret-redacted · untrustedContent']
+    style SCOPE fill:#0f766e,color:#fff
+```
+
 - **Approvals.** GET/HEAD/OPTIONS probes follow the read classification.
   POST/PUT/PATCH/DELETE always require a one-use approval token: the first
   call fails `APPROVAL_REQUIRED` with `details.tokenId`; retry with

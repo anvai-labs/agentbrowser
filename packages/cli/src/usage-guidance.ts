@@ -80,6 +80,29 @@ export const COOKIE_USAGE: UsageGuidance = {
   ],
 };
 
+/** P1-6c (ADR-033): the operator-side CDP extraction utility. */
+export const SEED_FROM_CDP_USAGE: UsageGuidance = {
+  notes: [
+    'Operator-side export from an ALREADY-OPEN operator Chrome (start it with a --remote-debugging-port); ' +
+      'this never starts a browser and is not the protected login-browser handoff. The port is not a ' +
+      'credential boundary: anything that can reach it can read that browser state.',
+    'Reads TAB-CONTEXT Network.getCookies from one matching tab in the default or an explicitly ' +
+      'selected incognito context — never browser-wide storage cookies (they miss session cookies), ' +
+      'profile databases, passwords, localStorage or IndexedDB. Multiple open incognito contexts ' +
+      'require --browser-context; zero matching tabs refuse.',
+    'The output is a versioned agentbrowser-cookie-seed/v1 file created EXCLUSIVELY with mode 0600 ' +
+      '(an existing path is refused). Bounded to 1 MiB and 1000 cookies; expired rows are omitted ' +
+      'with a counted warning. Import with session create --cookies-file. Extract immediately ' +
+      'before use and verify authentication: fingerprint-bound cookies (cf_clearance, datadome) ' +
+      'may not transfer to another browser context, and cookie presence is not a challenge bypass.',
+  ],
+  examples: [
+    'agentbrowser seed-from-cdp --domain vinted.com --domain .vinted.net --out ~/.config/agentbrowser/vinted-seed.json',
+    'agentbrowser seed-from-cdp --context incognito --browser-context 24AF --domain vinted.com --out /private/path/incognito-seed.json',
+    'agentbrowser session create --tenant TENANT --no-headless --cookies-file ~/.config/agentbrowser/vinted-seed.json',
+  ],
+};
+
 export const NAVIGATION_USAGE: UsageGuidance = {
   notes: [
     INTERACTION_GUIDANCE.networkPolicy,

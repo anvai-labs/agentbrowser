@@ -10,13 +10,14 @@
  *
  * Baseline history:
  *   2026-10-23  4373 tokens (38 pairs, 564 lines) — post pass-1..4 + #619..#624
+ *   2026-11-03  3316 tokens (29 pairs) — pass 5: shared harness helpers in api/engine test suites
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BASELINE_DUPLICATED_TOKENS = 4373;
+const BASELINE_DUPLICATED_TOKENS = 3316;
 const MIN_TOKENS = 100;
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const REPORT = join(ROOT, '.tmp', 'jscpd-ratchet', 'jscpd-report.json');

@@ -8,3 +8,4 @@ export * from './floor-policy.js';
 export { classifyIPAddress, isMetadataHostname } from './ip-address.js';
 export * from './network-policy.js';
 export * from './scope-policy.js';
+export * from './scope-rotation.js';

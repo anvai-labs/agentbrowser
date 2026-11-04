@@ -1,8 +1,11 @@
 # T10: engagements and automation runs
 
-Status: ACTIVE (approved 2026-10-16). Repository: agentbrowser.
+Status: ACTIVE (approved 2026-10-16; bounty-flow continuation from the 2026-10-30
+handoff is in progress). Repository: agentbrowser.
 Depends on: T7 (scope primitive, audit adapters); T5 (durable classification) for M4 runs.
 Inputs: core, the selected appsec/bounty/operations/qa mode, security, contracts, quality-ci.
+Current delivered state and the remaining ordered items live in the
+[continuity plan](../design/t10-bounty-flow-continuity.md).
 
 ## Goal
 
@@ -30,8 +33,8 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 ## Milestones and acceptance
 
 ```
-1.21.0 ✔ M1 ─▶ 1.22.0 ✔ M2 status ─▶ 1.23.0 ✔ M2 ledger ─▶ 1.24.0 ✔ M2 denial reporting
-  ─▶ 1.25.0 ✔ M3 program scope + findings ─▶ 1.26.0 ✔ M4 automation runs
+1.21.0 M1 ─ 1.22–24 M2 ─ 1.25.0 M3 ─ 1.26.0 M4 ─ 1.28.0 M5
+  └─ handoff arc: 1.29.x P0-1/P0-3/P1-4 ─ 1.30.x A1 + prereqs ─ 1.31.0 filters ─▶ 1.32.0 P0-2 probes
 ```
 
 | Milestone | Release | Acceptance (each test-first; real Chromium where traffic is involved) |
@@ -41,6 +44,7 @@ saved plan file ─▶ plan run ─▶ JUnit / JSON ─▶ test evaluate / CI ac
 | M3 program scope and findings | 1.25.0 | restrictive fields (excludes, ports, schemes, rate limit, program metadata); an importer for published program scope that maps `*.host` to subdomains only (the apex is in scope only when listed), refuses ambiguous wildcards and anything else it cannot express; findings bound to the engagement (out-of-scope evidence refused, confirmations cite ledger entries), SARIF draft export |
 | M4 automation runs | 1.26.0 | a saved plan file runs from the CLI with label targets, optional durable classification and JUnit/JSON results; the CI action accepts it. Released alongside: T6 rollback and async/recycled-option coverage, owned and recorded by [T6](t6-widget-strategies.md) |
 | M5 bounty workflow polish | 1.28.0 ([record](../evidence/release-1.28.0.md)) | explicit subrequest sizing and warnings, page-local navigation denial counts, session pacing/budget facts, private forced re-export, validated per-hop research markers and UA overrides with ledger evidence; local Chromium fixtures cover redirect stripping and re-injection |
+| Bounty-flow continuation (2026-10-30 handoff) | 1.29.0–1.32.0 ([continuity plan](../design/t10-bounty-flow-continuity.md)) | P0-1/P0-3/P1-4 (1.29.x), A1 coordinate interaction (1.30.0), redirect fidelity prerequisite (1.30.1), marker/seed fixes (1.30.2), publication privacy (1.30.3), event filters (1.31.0), P0-2 scoped API probes (1.32.0) — each increment adversarially reviewed pre-merge; live acceptance pending operator verification |
 
 ## Not in T10
 

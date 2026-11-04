@@ -2,12 +2,15 @@ import { createHash } from 'node:crypto';
 import {
   hostMatchesPattern,
   hostPatternsOverlap,
+  RESOURCE_FUNCTIONAL_TYPES,
+  RESOURCE_HOST_METHODS,
   type ResearchRequestHeader,
   requestHeaderIssues,
   type ScopeAssetHost,
   STATIC_ASSET_TYPES,
 } from '@agentbrowser/core';
 import { NetworkPolicyError } from './network-policy.js';
+import { RotationAdvisor, type RotationAdvisory } from './scope-rotation.js';
 
 /**
  * T7 slice 2: engagement scope enforcement for authorized security
@@ -76,6 +79,11 @@ export interface EngagementScopeOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Longest a request may wait for a rate-limit slot, queue included (default 15 s). */
   maxPaceMs?: number;
+  /**
+   * P1-6a (ADR-033): advisory rotation detection; absent = no detection (no
+   * guessing). Both patterns required, operator-configured, never inferred.
+   */
+  authRotation?: { refreshUrlPattern: string; identityUrlPattern: string };
 }
 
 /** T10 M3: who authorized the engagement, under which published program scope. */
@@ -111,6 +119,8 @@ export interface EngagementScopeStatus {
   program?: ScopeProgram;
   /** The rate limit in effect and how many requests waited for a slot. */
   rateLimit?: { requests: number; perSeconds: number; paced: number };
+  /** P1-6a (ADR-033): present only when configured; `suspected` sticks once the advisory fires. */
+  authRotation?: { refreshUrlPattern: string; identityUrlPattern: string; suspected: boolean };
 }
 
 const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 };
@@ -220,10 +230,10 @@ export function scopeConfigurationIssues(scope: {
   const issues: string[] = scope.requestHeaders ? requestHeaderIssues(scope.requestHeaders) : [];
   for (const asset of scope.assetHosts ?? []) {
     if (
-      asset.class !== 'asset' ||
+      (asset.class !== 'asset' && asset.class !== 'resource') ||
       allowed.some((p) => patternsOverlap(p, normalizeHost(asset.host)))
     )
-      issues.push('assetHosts must be asset-class and disjoint from program hosts');
+      issues.push('assetHosts must be asset/resource-class and disjoint from program hosts');
   }
   // pathRules: an unbound rule leaves its host unrestricted. excludePaths: an unbound
   // exclusion is a restriction silently ignored. Both are refused.
@@ -311,6 +321,11 @@ export class EngagementScopePolicy {
   private readonly ports: Set<number> | undefined;
   private readonly program: ScopeProgram | undefined;
   private readonly rate: { requests: number; perSeconds: number } | undefined;
+  private readonly authRotation:
+    | { refreshUrlPattern: string; identityUrlPattern: string }
+    | undefined;
+  /** Replaced wholesale by noteReseeded (the advisory re-arms); never null when configured. */
+  private rotation: RotationAdvisor | undefined;
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   private readonly maxPaceMs: number;
   /** Aborted by stop(): waiting requests wake at once and are denied. */
@@ -366,7 +381,7 @@ export class EngagementScopePolicy {
     if (
       this.assetHosts.some(
         (asset) =>
-          asset.class !== 'asset' ||
+          (asset.class !== 'asset' && asset.class !== 'resource') ||
           scope.allowedHosts.some((p) => patternsOverlap(normalizeHost(p), asset.host))
       )
     )
@@ -411,6 +426,23 @@ export class EngagementScopePolicy {
     this.ports = scope.allowedPorts !== undefined ? new Set(scope.allowedPorts) : undefined;
     this.program = scope.program !== undefined ? { ...scope.program } : undefined;
     this.rate = scope.rateLimit !== undefined ? { ...scope.rateLimit } : undefined;
+    this.authRotation = scope.authRotation !== undefined ? { ...scope.authRotation } : undefined;
+    if (scope.authRotation !== undefined) {
+      // Refused at create time: a pattern that cannot compile would otherwise
+      // be a detection config that silently never matches.
+      try {
+        this.rotation = new RotationAdvisor(scope.authRotation);
+      } catch (error) {
+        throw new NetworkPolicyError(
+          'POLICY_DENIED',
+          `authRotation: ${error instanceof Error ? error.message : 'invalid patterns'}`,
+          false,
+          { rule: 'scope.authRotation.invalid' }
+        );
+      }
+    } else {
+      this.rotation = undefined;
+    }
     this.sleep =
       scope.sleep ??
       ((ms: number, signal: AbortSignal) =>
@@ -617,7 +649,7 @@ export class EngagementScopePolicy {
       if (
         !/^[a-z0-9.-]+$/.test(name) ||
         new URL(`https://${name}`).hostname !== name ||
-        entry.class !== 'asset'
+        (entry.class !== 'asset' && entry.class !== 'resource')
       )
         throw scopeDenial('SCOPE_HOST_DENIED', 'invalid asset host');
       if (!existing.has(host)) {
@@ -693,6 +725,30 @@ export class EngagementScopePolicy {
     return this.status();
   }
 
+  /**
+   * P1-6a (ADR-033): feed one request outcome (the engine's request-record
+   * data) to the rotation advisor. Returns the advisory exactly once — when a
+   * refresh bounce is followed by a 401/403 on the identity endpoint — for
+   * the caller to ledger. Strictly observational: it never gates traffic.
+   */
+  noteOutcome(
+    type: 'request.finished' | 'request.failed' | 'request.headersInjected',
+    data: Record<string, unknown>
+  ): RotationAdvisory | undefined {
+    return this.rotation?.noteOutcome(type, data);
+  }
+
+  /**
+   * ADR-033 live reseed: a completed reseed answers the advisory — the
+   * suspected hint clears and detection re-arms for the new credentials.
+   * Scope accounting (budget, pacing, expiry, exclusions) is deliberately
+   * untouched: renewal is never a fresh grant.
+   */
+  noteReseeded(): void {
+    if (this.authRotation === undefined) return;
+    this.rotation = new RotationAdvisor(this.authRotation);
+  }
+
   /** The scope in effect, budget and denials; marker values are never reported. */
   status(): EngagementScopeStatus {
     return {
@@ -735,6 +791,9 @@ export class EngagementScopePolicy {
       ...(this.ports !== undefined ? { allowedPorts: [...this.ports] } : {}),
       ...(this.program !== undefined ? { program: { ...this.program } } : {}),
       ...(this.rate !== undefined ? { rateLimit: { ...this.rate, paced: this.paced } } : {}),
+      ...(this.authRotation !== undefined && this.rotation !== undefined
+        ? { authRotation: { ...this.authRotation, suspected: this.rotation.suspected() } }
+        : {}),
     };
   }
 
@@ -765,6 +824,36 @@ export class EngagementScopePolicy {
     }
   }
 
+  /**
+   * P1-5 (ADR-028 resource class): what a non-program host admits, by class.
+   * Both classes require attribution — the request must originate from a
+   * non-excluded program host — and never admit a navigation destination.
+   * `asset` stays exactly as before (GET/HEAD static subresources);
+   * `resource` additionally admits the functional dependency lane the
+   * target's own flow needs: page-initiated fetch/XHR with
+   * GET/HEAD/OPTIONS/POST.
+   */
+  private admitsNonProgramHost(
+    entry: ScopeAssetHost,
+    request: { method?: string; resourceType?: string },
+    initiatorHost: string | undefined
+  ): boolean {
+    const method = request.method ?? '';
+    const resourceType = request.resourceType ?? '';
+    const fromProgram =
+      initiatorHost !== undefined &&
+      this.allowed.some((p) => hostMatches(initiatorHost, p)) &&
+      !this.excludedHosts.some((p) => hostMatches(initiatorHost, p));
+    if (!fromProgram) return false;
+    if (entry.class === 'resource') {
+      return (
+        RESOURCE_HOST_METHODS.includes(method) &&
+        (STATIC_ASSET_TYPES.has(resourceType) || RESOURCE_FUNCTIONAL_TYPES.includes(resourceType))
+      );
+    }
+    return ['GET', 'HEAD'].includes(method) && STATIC_ASSET_TYPES.has(resourceType);
+  }
+
   private rules(request: {
     hostname: string;
     url?: string;
@@ -791,18 +880,9 @@ export class EngagementScopePolicy {
     const hostname = request.hostname.toLowerCase();
     const program = this.allowed.some((pattern) => hostMatches(hostname, pattern));
     const initiatorHost = request.initiatorHost;
-    const asset = this.assetHosts.some((entry) => hostMatches(hostname, entry.host));
-    if (
-      !program &&
-      !(
-        asset &&
-        ['GET', 'HEAD'].includes(request.method ?? '') &&
-        STATIC_ASSET_TYPES.has(request.resourceType ?? '') &&
-        initiatorHost &&
-        this.allowed.some((p) => hostMatches(initiatorHost, p)) &&
-        !this.excludedHosts.some((p) => hostMatches(initiatorHost, p))
-      )
-    ) {
+    const assetEntry = this.assetHosts.find((entry) => hostMatches(hostname, entry.host));
+    const asset = assetEntry !== undefined;
+    if (!program && !(asset && this.admitsNonProgramHost(assetEntry, request, initiatorHost))) {
       throw scopeDenial(
         'SCOPE_HOST_DENIED',
         `host ${hostname} is outside the authorized program/static-asset class`
@@ -843,7 +923,11 @@ export class EngagementScopePolicy {
         }
       }
     }
-    if (this.methods !== undefined) {
+    if (this.methods !== undefined && !(asset && !program)) {
+      // The program method floor governs program hosts; a non-program host
+      // carries its class method set instead (P1-5: a vendor beacon's POST is
+      // not a testing action on a target, so the program list never widened
+      // or narrowed it — the class decides).
       const method = request.method?.toUpperCase();
       if (method === undefined || !this.methods.has(method)) {
         throw scopeDenial(

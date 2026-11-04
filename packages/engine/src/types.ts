@@ -520,6 +520,25 @@ export interface EngineSession {
   addCookies?(cookies: NormalizedCookie[]): Promise<void>;
 
   /**
+   * ADR-033 live reseed: the QUALIFIED replacement operation — clear every
+   * cookie in the live context and install the given set as one engine-owned
+   * step. Callers gate this behind network quiescence (see inFlightRequests)
+   * and must refuse (never silently skip) when the engine omits it. A failed
+   * call may leave the jar cleared: the caller stops the session's authority
+   * rather than replaying under old cookies.
+   */
+  replaceCookies?(cookies: NormalizedCookie[]): Promise<void>;
+
+  /**
+   * ADR-033 live reseed: requests currently mid-flight — authorized but whose
+   * response has not fully settled (a late Set-Cookie on an outstanding
+   * response is exactly what overwrite the reseeded jar). Engines that cannot
+   * measure this omit it; callers refuse the reseed then. Bounded,
+   * best-effort count, never a liveness claim.
+   */
+  inFlightRequests?(): Promise<number>;
+
+  /**
    * TD-BROWSER-16 phase 6 (ADR-025 §3): an all-frames init script on the live
    * context — applies to every future document and every child frame/popup
    * in this session. Optional for the same reason as addCookies.

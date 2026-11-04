@@ -187,10 +187,14 @@ export const ScopeProgramSchema = Type.Object(
 // T7 slice 2: engagement scope (authorized security testing). Enforced
 // per request and per redirect hop by EngagementScopePolicy over the
 // session's base policy; restrict-only — the base always runs.
+// P1-5 (ADR-028 resource class): `asset` = static delivery hosts (GET/HEAD,
+// attributed static subresources); `resource` = functional dependency hosts the
+// target's own flow calls (GET/HEAD/OPTIONS/POST, page-initiated fetch/XHR
+// included). Both are disjoint from program hosts and never finding targets.
 export const ScopeAssetHostSchema = Type.Object(
   {
     host: Type.String({ minLength: 1, maxLength: 253, pattern: SCOPE_HOST_PATTERN }),
-    class: Type.Literal('asset'),
+    class: Type.Union([Type.Literal('asset'), Type.Literal('resource')]),
     category: Type.Optional(
       Type.Union([
         Type.Literal('asset'),
@@ -203,9 +207,23 @@ export const ScopeAssetHostSchema = Type.Object(
   { additionalProperties: false }
 );
 
+// P1-6a (ADR-033): operator-configured auth-rotation advisory. Both patterns
+// required, never inferred; without the field there is no detection. Syntax is
+// the shared URL-pattern convention — glob (`*` within one path segment, `**`
+// anything) or `/regex/flags` — matched against origin+path (query never
+// reaches the matcher, spec 14.2).
+export const ScopeAuthRotationSchema = Type.Object(
+  {
+    refreshUrlPattern: Type.String({ minLength: 1, maxLength: 512 }),
+    identityUrlPattern: Type.String({ minLength: 1, maxLength: 512 }),
+  },
+  { additionalProperties: false }
+);
+
 export const EngagementScopeSchema = Type.Object(
   {
     assetHosts: Type.Optional(Type.Array(ScopeAssetHostSchema, { minItems: 1, maxItems: 128 })),
+    authRotation: Type.Optional(ScopeAuthRotationSchema),
     // Exhaustive when set: exact hosts and ".suffix" entries in scope.
     allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
     pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
@@ -291,6 +309,18 @@ export const EngagementScopeStatusSchema = Type.Object(
     ),
     // Denials on the wire and in the navigation preflight, by sub-code.
     denials: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+    // P1-6a (ADR-033): present only when the scope configures rotation
+    // detection; `suspected` sticks once the advisory fires (until reseed).
+    authRotation: Type.Optional(
+      Type.Object(
+        {
+          refreshUrlPattern: Type.String(),
+          identityUrlPattern: Type.String(),
+          suspected: Type.Boolean(),
+        },
+        { additionalProperties: false }
+      )
+    ),
     // T10 M2: why all traffic stopped (ledger full or failed, session closing).
     stopped: Type.Optional(Type.String()),
     // T10 M3: present only when set on the scope.
@@ -421,6 +451,42 @@ export const ScopeAssetAmendmentSchema = Type.Object(
   { additionalProperties: false }
 );
 export type ScopeAssetAmendment = Static<typeof ScopeAssetAmendmentSchema>;
+
+/**
+ * ADR-033 live reseed: the operator-authenticated renewal request. Cookie
+ * values ride only the human-operator route (operator key); there is no agent
+ * surface. The digest the ledger records is computed server-side over the
+ * canonical cookie set. Scope accounting (budget, pacing, expiry, exclusions)
+ * is never part of the request — renewal is not a fresh grant.
+ */
+export const SessionReseedRequestSchema = Type.Object(
+  {
+    /** Re-read the scope before deciding; recorded in the authorization ledger entry. */
+    expectedRevision: Type.Integer({ minimum: 0 }),
+    /** Bounded wait for network quiescence before the cookie write; refuse otherwise. */
+    quiescenceTimeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 30000 })),
+    cookies: Type.Array(SessionCookieSchema, { minItems: 1, maxItems: 1000 }),
+  },
+  { additionalProperties: false }
+);
+export type SessionReseedRequest = Static<typeof SessionReseedRequestSchema>;
+
+/** What one completed reseed reports: facts only, never values. */
+export const SessionReseedResultSchema = Type.Object(
+  {
+    seedSha256: Type.String({ pattern: '^[0-9a-f]{64}$' }),
+    cookies: Type.Integer({ minimum: 1, maximum: 1000 }),
+    domains: Type.Array(Type.String(), { maxItems: 100 }),
+    invalidated: Type.Object(
+      { approvals: Type.Integer({ minimum: 0 }), lease: Type.Boolean() },
+      { additionalProperties: false }
+    ),
+    /** The rotation advisory after the reseed: false once it re-arms. */
+    authRotationSuspected: Type.Boolean(),
+  },
+  { additionalProperties: false }
+);
+export type SessionReseedResult = Static<typeof SessionReseedResultSchema>;
 
 /** ADR-027: authenticated operator input; raw browser state is never a wire field. */
 export const EvidencePassRequestSchema = Type.Object(

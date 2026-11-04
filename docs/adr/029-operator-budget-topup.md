@@ -1,6 +1,6 @@
 # ADR-029: Operator-approved live engagement budget increases
 
-Status: Accepted for T10 handoff P1-4 implementation (2026-10-30); independent
+Status: Accepted and implemented (1.29.0); independent
 review required before merge. Related: [ADR-028](028-operator-asset-scope-amendments.md),
 [ADR-006](006-network-egress-policy-ssrf.md).
 

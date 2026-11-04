@@ -244,6 +244,18 @@ export class SessionAuthority {
     return entry.control.takeover();
   }
 
+  /** ADR-033 live reseed: is an admitted operation of this session still draining? */
+  busy(sessionId: string): boolean {
+    return this.active(sessionId)?.control.hasActiveOperation() ?? false;
+  }
+
+  /** ADR-033 live reseed: rotate the review id — prepared reviewed operations
+   * die — without touching the control epoch or the delegated agent binding.
+   * A session never registered with the control plane has nothing prepared. */
+  invalidatePrepared(sessionId: string): void {
+    this.entries.get(sessionId)?.control.invalidateReview();
+  }
+
   delegate(sessionId: string, epoch: number, mode: AgentMode = DEFAULT_AGENT_MODE) {
     const entry = this.require(sessionId);
     const view = entry.control.delegate(epoch);
