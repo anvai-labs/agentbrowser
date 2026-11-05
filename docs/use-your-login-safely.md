@@ -137,31 +137,41 @@ traffic rather than replaying anything under old authority.
 
 ### The login browser is slow to open
 
-A server started by `launchd` — which is how `brew services` runs it — opens the login
-browser **much** more slowly than the same server started from a shell. Measured on one
-macOS machine, with a warm cache and an empty profile:
+**The usual cause is endpoint-security software**, not the login browser. Antivirus and
+EDR products install an *EndpointSecurity system extension* that authorizes process
+launches, and the delay it adds to a large signed app bundle like Chrome can be enormous.
+Measured on one macOS machine, same build, same empty profile, branded Chrome:
 
-| | shell-started server | `launchd`-started |
+| | shell-started server | `launchd`-started (`brew services`) |
 |---|---|---|
-| your branded Chrome | 1.1 s | 23 s |
-| the bundled Chromium (`AGENTBROWSER_PREFER_BUNDLED=1`) | 3.6 s | 6.1 s |
+| with an EndpointSecurity AV extension active | 1.1 s | **23 s** |
+| with that extension disabled | 1.1 s | **1.0 s** |
 
-A large profile adds more, because Chrome's startup work scales with the state it has to
-load. The root cause of the `launchd` penalty is not yet established; what matters
-operationally is that it is normal, and that it is bounded and visible rather than silent:
+The penalty fell on the `launchd`-started server's child specifically — the same launch
+from a shell was unaffected while the extension was active. So if your open is slow, check
+**System Settings → General → Login Items & Extensions → Endpoint Security Extensions**
+before suspecting anything else.
+
+Other contributors, much smaller: a cold start, and the bundled Chromium being a lighter
+bundle than branded Chrome (6.1 s versus 23 s under the same active extension). Profile
+size is *not* one — a 52 MB profile with real logins opened in 3.2 s, faster than a fresh
+profile, which pays first-run initialization instead.
+
+Whatever the cause, the slowness is bounded and visible rather than silent:
 
 - Every open logs its elapsed time (`login browser opened in 1.2s`). Past 10 s it logs a
   warning instead. Under `brew services` these land in
   `$(brew --prefix)/var/log/agentbrowser-server.log`.
 - The launch budget is `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` (default 120000, accepted
   range 5000–600000). Raise it if your logged open time approaches it. Playwright's own
-  default of 30 s was the previous, unconfigurable behavior, and 23 s left too little room:
-  exceeding the budget aborts the launch after Chrome has already drawn its window, which
-  looks exactly like a window that opened and then stopped responding.
-- If you would rather have the faster open than the branded binary, set
-  `AGENTBROWSER_PREFER_BUNDLED=1`. The trade-off is real: a login wall is likelier to
-  accept your own Chrome than a Chrome for Testing build, which is the whole reason the
-  login browser prefers branded ([ADR-016](adr/016-branded-chrome-first-headed-launches.md),
+  default of 30 s was the previous, unconfigurable behavior, and the observed 23 s left
+  only 7 s of room: exceeding the budget aborts the launch after Chrome has already drawn
+  its window, which looks exactly like a window that opened and then stopped responding.
+- If you cannot change the security software and would rather have the faster open than the
+  branded binary, set `AGENTBROWSER_PREFER_BUNDLED=1`. The trade-off is real: a login wall
+  is likelier to accept your own Chrome than a Chrome for Testing build, which is the whole
+  reason the login browser prefers branded
+  ([ADR-016](adr/016-branded-chrome-first-headed-launches.md),
   [ADR-025](adr/025-operator-cookie-handoff.md) §1).
 
 ### `LOGIN_PROFILE_IN_USE`, and recovering a changed hostname

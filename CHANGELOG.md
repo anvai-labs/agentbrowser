@@ -63,15 +63,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   the 30 s default applied — and a login browser opened by a
   `launchd`/`brew services` server was measured at **23 s** with branded
   Chrome (versus 1.1 s from a shell; 6 s bundled versus 3.6 s). Seven seconds
-  of headroom is not a budget: a large profile on a cold start crosses it, and
-  crossing it aborts the launch *after* Chrome has drawn its window, leaving a
-  window the server has disowned — which is exactly how "the login browser
-  opens an unresponsive window" presents. New
+  of headroom is not a budget: crossing it aborts the launch *after* Chrome
+  has drawn its window, leaving a window the server has disowned. New
   `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` (default 120000, range 5000–600000;
   invalid values warn and fall back) covers both the window launch and the
   binary-version probe, and every open logs its elapsed time, warning past
-  10 s. The `launchd` penalty itself is not yet root-caused; this makes it
-  bounded and visible instead of silent.
+  10 s.
+  The 23 s was tracked to **endpoint-security software**, not to `launchd` or
+  to Chrome: an antivirus `EndpointSecurity` system extension authorizing the
+  process launch. With that extension disabled the same launch takes 1.0 s,
+  reproducibly, while a shell-started server was 1.1 s either way — so the
+  penalty fell on the `launchd`-spawned child specifically. Profile size is
+  not a factor; a 52 MB profile with real logins opens in 3.2 s, faster than
+  a fresh profile, which pays first-run initialization. The guard stays
+  because any machine running such software will hit the same cliff.
 - The version probe no longer carries its own stricter 30 s budget. It runs on
   the one-time bundled→branded migration — the launch most likely to be slow
   under `launchd` — and **fails closed**, so a probe that merely ran out of
