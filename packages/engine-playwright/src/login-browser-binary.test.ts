@@ -778,12 +778,22 @@ describe('absent vs unparseable pinned version (round-6 finding 1)', () => {
 });
 
 describe('round-4 regressions', () => {
-  it('a version-less pin only escapes the gate when the PIN is the Playwright side', async () => {
-    // Round-4 finding 3, second half: widening adoption to either side must
-    // not widen the no-version escape. A pin naming BRANDED Chrome with no
-    // recorded version resolving to bundled is a real path change we cannot
-    // adjudicate, so it must refuse rather than adopt ungated.
+  it('a version-less BRANDED pin adopts too — symmetry with the same-path branch', async () => {
+    // INVERTED from round 4 (round-7 finding 1, reproduced). Round 4 gated the
+    // no-version escape on the pin side being Playwright-managed, at a time
+    // when absence and unparseability were the same case — so that gate was
+    // the only thing keeping an unparseable value fail-closed. Round 6
+    // separated them, which made the gate obsolete AND harmful: a first launch
+    // on branded Chrome whose version() read failed, followed by the
+    // AGENTBROWSER_PREFER_BUNDLED=1 that this PR's own docs recommend, refused
+    // with profile-destroying reset() as the only recovery.
+    //
+    // "Absence is our recording gap, not evidence of tampering" does not
+    // depend on which side is Playwright-managed. Unparseable still refuses —
+    // see 'a PRESENT but unparseable pinned version still fails closed'.
     await installBranded();
+    probeVersion = '156.0.8078.90';
+    contextVersion = '156.0.8078.90';
     const profile = profileFor('no-version-branded-pin');
     await writePin(profile, {
       executable: brandedCandidate,
@@ -791,10 +801,47 @@ describe('round-4 regressions', () => {
       executableModifiedMs: 1,
       launches: 2,
     });
-    await expect(
-      mk(profile, { brandedChromeCandidates: [brandedCandidate], preferBundled: true }).open()
-    ).rejects.toMatchObject({ code: 'LOGIN_BINARY_DOWNGRADED' });
-    expect(recorded.persistent).toHaveLength(0);
+    const browser = mk(profile, {
+      brandedChromeCandidates: [brandedCandidate],
+      preferBundled: true,
+    });
+    try {
+      await browser.open();
+      expect(lastExecutable()).toBe(bundledPath);
+      expect((await readPin(profile)).launches).toBe(3);
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  });
+
+  it('a first launch on BRANDED with a failed version read stays recoverable', async () => {
+    // The exact reproduction from round 7: no legacy pin, no tampering — just
+    // a version() read that failed on the first open, then the documented
+    // preferBundled switch. This must not cost the operator their logins.
+    await installBranded();
+    contextVersion = '';
+    const profile = profileFor('branded-first-launch-no-version');
+    const first = mk(profile, { brandedChromeCandidates: [brandedCandidate] });
+    await first.open();
+    await first.close();
+    const pinned = await readPin(profile);
+    expect(pinned.executable).toBe(brandedCandidate);
+    expect(pinned.chromiumVersion).toBeUndefined();
+
+    // Now follow the docs: prefer the bundled build for a faster open.
+    probeVersion = '156.0.8078.90';
+    contextVersion = '156.0.8078.90';
+    const second = mk(profile, {
+      brandedChromeCandidates: [brandedCandidate],
+      preferBundled: true,
+    });
+    try {
+      await second.open();
+      expect(lastExecutable()).toBe(bundledPath);
+      expect(parseChromeVersion((await readPin(profile)).chromiumVersion as string)).toBeDefined();
+    } finally {
+      await second.close().catch(() => undefined);
+    }
   });
 
   it('pins a USABLE version on a path change even when the context reports none', async () => {

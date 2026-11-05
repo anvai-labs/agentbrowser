@@ -592,14 +592,23 @@ export class LoginBrowser {
           pin,
           resolved,
           adoptMessage: `adopting a new binary (one side is a Playwright-managed build, so this is our own resolution changing)\n  was: ${pin.executable}\n  now: ${resolved}`,
-          // The version-less escape stays NARROW: only a pin that itself names
-          // a Playwright build gets it. That is the legacy case it was added
-          // for — pins written before chromiumVersion was recorded, all of
-          // which name the bundled binary. Widening adoption to either side
-          // (round 3) dragged the escape along with it, so branded→bundled on
-          // a version-less pin would have adopted with no probe and no
-          // comparison at all (round-4 review finding 3).
-          adoptWhenPinHasNoVersion: looksLikePlaywrightBundled(pin.executable),
+          // An absent version is adoptable here too, symmetrically with the
+          // same-path branch (round-7 review finding 1, reproduced).
+          //
+          // Round 4 narrowed this to "only when the PIN side is Playwright-
+          // managed" at a time when absence and unparseability were the same
+          // case, so the narrowing was the only thing keeping an unparseable
+          // value fail-closed. Round 6 separated them — assertNotADowngrade
+          // now refuses a present-but-unparseable value regardless of this
+          // flag — which makes the narrowing obsolete rather than protective,
+          // and leaves it actively harmful: a first launch on BRANDED Chrome
+          // whose version() read failed writes a version-less branded pin, and
+          // the operator then following this PR's own documented advice
+          // (AGENTBROWSER_PREFER_BUNDLED=1 for a faster open) hit
+          // LOGIN_BINARY_DOWNGRADED with profile-destroying reset() as the
+          // only recovery. "Absence is OUR recording gap, not evidence of
+          // tampering" does not depend on which side is Playwright-managed.
+          adoptWhenPinHasNoVersion: true,
         });
         return {
           path: resolved,
