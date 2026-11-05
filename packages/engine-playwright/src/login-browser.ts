@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -111,8 +112,14 @@ interface ProfilePin {
    * it when a same-path binary is replaced in place (a Chrome self-update).
    */
   chromiumVersion?: string;
-  /** Audit trail for an automatic re-pin: what it replaced, and when. */
+  /**
+   * Audit trail for an automatic re-pin: the superseded executable (only
+   * meaningful for a path change) and version, and when. Carried forward
+   * across later launches so the record is durable rather than lasting a
+   * single open (review finding 7).
+   */
   adoptedFromExecutable?: string;
+  adoptedFromVersion?: string;
   adoptedAtMs?: number;
   /**
    * Launch counter, for the record. It is NOT compared: detecting a
@@ -176,7 +183,7 @@ export class LoginBrowser {
     // ADR-025 §1: "a second open while one is running is a no-op" — but only
     // while it is RUNNING. A dead-but-unbookkept context used to make that
     // branch mean "you can never reopen", so reap before consulting it.
-    this.reapDeadContext();
+    await this.reapDeadContext();
     if (this.context !== undefined) return;
     if (this.closing !== undefined) await this.closing;
     await this.assertProfileSecure();
@@ -223,15 +230,32 @@ export class LoginBrowser {
       await this.releaseProfileLock();
       throw error;
     }
-    // The operator closing the last window marks the browser closed. The lock
-    // is released only if WE still hold it: a late 'close' from a previous
-    // instance must not delete a lock this or another instance has acquired.
-    this.context.on('close', () => {
-      this.context = undefined;
-      void this.releaseProfileLockIfMine();
+    // The operator closing the last window marks the browser closed.
+    //
+    // Both effects are guarded by the IDENTITY of the context this handler was
+    // registered for (review finding 4). `reapDeadContext` now calls close()
+    // on a context Playwright already considers gone, and a wedged pipe — the
+    // motivating case — can make that close resolve long afterwards. Without
+    // the guard, a late 'close' for context A would null out a live context B
+    // and delete B's lock, leaving the operator with an open window the server
+    // reports as closed.
+    const launched = this.context;
+    const token = this.lockToken;
+    launched.on('close', () => {
+      if (this.context === launched) this.context = undefined;
+      void this.releaseProfileLockIfToken(token);
     });
     const chromiumVersion = this.context.browser()?.version();
     await this.writePin({
+      // Carry the previous adoption record forward so it is durable; a new
+      // adoption in pinUpdate overwrites it.
+      ...(pin.adoptedFromExecutable !== undefined
+        ? { adoptedFromExecutable: pin.adoptedFromExecutable }
+        : {}),
+      ...(pin.adoptedFromVersion !== undefined
+        ? { adoptedFromVersion: pin.adoptedFromVersion }
+        : {}),
+      ...(pin.adoptedAtMs !== undefined ? { adoptedAtMs: pin.adoptedAtMs } : {}),
       ...(executablePath !== undefined ? { executable: executablePath } : {}),
       ...(identity !== undefined
         ? { executableSize: identity.size, executableModifiedMs: identity.modifiedMs }
@@ -246,17 +270,19 @@ export class LoginBrowser {
    * Drops a context whose browser is gone, so the next launch can proceed.
    * Separate from `isOpen` on purpose: a getter must not have side effects.
    */
-  private reapDeadContext(): void {
+  private reapDeadContext(): Promise<void> {
     const context = this.context;
-    if (context === undefined) return;
+    if (context === undefined) return Promise.resolve();
     // Only reap on POSITIVE evidence of disconnection — never on "cannot
     // tell". Reaping an unknown state would drop a live context, taking the
     // operator's window with it.
-    if (contextDisconnected(context) !== true) return;
+    if (contextDisconnected(context) !== true) return Promise.resolve();
     this.context = undefined;
     // Frees Playwright's own bookkeeping for a browser that is already gone.
     void context.close().catch(() => undefined);
-    void this.releaseProfileLockIfMine();
+    // AWAITED by callers (review finding 3): a fire-and-forget release let
+    // close() resolve with the lock still on disk.
+    return this.releaseProfileLockIfToken(this.lockToken);
   }
 
   async close(): Promise<void> {
@@ -264,13 +290,14 @@ export class LoginBrowser {
   }
 
   private async closeLocked(): Promise<void> {
-    // A disconnected context must close SUCCESSFULLY, not throw: the service's
-    // closeForShutdown() guards on isOpen, which is now liveness-based, so a
-    // throw here would make shutdown skip close() and leave agentbrowser-lock
-    // on disk. A context that was never open still throws (the lifecycle test
-    // pins that), so only the dead-context case changes.
+    // A disconnected context closes SUCCESSFULLY rather than throwing, so the
+    // reap (which releases the profile lock) actually runs for a wedged or
+    // killed Chrome instead of the caller seeing LOGIN_BROWSER_CLOSED and
+    // giving up. A context that was never open still throws — the lifecycle
+    // test pins that — so only the dead-context case changes. The service's
+    // closeForShutdown() calls this unconditionally for the same reason.
     if (this.context !== undefined && contextDisconnected(this.context) === true) {
-      this.reapDeadContext();
+      await this.reapDeadContext();
       return;
     }
     const context = this.context;
@@ -301,7 +328,7 @@ export class LoginBrowser {
   private async readCookiesLocked(): Promise<ReadLoginCookiesResult> {
     // Reap first, so a wedged browser refuses with LOGIN_BROWSER_CLOSED
     // instead of hanging in context.cookies().
-    this.reapDeadContext();
+    await this.reapDeadContext();
     const context = this.context;
     if (context === undefined) {
       throw new LoginBrowserError('LOGIN_BROWSER_CLOSED', 'the login browser is closed');
@@ -342,7 +369,7 @@ export class LoginBrowser {
     return this.serialize(async () => {
       // Without the reap, a dead context would refuse "close it first"
       // forever — wedging the one recovery the operator has.
-      this.reapDeadContext();
+      await this.reapDeadContext();
       if (this.context !== undefined) {
         throw new LoginBrowserError(
           'LOGIN_BROWSER_CLOSED',
@@ -443,14 +470,28 @@ export class LoginBrowser {
       // resolution, and a Playwright dependency bump moving the
       // chromium-<rev> path (which refuses today, with reset() as the only
       // exit). Every other path change still refuses.
+      // Review finding 1: adoption must STILL honor "never opened by an older
+      // binary". Playwright often bundles a Chrome for Testing from a FUTURE
+      // milestone, so the operator's branded stable Chrome can be OLDER than
+      // the bundled build this pin names — and the bundled→branded migration
+      // is the path every existing deployment takes exactly once. Adopting it
+      // unchecked would hand a profile written by the newer build to the older
+      // one, which is the loss ADR-025 §1 forbids, and would then rewrite the
+      // pin to the lower version, erasing the evidence.
       if (looksLikePlaywrightBundled(pin.executable)) {
-        console.info(
-          `[agentbrowser] login profile: adopting a new binary (the pin named Playwright's bundled build)\n  was: ${pin.executable}\n  now: ${resolved}`
+        const adopted = await this.assertNotADowngrade(
+          pin,
+          resolved,
+          `adopting a new binary (the pin named Playwright's bundled build)\n  was: ${pin.executable}\n  now: ${resolved}`
         );
         return {
           path: resolved,
           identity,
-          pinUpdate: { adoptedFromExecutable: pin.executable, adoptedAtMs: Date.now() },
+          pinUpdate: {
+            adoptedFromExecutable: pin.executable,
+            adoptedAtMs: Date.now(),
+            ...adopted,
+          },
           selection,
         };
       }
@@ -507,36 +548,63 @@ export class LoginBrowser {
     resolved: string,
     identity: ExecutableIdentity
   ): Promise<Partial<ProfilePin>> {
-    const pinned = parseChromeVersion(pin.chromiumVersion);
-    const refuse = (reason: string): never => {
-      throw new LoginBrowserError(
-        'LOGIN_BINARY_DOWNGRADED',
-        `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size}): ${reason}; reset the profile to adopt it`
-      );
-    };
-    // An old pin without a comparable version cannot be adjudicated, so it
-    // falls back to the previous refuse-on-any-change behavior. Fail closed.
-    if (pinned === undefined) refuse('the pinned version is missing or not comparable');
-    const probed = parseChromeVersion(await probeChromeVersion(resolved));
-    if (probed === undefined) refuse('the replacement binary did not report a comparable version');
-    const order = compareChromeVersion(probed as number[], pinned as number[]);
-    if (order < 0) {
-      refuse(
-        `the replacement is OLDER (pinned ${pin.chromiumVersion}, found ${(probed as number[]).join('.')})`
-      );
-    }
-    if (order === 0) {
+    const context = `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size})`;
+    const adopted = await this.assertNotADowngrade(pin, resolved, undefined, context, (probed) => {
       // Same version, different bytes is not a Chrome update; it is the
       // signature of a replaced binary. Refuse under the path-change code.
+      if (probed === 0) {
+        throw new LoginBrowserError(
+          'LOGIN_BINARY_CHANGED',
+          `the binary at the pinned path was replaced with different bytes reporting the SAME version (${pin.chromiumVersion}); reset the profile to adopt it`
+        );
+      }
+    });
+    return adopted;
+  }
+
+  /**
+   * The shared "never opened by an older binary" gate (ADR-025 §1), used by
+   * BOTH adoption paths — the bundled→branded / dependency-bump path change
+   * and the same-path in-place replacement. Returns the pin fields recording
+   * what was superseded, or throws.
+   *
+   * `onEqual` lets the same-path caller treat an identical version as tamper;
+   * for a path change an equal version is a perfectly ordinary adoption.
+   */
+  private async assertNotADowngrade(
+    pin: ProfilePin,
+    resolved: string,
+    adoptMessage?: string,
+    failureContext = 'the resolved browser binary differs from the pinned one',
+    onEqual?: (order: number) => void
+  ): Promise<Partial<ProfilePin>> {
+    // Annotated `never` so the compiler knows these calls terminate — without
+    // it the narrowed types below would need casts.
+    const refuse: (reason: string) => never = (reason) => {
       throw new LoginBrowserError(
-        'LOGIN_BINARY_CHANGED',
-        `the binary at the pinned path was replaced with different bytes reporting the SAME version (${pin.chromiumVersion}); reset the profile to adopt it`
+        'LOGIN_BINARY_DOWNGRADED',
+        `${failureContext}: ${reason}; reset the profile to adopt it`
+      );
+    };
+    const pinned = parseChromeVersion(pin.chromiumVersion);
+    // A pin without a comparable version cannot be adjudicated. Fail closed —
+    // the same posture the pre-version-comparison code had for any change.
+    if (pinned === undefined) refuse('the pinned version is missing or not comparable');
+    const probed = parseChromeVersion(await probeChromeVersion(resolved));
+    if (probed === undefined) refuse('the candidate binary did not report a comparable version');
+    const order = compareChromeVersion(probed, pinned);
+    if (order < 0) {
+      refuse(
+        `the candidate is OLDER (pinned ${pin.chromiumVersion}, found ${probed.join('.')}) — a profile is never opened by an older binary than the one that last wrote it`
       );
     }
+    onEqual?.(order);
     console.info(
-      `[agentbrowser] login profile: adopting an in-place browser update (${pin.chromiumVersion} -> ${(probed as number[]).join('.')})`
+      `[agentbrowser] login profile: ${adoptMessage ?? `adopting an in-place browser update (${pin.chromiumVersion} -> ${probed.join('.')})`}`
     );
-    return { adoptedFromExecutable: resolved, adoptedAtMs: Date.now() };
+    // The superseded VERSION is the useful record for a same-path update (the
+    // path is unchanged, so recording it says nothing — review finding 7).
+    return { adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)', adoptedAtMs: Date.now() };
   }
 
   // --- profile lock --------------------------------------------------------
@@ -545,12 +613,25 @@ export class LoginBrowser {
     return join(this.options.profileDir, 'agentbrowser-lock');
   }
 
+  /**
+   * The token written into the lock for the CURRENT launch: `<pid>:<nonce>`.
+   *
+   * The pid alone cannot distinguish this process's own next lock from the one
+   * a late handler is trying to release (review finding 5) — the operator
+   * closing and immediately reopening gives both the same pid, so a stale
+   * handler could delete the new lock and let another process in while our
+   * Chrome owns the profile. The stale-adoption logic only reads the pid
+   * prefix, so the nonce costs it nothing.
+   */
+  private lockToken = '';
+
   private async acquireProfileLock(): Promise<void> {
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
     for (;;) {
       try {
-        const mine = `${process.pid}`;
+        const mine = `${process.pid}:${randomUUID()}`;
         await writeFile(this.lockPath(), mine, { flag: 'wx', mode: 0o600 });
+        this.lockToken = mine;
         return;
       } catch (error) {
         const holder = await readFile(this.lockPath(), 'utf8').catch(() => undefined);
@@ -577,13 +658,15 @@ export class LoginBrowser {
   }
 
   /**
-   * Release only a lock this process still holds. The 'close' handler and the
-   * reap can both fire late — after another instance has acquired the lock —
-   * and an unconditional rm would delete that instance's lock.
+   * Release the lock only if it is still the one `token` acquired. The 'close'
+   * handler and the reap can both fire late — after this or another instance
+   * has acquired a NEW lock — and an unconditional rm would delete it.
    */
-  private async releaseProfileLockIfMine(): Promise<void> {
+  private async releaseProfileLockIfToken(token: string): Promise<void> {
+    if (token === '') return;
     const holder = await readFile(this.lockPath(), 'utf8').catch(() => undefined);
-    if (holder !== undefined && holder.trim() !== `${process.pid}`) return;
+    if (holder !== undefined && holder.trim() !== token) return;
+    if (this.lockToken === token) this.lockToken = '';
     await this.releaseProfileLock();
   }
 
@@ -610,7 +693,7 @@ export class LoginBrowser {
     if (state.state === 'live') {
       throw new LoginBrowserError(
         'LOGIN_PROFILE_IN_USE',
-        `another Chrome (pid ${state.pid}) holds this login profile; close it, then open the login browser again`
+        `another Chrome (pid ${state.pid}) holds this login profile; close it, then open the login browser again. If no such window exists, that Chrome has wedged — kill the process, then remove SingletonLock, SingletonSocket and SingletonCookie from the profile directory`
       );
     }
     if (state.state === 'foreign-host') {
@@ -622,9 +705,15 @@ export class LoginBrowser {
   }
 }
 
-/** Classify Chrome's ProcessSingleton lock without modifying anything. */
+/**
+ * Classify Chrome's ProcessSingleton lock without modifying anything.
+ *
+ * `isBrowserPid` is a test seam: the real predicate reads the process name,
+ * which a unit test cannot arrange for a pid it does not own.
+ */
 export async function inspectChromeSingleton(
-  profileDir: string
+  profileDir: string,
+  isBrowserPid: (pid: number) => Promise<boolean> = processLooksLikeBrowser
 ): Promise<
   | { state: 'absent' }
   | { state: 'stale' }
@@ -642,8 +731,49 @@ export async function inspectChromeSingleton(
   const pid = Number.parseInt(target.slice(split + 1), 10);
   if (Number.isNaN(pid)) return { state: 'unreadable' };
   if (host !== hostname()) return { state: 'foreign-host', host };
-  // Same host: a live owner must be refused, a dead one Chrome breaks itself.
-  return processExists(pid) ? { state: 'live', pid } : { state: 'stale' };
+  // Same host: only a live owner that is actually a BROWSER is refused.
+  //
+  // Review finding 2: pid existence alone is not enough. A crashed Chrome
+  // leaves the lock holding a dead pid, pids recycle quickly (Linux pid_max
+  // defaults to 32768, and after a reboot the low pids all belong to
+  // daemons), and processExists() also answers true on EPERM for a pid owned
+  // by another user. Trusting it would let an unrelated process permanently
+  // refuse LOGIN_PROFILE_IN_USE, naming a recovery the operator cannot
+  // perform and leaving profile-destroying reset() as the only exit — a
+  // regression against the previous behavior, where Chrome simply broke the
+  // stale lock. So an unverifiable or non-browser owner is reported stale and
+  // left to Chrome's own ProcessSingleton, which does not trust the pid
+  // either (it tries SingletonSocket).
+  if (!processExists(pid)) return { state: 'stale' };
+  return (await isBrowserPid(pid)) ? { state: 'live', pid } : { state: 'stale' };
+}
+
+/**
+ * Does this pid belong to a browser? Best-effort and deliberately
+ * conservative: anything we cannot read is NOT treated as a browser, so the
+ * caller falls back to letting Chrome arbitrate rather than locking the
+ * operator out.
+ */
+async function processLooksLikeBrowser(pid: number): Promise<boolean> {
+  const name = await processName(pid);
+  if (name === undefined) return false;
+  return /chrom(e|ium)/i.test(name);
+}
+
+async function processName(pid: number): Promise<string | undefined> {
+  if (process.platform === 'linux') {
+    // /proc/<pid>/exe is the authoritative path; comm is truncated to 15
+    // chars ("Google Chrome f"), which still matches the pattern above.
+    const { readlink: rl, readFile: rf } = await import('node:fs/promises');
+    const exe = await rl(`/proc/${pid}/exe`).catch(() => undefined);
+    if (exe !== undefined) return exe;
+    return (await rf(`/proc/${pid}/comm`, 'utf8').catch(() => undefined))?.trim();
+  }
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  return await promisify(execFile)('ps', ['-o', 'comm=', '-p', `${pid}`], { timeout: 5_000 })
+    .then(({ stdout }) => stdout.trim() || undefined)
+    .catch(() => undefined);
 }
 
 /**

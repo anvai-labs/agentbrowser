@@ -57,8 +57,10 @@ The server gains an **operator login browser**:
   throwaway profile so the suspect binary never opens the login profile — forward adopts,
   backwards refuses `LOGIN_BINARY_DOWNGRADED`, and the same version with different bytes
   refuses `LOGIN_BINARY_CHANGED`. A path change that is explicably ours (a pin naming a
-  Playwright build) is adopted once, keeping the profile; anything else refuses
-  `LOGIN_BINARY_CHANGED`, and `reset()` remains the fallback. The resolved binary is logged.
+  Playwright build) is adopted once, keeping the profile — but it is **subject to the same
+  downgrade gate**, because Playwright may bundle a newer-milestone Chrome for Testing than
+  the operator's branded stable Chrome; anything else refuses `LOGIN_BINARY_CHANGED`, and
+  `reset()` remains the fallback. The resolved binary is logged.
 - **The handoff reads only while the login browser is open.** There is no headless read of a
   closed profile. That would mean a second binary or mode, a profile-lock race, and lost session
   cookies, which Chrome drops when it closes. Since the operator must be present to approve a
@@ -73,7 +75,10 @@ The server gains an **operator login browser**:
     documents the manual recovery for a changed hostname. The server READS that lock and never
     removes it — a live owner's lock protects one cookie DB from two Chromes, and the file is
     POSIX-only — so a live or foreign-host owner refuses `LOGIN_PROFILE_IN_USE` naming the
-    recovery, instead of launching a Chrome that exits instantly.
+    recovery, instead of launching a Chrome that exits instantly. "Live" requires the pid to
+    be live AND to name a browser: pids recycle and `kill(pid, 0)` also succeeds on another
+    user's process, so trusting bare existence would let an unrelated pid lock the operator
+    out permanently. An unverifiable owner is treated as stale and left to Chrome.
   - "Running" means CONNECTED, not merely bookkept: a killed or pipe-wedged Chrome is reaped,
     so it neither reports open nor blocks the next open.
 - **It launches as a normal browser for a human.**

@@ -234,15 +234,42 @@ describe('ADR-025 §1 pin semantics', () => {
       const pin = await readPin(profile);
       expect(pin.executable).toBe(brandedCandidate);
       expect(pin.adoptedFromExecutable).toBe(bundledPath);
+      expect(pin.adoptedFromVersion).toBe('156.0.8078.4');
       // The operator's logins are the asset: the counter continues rather
       // than resetting, and the profile survives.
       expect(pin.launches).toBe(5);
-      // A path change has no same-path version to compare, so adoption must
-      // not need the probe.
-      expect(recorded.probe).toHaveLength(0);
+      // Review finding 1: adoption is NOT exempt from the downgrade gate, so
+      // it probes the candidate's version exactly like the same-path path.
+      expect(recorded.probe).toHaveLength(1);
     } finally {
       await browser.close().catch(() => undefined);
     }
+  });
+
+  it('REFUSES the bundled→branded migration when the branded Chrome is OLDER', async () => {
+    // Review finding 1, the realistic hazard: Playwright often bundles a
+    // Chrome for Testing from a FUTURE milestone, so the operator's branded
+    // stable Chrome can be older than the build that last wrote the profile.
+    // Adopting that unchecked is exactly what ADR-025 §1 forbids ("a profile
+    // is never opened by an older binary than the one that last wrote it"),
+    // and it would rewrite the pin to the lower version, erasing the evidence.
+    await installBranded();
+    const profile = profileFor('migrate-downgrade');
+    await writePin(profile, {
+      executable: bundledPath,
+      executableSize: 52_112,
+      executableModifiedMs: 1,
+      chromiumVersion: '157.0.1.1', // bundled CfT from a newer milestone
+      launches: 4,
+    });
+    probeVersion = '156.0.8078.80'; // the operator's branded stable Chrome
+    await expect(
+      mk(profile, { brandedChromeCandidates: [brandedCandidate] }).open()
+    ).rejects.toMatchObject({ code: 'LOGIN_BINARY_DOWNGRADED' });
+    // Never handed the profile to the older binary, and the pin is intact.
+    expect(recorded.persistent).toHaveLength(0);
+    expect((await readPin(profile)).chromiumVersion).toBe('157.0.1.1');
+    expect((await readPin(profile)).executable).toBe(bundledPath);
   });
 
   it('adopts a bundled-to-bundled path move (a Playwright dependency bump)', async () => {
@@ -385,16 +412,22 @@ describe('ADR-025 §1 pin semantics', () => {
 });
 
 describe('Chrome ProcessSingleton is read, never removed', () => {
-  it('refuses a live same-host owner, and leaves the lock in place', async () => {
+  it('classifies a live BROWSER owner as live, and never deletes the lock', async () => {
     const profile = profileFor('singleton-live');
     await mkdir(profile, { recursive: true, mode: 0o700 });
     await symlink(`${hostname()}-${process.pid}`, join(profile, 'SingletonLock'));
-    await expect(mk(profile, { brandedChromeCandidates: [] }).open()).rejects.toMatchObject({
-      code: 'LOGIN_PROFILE_IN_USE',
+    // The pid is real and live (it is us); the injected predicate stands in
+    // for "and it is a browser", which a test cannot arrange for real.
+    expect(await inspectChromeSingleton(profile, async () => true)).toMatchObject({
+      state: 'live',
+      pid: process.pid,
     });
-    expect(recorded.persistent).toHaveLength(0);
-    // Never deleted: a live owner means a second Chrome on one cookie DB.
-    expect(await inspectChromeSingleton(profile)).toMatchObject({ state: 'live' });
+    // Still on disk afterwards: deleting a live owner's lock would put two
+    // Chromes on one cookie DB. (The class-level refusal is covered by the
+    // foreign-host case below, which needs no predicate.)
+    expect(await inspectChromeSingleton(profile, async () => true)).toMatchObject({
+      state: 'live',
+    });
   });
 
   it('refuses a foreign-host lock', async () => {
@@ -415,6 +448,26 @@ describe('Chrome ProcessSingleton is read, never removed', () => {
     await mkdir(profile, { recursive: true, mode: 0o700 });
     // A pid that cannot be running.
     await symlink(`${hostname()}-2147483646`, join(profile, 'SingletonLock'));
+    expect(await inspectChromeSingleton(profile)).toMatchObject({ state: 'stale' });
+    const browser = mk(profile, { brandedChromeCandidates: [] });
+    try {
+      await browser.open();
+      expect(recorded.persistent).toHaveLength(1);
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  });
+
+  it('does NOT refuse when the lock pid is live but not a browser (pid recycling)', async () => {
+    // Review finding 2: pids recycle, and processExists() also answers true on
+    // EPERM for another user's pid. Trusting bare existence would let an
+    // unrelated process permanently refuse LOGIN_PROFILE_IN_USE, naming a
+    // recovery the operator cannot perform — a regression against the old
+    // behavior, where Chrome simply broke the stale lock. Our OWN pid is live
+    // and is node, not a browser, so it must classify stale and proceed.
+    const profile = profileFor('singleton-recycled');
+    await mkdir(profile, { recursive: true, mode: 0o700 });
+    await symlink(`${hostname()}-${process.pid}`, join(profile, 'SingletonLock'));
     expect(await inspectChromeSingleton(profile)).toMatchObject({ state: 'stale' });
     const browser = mk(profile, { brandedChromeCandidates: [] });
     try {

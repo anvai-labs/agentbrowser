@@ -31,11 +31,23 @@ export class LoginBrowserService {
     profileDir?: string;
     /** Test-only: CI drives the lifecycle headless; production is headed. */
     headless?: boolean;
+    /**
+     * Test-only ADR-016 candidate override. Production leaves this unset so
+     * the env fallback (AGENTBROWSER_CHROME_PATH / _PREFER_BUNDLED) and
+     * branded detection apply, exactly as for a session. A real-launch test
+     * must pass `[]` to pin itself to the bundled build: the ubuntu CI image
+     * ships /usr/bin/google-chrome, so without it that job would drive a
+     * runner Chrome whose version drifts while the Windows job used bundled.
+     */
+    brandedChromeCandidates?: string[];
   }) {
     this.enabled = options.enabled;
     if (options.enabled) {
       this.browser = new LoginBrowser({
         ...(options.headless !== undefined ? { headless: options.headless } : {}),
+        ...(options.brandedChromeCandidates !== undefined
+          ? { brandedChromeCandidates: options.brandedChromeCandidates }
+          : {}),
         // AGENTBROWSER_LOGIN_PROFILE_DIR overrides; the default sits under
         // the OS private per-user state root (never the server's working
         // directory, which can be synced or backed up), with the install
@@ -85,7 +97,15 @@ export class LoginBrowserService {
   }
 
   async closeForShutdown(): Promise<void> {
-    if (this.browser?.isOpen === true) await this.browser.close().catch(() => undefined);
+    // Unconditional when a browser exists — NOT guarded on isOpen.
+    //
+    // isOpen is liveness-based, so guarding on it would SKIP close() for a
+    // dead-but-unreaped context and leave agentbrowser-lock on disk: exactly
+    // the leak the liveness change exists to prevent (review finding 3).
+    // close() already tolerates both the never-opened case (it throws
+    // LOGIN_BROWSER_CLOSED, swallowed here) and the dead case (it reaps and
+    // releases the lock).
+    await this.browser?.close().catch(() => undefined);
   }
 
   private requireBrowser(): LoginBrowser {

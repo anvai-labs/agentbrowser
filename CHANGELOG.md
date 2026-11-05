@@ -34,7 +34,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   a failed probe fails closed. A path change that is explicably ours (a pin
   naming a Playwright build, including a dependency bump moving
   `chromium-<rev>`) is adopted once and recorded in the pin, keeping the
-  profile.
+  profile — but still subject to the downgrade gate, since Playwright can
+  bundle a newer-milestone Chrome for Testing than the operator's branded
+  stable Chrome.
+- **A recycled pid can no longer lock you out of the login browser.** Chrome's
+  `SingletonLock` records `<hostname>-<pid>`; pids recycle and `kill(pid, 0)`
+  also succeeds on another user's process, so a stale lock could name an
+  unrelated live process and refuse `LOGIN_PROFILE_IN_USE` forever. "Live" now
+  requires the pid to name a browser, and an unverifiable owner is left to
+  Chrome's own ProcessSingleton to arbitrate.
+- Shutdown closes the login browser unconditionally rather than gating on
+  `isOpen`, so a dead context cannot leave `agentbrowser-lock` behind; the
+  profile lock carries a per-launch token so a late `'close'` cannot delete a
+  lock that a subsequent launch acquired; and the `'close'` handler is guarded
+  by context identity so it cannot clear a live context.
 - **`isOpen` means a connected browser, not a bookkept context.** A killed or
   pipe-wedged Chrome used to leave the server reporting `open: true` forever
   while making every reopen a no-op. It is now reaped, and shutdown, `reset()`
