@@ -466,7 +466,13 @@ describe('ADR-025 §1 pin semantics', () => {
     expect(recorded.persistent).toHaveLength(0);
   });
 
-  it('fails CLOSED when the pin has no comparable version', async () => {
+  it('ADOPTS a same-path change when the pin records no version at all', async () => {
+    // Deliberately inverted from the original assertion (round-6 finding 1).
+    // An absent version cannot evidence a downgrade — nothing was recorded to
+    // move backwards from — and refusing on it cost the operator their whole
+    // profile for a field WE failed to write. The tamper-shaped case,
+    // present-but-unparseable, still fails closed; see the dedicated
+    // describe block above.
     const profile = profileFor('no-version');
     await writePin(profile, {
       executable: bundledPath,
@@ -474,10 +480,17 @@ describe('ADR-025 §1 pin semantics', () => {
       executableModifiedMs: 1,
       launches: 1,
     });
-    await expect(mk(profile, { brandedChromeCandidates: [] }).open()).rejects.toMatchObject({
-      code: 'LOGIN_BINARY_DOWNGRADED',
-    });
-    expect(recorded.persistent).toHaveLength(0);
+    probeVersion = '156.0.8078.90';
+    contextVersion = '156.0.8078.90';
+    const browser = mk(profile, { brandedChromeCandidates: [] });
+    try {
+      await browser.open();
+      expect(recorded.persistent).toHaveLength(1);
+      // And the gap closes: the pin now has a comparable version.
+      expect(parseChromeVersion((await readPin(profile)).chromiumVersion as string)).toBeDefined();
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
   });
 
   it('fails CLOSED when the probe cannot answer', async () => {
@@ -662,6 +675,11 @@ describe('looksLikePlaywrightBundled', () => {
         join('/root', 'chromium_headless_shell-1248', 'chrome-headless-shell')
       )
     ).toBe(true);
+    // Round-6 finding 2: a false POSITIVE now adopts a path change that
+    // should refuse, so operator-built Chromium trees must NOT match.
+    expect(looksLikePlaywrightBundled(join('/opt', 'chromium_build_42', 'chrome'))).toBe(false);
+    expect(looksLikePlaywrightBundled(join('/home', 'u', 'chromiumfoo123', 'chrome'))).toBe(false);
+    expect(looksLikePlaywrightBundled(join('/opt', 'google', 'chrome', 'chrome'))).toBe(false);
   });
 
   it('cannot be widened by PLAYWRIGHT_BROWSERS_PATH', () => {
@@ -680,6 +698,82 @@ describe('looksLikePlaywrightBundled', () => {
     } finally {
       delete process.env.PLAYWRIGHT_BROWSERS_PATH;
     }
+  });
+});
+
+describe('absent vs unparseable pinned version (round-6 finding 1)', () => {
+  // The structural rule behind rounds 2, 5 and 6: chromiumVersion is only
+  // ever recorded from sources that can fail, so its ABSENCE is our own
+  // recording gap and must not cost the operator their profile. A value that
+  // is PRESENT but not a version is tamper-shaped and must still fail closed.
+
+  it('a FIRST LAUNCH whose version read fails stays adjudicable afterwards', async () => {
+    // Reproduced by the reviewer and needs no legacy pin at all: first launch
+    // writes a version-less pin, then an ordinary in-place Chrome update used
+    // to hard-refuse with reset() as the only way out.
+    contextVersion = '';
+    const profile = profileFor('first-launch-no-version');
+    const first = mk(profile, { brandedChromeCandidates: [] });
+    await first.open();
+    await first.close();
+    expect((await readPin(profile)).chromiumVersion).toBeUndefined();
+
+    // Now an in-place update of that same binary: different bytes, newer.
+    const pin = await readPin(profile);
+    await writePin(profile, { ...pin, executableSize: 999_999 });
+    probeVersion = '157.0.1.1';
+    contextVersion = '157.0.1.1';
+    const second = mk(profile, { brandedChromeCandidates: [] });
+    try {
+      await second.open();
+      expect((await readPin(profile)).chromiumVersion).toBe('157.0.1.1');
+    } finally {
+      await second.close().catch(() => undefined);
+    }
+  });
+
+  it('a no-version ADOPTION stays adjudicable afterwards', async () => {
+    // The other reproduced trigger: the adoption branch deliberately does not
+    // probe, so if the context read also fails the pin has no version.
+    await installBranded();
+    contextVersion = '';
+    const profile = profileFor('adopt-no-version');
+    await writePin(profile, {
+      executable: bundledPath,
+      executableSize: 1,
+      executableModifiedMs: 1,
+      launches: 4,
+    });
+    const first = mk(profile, { brandedChromeCandidates: [brandedCandidate] });
+    await first.open();
+    await first.close();
+
+    const pin = await readPin(profile);
+    await writePin(profile, { ...pin, executableSize: 999_999 });
+    probeVersion = '157.0.1.1';
+    contextVersion = '157.0.1.1';
+    const second = mk(profile, { brandedChromeCandidates: [brandedCandidate] });
+    try {
+      await second.open();
+      expect((await readPin(profile)).chromiumVersion).toBe('157.0.1.1');
+    } finally {
+      await second.close().catch(() => undefined);
+    }
+  });
+
+  it('a PRESENT but unparseable pinned version still fails closed', async () => {
+    const profile = profileFor('unparseable-version');
+    await writePin(profile, {
+      executable: bundledPath,
+      executableSize: 1,
+      executableModifiedMs: 1,
+      chromiumVersion: 'Chrome 140', // the shape captureBrowserVersion exists for
+      launches: 1,
+    });
+    await expect(mk(profile, { brandedChromeCandidates: [] }).open()).rejects.toMatchObject({
+      code: 'LOGIN_BINARY_DOWNGRADED',
+    });
+    expect(recorded.persistent).toHaveLength(0);
   });
 });
 

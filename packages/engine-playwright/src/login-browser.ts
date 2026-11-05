@@ -672,10 +672,15 @@ export class LoginBrowser {
       pin,
       resolved,
       failureContext: `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size})`,
-      // A binary swapped under us at the SAME path is the suspicious case, so
-      // an unadjudicable pin fails closed here — the posture the pre-version
-      // code had for any in-place change.
-      adoptWhenPinHasNoVersion: false,
+      // An ABSENT pinned version is adoptable here too (round-6 finding 1).
+      // It cannot be evidence of a downgrade — nothing was recorded to move
+      // backwards from — and it is reachable without any legacy pin at all: a
+      // first launch whose version() read failed writes a version-less pin,
+      // and the next ordinary Chrome update would then hard-refuse with
+      // reset() as the only way out. A PRESENT-but-unparseable version still
+      // fails closed inside assertNotADowngrade, which is the tamper-shaped
+      // case this flag used to be guarding.
+      adoptWhenPinHasNoVersion: true,
       onEqual: (order) => {
         // Same version, different bytes is not a Chrome update; it is the
         // signature of a replaced binary. Refuse under the path-change code.
@@ -734,15 +739,30 @@ export class LoginBrowser {
     };
     const pinned = parseChromeVersion(pin.chromiumVersion);
     if (pinned === undefined) {
+      // ABSENT and UNPARSEABLE are different things, and conflating them is
+      // the structural root cause behind rounds 2, 5 and 6 (round-6 review
+      // finding 1, reproduced on two further paths including a plain first
+      // launch whose version read failed).
+      //
+      // `chromiumVersion` is only ever recorded from sources that can fail —
+      // the launched context's version(), or the probe. So its ABSENCE is
+      // evidence of OUR recording gap, not of tampering, and refusing on it
+      // punishes the operator with profile-destroying reset() for something
+      // we failed to write. A value that is PRESENT but not parseable is the
+      // opposite: something put a non-version string there, which is
+      // tamper-shaped and must still fail closed.
+      if (pin.chromiumVersion !== undefined) {
+        refuse(`the pinned version ${JSON.stringify(pin.chromiumVersion)} is not comparable`);
+      }
       if (!options.adoptWhenPinHasNoVersion) {
-        refuse('the pinned version is missing or not comparable');
+        refuse('the pinned version is missing');
       }
       // NO probe here (round-3 review finding 4). There is nothing to compare
       // against, so a probe could only decorate the log line — and it would
       // cost a second full Chrome launch on the one-time migration, the very
-      // path most likely to be slow. openLocked() records the real version
-      // from the launched context, so the next launch has a comparable one
-      // and this gap closes itself after one open either way.
+      // path most likely to be slow. The absence is not load-bearing any
+      // more: an absent version is adoptable above rather than a refusal
+      // waiting to happen on the next in-place update.
       announce(pin.chromiumVersion ?? '(unrecorded)', '(not comparable)');
       // Preserve whatever string WAS recorded, even if unparseable; only a
       // genuinely absent version reads as unrecorded.
@@ -1038,7 +1058,17 @@ export function looksLikePlaywrightBundled(path: string): boolean {
   // after the optional separator (round-5 review finding 4). Latent rather
   // than live, since executablePath() returns the headed path, but the env
   // check that used to cover it is gone.
-  return /[/\\]chromium[a-z_]*[_-]?\d+[/\\]/i.test(path) || /[/\\]ms-playwright[/\\]/.test(path);
+  // NARROWED to exactly Playwright's two directory shapes, with a REQUIRED
+  // separator before the revision (round-6 review finding 2). The previous
+  // `chromium[a-z_]*[_-]?\d+` also matched operator-built trees like
+  // `/opt/chromium_build_42/chrome` and `/home/u/chromiumfoo123/chrome`.
+  // Looseness here used to be harmless — a false negative merely cost the
+  // operator a `reset` — but now a false POSITIVE adopts a path change that
+  // should refuse, so the safe direction has flipped.
+  return (
+    /[/\\]chromium(?:_headless_shell)?[_-]\d+[/\\]/i.test(path) ||
+    /[/\\]ms-playwright[/\\]/.test(path)
+  );
 }
 
 /**
