@@ -318,9 +318,27 @@ export class LoginBrowser {
     // Destructured out rather than assigned undefined: exactOptionalPropertyTypes
     // makes `{ adoptedFromExecutable: undefined }` a type error, and omitting
     // the key is what "clear it" actually means on disk anyway.
-    const { adoptedFromExecutable: priorAdoptedFrom, ...carried } = pin;
+    const {
+      adoptedFromExecutable: priorAdoptedFrom,
+      executableSize: priorSize,
+      executableModifiedMs: priorMtime,
+      chromiumVersion: priorVersion,
+      ...carried
+    } = pin;
+    // Identity and version describe a SPECIFIC binary, so they are carried
+    // forward only while the path is unchanged (round-4 review finding 4).
+    // Across a path change, carrying them would pin the new executable with
+    // the old binary's bytes and version, and the next launch would then
+    // adjudicate an in-place change against the wrong baseline — a spurious
+    // LOGIN_BINARY_DOWNGRADED whose only recovery is profile-destroying
+    // reset(), or an unadjudicated acceptance. Dropping is the safe direction
+    // here, exactly where finding 6 said carrying was safe for the same path.
+    const samePath = executablePath !== undefined && executablePath === pin.executable;
     await this.writePin({
       ...carried,
+      ...(samePath && priorSize !== undefined ? { executableSize: priorSize } : {}),
+      ...(samePath && priorMtime !== undefined ? { executableModifiedMs: priorMtime } : {}),
+      ...(samePath && priorVersion !== undefined ? { chromiumVersion: priorVersion } : {}),
       ...(priorAdoptedFrom !== undefined && !adoptionIsSamePath
         ? { adoptedFromExecutable: priorAdoptedFrom }
         : {}),
@@ -564,9 +582,14 @@ export class LoginBrowser {
           pin,
           resolved,
           adoptMessage: `adopting a new binary (one side is a Playwright-managed build, so this is our own resolution changing)\n  was: ${pin.executable}\n  now: ${resolved}`,
-          // An old pin with no recorded version used to adopt here; refusing
-          // would be worse than the behavior being replaced.
-          adoptWhenPinHasNoVersion: true,
+          // The version-less escape stays NARROW: only a pin that itself names
+          // a Playwright build gets it. That is the legacy case it was added
+          // for — pins written before chromiumVersion was recorded, all of
+          // which name the bundled binary. Widening adoption to either side
+          // (round 3) dragged the escape along with it, so branded→bundled on
+          // a version-less pin would have adopted with no probe and no
+          // comparison at all (round-4 review finding 3).
+          adoptWhenPinHasNoVersion: looksLikePlaywrightBundled(pin.executable),
         });
         return {
           path: resolved,
@@ -827,8 +850,25 @@ export class LoginBrowser {
     // operator to kill Chrome and delete Singleton* — destructive advice for a
     // state that clears itself in about a second. acquireProfileLock() already
     // polls the same window for exactly this class of transient.
+    // A non-live reading must be CONFIRMED before we act on it (round-4
+    // review finding 2). `inspectChromeSingleton` reports `stale` whenever
+    // processName() returns undefined, and on darwin that is an
+    // `execFile('ps')` which can fail transiently under load. Sampling once
+    // gave that one chance to mislead; polling every 50ms gave it ~100, and
+    // the first false negative won — we would then take the lock and launch
+    // against a profile a live Chrome still owns, so Chrome's own
+    // ProcessSingleton makes the new instance defer and the operator gets an
+    // opaque Playwright timeout (now after the full launch budget) instead of
+    // the typed refusal this check exists to produce.
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
-    while (state.state === 'live' && Date.now() < deadline) {
+    for (;;) {
+      if (state.state !== 'live') {
+        // Second opinion before acting on "not live".
+        const confirmed = await inspect();
+        state = confirmed;
+        if (confirmed.state !== 'live') break;
+      }
+      if (Date.now() >= deadline) break;
       await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
       state = await inspect();
     }
@@ -954,8 +994,15 @@ async function probeChromeVersion(
  */
 export function looksLikePlaywrightBundled(path: string): boolean {
   if (path === chromium.executablePath()) return true;
-  const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (root !== undefined && root !== '' && path.startsWith(root)) return true;
+  // Playwright's own layout, wherever PLAYWRIGHT_BROWSERS_PATH points it:
+  // `<root>/chromium-<rev>/...` or a path under an `ms-playwright` cache dir.
+  //
+  // Deliberately NOT a bare `path.startsWith(PLAYWRIGHT_BROWSERS_PATH)`
+  // (round-4 review finding 3): that env var is operator-settable, the prefix
+  // test had no separator boundary (root `/opt/pw` matched `/opt/pwned/chrome`),
+  // and setting it to `/Applications` or `/` would have made the
+  // LOGIN_BINARY_CHANGED branch unreachable. The shape check covers every real
+  // Playwright install under any root without trusting the variable.
   return /[/\\]chromium[_-]?\d+[/\\]/.test(path) || /[/\\]ms-playwright[/\\]/.test(path);
 }
 

@@ -89,6 +89,12 @@ beforeEach(async () => {
   delete process.env.AGENTBROWSER_CHROME_PATH;
   delete process.env.AGENTBROWSER_PREFER_BUNDLED;
   delete process.env.AGENTBROWSER_CHROMIUM_ARGS;
+  delete process.env.AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS;
+  // looksLikePlaywrightBundled no longer consults this, but clearing it keeps
+  // the suite's hermeticity enforced rather than incidental: a value that
+  // happened to prefix os.tmpdir() used to invert the "neither side
+  // Playwright-managed" refusal into an adoption (round-4 review finding 6).
+  delete process.env.PLAYWRIGHT_BROWSERS_PATH;
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -649,5 +655,70 @@ describe('looksLikePlaywrightBundled', () => {
       looksLikePlaywrightBundled('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     ).toBe(false);
     expect(looksLikePlaywrightBundled(join('/usr', 'bin', 'google-chrome'))).toBe(false);
+  });
+
+  it('cannot be widened by PLAYWRIGHT_BROWSERS_PATH', () => {
+    // Round-4 review finding 3: a bare startsWith on this operator-settable
+    // var had no separator boundary, and pointing it at /Applications or /
+    // would have made the LOGIN_BINARY_CHANGED branch unreachable entirely.
+    try {
+      process.env.PLAYWRIGHT_BROWSERS_PATH = '/Applications';
+      expect(
+        looksLikePlaywrightBundled('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+      ).toBe(false);
+      process.env.PLAYWRIGHT_BROWSERS_PATH = '/';
+      expect(looksLikePlaywrightBundled(join('/usr', 'bin', 'google-chrome'))).toBe(false);
+      process.env.PLAYWRIGHT_BROWSERS_PATH = '/opt/pw';
+      expect(looksLikePlaywrightBundled('/opt/pwned/chrome')).toBe(false);
+    } finally {
+      delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+    }
+  });
+});
+
+describe('round-4 regressions', () => {
+  it('a version-less pin only escapes the gate when the PIN is the Playwright side', async () => {
+    // Round-4 finding 3, second half: widening adoption to either side must
+    // not widen the no-version escape. A pin naming BRANDED Chrome with no
+    // recorded version resolving to bundled is a real path change we cannot
+    // adjudicate, so it must refuse rather than adopt ungated.
+    await installBranded();
+    const profile = profileFor('no-version-branded-pin');
+    await writePin(profile, {
+      executable: brandedCandidate,
+      executableSize: 1,
+      executableModifiedMs: 1,
+      launches: 2,
+    });
+    await expect(
+      mk(profile, { brandedChromeCandidates: [brandedCandidate], preferBundled: true }).open()
+    ).rejects.toMatchObject({ code: 'LOGIN_BINARY_DOWNGRADED' });
+    expect(recorded.persistent).toHaveLength(0);
+  });
+
+  it('does not pin a new path with the previous binary’s version', async () => {
+    // Round-4 finding 4: identity and version describe a specific binary, so
+    // carrying them across a path change would have the next launch adjudicate
+    // against the wrong baseline. Here the context reports no version, so the
+    // old one must be DROPPED rather than attached to the new path.
+    contextVersion = '';
+    const profile = profileFor('no-stale-version');
+    await writePin(profile, {
+      executable: join(dir, 'ms-playwright', 'chromium-1200', 'chrome'),
+      executableSize: 1,
+      executableModifiedMs: 1,
+      chromiumVersion: '150.0.1.1',
+      launches: 1,
+    });
+    const browser = mk(profile, { brandedChromeCandidates: [] });
+    try {
+      await browser.open();
+      const pin = await readPin(profile);
+      expect(pin.executable).toBe(bundledPath);
+      // The old binary's version must not be carried onto the new path.
+      expect(pin.chromiumVersion).not.toBe('150.0.1.1');
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
   });
 });

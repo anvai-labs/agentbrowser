@@ -267,7 +267,7 @@ suite('the login browser', () => {
     240_000
   );
 
-  it('the pin records the real executable; a changed binary refuses and reset adopts', async () => {
+  it('the pin records the real executable; a path change adopts, same-version bytes refuse, reset clears', async () => {
     const profile = join(dir, 'profile-reset');
     const browser = mk({ profileDir: profile });
     const refused = mk({ profileDir: profile });

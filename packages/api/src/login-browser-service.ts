@@ -130,18 +130,29 @@ export class LoginBrowserService {
     // launch hold up shutdown for minutes where it used to return at once.
     // Giving up here only forfeits the lock cleanup that the next startup's
     // stale-lock adoption already handles.
-    await Promise.race([
-      browser.close().catch(() => undefined),
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          console.warn(
-            `[agentbrowser] login browser did not close within ${SHUTDOWN_CLOSE_TIMEOUT_MS}ms (a launch may still be in flight); continuing shutdown`
-          );
-          resolve();
-        }, SHUTDOWN_CLOSE_TIMEOUT_MS);
-        timer.unref?.();
-      }),
-    ]);
+    // The timer is CLEARED when close() wins (round-4 review finding 1,
+    // reproduced): Promise.race does not cancel the loser, so the warning
+    // fired 10s after a perfectly successful close in any process that
+    // outlived it — including the api test suite. Having just fixed this
+    // component for logging something misleading, it must not start logging
+    // the inverse.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        browser.close().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            console.warn(
+              `[agentbrowser] login browser did not close within ${SHUTDOWN_CLOSE_TIMEOUT_MS}ms (a launch may still be in flight); continuing shutdown`
+            );
+            resolve();
+          }, SHUTDOWN_CLOSE_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private requireBrowser(): LoginBrowser {
