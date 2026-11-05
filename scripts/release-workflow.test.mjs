@@ -123,6 +123,8 @@ const JOB_PERMISSIONS = {
   'release.yml/release': ['attestations: write', 'contents: write', 'id-token: write'],
   'release.yml/npm-publish': ['contents: read', 'id-token: write'],
   'docs.yml/deploy': ['id-token: write', 'pages: write'],
+  // Posts the CLA signature-request comment via `gh pr comment`.
+  'cla-check.yml/cla': ['contents: read', 'pull-requests: write'],
 };
 
 test('every workflow defaults to read-only contents and grants no write at the top level', () => {
