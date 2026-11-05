@@ -7,6 +7,50 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — the operator login browser never launched branded Chrome (ADR-025 §1)
+
+- **It ran Playwright's bundled Chrome for Testing, always.**
+  `LoginBrowser.resolvePinnedExecutable` called `chromium.executablePath()`
+  unconditionally and never consulted ADR-016's resolution, contradicting
+  ADR-025 §1 ("ADR-016's branded-Chrome selection, or
+  `AGENTBROWSER_CHROME_PATH`" and "reuses `headedChromiumOptions`"). A real
+  login wall is far likelier to accept the operator's branded Chrome, and the
+  sign-in is exactly when a target fingerprints the browser. The precedence
+  now lives in `chrome-binary.ts`, shared with the session path, and
+  `AGENTBROWSER_CHROME_PATH` / `AGENTBROWSER_PREFER_BUNDLED` work the same way
+  for both. Engine behavior is unchanged — including the `executableSelection`
+  diagnostic.
+- **The launch now logs its binary.** The service log's only binary line came
+  from the session path, so it was read as describing the login browser; that
+  misdirection is why this defect survived two debugging sessions.
+- **A Chrome self-update no longer costs you your logins.** A same-path
+  in-place replacement is judged against ADR-025's actual rule — "version has
+  moved backwards" — instead of refusing every change: forward adopts,
+  backwards refuses `LOGIN_BINARY_DOWNGRADED`, and the same version with
+  different bytes refuses `LOGIN_BINARY_CHANGED` as a tamper signature. The
+  version is read by a `chromium.launch()` probe on a throwaway profile, never
+  by opening the login profile — Chrome processes downgrade handling at profile
+  open, so a post-launch verdict would come too late. An unparseable version or
+  a failed probe fails closed. A path change that is explicably ours (a pin
+  naming a Playwright build, including a dependency bump moving
+  `chromium-<rev>`) is adopted once and recorded in the pin, keeping the
+  profile.
+- **`isOpen` means a connected browser, not a bookkept context.** A killed or
+  pipe-wedged Chrome used to leave the server reporting `open: true` forever
+  while making every reopen a no-op. It is now reaped, and shutdown, `reset()`
+  and cookie reads all handle a dead context instead of leaking the profile
+  lock, wedging, or hanging.
+- **Chrome's `SingletonLock` is read, never deleted.** Removing a live owner's
+  lock would put two Chromes on one cookie DB (and the file is POSIX-only). A
+  live or foreign-host owner now refuses `LOGIN_PROFILE_IN_USE` naming the
+  recovery, instead of launching a Chrome that exits instantly; a stale
+  same-host lock still proceeds, since Chrome breaks that one itself.
+- TD-BROWSER-16's deferred branded-chrome suite is delivered, hermetically on
+  all three platforms. `login-browser.test.ts` now forces
+  `brandedChromeCandidates: []` so its real-Chromium cases stay pinned to the
+  bundled build — the ubuntu CI image ships `/usr/bin/google-chrome`, which
+  this change would otherwise have had it start launching silently.
+
 ## [1.33.1] — 2026-11-04
 
 ### Fixed — three defects found by the live Vinted acceptance run (PR #700)

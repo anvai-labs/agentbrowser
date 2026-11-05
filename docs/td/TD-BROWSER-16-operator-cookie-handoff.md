@@ -173,24 +173,66 @@ Administrators, and the parse is what refuses anything wider. The profile root i
 `AGENTBROWSER_LOGIN_PROFILE_DIR` or the OS per-user state root (XDG_STATE_HOME/`~/.local/state`,
 `LOCALAPPDATA`) — the spec's "server data directory" intent, with synced-ness left to the
 operator's environment. Binary pinning records the executable path AND its file identity
-(size + mtime); a different path refuses `LOGIN_BINARY_CHANGED`, a same-path identity change (an
-in-place update) refuses `LOGIN_BINARY_DOWNGRADED`, and either refusal leaves the profile
-unlocked (the lock is acquired after every pre-launch check). The compared field is file
-identity, not the version string — the runner proved `chrome.exe --version` prints nothing on
-Windows (GUI-subsystem exe), which made a version-probe check fail open exactly where ADR-025's
-rationale is strongest; the recorded `chromiumVersion` stays as documentation. (Residual,
-exotic: a replacement preserving BOTH size and mtime would evade the check — practically
-negligible, and every observable direction of the check fails closed.) Lifecycle:
-open/close/read serialized; a live second owner or a hand-started Chrome (ProcessSingleton)
-refuses `LOGIN_PROFILE_IN_USE`, a stale lock is adopted, reads on a closed browser refuse
-`LOGIN_BROWSER_CLOSED`; partitioned (`partitionKey` OR `partitionKeyOpaque`) and expired cookies
-are skipped and counted. Operator-only routes `POST /v1/operator/login/{open,close,reset,read}`
+(size + mtime); a different path refuses `LOGIN_BINARY_CHANGED` and either refusal leaves the
+profile unlocked (the lock is acquired after every pre-launch check).
+
+**Superseded 2026-11-05** (the binary this path resolves, and how a same-path change is
+judged). Two corrections, both from the login-browser launch investigation:
+
+1. **The resolution was never ADR-016's.** `resolvePinnedExecutable` called
+   `chromium.executablePath()` unconditionally, so the login browser always ran Playwright's
+   bundled *Chrome for Testing* and never the operator's branded Chrome —  contradicting
+   ADR-025 §1 ("ADR-016's branded-Chrome selection, or `AGENTBROWSER_CHROME_PATH`") and its
+   "reuses `headedChromiumOptions`". The precedence now lives in
+   `packages/engine-playwright/src/chrome-binary.ts`, shared by the engine and the login
+   browser (it could not simply import the engine: `index.ts` re-exports `LoginBrowser`, so
+   that would be an import cycle). The login browser also logs its resolved binary — before,
+   the service log's only binary line came from the SESSION path and was misread as
+   describing this launch, which is what made the defect take two sessions to find.
+2. **File identity gates; the version adjudicates.** A same-path identity change no longer
+   refuses outright. It is judged against ADR-025 §1's actual rule — "refuses if that
+   binary's version has moved backwards" — because branded Chrome self-updates, and
+   refusing every in-place change would refuse after every update with profile-destroying
+   `reset()` as the only recovery. A forward move is adopted, a backwards move refuses
+   `LOGIN_BINARY_DOWNGRADED`, and the same version with different bytes refuses
+   `LOGIN_BINARY_CHANGED` (that is a tamper signature, not an update). The version is read
+   by a `chromium.launch()` probe on a THROWAWAY profile, never
+   `launchPersistentContext` on the login profile: Chrome processes its downgrade handling
+   when it opens a profile, so a post-launch verdict would arrive after the logins were
+   already at risk. No subprocess is involved, so the Windows objection that drove the
+   original identity-only design (`chrome.exe --version` prints nothing there) does not
+   apply. An unparseable or absent pinned version, or a probe that cannot answer, fails
+   closed. A path change that is explicably our own — a pin naming a Playwright build,
+   whether the pre-fix bundled pin or a dependency bump moving `chromium-<rev>` — is adopted
+   once and recorded in the pin (`adoptedFromExecutable`, `adoptedAtMs`) rather than
+   refused, so the operator's logins survive.
+
+(Residual, exotic: a replacement preserving BOTH size and mtime still evades the gate —
+practically negligible, and every observable direction fails closed. Residual, accepted: the
+probe does execute the candidate binary, but against a throwaway profile, which is strictly
+less exposure than opening the login profile with it.) Lifecycle:
+open/close/read serialized; a live second owner refuses `LOGIN_PROFILE_IN_USE`, reads on a
+closed browser refuse `LOGIN_BROWSER_CLOSED`; partitioned (`partitionKey` OR
+`partitionKeyOpaque`) and expired cookies are skipped and counted. Chrome's own
+`SingletonLock` is READ, never removed (removing a live owner's lock would put two Chromes on
+one cookie DB, and it is POSIX-only): a live or foreign-host owner refuses
+`LOGIN_PROFILE_IN_USE` naming the recovery, while a stale same-host lock proceeds — Chrome
+breaks that one itself. `isOpen` means a CONNECTED browser, not merely a bookkept context, so
+a killed or wedged Chrome no longer reports `open: true` forever nor blocks reopening. Operator-only routes `POST /v1/operator/login/{open,close,reset,read}`
 behind the human-operator actor with the seven `LOGIN_*` codes in the protocol (409/403/400,
 never 500); a hosted deployment refuses at the open route with a typed 400, and the service never
 constructs without operator keys — which are single-tenant, so multi-tenant deployments never
 boot with one; shutdown closes the browser.
 The Windows CI job runs this suite headless — via a TEST-side env knob the test file applies, not
-an engine env mode; the branded-chrome suite stays deferred to #465. Seven review rounds; every
+an engine env mode. The branded-chrome suite is **delivered** (2026-11-05,
+`login-browser-binary.test.ts`): resolution precedence, the pin decision table and the
+ProcessSingleton classification all run hermetically against a mocked `playwright` on all
+three platforms, so the Windows job gets the full matrix without installing Chrome. What stays
+a permanent non-goal rather than pending work is a REAL branded-Chrome launch in CI: the
+ubuntu image's Chrome version drifts and the Windows image has none, so such a test could not
+be deterministic — and `login-browser.test.ts` now forces `brandedChromeCandidates: []` so its
+real-Chromium cases stay pinned to the bundled build on every host instead of silently
+launching a runner's Chrome. Seven review rounds; every
 Windows behavior above is runner-proven, not claimed. Carried to phase 6 (acknowledged): the F12
 reset confirmation, raw values on the read route (tension with ADR-025 §2), the 1 MiB cookie
 size bound unenforced (count only), and 400/409 undocumented in the OpenAPI for the four routes.

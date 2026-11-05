@@ -1,7 +1,17 @@
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { type BrowserContext, chromium } from 'playwright';
+import {
+  type ChromeBinaryPreference,
+  compareChromeVersion,
+  extraChromiumArgs,
+  parseChromeVersion,
+  type ResolvedChromeBinaryPreference,
+  resolveBrandedChrome,
+  resolveChromeBinaryPreference,
+} from './chrome-binary.js';
 
 /**
  * TD-BROWSER-16 phase 4 (ADR-025 §1): the operator's login browser.
@@ -77,7 +87,7 @@ export interface ReadLoginCookiesResult {
   skipped: { partitioned: number; expired: number };
 }
 
-export interface LoginBrowserOptions {
+export interface LoginBrowserOptions extends ChromeBinaryPreference {
   /** The profile directory; created owner-only on first use. */
   profileDir: string;
   headless?: boolean;
@@ -95,10 +105,21 @@ interface ProfilePin {
    */
   executableSize?: number;
   executableModifiedMs?: number;
-  /** Chromium's own version string at pin time, for the record (never compared). */
+  /**
+   * Chromium's own version at pin time. ADR-025 §1's rule is "refuses if that
+   * binary's version has moved backwards", and this is the field that answers
+   * it when a same-path binary is replaced in place (a Chrome self-update).
+   */
   chromiumVersion?: string;
-  /** Monotonic launch counter; a later pin with a SMALLER count for the
-   * same executable means the profile was restored from an older backup. */
+  /** Audit trail for an automatic re-pin: what it replaced, and when. */
+  adoptedFromExecutable?: string;
+  adoptedAtMs?: number;
+  /**
+   * Launch counter, for the record. It is NOT compared: detecting a
+   * restored-from-backup profile by a decreasing count would need state kept
+   * outside the profile, which there is none of — the previous comment here
+   * claimed that detection, and nothing implemented it.
+   */
   launches: number;
 }
 
@@ -111,10 +132,34 @@ export class LoginBrowser {
   /** In-process queue so open/close/read never interleave. */
   private chain: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly options: LoginBrowserOptions) {}
+  /**
+   * ADR-016 preference with env defaults applied once, through the same
+   * helper the engine constructor uses, so a session and the login browser
+   * cannot drift on what AGENTBROWSER_CHROME_PATH / _PREFER_BUNDLED mean.
+   *
+   * ADR-025 §1's "resolved once at enablement" is implemented by the PIN, not
+   * by caching a path here: the constructor cannot be async, and Chrome may be
+   * installed after the server starts. A binary swapped mid-run trips
+   * LOGIN_BINARY_CHANGED, which is the guarantee the ADR is really asking for.
+   */
+  private readonly chromePreference: ResolvedChromeBinaryPreference;
 
+  constructor(private readonly options: LoginBrowserOptions) {
+    this.chromePreference = resolveChromeBinaryPreference(options);
+  }
+
+  /**
+   * Live, not merely bookkept. The 'close' handler below clears `context`,
+   * but a SIGKILLed or pipe-wedged Chrome can leave it set — and this getter
+   * is what the ADR-025 §3 handoff floor consults, so bookkeeping would let a
+   * dead browser satisfy the floor.
+   *
+   * Deliberately pure and synchronous: `isConnected()` reads a local flag, and
+   * packages/api/src/service.ts declares this dependency as
+   * `readonly isOpen: boolean`. Every side effect lives in the reap.
+   */
   get isOpen(): boolean {
-    return this.context !== undefined;
+    return this.context !== undefined && contextDisconnected(this.context) !== true;
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -128,9 +173,14 @@ export class LoginBrowser {
   }
 
   private async openLocked(): Promise<void> {
+    // ADR-025 §1: "a second open while one is running is a no-op" — but only
+    // while it is RUNNING. A dead-but-unbookkept context used to make that
+    // branch mean "you can never reopen", so reap before consulting it.
+    this.reapDeadContext();
     if (this.context !== undefined) return;
     if (this.closing !== undefined) await this.closing;
     await this.assertProfileSecure();
+    await this.assertChromeSingletonFree();
     const pin = await this.readPin();
     const headless = this.options.headless ?? false;
     if (!headless && !displayAvailable()) {
@@ -139,7 +189,25 @@ export class LoginBrowser {
         'the login browser needs a display; run headed on a machine with one'
       );
     }
-    const { path: executablePath, identity } = await this.resolvePinnedExecutable(pin);
+    const {
+      path: executablePath,
+      identity,
+      pinUpdate,
+      selection,
+    } = await this.resolvePinnedExecutable(pin);
+    // ADR-025 §1 says the login browser reuses the headed launch arguments,
+    // so the operator's AGENTBROWSER_CHROMIUM_ARGS escape hatch applies here
+    // too — an operator who needs a Chromium flag needs it most in the one
+    // browser built for logging in. No --start-maximized: that is a session
+    // window-shape choice, not a login one.
+    const args = [
+      '--disable-blink-features=AutomationControlled',
+      ...extraChromiumArgs(process.env.AGENTBROWSER_CHROMIUM_ARGS),
+    ];
+    // The winner is logged so a mis-resolved login browser is debuggable from
+    // the service log alone. Before this existed, the log's only binary line
+    // came from the SESSION path and was read as describing this launch.
+    console.info(`[agentbrowser] login browser binary: ${executablePath} (${selection})`);
     // The lock is acquired LAST: every refusal above must leave the profile
     // unlocked, or a transient mistake (a wider mode, a moved binary, no
     // display) wedges it for the process lifetime.
@@ -147,7 +215,7 @@ export class LoginBrowser {
     try {
       this.context = await chromium.launchPersistentContext(this.options.profileDir, {
         headless,
-        args: ['--disable-blink-features=AutomationControlled'],
+        args,
         ignoreDefaultArgs: [...LOGIN_BROWSER_DISABLE_FLAGS],
         ...(executablePath !== undefined ? { executablePath } : {}),
       });
@@ -155,10 +223,12 @@ export class LoginBrowser {
       await this.releaseProfileLock();
       throw error;
     }
-    // The operator closing the last window marks the browser closed.
+    // The operator closing the last window marks the browser closed. The lock
+    // is released only if WE still hold it: a late 'close' from a previous
+    // instance must not delete a lock this or another instance has acquired.
     this.context.on('close', () => {
       this.context = undefined;
-      void this.releaseProfileLock();
+      void this.releaseProfileLockIfMine();
     });
     const chromiumVersion = this.context.browser()?.version();
     await this.writePin({
@@ -167,8 +237,26 @@ export class LoginBrowser {
         ? { executableSize: identity.size, executableModifiedMs: identity.modifiedMs }
         : {}),
       ...(chromiumVersion !== undefined ? { chromiumVersion } : {}),
+      ...pinUpdate,
       launches: (pin.launches ?? 0) + 1,
     });
+  }
+
+  /**
+   * Drops a context whose browser is gone, so the next launch can proceed.
+   * Separate from `isOpen` on purpose: a getter must not have side effects.
+   */
+  private reapDeadContext(): void {
+    const context = this.context;
+    if (context === undefined) return;
+    // Only reap on POSITIVE evidence of disconnection — never on "cannot
+    // tell". Reaping an unknown state would drop a live context, taking the
+    // operator's window with it.
+    if (contextDisconnected(context) !== true) return;
+    this.context = undefined;
+    // Frees Playwright's own bookkeeping for a browser that is already gone.
+    void context.close().catch(() => undefined);
+    void this.releaseProfileLockIfMine();
   }
 
   async close(): Promise<void> {
@@ -176,6 +264,15 @@ export class LoginBrowser {
   }
 
   private async closeLocked(): Promise<void> {
+    // A disconnected context must close SUCCESSFULLY, not throw: the service's
+    // closeForShutdown() guards on isOpen, which is now liveness-based, so a
+    // throw here would make shutdown skip close() and leave agentbrowser-lock
+    // on disk. A context that was never open still throws (the lifecycle test
+    // pins that), so only the dead-context case changes.
+    if (this.context !== undefined && contextDisconnected(this.context) === true) {
+      this.reapDeadContext();
+      return;
+    }
     const context = this.context;
     if (context === undefined) {
       throw new LoginBrowserError('LOGIN_BROWSER_CLOSED', 'the login browser is closed');
@@ -202,6 +299,9 @@ export class LoginBrowser {
   }
 
   private async readCookiesLocked(): Promise<ReadLoginCookiesResult> {
+    // Reap first, so a wedged browser refuses with LOGIN_BROWSER_CLOSED
+    // instead of hanging in context.cookies().
+    this.reapDeadContext();
     const context = this.context;
     if (context === undefined) {
       throw new LoginBrowserError('LOGIN_BROWSER_CLOSED', 'the login browser is closed');
@@ -240,6 +340,9 @@ export class LoginBrowser {
   /** Deletes the profile directory (after close). */
   async reset(): Promise<void> {
     return this.serialize(async () => {
+      // Without the reap, a dead context would refuse "close it first"
+      // forever — wedging the one recovery the operator has.
+      this.reapDeadContext();
       if (this.context !== undefined) {
         throw new LoginBrowserError(
           'LOGIN_BROWSER_CLOSED',
@@ -302,36 +405,138 @@ export class LoginBrowser {
     await writeFile(this.pinPath(), `${JSON.stringify(pin, null, 2)}\n`, { mode: 0o600 });
   }
 
-  private async resolvePinnedExecutable(
-    pin: ProfilePin
-  ): Promise<{ path: string | undefined; identity: ExecutableIdentity | undefined }> {
-    const resolved = chromium.executablePath();
-    if (resolved === undefined) return { path: undefined, identity: undefined };
+  /**
+   * ADR-025 §1: "The login browser always launches the same executablePath,
+   * resolved once at enablement (ADR-016's branded-Chrome selection, or
+   * AGENTBROWSER_CHROME_PATH), and refuses if that binary's version has moved
+   * backwards."
+   *
+   * Until now this called `chromium.executablePath()` unconditionally and so
+   * always ran Playwright's bundled Chrome for Testing — never the operator's
+   * branded Chrome, which is what a real login wall is likeliest to accept.
+   *
+   * Unlike the engine (which omits `executablePath` for the bundled case),
+   * this always returns a CONCRETE path so the pin names a real file.
+   */
+  private async resolvePinnedExecutable(pin: ProfilePin): Promise<{
+    path: string | undefined;
+    identity: ExecutableIdentity | undefined;
+    pinUpdate: Partial<ProfilePin>;
+    selection: string;
+  }> {
+    const branded = await resolveBrandedChrome(this.chromePreference);
+    const selection = branded.selection;
+    const resolved = branded.path ?? chromium.executablePath();
+    if (resolved === undefined) {
+      return { path: undefined, identity: undefined, pinUpdate: {}, selection };
+    }
     const identity = await executableIdentity(resolved);
     // First launch pins the binary; later launches must match it exactly.
-    if (pin.executable === undefined) return { path: resolved, identity };
+    if (pin.executable === undefined) return { path: resolved, identity, pinUpdate: {}, selection };
+
     if (pin.executable !== resolved) {
+      // A path change we can explain as OUR OWN doing is adopted once rather
+      // than refused: the profile (the operator's logins — the whole asset
+      // this browser exists to hold) survives, and `reset()` stays reserved
+      // for mismatches we cannot account for. Two cases qualify, both
+      // server-controlled: the pre-fix bundled pin being replaced by branded
+      // resolution, and a Playwright dependency bump moving the
+      // chromium-<rev> path (which refuses today, with reset() as the only
+      // exit). Every other path change still refuses.
+      if (looksLikePlaywrightBundled(pin.executable)) {
+        console.info(
+          `[agentbrowser] login profile: adopting a new binary (the pin named Playwright's bundled build)\n  was: ${pin.executable}\n  now: ${resolved}`
+        );
+        return {
+          path: resolved,
+          identity,
+          pinUpdate: { adoptedFromExecutable: pin.executable, adoptedAtMs: Date.now() },
+          selection,
+        };
+      }
       throw new LoginBrowserError(
         'LOGIN_BINARY_CHANGED',
         'the pinned browser binary changed since this profile was created; reset the profile to adopt the new binary'
       );
     }
-    // Same path, different file identity: the binary was replaced in place
-    // (ADR-016 system-Chrome updates land this way). Not a version-string
-    // comparison — chrome.exe --version is mute on Windows, which made the
-    // old probe fail open there (runner-proven); size+mtime catches every
-    // in-place replacement without a subprocess.
+
+    // Same path, different bytes: the binary was replaced in place, which is
+    // how Chrome self-updates. ADR-025's rule is "moved BACKWARDS", and its
+    // stated reason is Chrome's DOWNGRADE handling moving a profile aside —
+    // so a forward update must be adopted, not refused. Refusing every
+    // in-place change (the previous behavior) was stricter than the ADR and
+    // harmless only while the binary was Playwright's frozen build; against a
+    // self-updating branded Chrome it would refuse after every update, with
+    // profile-destroying reset() as the only recovery.
     if (
       pin.executableSize !== undefined &&
       identity !== undefined &&
       (identity.size !== pin.executableSize || identity.modifiedMs !== pin.executableModifiedMs)
     ) {
+      return {
+        path: resolved,
+        identity,
+        pinUpdate: await this.adjudicateInPlaceReplacement(pin, resolved, identity),
+        selection,
+      };
+    }
+    return { path: resolved, identity, pinUpdate: {}, selection };
+  }
+
+  /**
+   * Decide whether a same-path, different-bytes binary may open the profile,
+   * by comparing its version against the pin — WITHOUT letting it near the
+   * login profile.
+   *
+   * The version comes from a `chromium.launch()` probe, which uses a
+   * Playwright-managed throwaway profile directory. `launchPersistentContext`
+   * must not be used to answer this: Chrome processes its downgrade handling
+   * when it OPENS a profile (ADR-025 §1: "Chrome's downgrade handling can move
+   * a profile aside and lose the logins"), so a verdict reached after that
+   * launch would come too late — and an untrusted binary would already have
+   * held the profile path as --user-data-dir, against a cookie DB ADR-025 §2
+   * calls equivalent to plaintext. A later close() would be a flush, not a
+   * rollback.
+   *
+   * No subprocess is involved, so this works on Windows, where the original
+   * `chrome.exe --version` probe printed nothing (the reason the pin compared
+   * file identity instead).
+   */
+  private async adjudicateInPlaceReplacement(
+    pin: ProfilePin,
+    resolved: string,
+    identity: ExecutableIdentity
+  ): Promise<Partial<ProfilePin>> {
+    const pinned = parseChromeVersion(pin.chromiumVersion);
+    const refuse = (reason: string): never => {
       throw new LoginBrowserError(
         'LOGIN_BINARY_DOWNGRADED',
-        `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size}); reset the profile to adopt it`
+        `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size}): ${reason}; reset the profile to adopt it`
+      );
+    };
+    // An old pin without a comparable version cannot be adjudicated, so it
+    // falls back to the previous refuse-on-any-change behavior. Fail closed.
+    if (pinned === undefined) refuse('the pinned version is missing or not comparable');
+    const probed = parseChromeVersion(await probeChromeVersion(resolved));
+    if (probed === undefined) refuse('the replacement binary did not report a comparable version');
+    const order = compareChromeVersion(probed as number[], pinned as number[]);
+    if (order < 0) {
+      refuse(
+        `the replacement is OLDER (pinned ${pin.chromiumVersion}, found ${(probed as number[]).join('.')})`
       );
     }
-    return { path: resolved, identity };
+    if (order === 0) {
+      // Same version, different bytes is not a Chrome update; it is the
+      // signature of a replaced binary. Refuse under the path-change code.
+      throw new LoginBrowserError(
+        'LOGIN_BINARY_CHANGED',
+        `the binary at the pinned path was replaced with different bytes reporting the SAME version (${pin.chromiumVersion}); reset the profile to adopt it`
+      );
+    }
+    console.info(
+      `[agentbrowser] login profile: adopting an in-place browser update (${pin.chromiumVersion} -> ${(probed as number[]).join('.')})`
+    );
+    return { adoptedFromExecutable: resolved, adoptedAtMs: Date.now() };
   }
 
   // --- profile lock --------------------------------------------------------
@@ -370,6 +575,106 @@ export class LoginBrowser {
   private async releaseProfileLock(): Promise<void> {
     await rm(this.lockPath(), { force: true });
   }
+
+  /**
+   * Release only a lock this process still holds. The 'close' handler and the
+   * reap can both fire late — after another instance has acquired the lock —
+   * and an unconditional rm would delete that instance's lock.
+   */
+  private async releaseProfileLockIfMine(): Promise<void> {
+    const holder = await readFile(this.lockPath(), 'utf8').catch(() => undefined);
+    if (holder !== undefined && holder.trim() !== `${process.pid}`) return;
+    await this.releaseProfileLock();
+  }
+
+  /**
+   * Chrome's OWN profile lock (ProcessSingleton), which is separate from
+   * agentbrowser-lock: <profile>/SingletonLock is a symlink whose target is
+   * `<hostname>-<pid>`.
+   *
+   * We only ever READ it. Removing it is unsafe in exactly the case that
+   * motivates looking: a wedged-but-ALIVE Chrome. Deleting its lock would let
+   * a second Chrome open the same Cookies DB and Local State and lose the
+   * logins. It is also POSIX-only (Windows Chrome uses a named mutex plus
+   * <profile>\lockfile), so deleting would no-op on the platform where
+   * App-Bound Encryption raises the stakes most. And ADR-025 §1 already notes
+   * a same-host stale lock "is taken over by Chrome on the same host", so
+   * there is nothing to gain where deletion would be safe.
+   *
+   * What this adds is a typed refusal instead of a Chrome that exits
+   * instantly: a live or foreign-host owner becomes LOGIN_PROFILE_IN_USE,
+   * refused BEFORE agentbrowser-lock is acquired, naming the recovery.
+   */
+  private async assertChromeSingletonFree(): Promise<void> {
+    const state = await inspectChromeSingleton(this.options.profileDir);
+    if (state.state === 'live') {
+      throw new LoginBrowserError(
+        'LOGIN_PROFILE_IN_USE',
+        `another Chrome (pid ${state.pid}) holds this login profile; close it, then open the login browser again`
+      );
+    }
+    if (state.state === 'foreign-host') {
+      throw new LoginBrowserError(
+        'LOGIN_PROFILE_IN_USE',
+        `this login profile is locked by Chrome on a different host (${state.host}; this host is ${hostname()}). Chrome only breaks a stale lock from the same host — remove SingletonLock, SingletonSocket and SingletonCookie from the profile directory once no Chrome is using it`
+      );
+    }
+  }
+}
+
+/** Classify Chrome's ProcessSingleton lock without modifying anything. */
+export async function inspectChromeSingleton(
+  profileDir: string
+): Promise<
+  | { state: 'absent' }
+  | { state: 'stale' }
+  | { state: 'live'; pid: number }
+  | { state: 'foreign-host'; host: string }
+  | { state: 'unreadable' }
+> {
+  const target = await readlink(join(profileDir, 'SingletonLock')).catch(() => undefined);
+  if (target === undefined) return { state: 'absent' };
+  // `<hostname>-<pid>`; the hostname itself may contain dashes, so split at
+  // the LAST one.
+  const split = target.lastIndexOf('-');
+  if (split <= 0) return { state: 'unreadable' };
+  const host = target.slice(0, split);
+  const pid = Number.parseInt(target.slice(split + 1), 10);
+  if (Number.isNaN(pid)) return { state: 'unreadable' };
+  if (host !== hostname()) return { state: 'foreign-host', host };
+  // Same host: a live owner must be refused, a dead one Chrome breaks itself.
+  return processExists(pid) ? { state: 'live', pid } : { state: 'stale' };
+}
+
+/**
+ * The version a candidate binary reports, read over Playwright's pipe with a
+ * THROWAWAY profile — `launch()`, never `launchPersistentContext()`, so the
+ * login profile is never opened by a binary that has not been vetted yet.
+ */
+async function probeChromeVersion(executablePath: string): Promise<string | undefined> {
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  try {
+    browser = await chromium.launch({ headless: true, executablePath, timeout: 30_000 });
+    return browser.version();
+  } catch {
+    return undefined;
+  } finally {
+    await browser?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Does this path look like a Playwright-managed browser build? Used only to
+ * decide whether a path change is one WE caused (a dependency bump, or the
+ * pre-ADR-016 bundled pin) and may therefore be adopted without destroying
+ * the profile. A false negative only costs the operator a `reset`, so the
+ * heuristic is deliberately loose.
+ */
+export function looksLikePlaywrightBundled(path: string): boolean {
+  if (path === chromium.executablePath()) return true;
+  const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (root !== undefined && root !== '' && path.startsWith(root)) return true;
+  return /[/\\]chromium[_-]?\d+[/\\]/.test(path) || /[/\\]ms-playwright[/\\]/.test(path);
 }
 
 interface ExecutableIdentity {
@@ -390,6 +695,23 @@ async function executableIdentity(path: string): Promise<ExecutableIdentity | un
   } catch {
     return undefined; // never block a launch on the identity read
   }
+}
+
+/**
+ * Is this context's browser positively disconnected?
+ *
+ * `true` = gone (reap it). `false` = alive. `undefined` = cannot tell, which
+ * callers treat as alive: a persistent context always exposes `browser()` in
+ * production (the pin's chromiumVersion is read through it), so the
+ * undeterminable case is a test stub, and guessing "dead" there would drop a
+ * live context.
+ */
+function contextDisconnected(context: BrowserContext): boolean | undefined {
+  if (typeof context.browser !== 'function') return undefined;
+  const browser = context.browser();
+  if (browser === null || browser === undefined) return undefined;
+  if (typeof browser.isConnected !== 'function') return undefined;
+  return !browser.isConnected();
 }
 
 function processExists(pid: number): boolean {
