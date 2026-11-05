@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -272,6 +273,37 @@ describe('ADR-025 §1 pin semantics', () => {
     expect((await readPin(profile)).executable).toBe(bundledPath);
   });
 
+  it('still adopts the migration when the pin records NO version (old pin format)', async () => {
+    // Round-2 review finding 1: fixing the downgrade hole must not brick the
+    // migration for a pin written before chromiumVersion was recorded (it is
+    // optional, and `browser()?.version()` can yield nothing). That case used
+    // to adopt, so failing closed would be strictly worse than the behavior
+    // being replaced — it would force the profile-destroying reset() and lose
+    // the logins this gate exists to protect.
+    await installBranded();
+    const profile = profileFor('migrate-no-version');
+    await writePin(profile, {
+      executable: bundledPath,
+      executableSize: 52_112,
+      executableModifiedMs: 1,
+      launches: 3,
+    });
+    probeVersion = '156.0.8078.80';
+    contextVersion = '156.0.8078.80';
+    const browser = mk(profile, { brandedChromeCandidates: [brandedCandidate] });
+    try {
+      await browser.open();
+      expect(lastExecutable()).toBe(brandedCandidate);
+      const pin = await readPin(profile);
+      expect(pin.launches).toBe(4);
+      // The hole closes itself: the next launch HAS a comparable version.
+      expect(pin.chromiumVersion).toBe('156.0.8078.80');
+      expect(pin.adoptedFromVersion).toBe('(unrecorded)');
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  });
+
   it('adopts a bundled-to-bundled path move (a Playwright dependency bump)', async () => {
     const profile = profileFor('rev-bump');
     await writePin(profile, {
@@ -412,21 +444,36 @@ describe('ADR-025 §1 pin semantics', () => {
 });
 
 describe('Chrome ProcessSingleton is read, never removed', () => {
-  it('classifies a live BROWSER owner as live, and never deletes the lock', async () => {
+  it('REFUSES a live browser owner, never launches, and leaves the lock on disk', async () => {
     const profile = profileFor('singleton-live');
     await mkdir(profile, { recursive: true, mode: 0o700 });
-    await symlink(`${hostname()}-${process.pid}`, join(profile, 'SingletonLock'));
+    const lock = join(profile, 'SingletonLock');
+    await symlink(`${hostname()}-${process.pid}`, lock);
     // The pid is real and live (it is us); the injected predicate stands in
-    // for "and it is a browser", which a test cannot arrange for real.
+    // for "and it is a browser", which a test cannot arrange for real. Driven
+    // through open() so the class-level refusal is covered, not just the
+    // classifier (round-2 review finding 2).
+    await expect(
+      mk(profile, { brandedChromeCandidates: [], isBrowserPid: async () => true }).open()
+    ).rejects.toMatchObject({ code: 'LOGIN_PROFILE_IN_USE' });
+    expect(recorded.persistent).toHaveLength(0);
+    // Never removed: deleting a live owner's lock would put two Chromes on one
+    // cookie DB. Asserted against the filesystem, not the read-only classifier.
+    expect(await readlink(lock)).toBe(`${hostname()}-${process.pid}`);
+    // And our own profile lock was not taken — every refusal leaves it free.
+    expect(existsSync(join(profile, 'agentbrowser-lock'))).toBe(false);
+  });
+
+  it('classifies a live non-browser pid as stale (the classifier, directly)', async () => {
+    const profile = profileFor('singleton-classify');
+    await mkdir(profile, { recursive: true, mode: 0o700 });
+    await symlink(`${hostname()}-${process.pid}`, join(profile, 'SingletonLock'));
+    expect(await inspectChromeSingleton(profile, async () => false)).toMatchObject({
+      state: 'stale',
+    });
     expect(await inspectChromeSingleton(profile, async () => true)).toMatchObject({
       state: 'live',
       pid: process.pid,
-    });
-    // Still on disk afterwards: deleting a live owner's lock would put two
-    // Chromes on one cookie DB. (The class-level refusal is covered by the
-    // foreign-host case below, which needs no predicate.)
-    expect(await inspectChromeSingleton(profile, async () => true)).toMatchObject({
-      state: 'live',
     });
   });
 

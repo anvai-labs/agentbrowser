@@ -93,6 +93,13 @@ export interface LoginBrowserOptions extends ChromeBinaryPreference {
   profileDir: string;
   headless?: boolean;
   now?: () => number;
+  /**
+   * Test seam for Chrome's ProcessSingleton owner check. Production uses the
+   * real process-name probe; a test cannot arrange for a pid it does not own
+   * to look like a browser, and without this the class-level `live` refusal
+   * would be untestable (round-2 review finding 2).
+   */
+  isBrowserPid?: (pid: number) => Promise<boolean>;
 }
 
 interface ProfilePin {
@@ -479,11 +486,14 @@ export class LoginBrowser {
       // one, which is the loss ADR-025 §1 forbids, and would then rewrite the
       // pin to the lower version, erasing the evidence.
       if (looksLikePlaywrightBundled(pin.executable)) {
-        const adopted = await this.assertNotADowngrade(
+        const adopted = await this.assertNotADowngrade({
           pin,
           resolved,
-          `adopting a new binary (the pin named Playwright's bundled build)\n  was: ${pin.executable}\n  now: ${resolved}`
-        );
+          adoptMessage: `adopting a new binary (the pin named Playwright's bundled build)\n  was: ${pin.executable}\n  now: ${resolved}`,
+          // An old pin with no recorded version used to adopt here; refusing
+          // would be worse than the behavior being replaced.
+          adoptWhenPinHasNoVersion: true,
+        });
         return {
           path: resolved,
           identity,
@@ -548,18 +558,25 @@ export class LoginBrowser {
     resolved: string,
     identity: ExecutableIdentity
   ): Promise<Partial<ProfilePin>> {
-    const context = `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size})`;
-    const adopted = await this.assertNotADowngrade(pin, resolved, undefined, context, (probed) => {
-      // Same version, different bytes is not a Chrome update; it is the
-      // signature of a replaced binary. Refuse under the path-change code.
-      if (probed === 0) {
-        throw new LoginBrowserError(
-          'LOGIN_BINARY_CHANGED',
-          `the binary at the pinned path was replaced with different bytes reporting the SAME version (${pin.chromiumVersion}); reset the profile to adopt it`
-        );
-      }
+    return this.assertNotADowngrade({
+      pin,
+      resolved,
+      failureContext: `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size})`,
+      // A binary swapped under us at the SAME path is the suspicious case, so
+      // an unadjudicable pin fails closed here — the posture the pre-version
+      // code had for any in-place change.
+      adoptWhenPinHasNoVersion: false,
+      onEqual: (order) => {
+        // Same version, different bytes is not a Chrome update; it is the
+        // signature of a replaced binary. Refuse under the path-change code.
+        if (order === 0) {
+          throw new LoginBrowserError(
+            'LOGIN_BINARY_CHANGED',
+            `the binary at the pinned path was replaced with different bytes reporting the SAME version (${pin.chromiumVersion}); reset the profile to adopt it`
+          );
+        }
+      },
     });
-    return adopted;
   }
 
   /**
@@ -570,14 +587,28 @@ export class LoginBrowser {
    *
    * `onEqual` lets the same-path caller treat an identical version as tamper;
    * for a path change an equal version is a perfectly ordinary adoption.
+   *
+   * `adoptWhenPinHasNoVersion` differs by caller on purpose (round-2 review
+   * finding 1). `chromiumVersion` is optional — pins written before it was
+   * recorded, or by a launch whose `browser()` yielded nothing, have none. For
+   * a SAME-PATH swap that is suspicious, so it fails closed. For a PATH change
+   * we can already explain as our own, refusing would be strictly worse than
+   * the behavior it replaced: that case used to adopt, so failing closed would
+   * force the profile-destroying `reset()` and lose exactly the logins this
+   * gate exists to protect. With no pinned version there is no downgrade to
+   * prove, and Chrome's own `Last Version` check remains the backstop.
    */
-  private async assertNotADowngrade(
-    pin: ProfilePin,
-    resolved: string,
-    adoptMessage?: string,
-    failureContext = 'the resolved browser binary differs from the pinned one',
-    onEqual?: (order: number) => void
-  ): Promise<Partial<ProfilePin>> {
+  private async assertNotADowngrade(options: {
+    pin: ProfilePin;
+    resolved: string;
+    adoptMessage?: string;
+    failureContext?: string;
+    adoptWhenPinHasNoVersion: boolean;
+    onEqual?: (order: number) => void;
+  }): Promise<Partial<ProfilePin>> {
+    const { pin, resolved, adoptMessage, onEqual } = options;
+    const failureContext =
+      options.failureContext ?? 'the resolved browser binary differs from the pinned one';
     // Annotated `never` so the compiler knows these calls terminate — without
     // it the narrowed types below would need casts.
     const refuse: (reason: string) => never = (reason) => {
@@ -586,10 +617,22 @@ export class LoginBrowser {
         `${failureContext}: ${reason}; reset the profile to adopt it`
       );
     };
+    const announce = (superseded: string, probedText: string): void => {
+      console.info(
+        `[agentbrowser] login profile: ${adoptMessage ?? `adopting an in-place browser update (${superseded} -> ${probedText})`}`
+      );
+    };
     const pinned = parseChromeVersion(pin.chromiumVersion);
-    // A pin without a comparable version cannot be adjudicated. Fail closed —
-    // the same posture the pre-version-comparison code had for any change.
-    if (pinned === undefined) refuse('the pinned version is missing or not comparable');
+    if (pinned === undefined) {
+      if (!options.adoptWhenPinHasNoVersion) {
+        refuse('the pinned version is missing or not comparable');
+      }
+      // Record what the adopting binary reports, so the next launch HAS a
+      // comparable version and this hole closes itself after one open.
+      const probedRaw = await probeChromeVersion(resolved);
+      announce(pin.chromiumVersion ?? '(unrecorded)', probedRaw ?? '(unreported)');
+      return { adoptedFromVersion: '(unrecorded)', adoptedAtMs: Date.now() };
+    }
     const probed = parseChromeVersion(await probeChromeVersion(resolved));
     if (probed === undefined) refuse('the candidate binary did not report a comparable version');
     const order = compareChromeVersion(probed, pinned);
@@ -599,11 +642,9 @@ export class LoginBrowser {
       );
     }
     onEqual?.(order);
-    console.info(
-      `[agentbrowser] login profile: ${adoptMessage ?? `adopting an in-place browser update (${pin.chromiumVersion} -> ${probed.join('.')})`}`
-    );
+    announce(pin.chromiumVersion ?? '(unrecorded)', probed.join('.'));
     // The superseded VERSION is the useful record for a same-path update (the
-    // path is unchanged, so recording it says nothing — review finding 7).
+    // path is unchanged, so recording it says nothing — round-1 finding 7).
     return { adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)', adoptedAtMs: Date.now() };
   }
 
@@ -689,7 +730,10 @@ export class LoginBrowser {
    * refused BEFORE agentbrowser-lock is acquired, naming the recovery.
    */
   private async assertChromeSingletonFree(): Promise<void> {
-    const state = await inspectChromeSingleton(this.options.profileDir);
+    const state = await inspectChromeSingleton(
+      this.options.profileDir,
+      this.options.isBrowserPid ?? processLooksLikeBrowser
+    );
     if (state.state === 'live') {
       throw new LoginBrowserError(
         'LOGIN_PROFILE_IN_USE',
