@@ -96,6 +96,13 @@ export async function createManagedServer(
   const callerLogLevel = process.env.AGENTBROWSER_LOG_LEVEL?.trim();
   const child = launcher.spawn('node', options.serverArgs ?? ['dist/server.js'], {
     PORT: String(port),
+    // HOST is pinned exactly like PORT: baseUrl below is hardcoded to
+    // 127.0.0.1, so an inherited ambient HOST (some CI systems export one)
+    // could never do anything but desync the client from the listener — or,
+    // since the server refuses an unauthenticated non-loopback bind, crash
+    // the child at boot and turn this launcher into a 15s health-check hang
+    // (review round 1, finding 1).
+    HOST: '127.0.0.1',
     AGENTBROWSER_LOG_LEVEL: callerLogLevel || 'error',
   });
 

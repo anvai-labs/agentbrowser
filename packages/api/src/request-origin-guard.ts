@@ -49,11 +49,13 @@ export interface RequestOriginGuard {
   readonly corsOrigin: false | '*' | string[];
 }
 
-function isLoopbackHostname(hostname: string): boolean {
+/** Exported for the startServer bind guard, which classifies the same value. */
+export function isLoopbackHostname(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '::1' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
-function normalizeHostname(hostname: string): string {
+/** Exported for the startServer bind guard, which classifies the same value. */
+export function normalizeHostname(hostname: string): string {
   return hostname
     .toLowerCase()
     .replace(/^\[|\]$/g, '')

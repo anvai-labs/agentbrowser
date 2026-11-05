@@ -410,6 +410,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug`, `info` (default), `warn` or `error`, case-insensitive. Unknown values print a warning and use `info`. `warn` drops successful-operation lines; `error` also drops failed operations, including policy and approval denials, so alert on the `errors_total` metric rather than on logs at that level. Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF` | service entrypoint | `1` = shut down cleanly (closing all sessions and browsers) when stdin closes. Opt-in lifeline for a supervising launcher: if the launcher is killed, the OS closes the pipe and the server still exits instead of orphaning Chromium. Leave unset under service managers that give the server an empty stdin (it would stop immediately). |
 | `AGENTBROWSER_ALLOW_LOOPBACK` | service entrypoint | Set `1`/`true` to disable the loopback/unspecified-address block (127/8, `0.0.0.0`, `::1`, `::`, `localhost` hostnames) for **all** sessions on this server — local-machine testing against `127.0.0.1` dev servers. Startup-only; session/request input can never set it. **With this set, visited pages can reach every loopback service, including this server's own API: in no-keys local mode that is full unauthenticated control of all sessions; in keyed mode the service is auth-gated but other loopback services are exposed.** Cloud-metadata blocking and session host restrictions still apply. Loud warning at startup. |
+| `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND` | service entrypoint | `1`/`true`/`yes`: allow the service to **bind beyond loopback without `AGENTBROWSER_API_KEYS`** — otherwise a `HOST=0.0.0.0` (or LAN-address) bind refuses to start. For environments where exposure is already the operator's explicit decision, such as a container whose ports must be published to be reachable (the Docker image sets this itself); the wide-bind `Host` check still applies on this path. **Not the same variable as `AGENTBROWSER_ALLOW_LOOPBACK`** (that one governs what visited *pages* may reach; this one governs where the *service* may listen). Keyless remote access without either variable: use an SSH tunnel to the loopback listener instead. |
 | `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. Metadata includes the whole link-local ranges (`169.254.0.0/16`, `fe80::/10`), so a CIDR exception cannot reach link-local devices. |
 | `AGENTBROWSER_CORS_ORIGINS` | service entrypoint | Comma-separated exact browser origins (`scheme://host[:port]`) allowed to call the API and to receive CORS headers, e.g. `https://console.example`. Unset/blank: none — cross-origin browser requests are refused with `403 FORBIDDEN` and no CORS headers are sent; the same-origin [operator panel](#browser-request-guard) still works. Malformed origins or empty list entries abort startup. `*` disables the origin check (loud warning). Merged with `ServerOptions.corsOrigin`. |
 | `AGENTBROWSER_ALLOWED_HOSTS` | service entrypoint | Comma-separated hostnames (no port) accepted in the `Host` header in addition to loopback names, e.g. `agentbrowser.internal`. Without API keys only loopback names are accepted on **any** bind (DNS-rebinding defense), so Compose/LAN clients that use a container or host name must be listed here; setting the list also enables the Host check on keyed wide binds. See [browser request guard](#browser-request-guard). |
@@ -462,12 +463,14 @@ non-blank `AGENTBROWSER_LOG_LEVEL` when one is set.
 Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
 default because it reads local files on the operator's behalf
 (screenshots, upload paths) — network exposure is an explicit opt-in via
-`HOST=0.0.0.0` (or `options.host`; the Dockerfile sets this for
-container port publishing). See `ServerOptions`; port selection
-rationale in [ADR-017](adr/017-default-port-5709.md). When exposing the
-service beyond localhost, set
-`AGENTBROWSER_API_KEYS` first — the egress policy constrains what
-*browser sessions* may reach, not who may reach the *service*.
+`HOST=0.0.0.0` (or `options.host`). See `ServerOptions`; port selection
+rationale in [ADR-017](adr/017-default-port-5709.md). **A bind beyond
+loopback without `AGENTBROWSER_API_KEYS` refuses to start** (or set
+`AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` where exposure is already the
+operator's own decision, such as a container with published ports; the
+Docker image sets this itself) — the egress policy constrains what
+*browser sessions* may reach, not who may reach the *service*. An empty
+`HOST=` is treated as unset, never as the `::` wide bind Node would give it.
 
 ### Browser request guard
 
@@ -495,13 +498,19 @@ DNS-rebound hostname. The guard refuses with `403 FORBIDDEN`:
 CLI, SDK and MCP clients send no `Origin` and no fetch metadata, so they are
 unaffected as long as they use a trusted name.
 
-**Wide binds** (`HOST=0.0.0.0`, the Docker image's default): without API keys
-only trusted names are accepted, for every client — `docker run -p 5709:5709`
-reached via `localhost:5709` works, but Compose services or LAN clients that
-use a container or host name get 403 until that name is listed in
-`AGENTBROWSER_ALLOWED_HOSTS` (the service logs this at startup). With
-`AGENTBROWSER_API_KEYS` set the `Host` check is skipped unless names are
-listed: the bearer key is the barrier, and a rebound page has none.
+**Wide binds** (`HOST=0.0.0.0` or a LAN address): without API keys the
+service **refuses to start** — set `AGENTBROWSER_API_KEYS`, bind loopback
+(`127.0.0.1`/`localhost`/`::1`), or set
+`AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` where exposure is already the
+operator's own decision (a container whose ports must be published to be
+reachable; the Docker image sets this itself). On the escape-hatch path the
+Host check below still applies: only trusted names are accepted for every
+client — `docker run -p 5709:5709` reached via `localhost:5709` works, but
+Compose services or LAN clients that use a container or host name get 403
+until that name is listed in `AGENTBROWSER_ALLOWED_HOSTS` (the service logs
+this at startup). With `AGENTBROWSER_API_KEYS` set the `Host` check is
+skipped unless names are listed: the bearer key is the barrier, and a
+rebound page has none.
 
 Compatibility notes:
 
