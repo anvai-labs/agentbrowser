@@ -66,6 +66,61 @@ export function preferBundledEnv(): boolean {
   return value === '1' || value === 'true';
 }
 
+/** The login browser's launch budget, in ms, when nothing overrides it. */
+export const DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS = 120_000;
+const MIN_LOGIN_LAUNCH_TIMEOUT_MS = 5_000;
+const MAX_LOGIN_LAUNCH_TIMEOUT_MS = 600_000;
+
+/**
+ * How long a login-browser launch may take, from
+ * AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS or an explicit option.
+ *
+ * Why this exists at all: `launchPersistentContext` carried no timeout, so
+ * Playwright's 30s default applied — and a login browser opened by a
+ * launchd-started server was MEASURED at 23s (branded Chrome, warm machine,
+ * empty profile). Seven seconds of headroom is not a budget; a real profile
+ * on a cold start plausibly crosses it, and crossing it leaves Chrome holding
+ * a drawn window that the server has already disowned, which is exactly how
+ * "the login browser opens an unresponsive window" presents.
+ *
+ * 120s default: generous enough to absorb a cold start on a large profile,
+ * while still reporting rather than hanging forever. An operator is waiting
+ * at the keyboard, so the elapsed time is logged either way.
+ *
+ * Shape follows snapshotTimeout() in ./snapshot-evidence.ts: an invalid
+ * explicit option throws (a caller passing nonsense is a bug), an invalid env
+ * value warns and falls back (an operator typo must not take the server down).
+ */
+export function loginLaunchTimeout(explicit?: number): number {
+  const valid = (value: number): boolean =>
+    Number.isInteger(value) &&
+    value >= MIN_LOGIN_LAUNCH_TIMEOUT_MS &&
+    value <= MAX_LOGIN_LAUNCH_TIMEOUT_MS;
+  if (explicit !== undefined) {
+    if (!valid(explicit)) {
+      throw new RangeError(
+        `loginLaunchTimeoutMs must be an integer between ${MIN_LOGIN_LAUNCH_TIMEOUT_MS} and ${MAX_LOGIN_LAUNCH_TIMEOUT_MS}`
+      );
+    }
+    return explicit;
+  }
+  const raw = process.env.AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS?.trim() ?? '';
+  if (raw === '') return DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (valid(parsed)) return parsed;
+  console.warn(
+    `[agentbrowser] AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS=${JSON.stringify(raw)} is not an integer between ${MIN_LOGIN_LAUNCH_TIMEOUT_MS} and ${MAX_LOGIN_LAUNCH_TIMEOUT_MS}; using ${DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS}ms`
+  );
+  return DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS;
+}
+
+/**
+ * Above this, a launch is slow enough that the operator deserves to be told
+ * why rather than left wondering. Measured reference points: ~1s from a
+ * shell, ~6s (bundled) and ~23s (branded) under a launchd-started server.
+ */
+export const SLOW_LOGIN_LAUNCH_MS = 10_000;
+
 /**
  * Parse AGENTBROWSER_CHROMIUM_ARGS into Chromium launch flags.
  *

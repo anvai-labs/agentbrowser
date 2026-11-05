@@ -8,10 +8,12 @@ import {
   type ChromeBinaryPreference,
   compareChromeVersion,
   extraChromiumArgs,
+  loginLaunchTimeout,
   parseChromeVersion,
   type ResolvedChromeBinaryPreference,
   resolveBrandedChrome,
   resolveChromeBinaryPreference,
+  SLOW_LOGIN_LAUNCH_MS,
 } from './chrome-binary.js';
 
 /**
@@ -100,6 +102,11 @@ export interface LoginBrowserOptions extends ChromeBinaryPreference {
    * would be untestable (round-2 review finding 2).
    */
   isBrowserPid?: (pid: number) => Promise<boolean>;
+  /**
+   * How long a launch may take, in ms. Env fallback
+   * AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS; see loginLaunchTimeout().
+   */
+  loginLaunchTimeoutMs?: number;
 }
 
 interface ProfilePin {
@@ -157,9 +164,32 @@ export class LoginBrowser {
    * LOGIN_BINARY_CHANGED, which is the guarantee the ADR is really asking for.
    */
   private readonly chromePreference: ResolvedChromeBinaryPreference;
+  /** Resolved once: an invalid explicit value must fail at construction. */
+  private readonly launchTimeoutMs: number;
 
   constructor(private readonly options: LoginBrowserOptions) {
     this.chromePreference = resolveChromeBinaryPreference(options);
+    this.launchTimeoutMs = loginLaunchTimeout(options.loginLaunchTimeoutMs);
+  }
+
+  /**
+   * Record how long the launch took, so a slow open reads as "41s" in the
+   * service log rather than as a hang.
+   *
+   * The whole reason this defect survived two debugging sessions is that the
+   * login launch logged nothing, leaving the session path's binary line as
+   * the only evidence — and it described a different launch entirely. Elapsed
+   * time is the other half of fixing that.
+   */
+  private reportLaunchElapsed(elapsedMs: number): void {
+    const seconds = (elapsedMs / 1000).toFixed(1);
+    if (elapsedMs < SLOW_LOGIN_LAUNCH_MS) {
+      console.info(`[agentbrowser] login browser opened in ${seconds}s`);
+      return;
+    }
+    console.warn(
+      `[agentbrowser] login browser took ${seconds}s to open (budget ${(this.launchTimeoutMs / 1000).toFixed(0)}s). A server started by launchd/brew services is much slower here than one started from a shell; a large profile adds more. Raise AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS if it approaches the budget — see docs/use-your-login-safely.md.`
+    );
   }
 
   /**
@@ -226,17 +256,22 @@ export class LoginBrowser {
     // unlocked, or a transient mistake (a wider mode, a moved binary, no
     // display) wedges it for the process lifetime.
     await this.acquireProfileLock();
+    const startedAt = performance.now();
     try {
       this.context = await chromium.launchPersistentContext(this.options.profileDir, {
         headless,
         args,
         ignoreDefaultArgs: [...LOGIN_BROWSER_DISABLE_FLAGS],
         ...(executablePath !== undefined ? { executablePath } : {}),
+        // Explicit, because Playwright's 30s default is demonstrably too
+        // tight here: a launchd-started server was measured at 23s.
+        timeout: this.launchTimeoutMs,
       });
     } catch (error) {
       await this.releaseProfileLock();
       throw error;
     }
+    this.reportLaunchElapsed(performance.now() - startedAt);
     // The operator closing the last window marks the browser closed.
     //
     // Both effects are guarded by the IDENTITY of the context this handler was
@@ -629,11 +664,11 @@ export class LoginBrowser {
       }
       // Record what the adopting binary reports, so the next launch HAS a
       // comparable version and this hole closes itself after one open.
-      const probedRaw = await probeChromeVersion(resolved);
+      const probedRaw = await probeChromeVersion(resolved, this.launchTimeoutMs);
       announce(pin.chromiumVersion ?? '(unrecorded)', probedRaw ?? '(unreported)');
       return { adoptedFromVersion: '(unrecorded)', adoptedAtMs: Date.now() };
     }
-    const probed = parseChromeVersion(await probeChromeVersion(resolved));
+    const probed = parseChromeVersion(await probeChromeVersion(resolved, this.launchTimeoutMs));
     if (probed === undefined) refuse('the candidate binary did not report a comparable version');
     const order = compareChromeVersion(probed, pinned);
     if (order < 0) {
@@ -825,10 +860,20 @@ async function processName(pid: number): Promise<string | undefined> {
  * THROWAWAY profile — `launch()`, never `launchPersistentContext()`, so the
  * login profile is never opened by a binary that has not been vetted yet.
  */
-async function probeChromeVersion(executablePath: string): Promise<string | undefined> {
+async function probeChromeVersion(
+  executablePath: string,
+  timeoutMs: number
+): Promise<string | undefined> {
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
-    browser = await chromium.launch({ headless: true, executablePath, timeout: 30_000 });
+    // The SAME budget as the real launch, not a stricter inline one. This
+    // probe is a launch of the same binary in the same environment, and it
+    // FAILS CLOSED: a probe that merely ran out of time yields
+    // LOGIN_BINARY_DOWNGRADED, which tells the operator to reset() and
+    // destroys the logins the gate exists to protect. It also runs on the
+    // one-time bundled->branded migration, i.e. the launch most likely to be
+    // slow under launchd — exactly the wrong place for a tight budget.
+    browser = await chromium.launch({ headless: true, executablePath, timeout: timeoutMs });
     return browser.version();
   } catch {
     return undefined;

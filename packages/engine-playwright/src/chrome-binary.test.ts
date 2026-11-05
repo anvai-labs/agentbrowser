@@ -1,15 +1,18 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   compareChromeVersion,
+  DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS,
   defaultBrandedChromeCandidates,
   extraChromiumArgs,
+  loginLaunchTimeout,
   parseChromeVersion,
   preferBundledEnv,
   resolveBrandedChrome,
   resolveChromeBinaryPreference,
+  SLOW_LOGIN_LAUNCH_MS,
 } from './chrome-binary.js';
 
 /**
@@ -167,6 +170,57 @@ describe('Chrome version arithmetic (the pin’s "moved backwards" rule)', () =>
 
   it('tolerates surrounding whitespace', () => {
     expect(parseChromeVersion(' 156.0.8078.80 ')).toEqual([156, 0, 8078, 80]);
+  });
+});
+
+describe('loginLaunchTimeout', () => {
+  afterEach(() => {
+    delete process.env.AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS;
+  });
+
+  it('defaults generously, because Playwright’s 30s is too tight here', () => {
+    expect(loginLaunchTimeout()).toBe(DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS);
+    // The measured launchd+branded open was 23s, so the default must leave
+    // real headroom above it rather than the 7s Playwright's default did.
+    expect(DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS).toBeGreaterThan(30_000);
+  });
+
+  it('reads the env var', () => {
+    process.env.AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS = '45000';
+    expect(loginLaunchTimeout()).toBe(45_000);
+  });
+
+  it('an invalid env value WARNS and falls back — never takes the server down', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      for (const raw of ['0', '12', 'soon', '-5000', '99999999', '1e4', '5000.5', ' ']) {
+        process.env.AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS = raw;
+        expect(loginLaunchTimeout()).toBe(DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS);
+      }
+      // ' ' trims to empty, which is "unset", so it warns for the other 7.
+      expect(warn).toHaveBeenCalledTimes(7);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('an invalid EXPLICIT value throws — a caller passing nonsense is a bug', () => {
+    for (const value of [0, 12, -1, 600_001, 1.5, Number.NaN]) {
+      expect(() => loginLaunchTimeout(value)).toThrow(RangeError);
+    }
+    expect(loginLaunchTimeout(5_000)).toBe(5_000);
+    expect(loginLaunchTimeout(600_000)).toBe(600_000);
+  });
+
+  it('an explicit value beats the environment', () => {
+    process.env.AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS = '45000';
+    expect(loginLaunchTimeout(90_000)).toBe(90_000);
+  });
+
+  it('the slow-launch threshold sits between shell and launchd reality', () => {
+    // ~1-3.6s from a shell must stay quiet; ~23s under launchd must warn.
+    expect(SLOW_LOGIN_LAUNCH_MS).toBeGreaterThan(3_600);
+    expect(SLOW_LOGIN_LAUNCH_MS).toBeLessThan(23_000);
   });
 });
 

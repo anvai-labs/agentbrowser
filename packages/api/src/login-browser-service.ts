@@ -40,6 +40,11 @@ export class LoginBrowserService {
      * runner Chrome whose version drifts while the Windows job used bundled.
      */
     brandedChromeCandidates?: string[];
+    /**
+     * Launch budget override (tests). Production uses the env fallback
+     * AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS and its default.
+     */
+    loginLaunchTimeoutMs?: number;
   }) {
     this.enabled = options.enabled;
     if (options.enabled) {
@@ -47,6 +52,9 @@ export class LoginBrowserService {
         ...(options.headless !== undefined ? { headless: options.headless } : {}),
         ...(options.brandedChromeCandidates !== undefined
           ? { brandedChromeCandidates: options.brandedChromeCandidates }
+          : {}),
+        ...(options.loginLaunchTimeoutMs !== undefined
+          ? { loginLaunchTimeoutMs: options.loginLaunchTimeoutMs }
           : {}),
         // AGENTBROWSER_LOGIN_PROFILE_DIR overrides; the default sits under
         // the OS private per-user state root (never the server's working

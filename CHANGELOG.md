@@ -58,6 +58,32 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   live or foreign-host owner now refuses `LOGIN_PROFILE_IN_USE` naming the
   recovery, instead of launching a Chrome that exits instantly; a stale
   same-host lock still proceeds, since Chrome breaks that one itself.
+- **The login browser's launch is no longer capped at Playwright's 30 s, and
+  says how long it took.** `launchPersistentContext` passed no `timeout`, so
+  the 30 s default applied — and a login browser opened by a
+  `launchd`/`brew services` server was measured at **23 s** with branded
+  Chrome (versus 1.1 s from a shell; 6 s bundled versus 3.6 s). Seven seconds
+  of headroom is not a budget: a large profile on a cold start crosses it, and
+  crossing it aborts the launch *after* Chrome has drawn its window, leaving a
+  window the server has disowned — which is exactly how "the login browser
+  opens an unresponsive window" presents. New
+  `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` (default 120000, range 5000–600000;
+  invalid values warn and fall back) covers both the window launch and the
+  binary-version probe, and every open logs its elapsed time, warning past
+  10 s. The `launchd` penalty itself is not yet root-caused; this makes it
+  bounded and visible instead of silent.
+- The version probe no longer carries its own stricter 30 s budget. It runs on
+  the one-time bundled→branded migration — the launch most likely to be slow
+  under `launchd` — and **fails closed**, so a probe that merely ran out of
+  time refused `LOGIN_BINARY_DOWNGRADED` and told the operator to `reset()`,
+  destroying the logins the gate exists to protect.
+- The operator guide finally documents the recovery ADR-025 §1 has claimed it
+  documents ("the guide documents the manual recovery for a changed
+  hostname") — that text did not exist. `docs/use-your-login-safely.md` gains
+  a "When something goes wrong" section covering the `launchd` slowness, the
+  `SingletonLock` recoveries including the changed-hostname case, and what the
+  `LOGIN_BINARY_*` refusals mean; `docs/operations.md` gains four
+  login-browser troubleshooting rows where it previously had none.
 - TD-BROWSER-16's deferred branded-chrome suite is delivered, hermetically on
   all three platforms. `login-browser.test.ts` now forces
   `brandedChromeCandidates: []` so its real-Chromium cases stay pinned to the

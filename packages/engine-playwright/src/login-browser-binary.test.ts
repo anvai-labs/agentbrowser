@@ -66,6 +66,7 @@ vi.mock('playwright', () => {
 const { LoginBrowser, looksLikePlaywrightBundled, inspectChromeSingleton } = await import(
   './login-browser.js'
 );
+const { DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS } = await import('./chrome-binary.js');
 
 let dir: string;
 /** A path that looks Playwright-managed AND exists. */
@@ -426,6 +427,47 @@ describe('ADR-025 §1 pin semantics', () => {
       code: 'LOGIN_BINARY_DOWNGRADED',
     });
     expect(recorded.persistent).toHaveLength(0);
+  });
+
+  it('gives the persistent launch AND the fail-closed probe the same budget', async () => {
+    // The probe used to carry an inline 30s while the real launch carried
+    // Playwright's 30s default. Both are launches of the same binary in the
+    // same environment, and the probe FAILS CLOSED — a probe that merely ran
+    // out of time yields LOGIN_BINARY_DOWNGRADED, which tells the operator to
+    // reset() and destroys the logins the gate protects. It also runs on the
+    // one-time migration, the launch most likely to be slow under launchd.
+    const profile = profileFor('timeout-shared');
+    await writePin(profile, {
+      executable: bundledPath,
+      executableSize: 1,
+      executableModifiedMs: 1,
+      chromiumVersion: '156.0.8078.4',
+      launches: 1,
+    });
+    probeVersion = '156.0.8078.80';
+    contextVersion = '156.0.8078.80';
+    const browser = mk(profile, { brandedChromeCandidates: [], loginLaunchTimeoutMs: 77_000 });
+    try {
+      await browser.open();
+      expect(recorded.probe).toHaveLength(1);
+      expect(recorded.probe[0]?.options.timeout).toBe(77_000);
+      expect(recorded.persistent.at(-1)?.options.timeout).toBe(77_000);
+      // And the probe still never sees the login profile.
+      expect(JSON.stringify(recorded.probe[0]?.options)).not.toContain(profile);
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  });
+
+  it('passes the default budget when nothing overrides it', async () => {
+    const profile = profileFor('timeout-default');
+    const browser = mk(profile, { brandedChromeCandidates: [] });
+    try {
+      await browser.open();
+      expect(recorded.persistent.at(-1)?.options.timeout).toBe(DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS);
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
   });
 
   it('does not probe at all on the steady path (pin matches)', async () => {
