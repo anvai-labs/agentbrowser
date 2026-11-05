@@ -28,6 +28,10 @@ start with the [root README](../README.md).
 | Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |
 | Implement the research-workload follow-ups through existing shared owners | [Consumer research intake and acceptance tasks](spec/design/consumer-research-intake.md) |
 
+Dated internal handoffs, session notes and investigation briefs were removed
+with the 2026-10 interim-docs cleanup; anything still normative lives in the
+published pages.
+
 ## Architecture Decision Records (ADRs)
 
 ADRs capture significant architectural decisions, their context, and consequences. Once accepted, these decisions guide implementation and should be referenced when questions arise.
