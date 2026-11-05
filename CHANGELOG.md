@@ -7,6 +7,94 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — the operator login browser never launched branded Chrome (ADR-025 §1)
+
+- **It ran Playwright's bundled Chrome for Testing, always.**
+  `LoginBrowser.resolvePinnedExecutable` called `chromium.executablePath()`
+  unconditionally and never consulted ADR-016's resolution, contradicting
+  ADR-025 §1 ("ADR-016's branded-Chrome selection, or
+  `AGENTBROWSER_CHROME_PATH`" and "reuses `headedChromiumOptions`"). A real
+  login wall is far likelier to accept the operator's branded Chrome, and the
+  sign-in is exactly when a target fingerprints the browser. The precedence
+  now lives in `chrome-binary.ts`, shared with the session path, and
+  `AGENTBROWSER_CHROME_PATH` / `AGENTBROWSER_PREFER_BUNDLED` work the same way
+  for both. Engine behavior is unchanged — including the `executableSelection`
+  diagnostic.
+- **The launch now logs its binary.** The service log's only binary line came
+  from the session path, so it was read as describing the login browser; that
+  misdirection is why this defect survived two debugging sessions.
+- **A Chrome self-update no longer costs you your logins.** A same-path
+  in-place replacement is judged against ADR-025's actual rule — "version has
+  moved backwards" — instead of refusing every change: forward adopts,
+  backwards refuses `LOGIN_BINARY_DOWNGRADED`, and the same version with
+  different bytes refuses `LOGIN_BINARY_CHANGED` as a tamper signature. The
+  version is read by a `chromium.launch()` probe on a throwaway profile, never
+  by opening the login profile — Chrome processes downgrade handling at profile
+  open, so a post-launch verdict would come too late. An unparseable version or
+  a failed probe fails closed. A path change that is explicably ours (a pin
+  naming a Playwright build, including a dependency bump moving
+  `chromium-<rev>`) is adopted once and recorded in the pin, keeping the
+  profile — but still subject to the downgrade gate, since Playwright can
+  bundle a newer-milestone Chrome for Testing than the operator's branded
+  stable Chrome.
+- **A recycled pid can no longer lock you out of the login browser.** Chrome's
+  `SingletonLock` records `<hostname>-<pid>`; pids recycle and `kill(pid, 0)`
+  also succeeds on another user's process, so a stale lock could name an
+  unrelated live process and refuse `LOGIN_PROFILE_IN_USE` forever. "Live" now
+  requires the pid to name a browser, and an unverifiable owner is left to
+  Chrome's own ProcessSingleton to arbitrate.
+- Shutdown closes the login browser unconditionally rather than gating on
+  `isOpen`, so a dead context cannot leave `agentbrowser-lock` behind; the
+  profile lock carries a per-launch token so a late `'close'` cannot delete a
+  lock that a subsequent launch acquired; and the `'close'` handler is guarded
+  by context identity so it cannot clear a live context.
+- **`isOpen` means a connected browser, not a bookkept context.** A killed or
+  pipe-wedged Chrome used to leave the server reporting `open: true` forever
+  while making every reopen a no-op. It is now reaped, and shutdown, `reset()`
+  and cookie reads all handle a dead context instead of leaking the profile
+  lock, wedging, or hanging.
+- **Chrome's `SingletonLock` is read, never deleted.** Removing a live owner's
+  lock would put two Chromes on one cookie DB (and the file is POSIX-only). A
+  live or foreign-host owner now refuses `LOGIN_PROFILE_IN_USE` naming the
+  recovery, instead of launching a Chrome that exits instantly; a stale
+  same-host lock still proceeds, since Chrome breaks that one itself.
+- **The login browser's launch is no longer capped at Playwright's 30 s, and
+  says how long it took.** `launchPersistentContext` passed no `timeout`, so
+  the 30 s default applied — and a login browser opened by a
+  `launchd`/`brew services` server was measured at **23 s** with branded
+  Chrome (versus 1.1 s from a shell; 6 s bundled versus 3.6 s). Seven seconds
+  of headroom is not a budget: crossing it aborts the launch *after* Chrome
+  has drawn its window, leaving a window the server has disowned. New
+  `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` (default 120000, range 5000–600000;
+  invalid values warn and fall back) covers both the window launch and the
+  binary-version probe, and every open logs its elapsed time, warning past
+  10 s.
+  The 23 s was tracked to **endpoint-security software**, not to `launchd` or
+  to Chrome: an antivirus `EndpointSecurity` system extension authorizing the
+  process launch. With that extension disabled the same launch takes 1.0 s,
+  reproducibly, while a shell-started server was 1.1 s either way — so the
+  penalty fell on the `launchd`-spawned child specifically. Profile size is
+  not a factor; a 52 MB profile with real logins opens in 3.2 s, faster than
+  a fresh profile, which pays first-run initialization. The guard stays
+  because any machine running such software will hit the same cliff.
+- The version probe no longer carries its own stricter 30 s budget. It runs on
+  the one-time bundled→branded migration — the launch most likely to be slow
+  under `launchd` — and **fails closed**, so a probe that merely ran out of
+  time refused `LOGIN_BINARY_DOWNGRADED` and told the operator to `reset()`,
+  destroying the logins the gate exists to protect.
+- The operator guide finally documents the recovery ADR-025 §1 has claimed it
+  documents ("the guide documents the manual recovery for a changed
+  hostname") — that text did not exist. `docs/use-your-login-safely.md` gains
+  a "When something goes wrong" section covering the `launchd` slowness, the
+  `SingletonLock` recoveries including the changed-hostname case, and what the
+  `LOGIN_BINARY_*` refusals mean; `docs/operations.md` gains four
+  login-browser troubleshooting rows where it previously had none.
+- TD-BROWSER-16's deferred branded-chrome suite is delivered, hermetically on
+  all three platforms. `login-browser.test.ts` now forces
+  `brandedChromeCandidates: []` so its real-Chromium cases stay pinned to the
+  bundled build — the ubuntu CI image ships `/usr/bin/google-chrome`, which
+  this change would otherwise have had it start launching silently.
+
 ## [1.33.1] — 2026-11-04
 
 ### Fixed — three defects found by the live Vinted acceptance run (PR #700)

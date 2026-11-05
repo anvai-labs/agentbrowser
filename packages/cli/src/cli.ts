@@ -3197,6 +3197,17 @@ export function buildCli(deps: CliDependencies): Cli {
         ['close', 'close the login browser; session cookies are dropped'],
         ['reset', 'delete the login profile (close first)'],
       ] as const) {
+        // `open` waits on a real browser launch, which endpoint-security
+        // software can stretch to tens of seconds; the server's own budget is
+        // AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS (default 120s, up to 600s). A
+        // client cap below that is worse than useless: it aborts while the
+        // server goes on to launch successfully and hold the profile lock, so
+        // the operator sees a failure for a launch that worked — and raising
+        // the server budget, which is what the docs tell them to do, could
+        // not take effect. Stay above the server's ceiling and let the server
+        // be the thing that decides a launch has taken too long.
+        // `close`/`reset` do not launch anything, so they keep the short cap.
+        const timeoutMs = verb === 'open' ? 630_000 : 60_000;
         loginBrowser
           .command(verb)
           .description(description)
@@ -3210,7 +3221,7 @@ export function buildCli(deps: CliDependencies): Cli {
               const res = await fetchOrUsageError(
                 `operator login-browser ${verb}`,
                 `${ctx.baseUrl}/v1/operator/login/${verb}`,
-                60_000,
+                timeoutMs,
                 { method: 'POST', headers: { authorization: `Bearer ${operatorKey}` } }
               );
               const body = (await res.json()) as unknown;

@@ -132,3 +132,85 @@ clears and installs the jar as one engine-owned step → records completion and 
 rotation advisory. Scope accounting (budget spent, pacing, expiry, exclusions, revision) is
 preserved verbatim — renewal is never a fresh grant. A failed replacement stops the session's
 traffic rather than replaying anything under old authority.
+
+## When something goes wrong
+
+### The login browser is slow to open
+
+**The usual cause is endpoint-security software**, not the login browser. Antivirus and
+EDR products install an *EndpointSecurity system extension* that authorizes process
+launches, and the delay it adds to a large signed app bundle like Chrome can be enormous.
+Measured on one macOS machine, same build, same empty profile, branded Chrome:
+
+| | shell-started server | `launchd`-started (`brew services`) |
+|---|---|---|
+| with an EndpointSecurity AV extension active | 1.1 s | **23 s** |
+| with that extension disabled | 1.1 s | **1.0 s** |
+
+The penalty fell on the `launchd`-started server's child specifically — the same launch
+from a shell was unaffected while the extension was active. So if your open is slow, check
+**System Settings → General → Login Items & Extensions → Endpoint Security Extensions**
+before suspecting anything else.
+
+Other contributors, much smaller: a cold start, and the bundled Chromium being a lighter
+bundle than branded Chrome (6.1 s versus 23 s under the same active extension). Profile
+size is *not* one — a 52 MB profile with real logins opened in 3.2 s, faster than a fresh
+profile, which pays first-run initialization instead.
+
+Whatever the cause, the slowness is bounded and visible rather than silent:
+
+- Every open logs its elapsed time (`login browser opened in 1.2s`). Past 10 s it logs a
+  warning instead. Under `brew services` these land in
+  `$(brew --prefix)/var/log/agentbrowser-server.log`.
+- The launch budget is `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` (default 120000, accepted
+  range 5000–600000). Raise it if your logged open time approaches it. Playwright's own
+  default of 30 s was the previous, unconfigurable behavior, and the observed 23 s left
+  only 7 s of room: exceeding the budget aborts the launch after Chrome has already drawn
+  its window, which looks exactly like a window that opened and then stopped responding.
+- If you cannot change the security software and would rather have the faster open than the
+  branded binary, set `AGENTBROWSER_PREFER_BUNDLED=1`. The trade-off is real: a login wall
+  is likelier to accept your own Chrome than a Chrome for Testing build, which is the whole
+  reason the login browser prefers branded
+  ([ADR-016](adr/016-branded-chrome-first-headed-launches.md),
+  [ADR-025](adr/025-operator-cookie-handoff.md) §1).
+
+### `LOGIN_PROFILE_IN_USE`, and recovering a changed hostname
+
+Chrome guards a profile with its own `SingletonLock`, a symlink whose target is
+`<hostname>-<pid>`. The server **reads** that lock and never deletes it: removing a live
+owner's lock would put two Chromes on one cookie database and lose the logins.
+
+- **Another Chrome really is open on this profile.** Close it, then open the login browser
+  again.
+- **A Chrome wedged or was killed.** Kill the process, then remove `SingletonLock`,
+  `SingletonSocket` and `SingletonCookie` from the profile directory.
+- **The lock names a different hostname.** Chrome only breaks a stale lock from the *same*
+  host, so a laptop whose `.local` hostname changed with the network leaves a lock no
+  Chrome will clear. The refusal names the recorded host and this host; remove those same
+  three `Singleton*` files once you are sure no Chrome is using the profile.
+
+The profile directory is `AGENTBROWSER_LOGIN_PROFILE_DIR`, defaulting under the OS per-user
+state root (`~/.local/state/login-profile` on Linux and macOS, `%LOCALAPPDATA%` on Windows).
+
+### `LOGIN_BINARY_CHANGED` / `LOGIN_BINARY_DOWNGRADED`
+
+The profile records which browser binary last wrote it, and refuses to open with an older
+one — Chrome's downgrade handling can move a profile aside and lose the logins, and on
+Windows App-Bound Encryption ties cookie decryption to one binary.
+
+Most changes are adopted automatically and need nothing from you, all of them logged:
+
+- a Chrome that updated itself in place (forward only);
+- any switch where one side is a Playwright-managed build — bundled→branded, branded→bundled
+  when you set `AGENTBROWSER_PREFER_BUNDLED=1`, a Playwright version bump moving the
+  bundled path, or the fallback to bundled while macOS is mid-swap of the Chrome `.app`.
+
+You see a refusal in three cases: the new binary is genuinely **older** than the one that
+wrote the profile; the binary at the same path changed while reporting the **same** version
+(a replacement, not an update); or you moved between two of your **own** installed Chromes,
+which we cannot attribute to our own resolution changing.
+
+For that last case, pointing `AGENTBROWSER_CHROME_PATH` back at the **pinned** path keeps
+the profile. Otherwise the only in-product recovery is `operator login-browser reset`, which
+**deletes the profile and every login in it** — the refusal message names the recorded
+binary so you can decide which you actually want.

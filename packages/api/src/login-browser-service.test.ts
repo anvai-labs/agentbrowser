@@ -41,6 +41,12 @@ describe('LoginBrowserService', () => {
       enabled: true,
       profileDir: join(dir, 'profile-lifecycle'),
       headless: process.env.AGENTBROWSER_LOGIN_HEADLESS === '1',
+      // Pin this REAL launch to Playwright's bundled build on every host. The
+      // ubuntu CI image ships /usr/bin/google-chrome, so branded detection
+      // would have this job drive a runner Chrome (drifting version, launch
+      // unqualified by Playwright) while the Windows job used bundled —
+      // the two jobs would stop testing the same thing.
+      brandedChromeCandidates: [],
     });
     try {
       expect((await service.open()).open).toBe(true);
