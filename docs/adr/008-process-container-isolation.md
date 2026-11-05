@@ -44,7 +44,7 @@ For a hosted multi-tenant service, stronger isolation is required.
 The owner approved a separate contained Chromium deployment profile, initially
 on Linux, that requires OS-enforced gateway-only egress before release. Native
 local/Brew operation remains supported without that containment guarantee.
-See the [accepted egress direction](../egress-transport-design.md) for the
+See the accepted egress direction (formerly docs/egress-transport-design.md) for the
 adapter/gateway split, required bypass tests and fail-closed startup contract.
 
 This pulls forward network containment only; full hostile multi-tenant resource

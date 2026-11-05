@@ -97,7 +97,7 @@ context; revoke old access at the service boundary.
 | Task view including declared inputs | 64 KiB | Core/mode retained; deduplicate shared modules |
 
 These are documentation budgets. Runtime limits come from existing protocol bounds
-and the [shared infrastructure design](../shared-session-infrastructure.md), advertised
+and the shared infrastructure design (removed 2026-10), advertised
 as effective deployment capabilities. Do not copy those numbers into mode-specific
 constants. Reuse one helper per budget domain at its responsible boundary: canonical
 input traversal for nested bytes/depth/nodes, observation budgeting for output,
