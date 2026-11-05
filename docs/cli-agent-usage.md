@@ -53,7 +53,7 @@ attempt to reuse authentication; verify the expected signed-in UI afterward.
 | `AGENTBROWSER_BASE_URL` | MCP adapter | Selects the REST service; the CLI does not use this variable. |
 | `AGENTBROWSER_API_KEY` | CLI and MCP adapter | Sends an existing bearer credential. |
 | `AGENTBROWSER_API_KEYS` | Server at startup | Configures `key:tenant` credentials; unset means an unauthenticated local service. |
-| `HOST`, `PORT` | Server at startup | Selects the listener; keep local instances on loopback. |
+| `HOST`, `PORT` | Server at startup | Selects the listener; keep local instances on loopback. A non-loopback `HOST` requires `AGENTBROWSER_API_KEYS` at startup (or `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` for containers). |
 | `AGENTBROWSER_ALLOWED_CIDRS` | Server at startup | Operator-authorized private-IP exceptions, never a loopback or metadata bypass. |
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | Server at startup | Per-response network byte cap: defaults to 10 MiB; operator override from 1 through 67108864 bytes (64 MiB). Session/CLI requests cannot raise it. |
 

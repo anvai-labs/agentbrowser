@@ -2,8 +2,10 @@
  * Server startup, loaded by bin.ts only after argument handling so that
  * --help/--version never pull in the engine graph (Playwright).
  * Port and host come from the PORT/HOST environment variables or the
- * ServerOptions defaults (5709 on 127.0.0.1; set HOST=0.0.0.0 for
- * network/container exposure).
+ * ServerOptions defaults (5709 on 127.0.0.1). A bind beyond loopback
+ * (HOST=0.0.0.0 or a LAN address) requires AGENTBROWSER_API_KEYS at startup
+ * — or AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1 for containers whose
+ * exposure is the operator's own port-publishing decision.
  */
 
 import { MetricsRegistry, StructuredLogger } from '@agentbrowser/core';

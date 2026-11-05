@@ -7,7 +7,7 @@
 
 import { FakeEngine } from '@agentbrowser/testkit';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildServer, startServer } from './server';
 
 describe('AgentBrowser REST API', () => {
@@ -2030,6 +2030,95 @@ describe('startServer defaults', () => {
         process.env.HOST = savedHost;
       }
       await server?.close();
+    }
+  });
+});
+
+describe('startServer bind policy: non-loopback without authentication refuses to start', () => {
+  // The guard resolves keys exactly like buildServer (options ?? env). Saving
+  // and clearing both env knobs around every case keeps the matrix honest.
+  const saved = { HOST: process.env.HOST, KEYS: process.env.AGENTBROWSER_API_KEYS };
+  const ESCAPE = 'AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND';
+
+  beforeEach(() => {
+    for (const key of ['HOST', 'AGENTBROWSER_API_KEYS', ESCAPE] as const) {
+      if (process.env[key] !== undefined) Reflect.deleteProperty(process.env, key);
+    }
+  });
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = value;
+      }
+    }
+    if (process.env[ESCAPE] !== undefined) Reflect.deleteProperty(process.env, ESCAPE);
+  });
+
+  it('refuses a wide bind with no keys, naming every exit', async () => {
+    process.env.HOST = '0.0.0.0';
+    await expect(startServer({ port: 0 })).rejects.toThrow(
+      /refusing to bind 0\.0\.0\.0 beyond loopback without authentication[\s\S]*AGENTBROWSER_API_KEYS[\s\S]*AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1/
+    );
+  });
+
+  it('refuses a specific non-loopback address the same way', async () => {
+    process.env.HOST = '192.168.1.10';
+    await expect(startServer({ port: 0 })).rejects.toThrow(/refusing to bind 192\.168\.1\.10/);
+  });
+
+  it('accepts a keyed wide bind configured via ENV, not options', async () => {
+    // The regression that would brick every brew/docker deployment: main.ts
+    // passes no apiKeys option, so keys arrive via AGENTBROWSER_API_KEYS. A
+    // guard checking options alone would refuse exactly this shape.
+    process.env.HOST = '0.0.0.0';
+    process.env.AGENTBROWSER_API_KEYS = 'guard-test-key:tenant-a';
+    let server: FastifyInstance | undefined;
+    try {
+      server = await startServer({ port: 0 });
+      expect(server.server.address()).toMatchObject({ address: '0.0.0.0' });
+    } finally {
+      await server?.close();
+    }
+  });
+
+  it('accepts a wide bind with the explicit escape hatch, for containers', async () => {
+    process.env.HOST = '0.0.0.0';
+    process.env[ESCAPE] = '1';
+    let server: FastifyInstance | undefined;
+    try {
+      server = await startServer({ port: 0 });
+      expect(server.server.address()).toMatchObject({ address: '0.0.0.0' });
+    } finally {
+      await server?.close();
+    }
+  });
+
+  it('binds loopback keyless for every loopback spelling', async () => {
+    // ::1 and localhost are loopback names the classifier accepts.
+    for (const host of ['127.0.0.1', 'localhost', '::1']) {
+      let server: FastifyInstance | undefined;
+      try {
+        server = await startServer({ port: 0, host });
+        expect(server.server.address()).toBeTruthy();
+      } finally {
+        await server?.close();
+      }
+    }
+  });
+
+  it('treats an empty or whitespace HOST as unset — never a silent :: bind', async () => {
+    // '' is set-but-not-nullish; without normalization fastify binds '::'.
+    for (const raw of ['', '   ']) {
+      process.env.HOST = raw;
+      let server: FastifyInstance | undefined;
+      try {
+        server = await startServer({ port: 0 });
+        expect(server.server.address()).toMatchObject({ address: '127.0.0.1' });
+      } finally {
+        await server?.close();
+      }
     }
   });
 });

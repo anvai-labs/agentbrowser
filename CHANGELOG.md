@@ -7,6 +7,33 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — a non-loopback bind without API keys now refuses to start
+
+- **`HOST=0.0.0.0` (or any LAN address) without `AGENTBROWSER_API_KEYS`
+  throws at startup** instead of warning. Previously a wide no-keys bind
+  started with a console warning plus a tightened Host-header check; the
+  listener was still exposed. Three exits, named in the error: configure
+  `AGENTBROWSER_API_KEYS`, keep the loopback default
+  (`127.0.0.1`/`localhost`/`::1`), or set
+  `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` where exposure is already the
+  operator's own decision — the Docker image sets this itself, since a
+  container is unreachable off-host until ports are published. The
+  wide-bind Host check still applies on the escape-hatch path. `::ffff:127.0.0.1`
+  binds loopback but is not classified as such and is refused — consistent
+  with the request guard treating it as untrusted.
+- **An empty `HOST=` is treated as unset.** It is set-but-not-nullish and
+  reached `fastify.listen` as `''`, which Node binds as `::` — the dual-stack
+  unspecified address, i.e. a stray empty line in an env file meant a silent
+  wide bind. `HOST` is now trimmed at both consumers (the request-origin
+  guard and the listener) through one shared resolution rule, so the two can
+  never disagree.
+- **Breaking failure-mode change for the SDK's managed launcher:** it spawns
+  the server with `...process.env`, so an ambient exported `HOST` (some CI
+  systems set one) now crashes the child at boot instead of silently binding
+  wide. The refusal is piped to the SDK's error output and names the fix; if
+  this bites you, unset `HOST` for the launcher or set
+  `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1`.
+
 ### Fixed — the operator login browser never launched branded Chrome (ADR-025 §1)
 
 - **It ran Playwright's bundled Chrome for Testing, always.**

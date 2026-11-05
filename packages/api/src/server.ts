@@ -84,7 +84,11 @@ import { operatorKeysFromEnvironment } from './operator-keys.js';
 import { TokenBucketLimiter } from './policy-query-limiter.js';
 import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
-import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
+import {
+  isLoopbackHostname,
+  normalizeHostname,
+  requestOriginGuardFromEnvironment,
+} from './request-origin-guard.js';
 import {
   AgentBrowserService,
   browserFailureOutcomeUnknown,
@@ -337,7 +341,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const operatorKeys = await operatorKeysFromEnvironment(process.env, {
     ...(apiKeys !== undefined ? { apiKeys } : {}),
   });
-  const bindHost = options.host ?? process.env.HOST ?? '127.0.0.1';
+  const bindHost = resolveBindHost(options.host ?? process.env.HOST);
   const originGuard = requestOriginGuardFromEnvironment(
     process.env,
     bindHost,
@@ -2887,13 +2891,67 @@ export async function startServer(options: ServerOptions = {}): Promise<FastifyI
   // local files on its behalf (screenshots, upload paths) - exposing that
   // to every interface by default would make the LAN a trust boundary the
   // operator never chose. Network exposure is an explicit HOST/options.host
-  // (the Dockerfile sets HOST=0.0.0.0 for container port publishing).
-  const host = options.host ?? process.env.HOST ?? '127.0.0.1';
+  // (the Dockerfile sets HOST=0.0.0.0 for container port publishing, with
+  // the escape hatch below).
+  const host = resolveBindHost(options.host ?? process.env.HOST);
+  assertBindAuthenticated(options, host);
 
   await server.listen({ port, host });
   console.log(`Server listening on ${host}:${port}`);
 
   return server;
+}
+
+/**
+ * The one HOST-resolution rule, shared by the origin guard (buildServer) and
+ * the listener (startServer) so the two can never disagree.
+ *
+ * Trimming is load-bearing, not cosmetic: an empty or whitespace-only HOST is
+ * set-but-not-nullish, so without this it reaches fastify.listen as '' and
+ * Node binds `::` — the dual-stack unspecified address, i.e. a silent wide
+ * bind from a stray `HOST=` line in an env file.
+ */
+function resolveBindHost(raw: string | undefined): string {
+  const trimmed = raw?.trim() ?? '';
+  return trimmed === '' ? '127.0.0.1' : trimmed;
+}
+
+/** Escape-hatch env for the bind guard, parsed with the repo's truthy convention. */
+function allowUnauthenticatedBind(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND?.trim() ?? '');
+}
+
+/**
+ * A bind beyond loopback without authentication refuses to START (2026-11).
+ * Before this, a wide no-keys bind only warned: the request-origin guard
+ * tightened Host-header checking, but the listener was already exposed.
+ *
+ * Key resolution mirrors buildServer exactly — `options.apiKeys ??
+ * apiKeysFromEnv()` — because main.ts passes no apiKeys option; checking
+ * options alone would refuse every deployment that configures keys via
+ * AGENTBROWSER_API_KEYS, i.e. the shape this guard exists to protect.
+ *
+ * The escape hatch is for environments where exposure is already an explicit
+ * operator decision, such as a container whose ports must be published to be
+ * reachable (the Dockerfile sets it); the wide-bind Host check still applies
+ * there. `::ffff:127.0.0.1` binds loopback but is not classified as such —
+ * it fails closed here, consistent with operations.md treating it as
+ * untrusted.
+ */
+function assertBindAuthenticated(options: ServerOptions, host: string): void {
+  if (isLoopbackHostname(normalizeHostname(host))) return;
+  const keys = options.apiKeys ?? apiKeysFromEnv();
+  if (keys !== undefined && keys.size > 0) return;
+  if (allowUnauthenticatedBind()) return;
+  throw new Error(
+    `refusing to bind ${host} beyond loopback without authentication. ` +
+      'Either set AGENTBROWSER_API_KEYS=key:tenant[,key:tenant...], ' +
+      'or keep the loopback default (127.0.0.1, localhost or ::1), ' +
+      'or — for an environment where exposure is already an explicit decision, ' +
+      'such as a container with published ports — set ' +
+      'AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1. ' +
+      'See docs/operations.md, "Wide binds".'
+  );
 }
 
 /** Parse PORT into a valid integer, ignoring junk rather than crashing. */
