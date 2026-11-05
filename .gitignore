@@ -44,6 +44,9 @@ Thumbs.db
 
 # Claude
 .claude/memory/
+# Agent worktrees under .claude/worktrees carry their own biome.json; biome's
+# nested-config discovery trips on them unless ignore-file-scoped out.
+.claude/worktrees/
 
 # Rust
 /target
