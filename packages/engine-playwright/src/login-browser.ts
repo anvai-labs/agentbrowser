@@ -32,11 +32,21 @@ import {
  *   refused. The Windows CI job runs this suite (headless env), which is
  *   where the win32 branches execute.
  *
- * Binary pinning: the resolved executable's path AND file identity (size +
- * mtime) are recorded at first launch; a later launch refuses if either
- * changed. There is no version probe: chrome.exe --version prints nothing on
- * Windows (GUI-subsystem exe, runner-proven), so a version string cannot be
- * compared there — file identity catches every in-place replacement.
+ * Binary pinning (ADR-025 §1): the resolved executable's path AND file
+ * identity (size + mtime) are recorded at first launch. Identity is the GATE,
+ * not the verdict — a change routes to adjudication rather than refusing
+ * outright, because the ADR's rule is "refuses if that binary's version has
+ * moved backwards" and branded Chrome self-updates in place constantly.
+ *
+ * A same-path identity change is decided by comparing versions, read with a
+ * `chromium.launch()` probe on a THROWAWAY profile so an unvetted binary never
+ * opens the login profile: forward adopts, backwards refuses
+ * LOGIN_BINARY_DOWNGRADED, and the same version with different bytes refuses
+ * LOGIN_BINARY_CHANGED (a replacement, not an update). A path change adopts
+ * once when either side is a Playwright-managed build — our own resolution
+ * changing — and refuses otherwise. The probe uses Playwright's pipe rather
+ * than a subprocess, so the old objection that `chrome.exe --version` prints
+ * nothing on Windows (GUI-subsystem exe, runner-proven) does not apply.
  *
  * Concurrency: open/close/read are serialized on an in-process lock, and a
  * stale `LOCK` file whose owner PID is gone is adopted; a live owner refuses
@@ -114,9 +124,10 @@ interface ProfilePin {
   executable?: string;
   /**
    * The pinned executable's file identity. The same path with a different
-   * identity = the binary was replaced in place (an update) → refused. This,
-   * not the version string, is the compared pin field: probing a version
-   * needs a subprocess whose stdout Windows' chrome.exe never writes.
+   * identity means the binary was replaced in place — how Chrome
+   * self-updates — which routes to a version comparison rather than a
+   * refusal. Identity is the cheap gate that decides whether to adjudicate at
+   * all; `chromiumVersion` is what the verdict compares.
    */
   executableSize?: number;
   executableModifiedMs?: number;
@@ -288,16 +299,31 @@ export class LoginBrowser {
       void this.releaseProfileLockIfToken(token);
     });
     const chromiumVersion = this.context.browser()?.version();
+    // Carry every previous value forward and let this launch's readings
+    // override them, rather than rebuilding the pin from what we happened to
+    // read (round-3 review finding 6). A dropped field is not neutral: losing
+    // `chromiumVersion` (an undefined `browser()?.version()`) would make the
+    // next legitimate in-place update unadjudicable and hard-refuse
+    // LOGIN_BINARY_DOWNGRADED with only reset() as recovery, and losing
+    // size/mtime (a swallowed stat error) would skip the gate for a launch
+    // and accept an unadjudicated replacement.
+    //
+    // A fresh adoption in pinUpdate lands last. When it records only a
+    // version — a same-path update, where the path did not change — the stale
+    // adoptedFromExecutable from an EARLIER path adoption is cleared, so the
+    // audit record describes one event instead of splicing two together
+    // (finding 7).
+    const adoptionIsSamePath =
+      pinUpdate.adoptedAtMs !== undefined && pinUpdate.adoptedFromExecutable === undefined;
+    // Destructured out rather than assigned undefined: exactOptionalPropertyTypes
+    // makes `{ adoptedFromExecutable: undefined }` a type error, and omitting
+    // the key is what "clear it" actually means on disk anyway.
+    const { adoptedFromExecutable: priorAdoptedFrom, ...carried } = pin;
     await this.writePin({
-      // Carry the previous adoption record forward so it is durable; a new
-      // adoption in pinUpdate overwrites it.
-      ...(pin.adoptedFromExecutable !== undefined
-        ? { adoptedFromExecutable: pin.adoptedFromExecutable }
+      ...carried,
+      ...(priorAdoptedFrom !== undefined && !adoptionIsSamePath
+        ? { adoptedFromExecutable: priorAdoptedFrom }
         : {}),
-      ...(pin.adoptedFromVersion !== undefined
-        ? { adoptedFromVersion: pin.adoptedFromVersion }
-        : {}),
-      ...(pin.adoptedAtMs !== undefined ? { adoptedAtMs: pin.adoptedAtMs } : {}),
       ...(executablePath !== undefined ? { executable: executablePath } : {}),
       ...(identity !== undefined
         ? { executableSize: identity.size, executableModifiedMs: identity.modifiedMs }
@@ -520,11 +546,24 @@ export class LoginBrowser {
       // unchecked would hand a profile written by the newer build to the older
       // one, which is the loss ADR-025 §1 forbids, and would then rewrite the
       // pin to the lower version, erasing the evidence.
-      if (looksLikePlaywrightBundled(pin.executable)) {
+      // EITHER side looking Playwright-managed makes this our own resolution
+      // changing rather than the operator pointing at something new.
+      //
+      // Checking only the pin (round-3 review finding 2) made adoption
+      // one-directional, and the docs this PR adds prescribe the other
+      // direction: "set AGENTBROWSER_PREFER_BUNDLED=1" for a faster open would
+      // have refused LOGIN_BINARY_CHANGED once the pin named branded Chrome,
+      // leaving profile-destroying reset() as the only recovery — following
+      // our own documentation would have cost the operator their logins. It
+      // also covers macOS swapping the whole Chrome .app during a self-update:
+      // resolution briefly finds no branded binary, falls back to bundled, and
+      // that must not brick the profile either. Still fully subject to the
+      // downgrade gate below.
+      if (looksLikePlaywrightBundled(pin.executable) || looksLikePlaywrightBundled(resolved)) {
         const adopted = await this.assertNotADowngrade({
           pin,
           resolved,
-          adoptMessage: `adopting a new binary (the pin named Playwright's bundled build)\n  was: ${pin.executable}\n  now: ${resolved}`,
+          adoptMessage: `adopting a new binary (one side is a Playwright-managed build, so this is our own resolution changing)\n  was: ${pin.executable}\n  now: ${resolved}`,
           // An old pin with no recorded version used to adopt here; refusing
           // would be worse than the behavior being replaced.
           adoptWhenPinHasNoVersion: true,
@@ -662,11 +701,19 @@ export class LoginBrowser {
       if (!options.adoptWhenPinHasNoVersion) {
         refuse('the pinned version is missing or not comparable');
       }
-      // Record what the adopting binary reports, so the next launch HAS a
-      // comparable version and this hole closes itself after one open.
-      const probedRaw = await probeChromeVersion(resolved, this.launchTimeoutMs);
-      announce(pin.chromiumVersion ?? '(unrecorded)', probedRaw ?? '(unreported)');
-      return { adoptedFromVersion: '(unrecorded)', adoptedAtMs: Date.now() };
+      // NO probe here (round-3 review finding 4). There is nothing to compare
+      // against, so a probe could only decorate the log line — and it would
+      // cost a second full Chrome launch on the one-time migration, the very
+      // path most likely to be slow. openLocked() records the real version
+      // from the launched context, so the next launch has a comparable one
+      // and this gap closes itself after one open either way.
+      announce(pin.chromiumVersion ?? '(unrecorded)', '(not comparable)');
+      // Preserve whatever string WAS recorded, even if unparseable; only a
+      // genuinely absent version reads as unrecorded.
+      return {
+        adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)',
+        adoptedAtMs: Date.now(),
+      };
     }
     const probed = parseChromeVersion(await probeChromeVersion(resolved, this.launchTimeoutMs));
     if (probed === undefined) refuse('the candidate binary did not report a comparable version');
@@ -765,10 +812,26 @@ export class LoginBrowser {
    * refused BEFORE agentbrowser-lock is acquired, naming the recovery.
    */
   private async assertChromeSingletonFree(): Promise<void> {
-    const state = await inspectChromeSingleton(
-      this.options.profileDir,
-      this.options.isBrowserPid ?? processLooksLikeBrowser
-    );
+    const inspect = (): ReturnType<typeof inspectChromeSingleton> =>
+      inspectChromeSingleton(
+        this.options.profileDir,
+        this.options.isBrowserPid ?? processLooksLikeBrowser
+      );
+    let state = await inspect();
+    // A live owner gets a grace period before it is called a conflict
+    // (round-3 review finding 3). When the operator closes the last window,
+    // Playwright reports the context closed while the Chrome process is still
+    // exiting and flushing Cookies/Local State, so its SingletonLock briefly
+    // still names a live browser pid. Refusing on the first read turned an
+    // ordinary close-then-reopen into LOGIN_PROFILE_IN_USE advising the
+    // operator to kill Chrome and delete Singleton* — destructive advice for a
+    // state that clears itself in about a second. acquireProfileLock() already
+    // polls the same window for exactly this class of transient.
+    const deadline = Date.now() + LOCK_TIMEOUT_MS;
+    while (state.state === 'live' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+      state = await inspect();
+    }
     if (state.state === 'live') {
       throw new LoginBrowserError(
         'LOGIN_PROFILE_IN_USE',

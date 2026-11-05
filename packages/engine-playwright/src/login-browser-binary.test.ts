@@ -324,7 +324,11 @@ describe('ADR-025 §1 pin semantics', () => {
     }
   });
 
-  it('refuses an unexplained path change without launching', async () => {
+  it('refuses an unexplained path change — NEITHER side Playwright-managed', async () => {
+    // Both the pin and the resolution name operator-installed binaries, so
+    // this is the operator pointing at something new, not our resolution
+    // changing. That is the only path change that still refuses.
+    await installBranded();
     const profile = profileFor('foreign-path');
     await writePin(profile, {
       executable: join(dir, 'some-other-chrome'),
@@ -333,10 +337,67 @@ describe('ADR-025 §1 pin semantics', () => {
       chromiumVersion: '156.0.8078.4',
       launches: 1,
     });
-    await expect(mk(profile, { brandedChromeCandidates: [] }).open()).rejects.toMatchObject({
-      code: 'LOGIN_BINARY_CHANGED',
-    });
+    await expect(
+      mk(profile, { brandedChromeCandidates: [brandedCandidate] }).open()
+    ).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
     expect(recorded.persistent).toHaveLength(0);
+  });
+
+  it('adopts branded→bundled, the direction the docs prescribe', async () => {
+    // Round-3 review finding 2: adoption used to check only the pin, so once
+    // it named branded Chrome, AGENTBROWSER_PREFER_BUNDLED=1 — which
+    // docs/use-your-login-safely.md and docs/operations.md both recommend for
+    // a faster open — refused LOGIN_BINARY_CHANGED and left profile-destroying
+    // reset() as the only recovery. Following our own documentation must not
+    // cost the operator their logins.
+    await installBranded();
+    const profile = profileFor('branded-to-bundled');
+    await writePin(profile, {
+      executable: brandedCandidate,
+      executableSize: 1,
+      executableModifiedMs: 1,
+      chromiumVersion: '156.0.8078.4',
+      launches: 7,
+    });
+    probeVersion = '156.0.8078.90';
+    contextVersion = '156.0.8078.90';
+    const browser = mk(profile, {
+      brandedChromeCandidates: [brandedCandidate],
+      preferBundled: true,
+    });
+    try {
+      await browser.open();
+      expect(lastExecutable()).toBe(bundledPath);
+      const pin = await readPin(profile);
+      expect(pin.executable).toBe(bundledPath);
+      expect(pin.adoptedFromExecutable).toBe(brandedCandidate);
+      expect(pin.launches).toBe(8);
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+  });
+
+  it('adopts the bundled fallback when the branded .app vanishes mid-update', async () => {
+    // macOS replaces the whole Chrome .app on self-update, so a launch during
+    // that window finds no branded binary, falls back to bundled, and must not
+    // brick the profile.
+    const profile = profileFor('app-swap');
+    await writePin(profile, {
+      executable: brandedCandidate, // not created: the .app is mid-swap
+      executableSize: 1,
+      executableModifiedMs: 1,
+      chromiumVersion: '156.0.8078.4',
+      launches: 2,
+    });
+    probeVersion = '156.0.8078.90';
+    contextVersion = '156.0.8078.90';
+    const browser = mk(profile, { brandedChromeCandidates: [brandedCandidate] });
+    try {
+      await browser.open();
+      expect(lastExecutable()).toBe(bundledPath);
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
   });
 
   it('adopts a same-path FORWARD in-place update (a Chrome self-update)', async () => {

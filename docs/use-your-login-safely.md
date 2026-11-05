@@ -198,14 +198,19 @@ The profile records which browser binary last wrote it, and refuses to open with
 one — Chrome's downgrade handling can move a profile aside and lose the logins, and on
 Windows App-Bound Encryption ties cookie decryption to one binary.
 
-Most changes are adopted automatically and need nothing from you: a Chrome that updated
-itself in place, and the one-time switch from the bundled Chromium to your branded Chrome.
-Both are logged. You see a refusal only when the new binary is genuinely **older** than the
-one that wrote the profile, or when the binary at the same path changed while reporting the
-same version — which is a replacement, not an update.
+Most changes are adopted automatically and need nothing from you, all of them logged:
 
-Recovery is `operator login-browser reset`, which **deletes the profile and every login in
-it**. Before doing that, check whether the binary is simply the wrong one: if your branded
-Chrome is older than the bundled Chromium that was in use before, pointing
-`AGENTBROWSER_CHROME_PATH` at a current Chrome, or setting
-`AGENTBROWSER_PREFER_BUNDLED=1`, keeps the profile intact.
+- a Chrome that updated itself in place (forward only);
+- any switch where one side is a Playwright-managed build — bundled→branded, branded→bundled
+  when you set `AGENTBROWSER_PREFER_BUNDLED=1`, a Playwright version bump moving the
+  bundled path, or the fallback to bundled while macOS is mid-swap of the Chrome `.app`.
+
+You see a refusal in three cases: the new binary is genuinely **older** than the one that
+wrote the profile; the binary at the same path changed while reporting the **same** version
+(a replacement, not an update); or you moved between two of your **own** installed Chromes,
+which we cannot attribute to our own resolution changing.
+
+For that last case, pointing `AGENTBROWSER_CHROME_PATH` back at the **pinned** path keeps
+the profile. Otherwise the only in-product recovery is `operator login-browser reset`, which
+**deletes the profile and every login in it** — the refusal message names the recorded
+binary so you can decide which you actually want.

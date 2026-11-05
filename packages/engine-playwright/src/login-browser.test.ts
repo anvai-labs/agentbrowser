@@ -298,8 +298,23 @@ suite('the login browser', () => {
       await browser.close();
       const pin2 = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin;
       expect(pin2.launches).toBe(2);
+      // A path change ADOPTS against a real browser when one side is a
+      // Playwright-managed build — which is always true in this file, since
+      // mk() forces brandedChromeCandidates: [] so resolution is the bundled
+      // binary. This is the one-time migration path exercised for real: the
+      // profile survives and the pin is rewritten to the resolved binary.
+      // The refusal case needs BOTH sides to be operator-installed, which
+      // only a controlled resolution can arrange — see
+      // login-browser-binary.test.ts.
       await writeFile(pinPath, JSON.stringify({ ...pin2, executable: '/moved/chromium' }));
-      await expect(refused.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
+      await refused.open();
+      await refused.close();
+      const adopted = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin & {
+        adoptedFromExecutable?: string;
+      };
+      expect(adopted.executable).toBe(chromium.executablePath());
+      expect(adopted.adoptedFromExecutable).toBe('/moved/chromium');
+      expect(existsSync(profile)).toBe(true);
       // A same-path in-place replacement is now ADJUDICATED by version
       // (ADR-025 §1's rule is "moved backwards"), not refused outright. Here
       // the recorded identity is tampered while the binary on disk is

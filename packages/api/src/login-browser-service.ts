@@ -21,6 +21,13 @@ function defaultLoginProfileRoot(): string {
   return process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? tmpdir(), '.local', 'state');
 }
 
+/**
+ * How long shutdown waits for the login browser to close. Short on purpose:
+ * close() queues behind any in-flight launch, and shutdown must not inherit
+ * the launch budget.
+ */
+const SHUTDOWN_CLOSE_TIMEOUT_MS = 10_000;
+
 export class LoginBrowserService {
   private browser: LoginBrowser | undefined;
   private readonly enabled: boolean;
@@ -105,15 +112,36 @@ export class LoginBrowserService {
   }
 
   async closeForShutdown(): Promise<void> {
+    const browser = this.browser;
+    if (browser === undefined) return;
     // Unconditional when a browser exists — NOT guarded on isOpen.
     //
     // isOpen is liveness-based, so guarding on it would SKIP close() for a
     // dead-but-unreaped context and leave agentbrowser-lock on disk: exactly
-    // the leak the liveness change exists to prevent (review finding 3).
-    // close() already tolerates both the never-opened case (it throws
+    // the leak the liveness change exists to prevent (round-1 finding 3).
+    // close() tolerates both the never-opened case (it throws
     // LOGIN_BROWSER_CLOSED, swallowed here) and the dead case (it reaps and
     // releases the lock).
-    await this.browser?.close().catch(() => undefined);
+    //
+    // Bounded, because close() serializes behind an in-flight open() and that
+    // launch may now run for the full AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS
+    // (round-3 review finding 8). This runs inside Fastify's onClose hook,
+    // which has no timeout of its own, so an unbounded await would let a slow
+    // launch hold up shutdown for minutes where it used to return at once.
+    // Giving up here only forfeits the lock cleanup that the next startup's
+    // stale-lock adoption already handles.
+    await Promise.race([
+      browser.close().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          console.warn(
+            `[agentbrowser] login browser did not close within ${SHUTDOWN_CLOSE_TIMEOUT_MS}ms (a launch may still be in flight); continuing shutdown`
+          );
+          resolve();
+        }, SHUTDOWN_CLOSE_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
   }
 
   private requireBrowser(): LoginBrowser {
