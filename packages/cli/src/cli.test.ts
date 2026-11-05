@@ -819,7 +819,7 @@ describe('AgentBrowser CLI', () => {
     });
   });
 
-  describe('observe command', () => {
+  describe('observe command state markers', () => {
     it('renders a [checked] marker for checked checkboxes', async () => {
       sessions.observe.mockResolvedValueOnce({
         sessionId: 'ses_1',

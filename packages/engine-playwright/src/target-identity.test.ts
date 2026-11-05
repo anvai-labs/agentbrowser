@@ -406,7 +406,7 @@ describe('whole-body snapshot fallback (observe())', () => {
       const editor = state.elements.find((element) => element.name === 'Notes');
       if (!editor?.ref) throw new Error('No editor ref');
       await page.act({ type: 'fill', target: { ref: editor.ref }, value: 'hello' });
-      expect(await backingPage(page).locator('[contenteditable]').innerText()).toBe('hello');
+      expect(await backingPage(page).locator('[contenteditable]').textContent()).toBe('hello');
     } finally {
       await engine.close();
     }

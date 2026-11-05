@@ -5022,7 +5022,13 @@ class PlaywrightPage implements EnginePage {
     try {
       const body = this.page.locator('body');
       const [text, domNodeCount] = await Promise.all([
-        body.innerText({ timeout: 1000 }).catch(() => ''),
+        // textContent over innerText (biome useDomNodeTextContent): no layout
+        // dependency, so the measurement survives detached/navigating pages;
+        // null (no text node) coalesces into the same best-effort zero.
+        body
+          .textContent({ timeout: 1000 })
+          .then((bodyText) => bodyText ?? '')
+          .catch(() => ''),
         this.page
           .locator('body *')
           .count()
