@@ -10,9 +10,12 @@ exclude_docs: |
   # Leading slash anchors each pattern to docs/ top level; unanchored
   # gitignore-style patterns match at any depth and would silently drop
   # spec/evidence/, spec/tasks/README.md and spec/design/consumer-*.
+  # Dated internal handoff/investigation notes were removed with the
+  # interim-docs cleanup (PR #654); the ADR template and the agent
+  # skill file stay excluded where they live.
   /README.md
+  /research/
   /evidence/
-  # The ADR template and the agent skill file.
   /adr/000-template.md
   /skills/
 
@@ -163,6 +166,12 @@ nav:
     - '024 Server Policy Engine Cedar': adr/024-server-policy-engine-cedar.md
     - '025 Operator Login Browser And Cookie Handoff': adr/025-operator-cookie-handoff.md
     - '026 Policy Reload Without Restart': adr/026-policy-reload-without-restart.md
+    - '027 Evidence Pass State Transfer': adr/027-evidence-pass-state-transfer.md
+    - '028 Operator Asset Scope Amendments': adr/028-operator-asset-scope-amendments.md
+    - '029 Operator Budget Top-up': adr/029-operator-budget-topup.md
+    - '030 Scoped Page Fetch': adr/030-scoped-page-fetch.md
+    - '031 Coordinate Interaction': adr/031-coordinate-interaction-and-visual-evidence.md
+    - '033 Cookie Seed Provenance and Reseed': adr/033-cookie-seed-provenance-and-reseed.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
@@ -185,7 +194,7 @@ nav:
     - 'Execution': spec/execution.md
     - 'Grounding': spec/grounding.md
     - 'Interfaces': spec/interfaces.md
-    - 'Quality Ci': spec/quality-ci.md
+    - 'Quality & CI': spec/quality-ci.md
     - 'Review': spec/review.md
     - 'Security': spec/security.md
     - 'State Memory': spec/state-memory.md
@@ -211,6 +220,11 @@ nav:
     - 'Session Launch Diagnostics': spec/design/session-launch-diagnostics.md
     - 'Session Lease Visibility': spec/design/session-lease-visibility.md
     - 'T10 Research Traffic Identity': spec/design/t10-research-traffic-identity.md
+    - 'T10 Bounty Operator Workflow': spec/design/t10-bounty-operator-workflow.md
+    - 'T10 Bounty Flow Continuity': spec/design/t10-bounty-flow-continuity.md
+    - 'T10 Flow Continuity P1 (resource hosts, auth lifecycle)': spec/design/t10-flow-continuity-p1.md
+    - 'T10 Owner-bound Publication': spec/design/t10-owner-publication.md
+    - 'T10 Event Replay Filters': spec/design/t10-event-replay-filters.md
     - 'T3 Application Recipe': spec/design/t3-application-recipe.md
     - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
     - 'T3 Live Junit': spec/design/t3-live-junit.md
@@ -265,6 +279,7 @@ nav:
     - 'Foundation Coverage Findings': spec/evidence/foundation-coverage-findings.md
     - 'Foundation Handback Recheck': spec/evidence/foundation-handback-recheck.md
     - 'Foundation Progress 2026 09 20': spec/evidence/foundation-progress-2026-09-20.md
+    - 'T10 Bounty Operator Workflow': spec/evidence/t10-bounty-operator-workflow.md
     - 'Navigation Failure Reasons': spec/evidence/navigation-failure-reasons.md
     - 'Node24 Baseline': spec/evidence/node24-baseline.md
     - 'Observation 120 Baseline': spec/evidence/observation-120-baseline.md
@@ -291,6 +306,15 @@ nav:
     - 'Release 1.27.2': spec/evidence/release-1.27.2.md
     - 'Release 1.27.3': spec/evidence/release-1.27.3.md
     - 'Release 1.27.4': spec/evidence/release-1.27.4.md
+    - 'Release 1.28.0': spec/evidence/release-1.28.0.md
+    - 'Release 1.29.0': spec/evidence/release-1.29.0.md
+    - 'Release 1.29.1': spec/evidence/release-1.29.1.md
+    - 'Release 1.30.0': spec/evidence/release-1.30.0.md
+    - 'Release 1.30.1 Qualification': spec/evidence/release-1.30.1.md
+    - 'Release 1.30.2 Qualification': spec/evidence/release-1.30.2.md
+    - 'Release 1.30.3 Qualification': spec/evidence/release-1.30.3.md
+    - 'Release 1.31.0 Qualification': spec/evidence/release-1.31.0.md
+    - 'Release 1.32.0 Qualification': spec/evidence/release-1.32.0.md
     - 'Release 1.9.1': spec/evidence/release-1.9.1.md
     - 'Session Close Causes': spec/evidence/session-close-causes.md
     - 'Session Disconnect': spec/evidence/session-disconnect.md
