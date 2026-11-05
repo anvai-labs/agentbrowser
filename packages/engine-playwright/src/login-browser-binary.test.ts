@@ -66,7 +66,7 @@ vi.mock('playwright', () => {
 const { LoginBrowser, looksLikePlaywrightBundled, inspectChromeSingleton } = await import(
   './login-browser.js'
 );
-const { DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS } = await import('./chrome-binary.js');
+const { DEFAULT_LOGIN_LAUNCH_TIMEOUT_MS, parseChromeVersion } = await import('./chrome-binary.js');
 
 let dir: string;
 /** A path that looks Playwright-managed AND exists. */
@@ -655,6 +655,13 @@ describe('looksLikePlaywrightBundled', () => {
       looksLikePlaywrightBundled('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     ).toBe(false);
     expect(looksLikePlaywrightBundled(join('/usr', 'bin', 'google-chrome'))).toBe(false);
+    // Round-5 finding 4: a real Playwright directory name the old pattern
+    // missed, because it required digits straight after the separator.
+    expect(
+      looksLikePlaywrightBundled(
+        join('/root', 'chromium_headless_shell-1248', 'chrome-headless-shell')
+      )
+    ).toBe(true);
   });
 
   it('cannot be widened by PLAYWRIGHT_BROWSERS_PATH', () => {
@@ -696,12 +703,20 @@ describe('round-4 regressions', () => {
     expect(recorded.persistent).toHaveLength(0);
   });
 
-  it('does not pin a new path with the previous binary’s version', async () => {
-    // Round-4 finding 4: identity and version describe a specific binary, so
-    // carrying them across a path change would have the next launch adjudicate
-    // against the wrong baseline. Here the context reports no version, so the
-    // old one must be DROPPED rather than attached to the new path.
+  it('pins a USABLE version on a path change even when the context reports none', async () => {
+    // Round-4 finding 4 said: do not carry the old binary's version onto a new
+    // path. Round-5 finding 1 showed the naive fix left the pin with NO
+    // comparable version when the context read failed — and the next
+    // legitimate in-place update then hard-refused LOGIN_BINARY_DOWNGRADED
+    // with profile-destroying reset() as the only recovery. Both must hold:
+    // not the stale version, and not nothing either. The probe's reading is
+    // the fallback, and `''` counts as absent.
+    //
+    // Asserting a POSITIVELY usable version on purpose: the earlier version of
+    // this test only checked `!== '150.0.1.1'`, which passed because the field
+    // was the empty string — it demonstrated the bug instead of guarding it.
     contextVersion = '';
+    probeVersion = '156.0.8078.90';
     const profile = profileFor('no-stale-version');
     await writePin(profile, {
       executable: join(dir, 'ms-playwright', 'chromium-1200', 'chrome'),
@@ -715,10 +730,43 @@ describe('round-4 regressions', () => {
       await browser.open();
       const pin = await readPin(profile);
       expect(pin.executable).toBe(bundledPath);
-      // The old binary's version must not be carried onto the new path.
       expect(pin.chromiumVersion).not.toBe('150.0.1.1');
+      expect(pin.chromiumVersion).toBe('156.0.8078.90');
+      expect(parseChromeVersion(pin.chromiumVersion as string)).toBeDefined();
     } finally {
       await browser.close().catch(() => undefined);
+    }
+  });
+
+  it('a later in-place update after such an adoption still adjudicates', async () => {
+    // The end-to-end consequence of round-5 finding 1: after a path-change
+    // adoption, the NEXT legitimate in-place Chrome update must be
+    // adjudicable rather than hard-refusing.
+    contextVersion = '';
+    probeVersion = '156.0.8078.90';
+    const profile = profileFor('adjudicable-after-adoption');
+    await writePin(profile, {
+      executable: join(dir, 'ms-playwright', 'chromium-1200', 'chrome'),
+      executableSize: 1,
+      executableModifiedMs: 1,
+      chromiumVersion: '150.0.1.1',
+      launches: 1,
+    });
+    const first = mk(profile, { brandedChromeCandidates: [] });
+    await first.open();
+    await first.close();
+    // Now simulate an in-place update of the adopted binary: same path,
+    // different recorded bytes, a newer version.
+    const pin = await readPin(profile);
+    await writePin(profile, { ...pin, executableSize: 999_999 });
+    probeVersion = '157.0.1.1';
+    contextVersion = '157.0.1.1';
+    const second = mk(profile, { brandedChromeCandidates: [] });
+    try {
+      await second.open();
+      expect((await readPin(profile)).chromiumVersion).toBe('157.0.1.1');
+    } finally {
+      await second.close().catch(() => undefined);
     }
   });
 });

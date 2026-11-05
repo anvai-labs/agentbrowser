@@ -248,6 +248,7 @@ export class LoginBrowser {
       path: executablePath,
       identity,
       pinUpdate,
+      probedVersion,
       selection,
     } = await this.resolvePinnedExecutable(pin);
     // ADR-025 §1 says the login browser reuses the headed launch arguments,
@@ -298,7 +299,15 @@ export class LoginBrowser {
       if (this.context === launched) this.context = undefined;
       void this.releaseProfileLockIfToken(token);
     });
-    const chromiumVersion = this.context.browser()?.version();
+    // The launched context is the best source, the probe's reading is the
+    // fallback, and an empty string counts as absent (round-5 review finding
+    // 1, reproduced). Without the fallback, a path-change adoption whose
+    // version read failed wrote a pin with NO comparable version — and the
+    // next legitimate in-place Chrome update then hard-refused
+    // LOGIN_BINARY_DOWNGRADED with profile-destroying reset() as the only
+    // recovery, which is round-2 finding 1 reached from the other side.
+    const reported = this.context.browser()?.version();
+    const chromiumVersion = reported !== undefined && reported !== '' ? reported : probedVersion;
     // Carry every previous value forward and let this launch's readings
     // override them, rather than rebuilding the pin from what we happened to
     // read (round-3 review finding 6). A dropped field is not neutral: losing
@@ -535,6 +544,7 @@ export class LoginBrowser {
     path: string | undefined;
     identity: ExecutableIdentity | undefined;
     pinUpdate: Partial<ProfilePin>;
+    probedVersion?: string;
     selection: string;
   }> {
     const branded = await resolveBrandedChrome(this.chromePreference);
@@ -578,7 +588,7 @@ export class LoginBrowser {
       // that must not brick the profile either. Still fully subject to the
       // downgrade gate below.
       if (looksLikePlaywrightBundled(pin.executable) || looksLikePlaywrightBundled(resolved)) {
-        const adopted = await this.assertNotADowngrade({
+        const outcome = await this.assertNotADowngrade({
           pin,
           resolved,
           adoptMessage: `adopting a new binary (one side is a Playwright-managed build, so this is our own resolution changing)\n  was: ${pin.executable}\n  now: ${resolved}`,
@@ -597,8 +607,9 @@ export class LoginBrowser {
           pinUpdate: {
             adoptedFromExecutable: pin.executable,
             adoptedAtMs: Date.now(),
-            ...adopted,
+            ...outcome.pin,
           },
+          ...(outcome.probedVersion !== undefined ? { probedVersion: outcome.probedVersion } : {}),
           selection,
         };
       }
@@ -621,10 +632,12 @@ export class LoginBrowser {
       identity !== undefined &&
       (identity.size !== pin.executableSize || identity.modifiedMs !== pin.executableModifiedMs)
     ) {
+      const outcome = await this.adjudicateInPlaceReplacement(pin, resolved, identity);
       return {
         path: resolved,
         identity,
-        pinUpdate: await this.adjudicateInPlaceReplacement(pin, resolved, identity),
+        pinUpdate: outcome.pin,
+        ...(outcome.probedVersion !== undefined ? { probedVersion: outcome.probedVersion } : {}),
         selection,
       };
     }
@@ -654,7 +667,7 @@ export class LoginBrowser {
     pin: ProfilePin,
     resolved: string,
     identity: ExecutableIdentity
-  ): Promise<Partial<ProfilePin>> {
+  ): Promise<AdoptionOutcome> {
     return this.assertNotADowngrade({
       pin,
       resolved,
@@ -702,7 +715,7 @@ export class LoginBrowser {
     failureContext?: string;
     adoptWhenPinHasNoVersion: boolean;
     onEqual?: (order: number) => void;
-  }): Promise<Partial<ProfilePin>> {
+  }): Promise<AdoptionOutcome> {
     const { pin, resolved, adoptMessage, onEqual } = options;
     const failureContext =
       options.failureContext ?? 'the resolved browser binary differs from the pinned one';
@@ -734,11 +747,14 @@ export class LoginBrowser {
       // Preserve whatever string WAS recorded, even if unparseable; only a
       // genuinely absent version reads as unrecorded.
       return {
-        adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)',
-        adoptedAtMs: Date.now(),
+        pin: {
+          adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)',
+          adoptedAtMs: Date.now(),
+        },
       };
     }
-    const probed = parseChromeVersion(await probeChromeVersion(resolved, this.launchTimeoutMs));
+    const probedRaw = await probeChromeVersion(resolved, this.launchTimeoutMs);
+    const probed = parseChromeVersion(probedRaw);
     if (probed === undefined) refuse('the candidate binary did not report a comparable version');
     const order = compareChromeVersion(probed, pinned);
     if (order < 0) {
@@ -750,7 +766,14 @@ export class LoginBrowser {
     announce(pin.chromiumVersion ?? '(unrecorded)', probed.join('.'));
     // The superseded VERSION is the useful record for a same-path update (the
     // path is unchanged, so recording it says nothing — round-1 finding 7).
-    return { adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)', adoptedAtMs: Date.now() };
+    // `probedVersion` is handed back so openLocked can fall back to it if the
+    // launched context cannot report one (round-5 review finding 1): we paid
+    // for this reading already, and without it a path-change adoption could
+    // leave the pin with no comparable version at all.
+    return {
+      pin: { adoptedFromVersion: pin.chromiumVersion ?? '(unrecorded)', adoptedAtMs: Date.now() },
+      ...(probedRaw !== undefined && probedRaw !== '' ? { probedVersion: probedRaw } : {}),
+    };
   }
 
   // --- profile lock --------------------------------------------------------
@@ -860,6 +883,12 @@ export class LoginBrowser {
     // ProcessSingleton makes the new instance defer and the operator gets an
     // opaque Playwright timeout (now after the full launch budget) instead of
     // the typed refusal this check exists to produce.
+    // LOCK_TIMEOUT_MS bounds how long we keep RETRYING, not the wall time:
+    // the deadline is checked between operations, and each inspect() on a
+    // live-pid path may run `ps` with its own 5s timeout, so a pathological
+    // case can take ~15s before the typed refusal (round-5 review finding 2).
+    // That only happens while confirming a real conflict, where a correct
+    // refusal matters more than a fast one.
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
     for (;;) {
       if (state.state !== 'live') {
@@ -1003,7 +1032,23 @@ export function looksLikePlaywrightBundled(path: string): boolean {
   // and setting it to `/Applications` or `/` would have made the
   // LOGIN_BINARY_CHANGED branch unreachable. The shape check covers every real
   // Playwright install under any root without trusting the variable.
-  return /[/\\]chromium[_-]?\d+[/\\]/.test(path) || /[/\\]ms-playwright[/\\]/.test(path);
+  // `chromium[a-z_]*` so real Playwright directory names other than
+  // `chromium-<rev>` match too — notably `chromium_headless_shell-<rev>`,
+  // which the previous pattern missed because it required digits immediately
+  // after the optional separator (round-5 review finding 4). Latent rather
+  // than live, since executablePath() returns the headed path, but the env
+  // check that used to cover it is gone.
+  return /[/\\]chromium[a-z_]*[_-]?\d+[/\\]/i.test(path) || /[/\\]ms-playwright[/\\]/.test(path);
+}
+
+/**
+ * What an adoption decision yields: the pin fields it records, plus the
+ * version the probe read (kept OUT of the pin fields so it cannot be written
+ * as a pin key — it is a fallback for `chromiumVersion`, not a field).
+ */
+interface AdoptionOutcome {
+  pin: Partial<ProfilePin>;
+  probedVersion?: string;
 }
 
 interface ExecutableIdentity {
