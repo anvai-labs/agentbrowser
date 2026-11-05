@@ -6,7 +6,7 @@ not completion of T6 or a new release.
 
 ## Failure and shared ownership
 
-The [research code audit](../../research/2026-09-browser-agents/code-findings.md)
+The research code audit (removed 2026-10)
 found 15 autofill test declarations but only 11 registered tests. Moving the nested
 widget suite to its intended scope, before changing expectations or runtime code,
 produced 15 executed tests: 12 passed and three failed. The dormant malformed-request

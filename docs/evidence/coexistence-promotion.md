@@ -61,7 +61,7 @@ The second develop [post-merge run](https://github.com/anvai-labs/agentbrowser/a
 exposed a popup closing during interception setup. A native regression reproduced
 the driver error; PR 159 records verified target closure as a structured error
 that still rejects qualification. Unexpected errors still propagate. See the
-[Firefox evidence gate](../firefox-egress-gate.md) for the exact limits.
+the Firefox evidence gate (removed 2026-10) for the exact limits.
 
 ## Parallel-session audit
 
