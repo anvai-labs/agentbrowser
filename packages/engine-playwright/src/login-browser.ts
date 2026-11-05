@@ -592,23 +592,6 @@ export class LoginBrowser {
           pin,
           resolved,
           adoptMessage: `adopting a new binary (one side is a Playwright-managed build, so this is our own resolution changing)\n  was: ${pin.executable}\n  now: ${resolved}`,
-          // An absent version is adoptable here too, symmetrically with the
-          // same-path branch (round-7 review finding 1, reproduced).
-          //
-          // Round 4 narrowed this to "only when the PIN side is Playwright-
-          // managed" at a time when absence and unparseability were the same
-          // case, so the narrowing was the only thing keeping an unparseable
-          // value fail-closed. Round 6 separated them — assertNotADowngrade
-          // now refuses a present-but-unparseable value regardless of this
-          // flag — which makes the narrowing obsolete rather than protective,
-          // and leaves it actively harmful: a first launch on BRANDED Chrome
-          // whose version() read failed writes a version-less branded pin, and
-          // the operator then following this PR's own documented advice
-          // (AGENTBROWSER_PREFER_BUNDLED=1 for a faster open) hit
-          // LOGIN_BINARY_DOWNGRADED with profile-destroying reset() as the
-          // only recovery. "Absence is OUR recording gap, not evidence of
-          // tampering" does not depend on which side is Playwright-managed.
-          adoptWhenPinHasNoVersion: true,
         });
         return {
           path: resolved,
@@ -681,15 +664,6 @@ export class LoginBrowser {
       pin,
       resolved,
       failureContext: `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size})`,
-      // An ABSENT pinned version is adoptable here too (round-6 finding 1).
-      // It cannot be evidence of a downgrade — nothing was recorded to move
-      // backwards from — and it is reachable without any legacy pin at all: a
-      // first launch whose version() read failed writes a version-less pin,
-      // and the next ordinary Chrome update would then hard-refuse with
-      // reset() as the only way out. A PRESENT-but-unparseable version still
-      // fails closed inside assertNotADowngrade, which is the tamper-shaped
-      // case this flag used to be guarding.
-      adoptWhenPinHasNoVersion: true,
       onEqual: (order) => {
         // Same version, different bytes is not a Chrome update; it is the
         // signature of a replaced binary. Refuse under the path-change code.
@@ -712,22 +686,23 @@ export class LoginBrowser {
    * `onEqual` lets the same-path caller treat an identical version as tamper;
    * for a path change an equal version is a perfectly ordinary adoption.
    *
-   * `adoptWhenPinHasNoVersion` differs by caller on purpose (round-2 review
-   * finding 1). `chromiumVersion` is optional — pins written before it was
-   * recorded, or by a launch whose `browser()` yielded nothing, have none. For
-   * a SAME-PATH swap that is suspicious, so it fails closed. For a PATH change
-   * we can already explain as our own, refusing would be strictly worse than
-   * the behavior it replaced: that case used to adopt, so failing closed would
-   * force the profile-destroying `reset()` and lose exactly the logins this
-   * gate exists to protect. With no pinned version there is no downgrade to
-   * prove, and Chrome's own `Last Version` check remains the backstop.
+   * The version rule, in one place because conflating its two cases was the
+   * structural cause of several review rounds:
+   * - `chromiumVersion` ABSENT → adoptable on BOTH branches. It is recorded
+   *   only from sources that can fail (the launched context's `version()`, or
+   *   the probe), so its absence is our own recording gap. Nothing was
+   *   recorded to move backwards from, so no downgrade can be proven, and
+   *   refusing would force the profile-destroying `reset()` for a field WE
+   *   failed to write. Chrome's own `Last Version` check remains the backstop.
+   * - PRESENT but not parseable → always refuses, on both branches, before
+   *   anything else is considered. That value had to come from somewhere, so
+   *   it is tamper-shaped rather than missing.
    */
   private async assertNotADowngrade(options: {
     pin: ProfilePin;
     resolved: string;
     adoptMessage?: string;
     failureContext?: string;
-    adoptWhenPinHasNoVersion: boolean;
     onEqual?: (order: number) => void;
   }): Promise<AdoptionOutcome> {
     const { pin, resolved, adoptMessage, onEqual } = options;
@@ -762,9 +737,6 @@ export class LoginBrowser {
       // tamper-shaped and must still fail closed.
       if (pin.chromiumVersion !== undefined) {
         refuse(`the pinned version ${JSON.stringify(pin.chromiumVersion)} is not comparable`);
-      }
-      if (!options.adoptWhenPinHasNoVersion) {
-        refuse('the pinned version is missing');
       }
       // NO probe here (round-3 review finding 4). There is nothing to compare
       // against, so a probe could only decorate the log line — and it would
