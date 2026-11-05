@@ -342,12 +342,22 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     ...(apiKeys !== undefined ? { apiKeys } : {}),
   });
   const bindHost = resolveBindHost(options.host ?? process.env.HOST);
+  const authenticated = (apiKeys?.size ?? 0) > 0;
+  // Suppress the origin guard's wide-bind WARNING on the path where the
+  // startServer bind guard is about to refuse: that warning recommends
+  // AGENTBROWSER_ALLOWED_HOSTS as a remedy for a running service that, on
+  // this path, never starts — an operator following it adds the names,
+  // restarts, and is refused again. The refusal message is the only guidance
+  // that path should carry (review round 1, finding 4).
+  const warnUnlessRefusing = willRefuseUnauthenticatedBind(authenticated, bindHost)
+    ? () => undefined
+    : console.warn;
   const originGuard = requestOriginGuardFromEnvironment(
     process.env,
     bindHost,
     options.corsOrigin,
-    console.warn,
-    (apiKeys?.size ?? 0) > 0
+    warnUnlessRefusing,
+    authenticated
   );
   const deploymentMode =
     deploymentModeFromEnvironment(process.env) === 'hosted'
@@ -2876,6 +2886,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   // Read-only handle for operator-surface tests; not part of the public API.
   fastify.decorate('service', service);
+  // The RESOLVED bind facts, so startServer's listener and bind guard consume
+  // exactly what buildServer's origin guard classified — one evaluation of
+  // HOST and of key configuration, not three that can drift (review round 1,
+  // finding 3).
+  fastify.decorate('bindContext', { host: bindHost, authenticated });
   fastify.addHook('onClose', async () => {
     await loginBrowser.closeForShutdown();
   });
@@ -2887,24 +2902,33 @@ export async function startServer(options: ServerOptions = {}): Promise<FastifyI
   // PORT/HOST let a supervisor (the SDK's managed launcher, containers)
   // place the server without code changes.
   const port = options.port ?? envPort() ?? 5709;
-  // Loopback by default: the service is a local agent's browser and reads
-  // local files on its behalf (screenshots, upload paths) - exposing that
-  // to every interface by default would make the LAN a trust boundary the
-  // operator never chose. Network exposure is an explicit HOST/options.host
-  // (the Dockerfile sets HOST=0.0.0.0 for container port publishing, with
-  // the escape hatch below).
-  const host = resolveBindHost(options.host ?? process.env.HOST);
-  assertBindAuthenticated(options, host);
+  // The RESOLVED bind facts come from buildServer (bindContext): one
+  // evaluation of HOST and of key configuration, consumed identically by the
+  // origin guard, this listener, and the bind guard below.
+  const bind = bindContextOf(server);
+  assertBindAuthenticated(bind);
 
-  await server.listen({ port, host });
-  console.log(`Server listening on ${host}:${port}`);
+  await server.listen({ port, host: bind.host });
+  console.log(`Server listening on ${bind.host}:${port}`);
 
   return server;
 }
 
+/** The bind facts buildServer resolved and decorated onto the instance. */
+interface BindContext {
+  host: string;
+  authenticated: boolean;
+}
+
+function bindContextOf(server: FastifyInstance): BindContext {
+  const bind = (server as FastifyInstance & { bindContext?: BindContext }).bindContext;
+  if (bind === undefined) throw new Error('buildServer did not decorate bindContext');
+  return bind;
+}
+
 /**
- * The one HOST-resolution rule, shared by the origin guard (buildServer) and
- * the listener (startServer) so the two can never disagree.
+ * The one HOST-resolution rule, applied once in buildServer and consumed by
+ * the origin guard, the listener and the bind guard.
  *
  * Trimming is load-bearing, not cosmetic: an empty or whitespace-only HOST is
  * set-but-not-nullish, so without this it reaches fastify.listen as '' and
@@ -2921,15 +2945,23 @@ function allowUnauthenticatedBind(): boolean {
   return /^(1|true|yes)$/i.test(process.env.AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND?.trim() ?? '');
 }
 
+/** True when the startServer bind guard will refuse this bind: the condition
+ * buildServer also uses to suppress the (then-misleading) wide-bind warning. */
+function willRefuseUnauthenticatedBind(authenticated: boolean, host: string): boolean {
+  return (
+    !isLoopbackHostname(normalizeHostname(host)) && !authenticated && !allowUnauthenticatedBind()
+  );
+}
+
 /**
  * A bind beyond loopback without authentication refuses to START (2026-11).
  * Before this, a wide no-keys bind only warned: the request-origin guard
  * tightened Host-header checking, but the listener was already exposed.
  *
- * Key resolution mirrors buildServer exactly — `options.apiKeys ??
- * apiKeysFromEnv()` — because main.ts passes no apiKeys option; checking
- * options alone would refuse every deployment that configures keys via
- * AGENTBROWSER_API_KEYS, i.e. the shape this guard exists to protect.
+ * Consumes buildServer's RESOLVED facts (bindContext) rather than re-deriving
+ * key configuration — a second derivation would drift from buildServer's the
+ * first time an auth source is added there, reintroducing exactly the
+ * refuse-every-keyed-deployment bug the env-keys regression test pins.
  *
  * The escape hatch is for environments where exposure is already an explicit
  * operator decision, such as a container whose ports must be published to be
@@ -2938,20 +2970,18 @@ function allowUnauthenticatedBind(): boolean {
  * it fails closed here, consistent with operations.md treating it as
  * untrusted.
  */
-function assertBindAuthenticated(options: ServerOptions, host: string): void {
-  if (isLoopbackHostname(normalizeHostname(host))) return;
-  const keys = options.apiKeys ?? apiKeysFromEnv();
-  if (keys !== undefined && keys.size > 0) return;
-  if (allowUnauthenticatedBind()) return;
-  throw new Error(
-    `refusing to bind ${host} beyond loopback without authentication. ` +
-      'Either set AGENTBROWSER_API_KEYS=key:tenant[,key:tenant...], ' +
-      'or keep the loopback default (127.0.0.1, localhost or ::1), ' +
-      'or — for an environment where exposure is already an explicit decision, ' +
-      'such as a container with published ports — set ' +
-      'AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1. ' +
-      'See docs/operations.md, "Wide binds".'
-  );
+function assertBindAuthenticated(bind: BindContext): void {
+  if (willRefuseUnauthenticatedBind(bind.authenticated, bind.host)) {
+    throw new Error(
+      `refusing to bind ${bind.host} beyond loopback without authentication. ` +
+        'Either set AGENTBROWSER_API_KEYS=key:tenant[,key:tenant...], ' +
+        'or keep the loopback default (127.0.0.1, localhost or ::1), ' +
+        'or — for an environment where exposure is already an explicit decision, ' +
+        'such as a container with published ports — set ' +
+        'AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1. ' +
+        'See docs/operations.md, "Wide binds".'
+    );
+  }
 }
 
 /** Parse PORT into a valid integer, ignoring junk rather than crashing. */

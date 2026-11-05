@@ -27,12 +27,14 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   wide bind. `HOST` is now trimmed at both consumers (the request-origin
   guard and the listener) through one shared resolution rule, so the two can
   never disagree.
-- **Breaking failure-mode change for the SDK's managed launcher:** it spawns
-  the server with `...process.env`, so an ambient exported `HOST` (some CI
-  systems set one) now crashes the child at boot instead of silently binding
-  wide. The refusal is piped to the SDK's error output and names the fix; if
-  this bites you, unset `HOST` for the launcher or set
-  `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1`.
+- **The SDK's managed launcher now pins `HOST=127.0.0.1` when spawning the
+  server** (as it always pinned `PORT`): it merges `...process.env`, so an
+  ambient exported `HOST` (some CI systems set one) previously flowed to the
+  child and silently bound it wide while the SDK client kept talking to
+  `127.0.0.1`. With the new bind guard such a child would instead crash at
+  boot and surface as a 15-second health-check timeout; pinning makes the
+  ambient variable irrelevant — the client's baseUrl is loopback, so an
+  inherited `HOST` could never do anything but desync or crash.
 
 ### Fixed — the operator login browser never launched branded Chrome (ADR-025 §1)
 

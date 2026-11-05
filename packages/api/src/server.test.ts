@@ -2036,9 +2036,14 @@ describe('startServer defaults', () => {
 
 describe('startServer bind policy: non-loopback without authentication refuses to start', () => {
   // The guard resolves keys exactly like buildServer (options ?? env). Saving
-  // and clearing both env knobs around every case keeps the matrix honest.
-  const saved = { HOST: process.env.HOST, KEYS: process.env.AGENTBROWSER_API_KEYS };
+  // and clearing both env knobs around every case keeps the matrix honest —
+  // saved under their REAL names (an earlier draft saved KEYS: ..., which
+  // restored a phantom process.env.KEYS and left AGENTBROWSER_API_KEYS
+  // polluted for the rest of the process; review round 1, finding 2).
   const ESCAPE = 'AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND';
+  const savedHost = process.env.HOST;
+  const savedKeys = process.env.AGENTBROWSER_API_KEYS;
+  const savedEscape = process.env[ESCAPE];
 
   beforeEach(() => {
     for (const key of ['HOST', 'AGENTBROWSER_API_KEYS', ESCAPE] as const) {
@@ -2046,21 +2051,37 @@ describe('startServer bind policy: non-loopback without authentication refuses t
     }
   });
   afterEach(() => {
-    for (const [key, value] of Object.entries(saved)) {
+    for (const [key, value] of [
+      ['HOST', savedHost],
+      ['AGENTBROWSER_API_KEYS', savedKeys],
+      [ESCAPE, savedEscape],
+    ] as const) {
       if (value === undefined) {
         Reflect.deleteProperty(process.env, key);
       } else {
         process.env[key] = value;
       }
     }
-    if (process.env[ESCAPE] !== undefined) Reflect.deleteProperty(process.env, ESCAPE);
   });
 
-  it('refuses a wide bind with no keys, naming every exit', async () => {
+  it('refuses a wide bind with no keys, naming every exit — and without the misleading wide-bind warning', async () => {
     process.env.HOST = '0.0.0.0';
-    await expect(startServer({ port: 0 })).rejects.toThrow(
-      /refusing to bind 0\.0\.0\.0 beyond loopback without authentication[\s\S]*AGENTBROWSER_API_KEYS[\s\S]*AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1/
-    );
+    // Review round 1, finding 4: the origin guard's wide-bind warning
+    // recommends AGENTBROWSER_ALLOWED_HOSTS as a remedy for a service that,
+    // on this path, never starts. The refusal must be the only guidance.
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      await expect(startServer({ port: 0 })).rejects.toThrow(
+        /refusing to bind 0\.0\.0\.0 beyond loopback without authentication[\s\S]*AGENTBROWSER_API_KEYS[\s\S]*AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1/
+      );
+    } finally {
+      console.warn = warn;
+    }
+    expect(warnings.join('\n')).not.toContain('without API keys');
   });
 
   it('refuses a specific non-loopback address the same way', async () => {
