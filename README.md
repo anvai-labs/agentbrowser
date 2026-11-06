@@ -11,6 +11,38 @@ harnesses.
 
 [![AgentBrowser launch overview video](https://img.youtube.com/vi/1ZEtWKqpxQI/maxresdefault.jpg)](https://youtu.be/1ZEtWKqpxQI)
 
+## How it works, at a glance
+
+An agent connects through one of three surfaces; the service does the driving and
+hands back **semantic observations**, never pixels. Every outbound request and
+every side effect pass through a safety gate on the way.
+
+```mermaid
+flowchart LR
+    Agent["AI agent"]
+    Agent -->|"MCP · CLI · SDK/REST"| Svc
+
+    subgraph Svc["AgentBrowser service"]
+      direction TB
+      Gate{{"safety gates"}}
+    end
+
+    Svc -->|"BrowserEngine<br/>(swappable)"| Browser["Browser<br/>Chromium · Firefox · WebKit · Safari"]
+    Browser --> Site["Authorized<br/>website"]
+
+    Site -.->|"accessibility tree,<br/>not screenshots"| Svc
+    Svc -.->|"compact JSON:<br/>refs · roles · redacted secrets"| Agent
+```
+
+The four safety invariants, in one line each:
+
+| Guarantee | What it means for the agent |
+| --- | --- |
+| **Semantic observations** | You read an accessibility/DOM model, not a screenshot — smaller, deterministic, diffable. |
+| **Stable element refs** | You act on `e<rev>_<n>` handles that **expire when the page changes**, so you can never click a stale target. |
+| **Egress policy** | Loopback, private IPs and cloud metadata are blocked by default (SSRF defense) at a single choke point. |
+| **Approval gates** | Transactions and account changes need a single-use token before they run. |
+
 ## Install (Homebrew)
 
 ```bash
@@ -122,25 +154,75 @@ rejects explicit `headless: true` for them loudly
 ## Architecture
 
 TypeScript control plane (Node 24.21.0 qualification/build baseline, pnpm
-workspace) over an engine-neutral protocol:
+workspace) over an engine-neutral protocol. The dashed line is the one that
+matters: **everything above it is engine-agnostic**, and every engine below it
+implements the same `BrowserEngine` interface and passes the same contract
+suite, so engines swap without touching clients ([ADR-002](docs/adr/002-engine-neutral-protocol.md)).
 
+```mermaid
+flowchart TB
+    subgraph S["Surfaces — how agents connect"]
+      MCP["mcp-server<br/>(stdio, proxies over HTTP)"]
+      CLI["cli"]
+      SDK["sdk-typescript"]
+    end
+
+    API["api — REST + WebSocket service<br/>(composition root)"]
+
+    subgraph CP["Control plane — engine-neutral"]
+      CORE["core<br/>sessions · actions · observation"]
+      CONTROL["control<br/>human/agent authority"]
+      POL["policy · policy-engine<br/>egress + decisions"]
+      EXT["extraction"]
+    end
+
+    ENGINE["engine — BrowserEngine interface"]
+    PROTO["protocol — versioned contract (no deps)"]
+
+    subgraph EN["Engines — implement BrowserEngine"]
+      PW["engine-playwright"]
+      SF["engine-safari"]
+      FF["engine-firefox"]
+      OB["engine-obscura"]
+    end
+
+    MCP & CLI & SDK -->|HTTP| API
+    API --> CORE & CONTROL & POL & EXT
+    API --> PW & SF
+    CORE --> ENGINE
+    PW & SF & FF & OB -.implement.-> ENGINE
+    ENGINE --> PROTO
+    CORE --> PROTO
 ```
-packages/
-├── protocol/           # Versioned schemas - the public contract
-├── engine/             # BrowserEngine interface + core types
-├── engine-playwright/  # Chromium / Firefox / WebKit (Playwright)
-├── engine-obscura/     # Experimental Rust engine adapter
-├── engine-safari/      # Real Safari via safaridriver (WebDriver)
-├── core/               # Session coordination, normalization, actions
-├── policy/             # Egress / network policy
-├── extraction/         # Page extraction
-├── testkit/            # FakeEngine + the reusable contract suite
-├── sdk-typescript/     # TypeScript client SDK
-├── mcp-server/         # MCP stdio adapter to the shared service
-├── api/                # REST + WebSocket service
-├── cli/                # Human and shell-agent CLI; offline command discovery
-└── benchmarks/         # Performance benchmarks
-```
+
+*Edges show the primary layering, not every dependency: `protocol` (and, to a
+lesser degree, `engine`) underpins most packages — including `api` directly — so
+those contract edges are drawn once at the spine rather than from every node. The
+authoritative graph is each package's `package.json`.*
+
+<!-- Keep this table in sync with packages/*/package.json descriptions. -->
+
+| Package | Layer | Role |
+| --- | --- | --- |
+| `protocol` | contract | Versioned schemas + types; the public contract (zero deps). |
+| `engine` | contract | The `BrowserEngine` interface + engine-neutral types. |
+| `core` | control | Session coordination, action execution, observation normalization. |
+| `control` | control | Shared human/agent authority; browser-independent application operations. |
+| `policy` | control | Network egress policy (SSRF defense). |
+| `policy-engine` | control | Server policy decisions behind one Authorizer seam ([ADR-024](docs/adr/024-server-policy-engine-cedar.md)). |
+| `extraction` | control | Deterministic page extractors with evidence provenance. |
+| `engine-playwright` | engine | Chromium / Firefox / WebKit (production default). |
+| `engine-safari` | engine | Real Safari via safaridriver (macOS, always headed). |
+| `engine-firefox` | engine | Experimental native Firefox WebDriver BiDi (trusted local). |
+| `engine-obscura` | engine | Experimental Rust engine adapter (benchmark-only). |
+| `api` | surface | REST + WebSocket service; the composition root. |
+| `cli` | surface | Human + shell-agent CLI; offline command discovery. |
+| `mcp-server` | surface | MCP stdio adapter; talks to the service over HTTP. |
+| `sdk-typescript` | surface | TypeScript client SDK. |
+| `testkit` | support | `FakeEngine` + the reusable contract suite. |
+| `engagement` | support | Findings bound to an engagement ledger; SARIF draft export. |
+| `audit` | support | Visual audit adapter (baseline/versioned pixel diffs). |
+| `benchmarks` | support | Benchmark harness, deterministic task suite, soak tests. |
 
 The unbound MCP catalog exposes twenty-five tools, among them `session_create`,
 `page_create`, `navigate`, `observe`, `act`, `autofill`, `plan`, `extract`,
@@ -156,6 +238,59 @@ revision (ADR-009). Observed values are redacted at the engine's sensitivity
 boundary (TD-BROWSER-13): password and credential fields report
 `valueRedacted: true` instead of a value.
 
+### A round trip
+
+Reads and actions follow the same path. The engine captures an accessibility
+snapshot; the service redacts, bounds and normalizes it into compact JSON before
+the agent ever sees it.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Ag as AI agent
+    participant Su as Surface<br/>(MCP/CLI/SDK)
+    participant Svc as API service
+    participant En as BrowserEngine
+    participant Pg as Page
+    Ag->>Su: observe(session, page)
+    Su->>Svc: HTTP
+    Svc->>En: capture a11y snapshot
+    En->>Pg: read DOM + a11y tree
+    Pg-->>Svc: raw state
+    Svc-->>Su: refs · roles · redacted secrets<br/>(bounded by maxBytes / maxElements)
+    Su-->>Ag: compact JSON
+    Note over Ag,Pg: a ref is scoped to tenant+session+page and dies when the<br/>page revision changes — acting on a stale ref fails STALE_TARGET
+```
+
+### Session lifecycle
+
+Sessions are **ephemeral by default** — a TTL and an idle timeout reap them, and
+any policy or engine fault moves them to a terminal state instead of hanging
+([ADR-005](docs/adr/005-ephemeral-sessions-explicit-persistence.md)).
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATING
+    CREATING --> READY
+    READY --> ACTIVE: first action
+    ACTIVE --> ACTIVE: observe / act
+    READY --> CLOSING: close
+    ACTIVE --> CLOSING: close
+    CLOSING --> CLOSED
+    CLOSED --> [*]
+
+    state "terminal faults" as T
+    READY --> T
+    ACTIVE --> T
+    T --> [*]
+    note right of T
+      EXPIRED — TTL or idle timeout
+      POLICY_TERMINATED — egress violation
+      ENGINE_CRASHED — engine fault
+      QUOTA_TERMINATED — quota exceeded
+    end note
+```
+
 ### The fast path for forms: snapshot then plan
 
 For supported native forms, prefer [scoped bulk autofill](docs/bulk-autofill.md):
@@ -168,6 +303,20 @@ For explicit heterogeneous steps, the snapshot/plan pair remains available:
 Filling a multi-field form one `browser_act` at a time costs a round trip
 per field, because every action bumps the page revision. The batched pair
 collapses that to two calls ([TD-BROWSER-8](docs/td/TD-BROWSER-8-batched-snapshots-and-action-plans.md)):
+
+```mermaid
+flowchart LR
+    subgraph B["one act per field"]
+      direction TB
+      b1["act fill #1"] --> b2["revision++"] --> b3["act fill #2"] --> b4["revision++"] --> b5["… × N round trips"]
+    end
+    subgraph A["snapshot + plan"]
+      direction TB
+      a1["snapshot<br/>→ fields[]"] --> a2["plan<br/>→ ordered steps, per-step results,<br/>refs self-heal once each"]
+    end
+    B -->|"2 calls total"| A
+```
+
 
 1. `browser_snapshot` returns a self-contained page summary - url, title,
    revision, the page's adaptive `mode`, and `fields` (`{ref, role, label}`).
