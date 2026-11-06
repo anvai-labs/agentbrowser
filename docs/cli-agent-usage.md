@@ -53,7 +53,7 @@ attempt to reuse authentication; verify the expected signed-in UI afterward.
 | `AGENTBROWSER_BASE_URL` | MCP adapter | Selects the REST service; the CLI does not use this variable. |
 | `AGENTBROWSER_API_KEY` | CLI and MCP adapter | Sends an existing bearer credential. |
 | `AGENTBROWSER_API_KEYS` | Server at startup | Configures `key:tenant` credentials; unset means an unauthenticated local service. |
-| `HOST`, `PORT` | Server at startup | Selects the listener; keep local instances on loopback. |
+| `HOST`, `PORT` | Server at startup | Selects the listener; keep local instances on loopback. A non-loopback `HOST` requires `AGENTBROWSER_API_KEYS` at startup (or `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` for containers). |
 | `AGENTBROWSER_ALLOWED_CIDRS` | Server at startup | Operator-authorized private-IP exceptions, never a loopback or metadata bypass. |
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | Server at startup | Per-response network byte cap: defaults to 10 MiB; operator override from 1 through 67108864 bytes (64 MiB). Session/CLI requests cannot raise it. |
 
@@ -96,7 +96,7 @@ ports. `--allow-hosts` only narrows a session's permissions. Loopback and cloud
 metadata remain denied even with a broad CIDR. A `POLICY_DENIED` result can reflect
 other rules; inspect its bounded reason and operator configuration before acting.
 Do not invent an allow-loopback flag or use CDP attachment as a policy workaround.
-For exact enforcement semantics, see [LAN CIDR policy](lan-cidr-policy.md).
+For exact enforcement semantics, see `AGENTBROWSER_ALLOWED_CIDRS` in the operations guide.
 
 ### Explicitly authorized loopback testing
 
@@ -583,7 +583,7 @@ reports. Outcome remains CLI/SDK/REST only unless measured demand justifies an M
 projection; other MCP result contracts remain to be qualified.
 
 For cross-version integration and common-helper reuse, use the on-demand
-[Claude foundation handoff](agent-handoffs/claude-foundation-reuse.md). It separates
+the Claude foundation handoff (formerly docs/agent-handoffs/). It separates
 published capabilities, installed binaries and the T3 candidate.
 
 ## Evaluate a completed case offline

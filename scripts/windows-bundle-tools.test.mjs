@@ -210,14 +210,14 @@ test('pruneCedarWasm keeps one wasm build and enforces the pin', async () => {
     await writeFile(join(pkg, 'nodejs', 'cedar_wasm_bg.wasm'), real);
     await writeFile(join(pkg, 'esm', 'cedar_wasm.js'), 'export const x = 1;');
     await writeFile(join(pkg, 'web', 'cedar_wasm.js'), 'export const x = 1;');
-    await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '4.13.0' }));
+    await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '4.14.0' }));
     assert.equal(await pruneCedarWasm(dir), 1);
     assert.equal(existsSync(join(pkg, 'nodejs', 'cedar_wasm_bg.wasm')), true);
     assert.equal(existsSync(join(pkg, 'esm')), false);
     assert.equal(existsSync(join(pkg, 'web')), false);
     // A version bump without re-pinning is refused, not silently pruned.
-    await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '4.14.0' }));
-    await assert.rejects(() => pruneCedarWasm(dir), /pins 4.13.0/);
+    await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '4.15.0' }));
+    await assert.rejects(() => pruneCedarWasm(dir), /pins 4.14.0/);
   });
 });
 

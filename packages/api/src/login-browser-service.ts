@@ -21,6 +21,13 @@ function defaultLoginProfileRoot(): string {
   return process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? tmpdir(), '.local', 'state');
 }
 
+/**
+ * How long shutdown waits for the login browser to close. Short on purpose:
+ * close() queues behind any in-flight launch, and shutdown must not inherit
+ * the launch budget.
+ */
+const SHUTDOWN_CLOSE_TIMEOUT_MS = 10_000;
+
 export class LoginBrowserService {
   private browser: LoginBrowser | undefined;
   private readonly enabled: boolean;
@@ -31,11 +38,31 @@ export class LoginBrowserService {
     profileDir?: string;
     /** Test-only: CI drives the lifecycle headless; production is headed. */
     headless?: boolean;
+    /**
+     * Test-only ADR-016 candidate override. Production leaves this unset so
+     * the env fallback (AGENTBROWSER_CHROME_PATH / _PREFER_BUNDLED) and
+     * branded detection apply, exactly as for a session. A real-launch test
+     * must pass `[]` to pin itself to the bundled build: the ubuntu CI image
+     * ships /usr/bin/google-chrome, so without it that job would drive a
+     * runner Chrome whose version drifts while the Windows job used bundled.
+     */
+    brandedChromeCandidates?: string[];
+    /**
+     * Launch budget override (tests). Production uses the env fallback
+     * AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS and its default.
+     */
+    loginLaunchTimeoutMs?: number;
   }) {
     this.enabled = options.enabled;
     if (options.enabled) {
       this.browser = new LoginBrowser({
         ...(options.headless !== undefined ? { headless: options.headless } : {}),
+        ...(options.brandedChromeCandidates !== undefined
+          ? { brandedChromeCandidates: options.brandedChromeCandidates }
+          : {}),
+        ...(options.loginLaunchTimeoutMs !== undefined
+          ? { loginLaunchTimeoutMs: options.loginLaunchTimeoutMs }
+          : {}),
         // AGENTBROWSER_LOGIN_PROFILE_DIR overrides; the default sits under
         // the OS private per-user state root (never the server's working
         // directory, which can be synced or backed up), with the install
@@ -85,7 +112,47 @@ export class LoginBrowserService {
   }
 
   async closeForShutdown(): Promise<void> {
-    if (this.browser?.isOpen === true) await this.browser.close().catch(() => undefined);
+    const browser = this.browser;
+    if (browser === undefined) return;
+    // Unconditional when a browser exists — NOT guarded on isOpen.
+    //
+    // isOpen is liveness-based, so guarding on it would SKIP close() for a
+    // dead-but-unreaped context and leave agentbrowser-lock on disk: exactly
+    // the leak the liveness change exists to prevent (round-1 finding 3).
+    // close() tolerates both the never-opened case (it throws
+    // LOGIN_BROWSER_CLOSED, swallowed here) and the dead case (it reaps and
+    // releases the lock).
+    //
+    // Bounded, because close() serializes behind an in-flight open() and that
+    // launch may now run for the full AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS
+    // (round-3 review finding 8). This runs inside Fastify's onClose hook,
+    // which has no timeout of its own, so an unbounded await would let a slow
+    // launch hold up shutdown for minutes where it used to return at once.
+    // Giving up here only forfeits the lock cleanup that the next startup's
+    // stale-lock adoption already handles.
+    // The timer is CLEARED when close() wins (round-4 review finding 1,
+    // reproduced): Promise.race does not cancel the loser, so the warning
+    // fired 10s after a perfectly successful close in any process that
+    // outlived it — including the api test suite. Having just fixed this
+    // component for logging something misleading, it must not start logging
+    // the inverse.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        browser.close().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            console.warn(
+              `[agentbrowser] login browser did not close within ${SHUTDOWN_CLOSE_TIMEOUT_MS}ms (a launch may still be in flight); continuing shutdown`
+            );
+            resolve();
+          }, SHUTDOWN_CLOSE_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private requireBrowser(): LoginBrowser {

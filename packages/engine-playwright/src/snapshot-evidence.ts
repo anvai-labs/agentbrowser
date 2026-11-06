@@ -92,7 +92,7 @@ function positiveIntEnv(name: string, fallback: number): number {
 export interface EmptyObservationInput {
   /** Elements the accessibility tree actually surfaced. */
   elementCount: number;
-  /** Length of document.body.innerText at observation time. */
+  /** Length of document.body text (textContent) at observation time. */
   bodyTextLength: number;
   /** Count of element nodes under document.body at observation time. */
   domNodeCount: number;

@@ -5,7 +5,7 @@ is this record; the enforcement itself is NOT SHIPPED). Task packet:
 [t7-audit-security](../tasks/t7-audit-security.md). Origin: the
 foundation-first refinements ([foundation-refinements](../tasks/foundation-refinements.md))
 and the egress-transport reassessment's "neither component substitutes
-for the other" boundary ([egress-transport design](../../egress-transport-design.md)).
+for the other" boundary (formerly docs/egress-transport-design.md).
 
 ## The pairing
 
@@ -37,7 +37,7 @@ sessions are offered to tenants who are the adversary, the application
 boundary is insufficient BY ITSELF — closing R03/R13 capabilities for
 that audience requires the pairing first. The T7 packet's stop rule
 applies: the gateway program this prerequisite needs is deferred and
-GATED ([egress-transport feasibility](../../egress-transport-feasibility.md)
+GATED (egress-transport feasibility study, removed 2026-10
 — gate FAILED, no production transport approved); this record documents
 the requirement without restarting that project implicitly.
 
@@ -48,7 +48,7 @@ the requirement without restarting that project implicitly.
    or equivalent — the mechanism is deployment-specific; the property is
    not).
 2. Fail-closed startup: if the enforcement cannot be verified, the
-   contained profile refuses to start (the [transport design's](../../egress-transport-design.md)
+   contained profile refuses to start (the transport design's, formerly docs/egress-transport-design.md,
    contained row) — no silent native fallback.
 3. No unauthenticated control plane on the enforcement path (the
    loopback opt-out's page→service escalation is the cautionary record;

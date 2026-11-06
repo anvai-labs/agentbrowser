@@ -286,7 +286,7 @@ is made for those integrations.
   `updateConfig()` calls affect new sessions, not existing captured generations;
   close/recreate those sessions to apply updated rules, including deny changes.
 
-See the [production integration contract](connection-authority-design.md#t2b2-production-integration-boundary)
+the production integration contract (formerly docs/connection-authority-design.md)
 for policy snapshot and cancellation semantics. Validate custom integrations
 before upgrading. The [release tracker](release-milestones.md) distinguishes
 candidate integration checks from published and installed acceptance; version
@@ -410,7 +410,8 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug`, `info` (default), `warn` or `error`, case-insensitive. Unknown values print a warning and use `info`. `warn` drops successful-operation lines; `error` also drops failed operations, including policy and approval denials, so alert on the `errors_total` metric rather than on logs at that level. Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF` | service entrypoint | `1` = shut down cleanly (closing all sessions and browsers) when stdin closes. Opt-in lifeline for a supervising launcher: if the launcher is killed, the OS closes the pipe and the server still exits instead of orphaning Chromium. Leave unset under service managers that give the server an empty stdin (it would stop immediately). |
 | `AGENTBROWSER_ALLOW_LOOPBACK` | service entrypoint | Set `1`/`true` to disable the loopback/unspecified-address block (127/8, `0.0.0.0`, `::1`, `::`, `localhost` hostnames) for **all** sessions on this server — local-machine testing against `127.0.0.1` dev servers. Startup-only; session/request input can never set it. **With this set, visited pages can reach every loopback service, including this server's own API: in no-keys local mode that is full unauthenticated control of all sessions; in keyed mode the service is auth-gated but other loopback services are exposed.** Cloud-metadata blocking and session host restrictions still apply. Loud warning at startup. |
-| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. Metadata includes the whole link-local ranges (`169.254.0.0/16`, `fe80::/10`), so a CIDR exception cannot reach link-local devices. See [LAN CIDR policy](lan-cidr-policy.md). |
+| `AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND` | service entrypoint | `1`/`true`/`yes`: allow the service to **bind beyond loopback without `AGENTBROWSER_API_KEYS`** — otherwise a `HOST=0.0.0.0` (or LAN-address) bind refuses to start. For environments where exposure is already the operator's explicit decision, such as a container whose ports must be published to be reachable (the Docker image sets this itself); the wide-bind `Host` check still applies on this path. **Not the same variable as `AGENTBROWSER_ALLOW_LOOPBACK`** (that one governs what visited *pages* may reach; this one governs where the *service* may listen). Keyless remote access without either variable: use an SSH tunnel to the loopback listener instead. |
+| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. Metadata includes the whole link-local ranges (`169.254.0.0/16`, `fe80::/10`), so a CIDR exception cannot reach link-local devices. |
 | `AGENTBROWSER_CORS_ORIGINS` | service entrypoint | Comma-separated exact browser origins (`scheme://host[:port]`) allowed to call the API and to receive CORS headers, e.g. `https://console.example`. Unset/blank: none — cross-origin browser requests are refused with `403 FORBIDDEN` and no CORS headers are sent; the same-origin [operator panel](#browser-request-guard) still works. Malformed origins or empty list entries abort startup. `*` disables the origin check (loud warning). Merged with `ServerOptions.corsOrigin`. |
 | `AGENTBROWSER_ALLOWED_HOSTS` | service entrypoint | Comma-separated hostnames (no port) accepted in the `Host` header in addition to loopback names, e.g. `agentbrowser.internal`. Without API keys only loopback names are accepted on **any** bind (DNS-rebinding defense), so Compose/LAN clients that use a container or host name must be listed here; setting the list also enables the Host check on keyed wide binds. See [browser request guard](#browser-request-guard). |
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | service entrypoint | Per-response network byte cap, default 10485760 (10 MiB). Startup-only decimal integer from 1 to 67108864 (64 MiB); unset/blank keeps the default, invalid input aborts startup. Example: 33554432 for large LinkedIn JavaScript bundles. Applies to all sessions on that server; session input cannot raise it. Host/SSRF rules remain intact. Distinct from extraction and download budgets. Playwright buffers before its actual-byte check, so this does not bound peak transport memory. |
@@ -429,6 +430,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_JOURNAL_HISTORY_FILE` | service | Optional, **trusted operator configuration** (T5 J3d): absolute path to an owner-only (`0600`) JSON file listing at most 16 namespaces rotated away from, each with its original descriptor inputs and key file (format in [the journal section](#durable-application-writes-t5-c4b)). They stay searchable and recoverable until `retainUntil` and never accept new writes. Requires the other `AGENTBROWSER_JOURNAL_*` variables; a malformed file aborts startup, while an entry the store refuses is reported in `GET /v1/journal` and never stops the current namespace. |
 | `AGENTBROWSER_JOURNAL_INITIALIZE` | service | `1` initializes an empty store on this start only; it never repairs an existing store. Remove it after the first successful start. |
 | `AGENTBROWSER_LOGIN_PROFILE_DIR` | service (login browser) | **Trusted operator configuration** (ADR-025): the login browser's persistent profile directory. Default: the OS private per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA`), outside synced and backed-up paths — keep any override equally private; the directory is enforced owner-only (POSIX `0700`, Windows owner DACL) at every launch. |
+| `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` | service (login browser) | Optional (default 120000, accepted range 5000–600000; invalid values warn and fall back): how long the login browser's launch may take, covering both the window launch and the binary-version probe. The generous default is deliberate — endpoint-security software can add tens of seconds to a browser launch (measured: branded Chrome under `brew services` took 23 s with an antivirus EndpointSecurity extension active and 1.0 s with it disabled), and Playwright's unconfigurable 30 s default left only 7 s of room: exceeding it aborts the launch *after* Chrome has drawn its window, which presents as a window that opened and then stopped responding. Every open logs its elapsed time, and warns past 10 s. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | HMAC key for the artifact download-token check (`?token=`); unset, a random per-process key is used. No route currently issues tokens, so artifact access is by session ownership and this key has no practical effect today. |
 | `AGENTBROWSER_ARTIFACT_MAX_TOTAL_BYTES` | service | Aggregate in-memory artifact ceiling, in bytes. Default 268435456 (256 MiB); must be at least the 10 MiB per-artifact ceiling, and invalid values abort startup. When full, the oldest artifact of the tenant holding the most is evicted (fair share: no tenant is pushed below an equal share by others). |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 4.375-hour default. |
@@ -461,12 +463,14 @@ non-blank `AGENTBROWSER_LOG_LEVEL` when one is set.
 Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
 default because it reads local files on the operator's behalf
 (screenshots, upload paths) — network exposure is an explicit opt-in via
-`HOST=0.0.0.0` (or `options.host`; the Dockerfile sets this for
-container port publishing). See `ServerOptions`; port selection
-rationale in [ADR-017](adr/017-default-port-5709.md). When exposing the
-service beyond localhost, set
-`AGENTBROWSER_API_KEYS` first — the egress policy constrains what
-*browser sessions* may reach, not who may reach the *service*.
+`HOST=0.0.0.0` (or `options.host`). See `ServerOptions`; port selection
+rationale in [ADR-017](adr/017-default-port-5709.md). **A bind beyond
+loopback without `AGENTBROWSER_API_KEYS` refuses to start** (or set
+`AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` where exposure is already the
+operator's own decision, such as a container with published ports; the
+Docker image sets this itself) — the egress policy constrains what
+*browser sessions* may reach, not who may reach the *service*. An empty
+`HOST=` is treated as unset, never as the `::` wide bind Node would give it.
 
 ### Browser request guard
 
@@ -494,13 +498,19 @@ DNS-rebound hostname. The guard refuses with `403 FORBIDDEN`:
 CLI, SDK and MCP clients send no `Origin` and no fetch metadata, so they are
 unaffected as long as they use a trusted name.
 
-**Wide binds** (`HOST=0.0.0.0`, the Docker image's default): without API keys
-only trusted names are accepted, for every client — `docker run -p 5709:5709`
-reached via `localhost:5709` works, but Compose services or LAN clients that
-use a container or host name get 403 until that name is listed in
-`AGENTBROWSER_ALLOWED_HOSTS` (the service logs this at startup). With
-`AGENTBROWSER_API_KEYS` set the `Host` check is skipped unless names are
-listed: the bearer key is the barrier, and a rebound page has none.
+**Wide binds** (`HOST=0.0.0.0` or a LAN address): without API keys the
+service **refuses to start** — set `AGENTBROWSER_API_KEYS`, bind loopback
+(`127.0.0.1`/`localhost`/`::1`), or set
+`AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND=1` where exposure is already the
+operator's own decision (a container whose ports must be published to be
+reachable; the Docker image sets this itself). On the escape-hatch path the
+Host check below still applies: only trusted names are accepted for every
+client — `docker run -p 5709:5709` reached via `localhost:5709` works, but
+Compose services or LAN clients that use a container or host name get 403
+until that name is listed in `AGENTBROWSER_ALLOWED_HOSTS` (the service logs
+this at startup). With `AGENTBROWSER_API_KEYS` set the `Host` check is
+skipped unless names are listed: the bearer key is the barrier, and a
+rebound page has none.
 
 Compatibility notes:
 
@@ -692,7 +702,7 @@ which an export includes).
 Delivery note: the direct-download and captured-download improvements below
 merged into `develop` in [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80).
 This is a partial correction, not browser containment: R4 remains open in the
-[delivery tracker](engineering-review-remediation.md). Integration into `develop`
+delivery tracker (formerly docs/engineering-review-remediation.md). Integration into `develop`
 does not itself publish a release.
 
 Direct URL downloads validate every redirect and resolved address, pin the
@@ -735,7 +745,7 @@ cannot stream through it either. A transport-level fix requires an
 interception layer that can forward WebSockets (OS/CDP-level proxy),
 which the `context.route` fetch/fulfill design cannot provide — the
 candidate mechanisms are gated as failed in
-[egress-transport feasibility](egress-transport-feasibility.md), and
+the egress-transport feasibility study (removed 2026-10), and
 the [threat model](threat-model.md) carries the enforcement-boundary
 caveats (page-routing coverage only, no worker guarantee, explicit
 `off`/no-policy modes unguarded).
@@ -1101,7 +1111,7 @@ attaches the SSRF default by design), plus the operator `cdp-attach`
 lane, which never installs the WS deny handler and is likewise
 unguarded for WS. If live streaming is a hard
 requirement, track the transport-level replacement in
-[egress-transport feasibility](egress-transport-feasibility.md) — until
+the egress-transport feasibility study (removed 2026-10) — until
 that lands, reload-to-read-final-state or REST polling is the supported
 pattern.
 
@@ -1369,6 +1379,10 @@ authority model and the acceptance fixture
 | --- | --- |
 | Startup warns `/v1 is UNAUTHENTICATED` | `AGENTBROWSER_API_KEYS` unset — set `key:tenant` pairs before exposing the service. |
 | `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (4.4 h / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
+| `operator login-browser open` takes tens of seconds | Usually **endpoint-security software**: an antivirus/EDR *EndpointSecurity system extension* authorizing the process launch. Measured on one machine, branded Chrome under `brew services`: **23 s with such an extension active, 1.0 s with it disabled** — while the same launch from a shell was 1.1 s either way, so the penalty fell on the `launchd`-spawned child specifically. Check System Settings → General → Login Items & Extensions → Endpoint Security Extensions first. Profile size is not a factor (a 52 MB profile opened in 3.2 s, faster than a fresh one). The elapsed time is logged on every open, with a warning past 10 s; raise `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS` if it approaches the budget, or set `AGENTBROWSER_PREFER_BUNDLED=1` for a lighter bundle. See [the login guide](use-your-login-safely.md#when-something-goes-wrong). |
+| The login-browser window opens but does not respond | First check the logged open time: if it hit `AGENTBROWSER_LOGIN_LAUNCH_TIMEOUT_MS`, the launch was aborted *after* Chrome drew its window, so nothing is driving it — raise the budget and reopen. Otherwise kill the Chrome, remove `SingletonLock`, `SingletonSocket` and `SingletonCookie` from the profile directory, and restart the service. |
+| `LOGIN_PROFILE_IN_USE` with no login window visible | A Chrome wedged or was killed and left Chrome's own `SingletonLock` behind, or the lock names a different hostname (a laptop whose `.local` name changed) — Chrome only breaks a stale lock from the same host. The server reads that lock and never deletes it, because removing a live owner's would put two Chromes on one cookie database. Recovery is in [the login guide](use-your-login-safely.md#when-something-goes-wrong). |
+| `LOGIN_BINARY_CHANGED` / `LOGIN_BINARY_DOWNGRADED` | The profile refuses to open with a binary older than the one that last wrote it (ADR-025 §1). In-place Chrome updates adopt automatically, as does any switch where one side is a Playwright-managed build (bundled→branded, branded→bundled via `AGENTBROWSER_PREFER_BUNDLED=1`, or a Playwright version bump) — all logged. A refusal therefore means either a genuinely older binary, the same version with different bytes (a replacement, not an update), or a move between two operator-installed binaries. For the last case, pointing `AGENTBROWSER_CHROME_PATH` back at the **pinned** path avoids `operator login-browser reset`, which deletes the profile and every login in it. |
 | `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `snapshot` + `plan`, which self-heals stale refs once per step. |
 | `upload` fails with `TARGET_AMBIGUOUS` naming several file inputs | The page has more than one `input[type=file]` (hidden Dropzone inputs are common). Observe with `include:["fileInputs"]` to mint refs for every input — hidden ones included — then pass `target: {ref}`. |
 | Observation shows a checkbox but no on/off state | Checkbox/radio/switch elements carry `checked` (true/false) on observations; tri-state mixed is reported as absent rather than guessed. React-controlled widgets can still hide state in the DOM attribute — trust the observation field, not the raw HTML attribute. |
@@ -1385,7 +1399,7 @@ authority model and the acceptance fixture
 | Upgrading to 1.15.2 | Observation redaction is engine-side and needs a service restart to take effect; sessions created before the restart keep the old behavior for their lifetime. No client update is required (all new fields are optional). |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |
-| A live-updating SPA never updates (a server-side action completes but the UI stays stale; reloading the page shows the final result) | With any active egress policy — the default SSRF policy included — page WebSocket upgrades are closed outright (close code `1014`, reason `blocked by egress policy`): a Playwright limitation makes allowed-WebSocket forwarding impossible under the fetch/fulfill choke point, so upgrades are denied cleanly instead of failing opaquely. Treat long-running actions as fire-and-reload (or poll a REST endpoint) rather than waiting for push; a page WebSocket closing with `1014` is this behavior, not a site or bot wall. `allowServiceWorkers` restores service-worker transport only, never WebSockets. See the [egress notes](threat-model.md) and [egress-transport feasibility](egress-transport-feasibility.md). |
+| A live-updating SPA never updates (a server-side action completes but the UI stays stale; reloading the page shows the final result) | With any active egress policy — the default SSRF policy included — page WebSocket upgrades are closed outright (close code `1014`, reason `blocked by egress policy`): a Playwright limitation makes allowed-WebSocket forwarding impossible under the fetch/fulfill choke point, so upgrades are denied cleanly instead of failing opaquely. Treat long-running actions as fire-and-reload (or poll a REST endpoint) rather than waiting for push; a page WebSocket closing with `1014` is this behavior, not a site or bot wall. `allowServiceWorkers` restores service-worker transport only, never WebSockets. See the [egress notes](threat-model.md). |
 
 
 ### Windows

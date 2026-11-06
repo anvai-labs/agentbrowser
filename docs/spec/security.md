@@ -21,7 +21,7 @@ not certify hosted containment or implement a penetration-testing engine.
 Local functional automation is qualified independently from hostile multi-tenant
 containment. Current engine routing has known redirect, DNS and target coverage
 limitations; real Safari guarded service creation is unsupported. Respect the
-[engine matrix](../engines.md) and deferred [transport contract](../transport-integration-contract.md).
+[engine matrix](../engines.md) and deferred transport contract (removed 2026-10).
 Never claim that a mode name or HTTP proxy closes these holes.
 
 Hosted hostile workloads require independently enforced process/filesystem/network

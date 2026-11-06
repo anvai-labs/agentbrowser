@@ -2,6 +2,7 @@ import { chmodSync, existsSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LoginBrowser, LoginBrowserError, tcpListenersOf } from './login-browser.js';
 
@@ -16,8 +17,22 @@ import { LoginBrowser, LoginBrowserError, tcpListenersOf } from './login-browser
 // The knob is TEST-side: the engine has no env-driven headless mode, so a
 // stray env var can never make a production login browser invisible.
 const HEADLESS = process.env.AGENTBROWSER_LOGIN_HEADLESS === '1';
+/**
+ * brandedChromeCandidates: [] pins every real launch in this file to
+ * Playwright's bundled build — exactly what it used before the login browser
+ * gained ADR-016 resolution. This is FORCED, not inferred from absence: the
+ * ubuntu CI image ships /usr/bin/google-chrome (see
+ * engine-families-platforms.test.ts), the Windows job ships none, and a
+ * developer's Mac has a branded Chrome whose version drifts weekly — so
+ * without this the three hosts would stop testing the same binary. Branded
+ * resolution is covered hermetically in login-browser-binary.test.ts.
+ */
 const mk = (options: { profileDir: string; now?: () => number }) =>
-  new LoginBrowser({ ...options, ...(HEADLESS ? { headless: true } : {}) });
+  new LoginBrowser({
+    ...options,
+    brandedChromeCandidates: [],
+    ...(HEADLESS ? { headless: true } : {}),
+  });
 const suite = describe;
 
 let dir: string;
@@ -252,7 +267,7 @@ suite('the login browser', () => {
     240_000
   );
 
-  it('the pin records the real executable; a changed binary refuses and reset adopts', async () => {
+  it('the pin records the real executable; a path change adopts, same-version bytes refuse, reset clears', async () => {
     const profile = join(dir, 'profile-reset');
     const browser = mk({ profileDir: profile });
     const refused = mk({ profileDir: profile });
@@ -271,7 +286,10 @@ suite('the login browser', () => {
         chromiumVersion?: string;
         launches: number;
       };
-      expect(pin.executable).toBeTruthy();
+      // Non-vacuous now that mk() forces brandedChromeCandidates: []: the
+      // resolved binary must be exactly Playwright's bundled build, on every
+      // host. Before that pinning, this could only assert "something".
+      expect(pin.executable).toBe(chromium.executablePath());
       expect(pin.executableSize).toBeGreaterThan(0);
       expect(typeof pin.executableModifiedMs).toBe('number');
       expect(pin.chromiumVersion).toBeTruthy();
@@ -280,17 +298,35 @@ suite('the login browser', () => {
       await browser.close();
       const pin2 = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin;
       expect(pin2.launches).toBe(2);
+      // A path change ADOPTS against a real browser when one side is a
+      // Playwright-managed build — which is always true in this file, since
+      // mk() forces brandedChromeCandidates: [] so resolution is the bundled
+      // binary. This is the one-time migration path exercised for real: the
+      // profile survives and the pin is rewritten to the resolved binary.
+      // The refusal case needs BOTH sides to be operator-installed, which
+      // only a controlled resolution can arrange — see
+      // login-browser-binary.test.ts.
       await writeFile(pinPath, JSON.stringify({ ...pin2, executable: '/moved/chromium' }));
-      await expect(refused.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
-      // A same-path in-place replacement refuses DOWNGRADED — and leaves the
-      // profile UNLOCKED (the lock is acquired last). Tampering the RECORDED
-      // identity is symmetric to rewriting the binary: the compared property
-      // is recorded-vs-live file identity (size+mtime — a version probe is
-      // mute on Windows, runner-proven, which is why the pin does not use one).
+      await refused.open();
+      await refused.close();
+      const adopted = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin & {
+        adoptedFromExecutable?: string;
+      };
+      expect(adopted.executable).toBe(chromium.executablePath());
+      expect(adopted.adoptedFromExecutable).toBe('/moved/chromium');
+      expect(existsSync(profile)).toBe(true);
+      // A same-path in-place replacement is now ADJUDICATED by version
+      // (ADR-025 §1's rule is "moved backwards"), not refused outright. Here
+      // the recorded identity is tampered while the binary on disk is
+      // untouched, so the probe reports the SAME version it pinned — different
+      // bytes at the same version is the tamper signature, not a Chrome
+      // update, so it refuses as CHANGED. The profile is still left UNLOCKED
+      // (the lock is acquired last). Forward-adopt and backwards-refuse need a
+      // controlled version, so they live in login-browser-binary.test.ts.
       const lockPath = join(profile, 'agentbrowser-lock');
       await writeFile(pinPath, JSON.stringify({ ...pin2, executableSize: 1 }));
       await expect(identityRefused.open()).rejects.toMatchObject({
-        code: 'LOGIN_BINARY_DOWNGRADED',
+        code: 'LOGIN_BINARY_CHANGED',
       });
       expect(existsSync(lockPath)).toBe(false);
       await refused.reset();

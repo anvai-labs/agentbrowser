@@ -48,7 +48,7 @@ describe('managed subprocess server', () => {
         spawnCalls.push({
           command,
           args: ['dist/server.js'],
-          env: { PORT: '3990' },
+          env: { PORT: '3990', HOST: '127.0.0.1', AGENTBROWSER_LOG_LEVEL: 'error' },
         });
         return {
           pid: 4242,

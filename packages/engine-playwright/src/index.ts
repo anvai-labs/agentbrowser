@@ -69,6 +69,12 @@ import {
   type Page,
 } from 'playwright';
 import { BodyRedirectGuard, followMethod, type GuardProbeLane } from './body-redirect-guard.js';
+import {
+  defaultBrandedChromeCandidates,
+  extraChromiumArgs,
+  preferBundledEnv,
+  resolveBrandedChrome,
+} from './chrome-binary.js';
 import { admitPageFetchResponse } from './page-fetch-admission.js';
 import { PageFetchLane, PROBE_NONCE_HEADER, type ProbeClaim } from './page-fetch-lane.js';
 import { PageFetchController } from './page-fetch-probe.js';
@@ -1176,46 +1182,11 @@ export function resolveContextViewport(
   return explicit ?? (headless ? { width: 1280, height: 720 } : null);
 }
 
-function defaultBrandedChromeCandidates(): string[] {
-  if (process.platform === 'darwin') {
-    return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
-  }
-  if (process.platform === 'win32') {
-    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
-    const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
-    return [
-      `${programFiles}\\Google\\Chrome\\Application\\chrome.exe`,
-      `${programFilesX86}\\Google\\Chrome\\Application\\chrome.exe`,
-    ];
-  }
-  return ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome'];
-}
-
-function preferBundledEnv(): boolean {
-  const value = process.env.AGENTBROWSER_PREFER_BUNDLED;
-  return value === '1' || value === 'true';
-}
-
-/**
- * Parse AGENTBROWSER_CHROMIUM_ARGS into Chromium launch flags.
- *
- * Operator escape hatch for engine-level Chromium policies the page stack
- * cannot override. Motivating case (2026-09-25 field run): Chrome's Local
- * Network Access enforcement kills same-origin XHR from pages ON a private
- * IP — a LAN-hosted console's fetch to its own origin throws without
- * reaching the server — defeating the CIDR allowlist for exactly the flows
- * the operator opted into.
- *
- * Space-separated; unset or blank yields no flags. Scope: HEADED CHROMIUM
- * launches only. The headless pool keeps stock launch defaults on purpose
- * (ADR-013: headless detection is honest and desired), firefox/webkit
- * launches never receive Chromium flags, and both CDP attach paths
- * (cdpEndpoint, operatorCdp) cannot apply launch flags at all — the
- * constructor warns on those two when the variable is set.
- */
-export function extraChromiumArgs(raw: string | undefined): string[] {
-  return (raw ?? '').trim().split(/\s+/).filter(Boolean);
-}
+// ADR-016 binary resolution now lives in ./chrome-binary.js so the operator
+// login browser shares it (ADR-025 §1 requires that; it previously could not,
+// because index.ts re-exports LoginBrowser and the import would cycle).
+// extraChromiumArgs is re-exported to keep its existing public import path.
+export { extraChromiumArgs } from './chrome-binary.js';
 
 /** A session owns its context and, only for a local headed launch, its browser. */
 async function closeSessionResources(
@@ -1857,30 +1828,21 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   /**
    * ADR-016 headed-binary precedence. Detection (branded candidates) runs
    * only when no explicit path is set and preferBundled is false.
+   *
+   * The precedence itself lives in ./chrome-binary.js, shared with the
+   * operator login browser (ADR-025 §1). This stays a method with the same
+   * name and signature so the suites that cast to reach it keep working, and
+   * so `executableSelection` in SessionDiagnostics keeps its exact meaning.
    */
   private async resolveHeadedExecutable(): Promise<{
     path?: string;
     selection: 'explicit' | 'detected' | 'playwright_default';
   }> {
-    const fs = await import('node:fs/promises');
-    if (this.chromeBinaryPath !== undefined) {
-      try {
-        await fs.access(this.chromeBinaryPath);
-        return { path: this.chromeBinaryPath, selection: 'explicit' };
-      } catch {
-        return { selection: 'playwright_default' };
-      }
-    }
-    if (this.preferBundled) return { selection: 'playwright_default' };
-    for (const candidate of this.brandedChromeCandidates) {
-      try {
-        await fs.access(candidate);
-        return { path: candidate, selection: 'detected' };
-      } catch {
-        // candidate absent — keep probing
-      }
-    }
-    return { selection: 'playwright_default' };
+    return resolveBrandedChrome({
+      ...(this.chromeBinaryPath !== undefined ? { chromeBinaryPath: this.chromeBinaryPath } : {}),
+      preferBundled: this.preferBundled,
+      brandedChromeCandidates: this.brandedChromeCandidates,
+    });
   }
 
   /**
@@ -5022,7 +4984,13 @@ class PlaywrightPage implements EnginePage {
     try {
       const body = this.page.locator('body');
       const [text, domNodeCount] = await Promise.all([
-        body.innerText({ timeout: 1000 }).catch(() => ''),
+        // textContent over innerText (biome useDomNodeTextContent): no layout
+        // dependency, so the measurement survives detached/navigating pages;
+        // null (no text node) coalesces into the same best-effort zero.
+        body
+          .textContent({ timeout: 1000 })
+          .then((bodyText) => bodyText ?? '')
+          .catch(() => ''),
         this.page
           .locator('body *')
           .count()
