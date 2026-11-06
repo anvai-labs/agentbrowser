@@ -909,7 +909,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         return {
           status: await engine.capabilities().then(
             () => 'ready',
-            () => 'unavailable'
+            () => {
+              // Signal the readiness failure without the engine's raw error
+              // text: that text is treated as private everywhere, logs
+              // included (see normalizeEngineError and the publication-fault
+              // test). The startup launch preflight (main.ts) is where the
+              // raw cause is surfaced, to the operator's own console.
+              options.logger?.warn('health.ready_unavailable', {});
+              return 'unavailable';
+            }
           ),
         };
       }
@@ -917,7 +925,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       return { status: 'ready', engine: engine.name, version: engine.version, capabilities };
     } catch {
       // Unauthenticated infra route: state only, never the engine's raw
-      // error text (driver paths, topology, stack-adjacent detail).
+      // error text (driver paths, topology, stack-adjacent detail). Log the
+      // readiness failure as an event; the raw cause is an operator-console
+      // concern handled by the startup preflight, not the request logger.
+      options.logger?.warn('health.ready_unavailable', {});
       return reply.status(503).send({
         error: {
           code: 'ENGINE_CRASHED',
