@@ -4063,6 +4063,27 @@ class PlaywrightPage implements EnginePage {
     // content marker can tell "frame folded its content" from "frame holds
     // content observation never surfaced".
     const frameContributions = new Map<import('playwright').Frame, number>();
+    // TD-BROWSER-17 frame-qualified refs: elements observed in a child frame
+    // mint `f<index>_e<revision>_<ordinal>`, where <index> is the frame's
+    // position in the engine's frame list (main frame = 0, never prefixed —
+    // top-document refs stay unprefixed `e<revision>_<ordinal>` so
+    // single-frame snapshots stay byte-identical to the pre-frame grammar).
+    // The per-element map lets the post-binding renumbering re-stamp the
+    // same qualifier on the next revision; the per-frame cache keeps the
+    // index computation to one lookup per frame per observation.
+    const frameRefPrefix = new Map<import('playwright').Frame, string>();
+    const refPrefixOf = new WeakMap<StoredElement, string>();
+    const prefixFor = (frame: import('playwright').Frame): string => {
+      const cached = frameRefPrefix.get(frame);
+      if (cached !== undefined) return cached;
+      const index = this.page.frames().indexOf(frame);
+      // A frame detached mid-observation has no index; it degrades to the
+      // shared (unprefixed) namespace rather than mint an unparseable
+      // qualifier — its reads already fail closed into the coverage block.
+      const prefix = index >= 0 ? `f${index}_` : '';
+      frameRefPrefix.set(frame, prefix);
+      return prefix;
+    };
     // Bounded frame identity: URL origin+path when meaningful, else the
     // frame's name, else its traversal ordinal.
     const frameIdentity = (frame: import('playwright').Frame, ordinal: number): string => {
@@ -4171,13 +4192,18 @@ class PlaywrightPage implements EnginePage {
             refOffset,
             // Frame content is a separate snapshot block: depth restarts and
             // the merged list position does not imply main-tree nesting.
-            blockCounter + 1
+            blockCounter + 1,
+            prefixFor(frame)
           );
           if (parsed.length > 0) {
             blockCounter += 1;
             blockOfFrame.set(frame, blockCounter);
           }
-          for (const element of parsed) this.frameOfElement.set(element, frame);
+          const framePrefix = frameRefPrefix.get(frame) ?? '';
+          for (const element of parsed) {
+            this.frameOfElement.set(element, frame);
+            refPrefixOf.set(element, framePrefix);
+          }
           frameContributions.set(frame, parsed.length);
           refOffset += parsed.length;
           elements.push(...parsed);
@@ -4238,6 +4264,7 @@ class PlaywrightPage implements EnginePage {
       const formControlsRequested = request.include?.includes('formControls') === true;
       for (const root of summaryRoots) {
         const block = root === this.page ? undefined : blockOfFrame.get(root);
+        const refPrefix = root === this.page ? '' : prefixFor(root as import('playwright').Frame);
         // The main frame is labelled 'main' (as the formControls scan does), never by URL, so a
         // coverage entry about it cannot be mistaken for a child frame at the same address.
         const identity =
@@ -4293,7 +4320,7 @@ class PlaywrightPage implements EnginePage {
         }
         for (const info of selected.rows) {
           elements.push({
-            ref: `e${this.revision}_${elements.length}`,
+            ref: `${refPrefix}e${this.revision}_${elements.length}`,
             role: 'html-summary',
             name: info.name,
             visible: true,
@@ -4305,19 +4332,23 @@ class PlaywrightPage implements EnginePage {
             attributes: { tag: 'summary' },
           });
           const merged = elements.at(-1);
-          if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+          if (merged !== undefined) {
+            if (root !== this.page) this.frameOfElement.set(merged, root);
+            refPrefixOf.set(merged, refPrefix);
+          }
         }
       }
       if (request.include?.includes('fileInputs') === true) {
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
+          const refPrefix = root === this.page ? '' : prefixFor(root as import('playwright').Frame);
           for (const info of await reads.read(
             'file_inputs',
             () => this.describeFileInputs(root),
             root === this.page ? 15000 : 500
           )) {
             elements.push({
-              ref: `e${this.revision}_${elements.length}`,
+              ref: `${refPrefix}e${this.revision}_${elements.length}`,
               role: 'fileinput',
               ...(info.name !== undefined ? { name: info.name } : {}),
               visible: info.visible,
@@ -4332,7 +4363,10 @@ class PlaywrightPage implements EnginePage {
               },
             });
             const merged = elements.at(-1);
-            if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+            if (merged !== undefined) {
+              if (root !== this.page) this.frameOfElement.set(merged, root);
+              refPrefixOf.set(merged, refPrefix);
+            }
           }
         }
       }
@@ -4431,6 +4465,7 @@ class PlaywrightPage implements EnginePage {
 
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
+          const refPrefix = root === this.page ? '' : prefixFor(root as import('playwright').Frame);
           for (const info of await scanSafely(
             root,
             () =>
@@ -4439,7 +4474,7 @@ class PlaywrightPage implements EnginePage {
             2
           )) {
             elements.push({
-              ref: `e${this.revision}_${elements.length}`,
+              ref: `${refPrefix}e${this.revision}_${elements.length}`,
               role: 'control',
               ...(info.name !== undefined ? { name: info.name } : {}),
               ...(info.context !== undefined ? { context: info.context } : {}),
@@ -4457,7 +4492,10 @@ class PlaywrightPage implements EnginePage {
               },
             });
             const merged = elements.at(-1);
-            if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+            if (merged !== undefined) {
+              if (root !== this.page) this.frameOfElement.set(merged, root);
+              refPrefixOf.set(merged, refPrefix);
+            }
           }
         }
         // Round-16/F4: the identity-string recovery filter is REMOVED —
@@ -4951,7 +4989,9 @@ class PlaywrightPage implements EnginePage {
       const states = new Map<string, StoredElement>();
       for (const [index, element] of elements.entries()) {
         const oldRef = element.ref ?? '';
-        const newRef = `e${this.revision}_${index}`;
+        // Re-stamp the frame qualifier (TD-BROWSER-17) so a re-minted frame
+        // ref keeps its owning-frame namespace across revisions.
+        const newRef = `${refPrefixOf.get(element) ?? ''}e${this.revision}_${index}`;
         const binding = this.bindings.get(oldRef);
         const state = this.refStore.get(oldRef);
         if (binding) bindings.set(newRef, binding);
@@ -5201,7 +5241,10 @@ class PlaywrightPage implements EnginePage {
     yaml: string,
     revision: number,
     refOffset = 0,
-    block = 0
+    block = 0,
+    // TD-BROWSER-17: '' for the main frame (refs stay unprefixed), `f<index>_`
+    // for a child frame — see prefixFor in observeOnce.
+    refPrefix = ''
   ): StoredElement[] {
     const elements: StoredElement[] = [];
     const lines = yaml.split('\n');
@@ -5259,7 +5302,7 @@ class PlaywrightPage implements EnginePage {
       }
 
       const element: StoredElement = {
-        ref: `e${revision}_${refOffset + elements.length}`,
+        ref: `${refPrefix}e${revision}_${refOffset + elements.length}`,
         role,
         visible: true,
         enabled: true,

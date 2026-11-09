@@ -597,7 +597,9 @@ describe('Schema Structure', () => {
 
 describe('ADR-015 single-source-of-truth exports', () => {
   it('REF_PATTERN.source stays byte-for-byte stable (embedded in OpenAPI/MCP schemas)', () => {
-    expect(REF_PATTERN.source).toBe('^e\\d+_\\d+$');
+    // TD-BROWSER-17: the grammar gained an optional frame qualifier
+    // (`f<index>_e<revision>_<ordinal>`); top-document refs stay unprefixed.
+    expect(REF_PATTERN.source).toBe('^(?:f\\d+_)?e\\d+_\\d+$');
   });
 
   it('parseRef extracts revision and ordinal, rejects malformed refs', () => {
@@ -607,6 +609,23 @@ describe('ADR-015 single-source-of-truth exports', () => {
     expect(parseRef('e3_')).toBeNull();
     expect(parseRef('e3_12x')).toBeNull();
     expect(parseRef('')).toBeNull();
+  });
+
+  it('parseRef resolves frame-qualified refs (TD-BROWSER-17), frame omitted when absent', () => {
+    expect(parseRef('f2_e17_3')).toEqual({ frame: 2, revision: 17, ordinal: 3 });
+    expect(parseRef('f0_e1_0')).toEqual({ frame: 0, revision: 1, ordinal: 0 });
+    // Malformed qualifiers are rejected, not silently stripped.
+    expect(parseRef('f_e17_3')).toBeNull();
+    expect(parseRef('fx_e17_3')).toBeNull();
+    expect(parseRef('f2_e17_')).toBeNull();
+    expect(parseRef('f2_e17_3x')).toBeNull();
+    // Unprefixed refs carry no frame key at all (not frame: undefined), so
+    // structural equality against legacy shapes keeps passing.
+    expect(Object.hasOwn(parseRef('e3_12') ?? {}, 'frame')).toBe(false);
+    expect(REF_PATTERN.test('f2_e17_3')).toBe(true);
+    expect(REF_PATTERN.test('f12_e1_0')).toBe(true);
+    expect(REF_PATTERN.test('f-1_e1_0')).toBe(false);
+    expect(REF_PATTERN.test('ff2_e1_0')).toBe(false);
   });
 
   it('DELIVERED_EXTRACT_FORMATS is the canonical format list, including schema and records', () => {

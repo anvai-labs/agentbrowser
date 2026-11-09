@@ -159,6 +159,41 @@ describe('ActionExecutor', () => {
       expect(result.error?.code).toBe('STALE_TARGET');
       expect(result.error?.retryable).toBe(true);
     });
+
+    it('should pass a frame-qualified ref (TD-BROWSER-17) through the staleness gate at the current revision', async () => {
+      vi.mocked(mockEnginePage.act).mockResolvedValue(effect({ result: { ok: true } }) as never);
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'f2_e1_3',
+        fingerprint: 'button_Submit_visible_true_enabled_true',
+        role: 'button',
+        name: 'Submit',
+        visible: true,
+        enabled: true,
+      });
+
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'f2_e1_3' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      // The frame qualifier must not read as malformed or stale: the ref
+      // reaches the engine, which routes it to the owning frame.
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.resolve).toHaveBeenCalledWith({ ref: 'f2_e1_3' });
+      expect(mockEnginePage.act).toHaveBeenCalled();
+    });
+
+    it('should report STALE_TARGET (not INVALID_REQUEST) for a frame-qualified ref from another revision', async () => {
+      (mockEnginePage.resolve as any).mockRejectedValue(new Error('Element not found'));
+
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'f2_e999_3' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('STALE_TARGET');
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
+    });
   });
 
   describe('staleness detection', () => {

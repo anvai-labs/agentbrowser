@@ -377,4 +377,103 @@ describe('child-frame observation and ref binding (T6)', () => {
       await servers.close();
     }
   }, 60_000);
+
+  // TD-BROWSER-17 ask 1: frame-qualified refs. Child-frame elements mint
+  // `f<index>_e<revision>_<ordinal>`; top-document elements stay unprefixed
+  // `e<revision>_<ordinal>` (byte-identical to the pre-frame grammar).
+  it('qualifies child-frame refs with the owning frame index, main-frame refs not', async () => {
+    const servers = await startServers();
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: servers.main });
+
+      const observation = await page.observe({ mode: 'interactive' });
+      const frameButton = observation.elements.find((element) => element.name === 'Frame A Action');
+      const mainButton = observation.elements.find((element) => element.name === 'Main Action');
+      expect(frameButton?.ref).toMatch(/^f\d+_e\d+_\d+$/);
+      expect(mainButton?.ref).toMatch(/^e\d+_\d+$/);
+
+      // Depth-2 content also carries a qualifier (the inner frame's own index).
+      const nested = observation.elements.find((element) => element.name === 'Nested Action');
+      expect(nested?.ref).toMatch(/^f\d+_e\d+_\d+$/);
+
+      // The qualifier routes the act: the ref resolves and clicks in its frame.
+      await page.act({ type: 'click', target: { ref: frameButton?.ref } });
+    } finally {
+      await session?.close();
+      await servers.close();
+    }
+  }, 60_000);
+
+  it('retires a frame-qualified ref after its frame mutates', async () => {
+    const servers = await startServers();
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: servers.main });
+
+      const staleRef = (await waitForElement(page, 'Frame B Action')).ref as string;
+      expect(staleRef).toMatch(/^f\d+_e\d+_\d+$/);
+
+      // The click mutates the frame's DOM (button renames itself): the
+      // revision moves and the observed ref must stop resolving — no stale
+      // dispatch into the frame.
+      await page.act({ type: 'click', target: { ref: staleRef } });
+      let rejected: unknown;
+      try {
+        await page.act({ type: 'click', target: { ref: staleRef } });
+      } catch (error) {
+        rejected = error;
+      }
+      expect(rejected).toBeDefined();
+      const code = (rejected as { code?: string } | undefined)?.code;
+      expect(['TARGET_NOT_FOUND', 'STALE_TARGET']).toContain(code);
+      // And the observation after the mutation shows the new state, with a
+      // fresh (different) ref for the mutated frame content.
+      const after = await page.observe({ mode: 'interactive' });
+      const renamed = after.elements.find((element) => element.name === 'DONE-B');
+      expect(renamed?.ref).toMatch(/^f\d+_e\d+_\d+$/);
+      expect(renamed?.ref).not.toBe(staleRef);
+    } finally {
+      await session?.close();
+      await servers.close();
+    }
+  }, 60_000);
+
+  it('keeps a no-iframe page byte-identical: unprefixed sequential refs, stable across observes', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<main><button>Only Action</button><a href="/x">Only Link</a></main>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url: `http://127.0.0.1:${(server.address() as { port: number }).port}/`,
+      });
+
+      const first = await page.observe({ mode: 'interactive' });
+      const refs = first.elements.map((element) => element.ref ?? '');
+      expect(refs.length).toBeGreaterThan(0);
+      // Regression guard (TD-BROWSER-17): no frame namespace churn on
+      // single-frame pages — every ref is a plain `e<revision>_<ordinal>`.
+      for (const ref of refs) expect(ref).toMatch(/^e\d+_\d+$/);
+      const revision = refs[0]?.match(/^e(\d+)_/)?.[1];
+      expect(refs.map((ref) => ref.split('_')[1])).toEqual(refs.map((_, i) => String(i)));
+
+      // An unchanged page re-observes to the same refs (stable revision).
+      const second = await page.observe({ mode: 'interactive' });
+      expect(second.elements.map((element) => element.ref)).toEqual(refs);
+      expect(second.elements[0]?.ref).toMatch(new RegExp(`^e${revision}_`));
+    } finally {
+      await session?.close();
+      server.closeAllConnections();
+      await new Promise<void>((done) => server.close(() => done()));
+    }
+  }, 60_000);
 });

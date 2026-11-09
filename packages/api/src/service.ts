@@ -5842,7 +5842,7 @@ export class AgentBrowserService {
         if (!REF_PATTERN.test(ref)) {
           throw new ServiceError(
             'INVALID_REQUEST',
-            `Invalid element reference '${ref}'. Expected e<revision>_<ordinal>, such as e1_0.`,
+            `Invalid element reference '${ref}'. Expected e<revision>_<ordinal> (frame-qualified: f<frame>_e<revision>_<ordinal>), such as e1_0 or f2_e1_3.`,
             false,
             { ref }
           );
