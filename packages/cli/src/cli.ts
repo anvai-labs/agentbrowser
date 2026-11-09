@@ -29,7 +29,11 @@ import {
   pruneArtifactCache,
 } from '@agentbrowser/core/local-artifacts';
 import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
-import { MAX_PROBE_BODY_BYTES } from '@agentbrowser/protocol';
+import {
+  DELIVERED_OBSERVATION_INCLUDES,
+  DELIVERED_PROJECTION_FIELDS,
+  MAX_PROBE_BODY_BYTES,
+} from '@agentbrowser/protocol';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -2032,7 +2036,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--max-bytes <n>', 'maximum observation size in bytes')
         .option(
           '--include <token>',
-          'enrichment token, repeatable: overlays | fileInputs | formControls | state',
+          `enrichment token, repeatable: ${DELIVERED_OBSERVATION_INCLUDES.join(' | ')}`,
           (token: string, acc: string[]) => [...acc, token],
           []
         )
@@ -2116,8 +2120,10 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.include && options.include.length > 0) {
                 // TD-BROWSER-18 gap 7: element fields (href | attributes |
                 // required) belong to --include-fields; sending them here
-                // reached the server as a bare "Expected union value".
-                const elementFields = new Set(['href', 'attributes', 'required']);
+                // reached the server as a bare "Expected union value". Sets
+                // derive from the protocol consts (review F4): one source of
+                // truth, so the next token cannot drift the CLI's claim.
+                const elementFields = new Set<string>(DELIVERED_PROJECTION_FIELDS);
                 for (const token of options.include) {
                   if (elementFields.has(token))
                     throw new UsageError(
@@ -2125,12 +2131,13 @@ export function buildCli(deps: CliDependencies): Cli {
                         'pass it via --include-fields instead.'
                     );
                 }
-                const valid = new Set(['overlays', 'fileInputs', 'formControls', 'state']);
+                const valid = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
                 for (const token of options.include) {
                   if (!valid.has(token))
                     throw new UsageError(
                       `Unknown --include token '${token}' - valid tokens: ` +
-                        'overlays | fileInputs | formControls | state.'
+                        `${DELIVERED_OBSERVATION_INCLUDES.join(' | ')}. If your server is ` +
+                        'newer than this CLI, upgrade the CLI to match.'
                     );
                 }
                 request.include = options.include as NonNullable<ObservationRequest['include']>;

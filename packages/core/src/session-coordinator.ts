@@ -438,8 +438,11 @@ export class SessionCoordinator {
     // WebAuthn credential created mid-ceremony is gone with the context,
     // recoverable only by an operator-side credential reset. Say so, on
     // both the sweep and lazy paths; callers raising --idle-timeout is the
-    // mitigation (bounty preset: 1h).
-    if (cause === 'idle_expired')
+    // mitigation (bounty preset: 1h). Skipped when the operator already
+    // initiated CLOSING: the profile teardown is theirs, not idle's (review
+    // F5b). Note the sweep can observe the deadline late by up to the
+    // cleanup interval - the log's timing is approximate.
+    if (!alreadyClosing && cause === 'idle_expired')
       this.logger?.warn('session.idle-expired', {
         sessionId: session.id,
         idleTimeoutMs: session.metadata.idleTimeoutMs,

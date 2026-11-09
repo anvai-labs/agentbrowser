@@ -4837,6 +4837,10 @@ class PlaywrightPage implements EnginePage {
           // false), and read failure leaves the keys absent - unknowable,
           // not false. Mints no rows, so base/change-detection counts are
           // untouched and default observations stay byte-identical.
+          // aria-hidden is deliberately NOT mapped: `visible` means rendered
+          // and interactable (it gates action dispatch), and overwriting it
+          // with a11y-tree membership would hide rendered-but-aria-hidden
+          // controls from agents filtering visible:true (review F3).
           if (request.include?.includes('state')) {
             const aria = await reads
               .read('aria_state', () =>
@@ -4844,7 +4848,6 @@ class PlaywrightPage implements EnginePage {
                   checked: node.getAttribute('aria-checked'),
                   expanded: node.getAttribute('aria-expanded'),
                   disabled: node.getAttribute('aria-disabled'),
-                  hidden: node.getAttribute('aria-hidden'),
                 }))
               )
               .catch(() => undefined);
@@ -4857,7 +4860,6 @@ class PlaywrightPage implements EnginePage {
               )
                 element.expanded = aria.expanded === 'true';
               if (aria.disabled === 'true' && element.enabled !== false) element.enabled = false;
-              if (aria.hidden === 'true' && element.visible) element.visible = false;
             }
           }
         })
