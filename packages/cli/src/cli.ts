@@ -186,6 +186,12 @@ function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionRespon
         ]
       : []),
     ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    // ADR-034: the self-identifying attachment line — which Chrome am I driving?
+    ...(view.attachment
+      ? [
+          `  attachment: ${view.attachment.kind} on ${view.attachment.hostHint}${view.attachment.profileHint !== undefined ? ` (profile ${view.attachment.profileHint})` : ''}`,
+        ]
+      : []),
     ...(lease
       ? [
           `  lease: sampled=${lease.sampledAt}; ttl-expires=${lease.expiresAt}; idle-expires=${lease.idleExpiresAt} (Unix ms)`,

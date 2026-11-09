@@ -1,6 +1,10 @@
 import { expect, it } from 'vitest';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
-import { operatorCdpFromEnvironment } from './cdp-startup.js';
+import {
+  hostHintFromHostname,
+  operatorCdpFromEnvironment,
+  profileHintFromEnvironment,
+} from './cdp-startup.js';
 
 it('leaves ordinary startup disabled', () => {
   expect(operatorCdpFromEnvironment({})).toBeUndefined();
@@ -51,4 +55,22 @@ it('does not accept truthy strings as trusted embedding acknowledgements or mode
   expect(() => cdpAttachAdmission({ deploymentMode: 'hosetd' as 'hosted' }, ['one'])).toThrow(
     'Invalid deployment mode'
   );
+});
+
+it('reduces the daemon hostname to a bounded first-label host hint (ADR-034)', () => {
+  expect(hostHintFromHostname('daemon.example.com')).toBe('daemon');
+  expect(hostHintFromHostname('ops-macbook.local')).toBe('ops-macbook');
+  expect(hostHintFromHostname('')).toBeUndefined();
+});
+
+it('parses the operator profile hint from the environment, refusing path-like values', () => {
+  expect(profileHintFromEnvironment({})).toEqual({});
+  expect(profileHintFromEnvironment({ AGENTBROWSER_CDP_PROFILE_HINT: 'Operator' })).toEqual({
+    profileHint: 'Operator',
+  });
+  const refused = profileHintFromEnvironment({
+    AGENTBROWSER_CDP_PROFILE_HINT: '/Users/op/agentbrowser-operator-profile',
+  });
+  expect(refused.profileHint).toBeUndefined();
+  expect(refused.warning).toMatch(/AGENTBROWSER_CDP_PROFILE_HINT/);
 });
