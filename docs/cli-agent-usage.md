@@ -231,6 +231,41 @@ an HTTP MCP endpoint. `AGENTBROWSER_BASE_URL` configures the adapter; the CLI us
 `--base-url`. Both support `AGENTBROWSER_API_KEY` when service authentication is
 enabled. Keep credentials out of committed project instructions and configuration.
 
+## Browse sites where the human is already logged in (operator Chrome, CDP attach)
+
+When the task needs the human's existing login (cloud managers, billing portals),
+do NOT re-type credentials into a fresh headed session — attach to the operator
+Chrome profile that holds them. The daemon must be started with the CDP-attach
+environment (both variables, see the env table in `operations.md`):
+
+```sh
+# On the machine where the logged-in Chrome runs (CDP: --remote-debugging-port=9222
+# or similar, dedicated operator profile):
+HOST=127.0.0.1 PORT=5710 \
+AGENTBROWSER_API_KEYS="$AGENTBROWSER_API_KEY:TENANT" \
+AGENTBROWSER_CDP_ENDPOINT=http://127.0.0.1:9222 \
+AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true \
+agentbrowser-server &
+agentbrowser --base-url http://127.0.0.1:5710 --api-key-file /path/to/key \
+  session create --tenant TENANT --cdp-attach --json
+```
+
+Agent-side notes that save a wasted session:
+
+- The API key decides the tenant — pass `--tenant` matching the key's tenant,
+  not an arbitrary id. The **operator keys file authenticates operator routes
+  only** (login browser, approvals); passing it as a session bearer returns
+  `UNAUTHORIZED`.
+- Do not try to add `AGENTBROWSER_CDP_ENDPOINT` to a Homebrew-managed daemon:
+  `brew services restart` regenerates its plist and silently drops hand-edits.
+  Run a second daemon instance on another port (as above) instead.
+- If the logged-in Chrome lives on ANOTHER machine (e.g. the human's laptop),
+  SSH-tunnel both surfaces to the machine running the daemon: the CDP port
+  (`ssh -L 9222:127.0.0.1:9222`) for the daemon, and the daemon's own port if
+  the agent runs elsewhere. The daemon and Chrome must be on the same host.
+- `--cdp-attach` owns only pages the session opens; the human's own tabs are
+  never driven. Egress preflight covers explicit navigation URLs only.
+
 ## Inspect captured session identity and launch facts
 
 ```sh
