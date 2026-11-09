@@ -51,9 +51,14 @@ inline iframe is a placeholder that never receives content in this state.
      **and** the top-level observation is sparse (≤
      `AGENTBROWSER_NESTED_UNOBSERVABLE_MAX_TOP_ELEMENTS`, default 20).
    Hidden/zero-size analytics frames and unknown (unprobed) frame documents
-   never fire it. Precedence: `aria-snapshot-timeout` >
-   `nested_content_unobservable` > `empty-snapshot-nonempty-dom` (a
-   zero-element top document stays an SPA-not-mounted diagnosis). Note the
+   never fire it; frames skipped for budget/depth/timeout, still-loading
+   frames, and frames with a declared `src` still sitting at a provisional
+   `about:blank` read as unknown too (adversarial-review hardening: a
+   navigation in flight probes identically to the repro placeholder, and
+   must stay silent). A zero-element top document stays the
+   SPA-not-mounted diagnosis for BOTH branches — enforced in code, not
+   just this note. Precedence: `aria-snapshot-timeout` >
+   `nested_content_unobservable` > `empty-snapshot-nonempty-dom`. Note the
    semantic overlap with ask 1: once recursive traversal folds a frame's
    content, that frame contributes elements and the marker stops firing —
    the marker is the honest "we could not fold it" signal, not a frame
@@ -69,3 +74,11 @@ inline iframe is a placeholder that never receives content in this state.
   unobservable variant.
 - Regression guard: standard single-frame pages must produce byte-identical
   snapshots (no ref-namespace churn for `f1_`-prefixed top-document refs).
+  Scope note (adversarial review): byte-identity is pinned for NO-iframe
+  pages only. On pages WITH iframes, child-frame refs changed namespace
+  from unprefixed to `f<index>_e<rev>_<n>`; held refs fail closed
+  (TARGET_NOT_FOUND, remap-eligible), and the published
+  `REF_PATTERN.source` grew the optional qualifier — consumers pinned to
+  the pre-change pattern need updating. Detached-mid-observation frames
+  degrade to the unprefixed namespace (disclosed in code; the binding
+  still carries the owning frame).

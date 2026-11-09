@@ -835,7 +835,12 @@ clicks):
    top document cannot see. Cross-origin (OOPIF) frames are unreachable by
    this walk.
 
-Frame-qualified refs for these panes are planned in
-[TD-BROWSER-17](td/TD-BROWSER-17-nested-app-observability.md); until it
-lands, treat sidebar-only observations of these consoles as incomplete
-coverage, not an empty page.
+Frame-qualified refs for these panes have landed (child-frame elements mint
+`f<index>_e<revision>_<ordinal>`; top-document refs stay unprefixed), and
+`observe` now reports `degradedReason: 'nested_content_unobservable'` when a
+pane renders where observation cannot fold — treat that reason as
+incomplete coverage, not an empty page. Compatibility note: on pages WITH
+iframes, child-frame refs changed namespace (previously unprefixed); refs
+held across the upgrade fail closed as TARGET_NOT_FOUND (remap-eligible),
+and clients pinned to the pre-change published ref pattern reject
+qualified refs until updated.

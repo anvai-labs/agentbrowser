@@ -113,6 +113,7 @@ import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-contr
 import {
   classifyNestedContentUnobservable,
   type FrameContentProbe,
+  frameElementProbePageFunction,
   hasLargeVisibleIframeSlot,
   iframeSlotPageFunction,
 } from './nested-content.js';
@@ -4053,6 +4054,11 @@ class PlaywrightPage implements EnginePage {
     const mainFrame = this.page.mainFrame();
     const frameCoverage: RawFrameCoverage[] = [];
     const uncommittedFrames = new Set<import('playwright').Frame>();
+    // TD-BROWSER-17 ask 2 (review F4): frames traversal skipped for budget,
+    // depth or timeout reasons were NOT "tried and empty" — probing their
+    // DOM below would conflate envelope starvation with unobservability.
+    // They read as unknown, never as content-bearing or placeholder.
+    const unprobeableFrames = new Set<import('playwright').Frame>();
     // TD-BROWSER-17 ask 2: per-frame element contributions, so the nested-
     // content marker can tell "frame folded its content" from "frame holds
     // content observation never surfaced".
@@ -4122,6 +4128,7 @@ class PlaywrightPage implements EnginePage {
           const depth = depthOf(frame);
           if (depth > MAX_FRAME_DEPTH) {
             frameCoverage.push({ frame: identity, status: 'depth_exceeded' });
+            unprobeableFrames.add(frame);
             continue;
           }
           // Per-frame slice: the remaining envelope re-split evenly across
@@ -4133,6 +4140,7 @@ class PlaywrightPage implements EnginePage {
           const slice = frameSliceMs(snapshotBudget.remaining(), framesLeft - frameIndex);
           if (snapshotBudget.exhausted || slice <= 0) {
             frameCoverage.push({ frame: identity, status: 'budget_exceeded' });
+            unprobeableFrames.add(frame);
             continue;
           }
           let frameYaml: string | undefined;
@@ -4142,6 +4150,7 @@ class PlaywrightPage implements EnginePage {
             // A frame detaching mid-traversal must not reject the whole
             // observation; it reads as an uninspectable frame.
             frameCoverage.push({ frame: identity, status: 'unavailable', reason: 'detached' });
+            unprobeableFrames.add(frame);
             continue;
           }
           if (frameYaml === undefined) {
@@ -4150,6 +4159,10 @@ class PlaywrightPage implements EnginePage {
             // rather than read the shell as complete coverage.
             const status = frame.url() === '' ? 'loading' : 'timeout';
             frameCoverage.push({ frame: identity, status });
+            // Review F3: a still-loading or timed-out frame is not a
+            // provably empty placeholder — it must read as unknown to the
+            // nested-content classifier, never satisfy branch 2.
+            (status === 'loading' ? uncommittedFrames : unprobeableFrames).add(frame);
             continue;
           }
           const parsed = this.parseAriaSnapshot(
@@ -4985,33 +4998,80 @@ class PlaywrightPage implements EnginePage {
     let nestedUnobservable = false;
     const childFrames = this.page.frames().filter((frame) => frame !== mainFrame);
     if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && childFrames.length > 0) {
-      // Frames whose body count was already measured as zero during
-      // traversal are known-empty placeholders — no second probe needed.
-      // Unknown documents (probe failed / probe budget spent) are neither
-      // content-rich nor provably empty and never feed the marker.
+      // Review F3: uncommitted (still-loading) frames are unknown — neither
+      // content-rich nor provably empty placeholders; "wait and re-observe"
+      // is the honest state, so they satisfy neither classifier branch.
+      // Unprobeable frames (budget/depth/timeout skips, review F4) likewise.
       const probes: FrameContentProbe[] = [];
       let probesLeft = 8;
       for (const frame of childFrames) {
         const contributedElements = frameContributions.get(frame) ?? 0;
-        if (contributedElements > 0 || uncommittedFrames.has(frame)) {
-          probes.push(
-            contributedElements > 0
-              ? { contributedElements, bodyTextLength: undefined, domNodeCount: undefined }
-              : { contributedElements: 0, bodyTextLength: 0, domNodeCount: 0 }
-          );
+        if (
+          contributedElements > 0 ||
+          uncommittedFrames.has(frame) ||
+          unprobeableFrames.has(frame)
+        ) {
+          probes.push({ contributedElements, bodyTextLength: undefined, domNodeCount: undefined });
           continue;
         }
         let probe: { bodyTextLength: number; domNodeCount: number } | undefined;
+        let visible: boolean | undefined;
         if (probesLeft > 0) {
           probesLeft -= 1;
+          // Frame-element facts from the parent document (review F1 + F3):
+          // visibility gates branch 1; a declared src while the frame still
+          // sits at about:blank means a navigation is in flight — the
+          // provisional blank document probes identical to the repro's
+          // placeholder, so it reads as unknown instead.
+          const elementProbe = await reads
+            .read('nested_content', () =>
+              frame.frameElement().then((el) => el.evaluate(frameElementProbePageFunction))
+            )
+            .catch(() => undefined);
+          const pendingNavigation =
+            elementProbe !== undefined &&
+            typeof elementProbe.src === 'string' &&
+            elementProbe.src.length > 0 &&
+            (frame.url() === '' || frame.url() === 'about:blank');
+          if (pendingNavigation) {
+            probes.push({
+              contributedElements: 0,
+              bodyTextLength: undefined,
+              domNodeCount: undefined,
+            });
+            continue;
+          }
+          // Review F3 (committed case): a document that committed but has
+          // not finished loading measures as a tiny partial body — which is
+          // NOT a placeholder. Unknown until readyState completes.
+          const readyState = await reads
+            .read('nested_content', () =>
+              frame.evaluate(
+                () => (globalThis as { document?: { readyState?: string } }).document?.readyState
+              )
+            )
+            .catch(() => undefined);
+          if (readyState !== 'complete') {
+            probes.push({
+              contributedElements: 0,
+              bodyTextLength: undefined,
+              domNodeCount: undefined,
+            });
+            continue;
+          }
           probe = await reads
             .read('nested_content', () => this.measureRootDomContent(frame), 500)
             .catch(() => undefined);
+          // Review F1: branch 1 requires the frame element to render
+          // visibly — a display:none mount's body text is the benign
+          // analytics shape. Unknown visibility never fires branch 1.
+          visible = elementProbe?.visible;
         }
         probes.push({
           contributedElements: 0,
           bodyTextLength: probe?.bodyTextLength,
           domNodeCount: probe?.domNodeCount,
+          ...(visible !== undefined ? { visible } : {}),
         });
       }
       nestedUnobservable = classifyNestedContentUnobservable({

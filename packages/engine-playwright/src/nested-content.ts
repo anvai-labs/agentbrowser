@@ -29,6 +29,14 @@ export interface FrameContentProbe {
   bodyTextLength: number | undefined;
   /** Element-node count under the frame body; undefined means unknown. */
   domNodeCount: number | undefined;
+  /**
+   * Whether the frame's inline element renders visibly in the top document
+   * (bounded size + computed style); undefined means unknown. Branch 1
+   * requires known-visible: a hidden frame's body text (tag-manager and ad
+   * frames routinely carry hundreds of characters) is exactly the benign
+   * shape the marker must never report (adversarial review F1).
+   */
+  visible?: boolean;
 }
 
 export interface NestedContentUnobservableInput {
@@ -43,9 +51,12 @@ export interface NestedContentUnobservableInput {
    */
   hasLargeVisibleIframeSlot: boolean;
   /**
-   * Interactive elements observed from the top document alone (minted
-   * enrichment rows excluded). Zero means the top document itself observed
-   * as empty — that is the empty-snapshot-nonempty-dom case, not this one.
+   * Base elements observed in this observation (minted enrichment rows
+   * excluded; frame contributions included). Zero means the top document
+   * observed as empty — the SPA-not-mounted case, which keeps the
+   * empty-snapshot-nonempty-dom diagnosis for BOTH branches (review F2):
+   * "wait for mount" is the correct advice when nothing was observed at
+   * all, and branch 2's displaced-pane claim needs a rendered shell.
    */
   topElementCount: number;
 }
@@ -127,6 +138,43 @@ export function hasLargeVisibleIframeSlot(raw: unknown): boolean {
   });
 }
 
+/** The DOM surface the frame-element probe touches (no DOM lib). */
+interface FrameElementDomNode {
+  getBoundingClientRect(): { width: number; height: number };
+  getAttribute(name: string): string | null;
+  ownerDocument: {
+    defaultView?: {
+      getComputedStyle(node: unknown): { display?: string; visibility?: string };
+    } | null;
+  };
+}
+
+/**
+ * Serialized into the frame's PARENT document (the frame element lives
+ * there): whether the inline frame element renders with non-zero size, and
+ * whether it declares a src. Hidden/zero-size frames (display:none
+ * tag-manager mounts) carry hidden body text that must never read as
+ * "content pane" evidence (adversarial review F1) — branch 1 requires
+ * known-visible. A declared src while the frame still sits at about:blank
+ * means a navigation is in flight (review F3): the provisional blank
+ * document reports readyState 'complete' with an empty body — identical to
+ * the repro placeholder to every document probe — so such frames read as
+ * UNKNOWN (navigation pending), never as provably empty placeholders.
+ */
+export function frameElementProbePageFunction(node: FrameElementDomNode): {
+  visible: boolean;
+  src: string | null;
+} {
+  const rect = node.getBoundingClientRect();
+  const style = node.ownerDocument.defaultView?.getComputedStyle(node);
+  const visible =
+    rect.width >= 1 &&
+    rect.height >= 1 &&
+    style?.display !== 'none' &&
+    style?.visibility !== 'hidden';
+  return { visible, src: node.getAttribute('src') };
+}
+
 /**
  * True when the page's nested content is present but unobservable and the
  * observation must say so rather than read as a complete (near-)empty page.
@@ -141,13 +189,21 @@ export function hasLargeVisibleIframeSlot(raw: unknown): boolean {
  */
 export function classifyNestedContentUnobservable(input: NestedContentUnobservableInput): boolean {
   if (input.childFrameCount < 1 || input.frames.length === 0) return false;
+  // Both branches claim "content rendered somewhere observation did not
+  // cover". A zero-element observation is the SPA-not-mounted case — the
+  // correct advice is wait-and-re-observe, not the screenshot fallback
+  // (review F2: the gate now covers branch 1 too, and the documented
+  // precedence is enforced in code, not just in the TD).
+  if (input.topElementCount < 1) return false;
 
   // Same "non-trivial content" bar as empty-snapshot-nonempty-dom — one
   // shared notion of "the DOM plainly holds content".
   const minText = positiveIntEnv('AGENTBROWSER_EMPTY_DOM_MIN_TEXT', 200);
   const minNodes = positiveIntEnv('AGENTBROWSER_EMPTY_DOM_MIN_NODES', 150);
   const foldable = (probe: FrameContentProbe): boolean =>
-    probe.bodyTextLength !== undefined && probe.domNodeCount !== undefined;
+    probe.bodyTextLength !== undefined &&
+    probe.domNodeCount !== undefined &&
+    probe.visible === true;
   const unknown = (probe: FrameContentProbe): boolean =>
     probe.bodyTextLength === undefined || probe.domNodeCount === undefined;
 
