@@ -79,8 +79,8 @@ const PLACEHOLDER_MAX_TEXT = 50;
 const PLACEHOLDER_MAX_NODES = 50;
 
 /** An inline iframe slot counts as a "content pane" placeholder above these CSS px sizes. */
-export const LARGE_IFRAME_SLOT_MIN_WIDTH = 200;
-export const LARGE_IFRAME_SLOT_MIN_HEIGHT = 150;
+const LARGE_IFRAME_SLOT_MIN_WIDTH = 200;
+const LARGE_IFRAME_SLOT_MIN_HEIGHT = 150;
 
 /** The DOM surface the page function touches (the engine compiles without the DOM lib). */
 interface IframeSlotDomNode {
