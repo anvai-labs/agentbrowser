@@ -802,7 +802,10 @@ export const TypeTextActionSchema = Type.Object({
 export const SelectActionSchema = Type.Object({
   type: Type.Literal('select'),
   target: ElementTargetSchema,
-  values: Type.Array(Type.String(), { minItems: 1 }),
+  // Bounded like an act batch (MAX_BATCH_STEPS in wire-action.ts): each value
+  // drives an open→pick round-trip on custom comboboxes, so an unbounded list
+  // would hold the page's action path open indefinitely.
+  values: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }),
 });
 
 const uploadIntegrityProperties = {
@@ -942,7 +945,9 @@ export const PlanStepSchema = Type.Object({
   action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
   target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
   value: Type.Optional(Type.String()),
-  values: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
+  // `values` only select carries; bounded like MAX_BATCH_STEPS because each
+  // value drives an open→pick round-trip on custom comboboxes.
+  values: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
   paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
   ...uploadIntegrityProperties,
   deltaX: Type.Optional(Type.Number()),

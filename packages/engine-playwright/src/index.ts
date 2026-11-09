@@ -515,6 +515,29 @@ function visibleComboboxOptions(scopeId: string | null): ComboboxRow[] {
   return rows.slice(0, 100);
 }
 
+/**
+ * Re-resolve one scanned row for the click, inside the SAME root the scan
+ * used (popup element when its id resolves, else the document) so the
+ * ordinal can never drift because a second DOM-resident listbox sits
+ * earlier in the DOM. The row's text is re-verified: if the widget
+ * re-rendered between scan and click, refusing (stale) beats clicking a
+ * neighboring row.
+ */
+function comboboxOptionAt(args: {
+  scopeId: string | null;
+  index: number;
+  text: string;
+}): ComboboxOptionNode | null {
+  const doc = (globalThis as unknown as { document: ComboboxDocument }).document;
+  const scope = (args.scopeId !== null ? doc.getElementById(args.scopeId) : null) ?? doc;
+  const node = scope.querySelectorAll('[role="option"]')[args.index];
+  if (!node) return null;
+  const text = (node.getAttribute('aria-label') ?? node.textContent ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return text === args.text ? node : null;
+}
+
 /** Browser-only structural views keep this engine free of DOM runtime/type dependencies. */
 interface NativeCaptureNode extends FormEvidenceNode {
   name: string;
@@ -1008,6 +1031,36 @@ const FILL_VERIFY_SETTLE_MS = 250;
 // click, popup-open wait, option-row click). The point of the combobox path is
 // to never wait out the 30s actionability default again.
 const COMBOBOX_OPEN_TIMEOUT_MS = 5000;
+// Review R3: the not-found listing quotes page data into an error message —
+// cap the total, clip each item, and strip quotes/newlines so the list stays
+// bounded and unambiguous.
+const COMBOBOX_LISTING_ITEM_MAX_CHARS = 120;
+const COMBOBOX_LISTING_MAX_BYTES = 1024;
+
+function boundedComboboxListing(options: string[]): { text: string; items: string[] } {
+  const clean = (raw: string) => raw.replace(/["\\\n\r\t]/g, ' ').trim();
+  const lines: string[] = [];
+  const items: string[] = [];
+  let bytes = 0;
+  let omitted = 0;
+  for (const option of options) {
+    let cleaned = clean(option);
+    if (cleaned.length > COMBOBOX_LISTING_ITEM_MAX_CHARS) {
+      cleaned = `${cleaned.slice(0, COMBOBOX_LISTING_ITEM_MAX_CHARS - 1)}…`;
+    }
+    const entry = `"${cleaned}"`;
+    const cost = Buffer.byteLength(entry) + 2;
+    if (bytes + cost > COMBOBOX_LISTING_MAX_BYTES) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(entry);
+    items.push(cleaned);
+    bytes += cost;
+  }
+  if (omitted > 0) lines.push(`(+${omitted} more omitted)`);
+  return { text: lines.join(', '), items };
+}
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
 function unquote(value: string): string {
@@ -5908,26 +5961,41 @@ class PlaywrightPage implements EnginePage {
    * (Cloudflare settings rows, member selects). Click-open flow only: toggle
    * the popup open (skipped when aria-expanded already reads true), wait
    * bounded for visible option rows, match the requested value against row
-   * text (exact, then substring, case-insensitive), and click the row with a
-   * real Playwright gesture. Multi-value reuses an open popup and reopens
-   * between picks when the widget closes it. Typing-filter comboboxes (input
-   * with aria-autocomplete) are out of scope and the open timeout says so.
+   * text (exact, then substring, case-insensitive — first DOM-order match
+   * wins), and click the row with a real Playwright gesture. Scan AND click
+   * run in the control's owning frame and address rows through the same
+   * NodeList semantics, so a second DOM-resident listbox elsewhere can never
+   * shift the ordinal. Multi-value reuses an open popup and reopens between
+   * picks when the widget closes it. Typing-filter comboboxes (input with
+   * aria-autocomplete) are out of scope and the open timeout says so.
+   * Returns the matched row text per picked value, in order.
    */
-  private async driveComboboxSelect(control: ElementHandle, values: string[]): Promise<void> {
+  private async driveComboboxSelect(
+    dom: Page | import('playwright').Frame,
+    control: ElementHandle,
+    values: string[]
+  ): Promise<string[]> {
+    const matched: string[] = [];
     for (const value of values) {
-      const pattern = await control.evaluate(comboboxPattern);
+      const pattern = await control.evaluate(comboboxPattern).catch(() => {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Combobox control re-rendered or detached during select; observe again',
+          false
+        );
+      });
       if ((pattern.expanded ?? '') !== 'true') {
         await control.click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
       }
       // Wait bounded for the popup's visible rows — portaled listboxes render
       // a tick after the click, so poll instead of asserting immediately.
       const deadline = Date.now() + COMBOBOX_OPEN_TIMEOUT_MS;
-      let rows: ComboboxRow[] = await this.page
+      let rows: ComboboxRow[] = await dom
         .evaluate(visibleComboboxOptions, pattern.scopeId)
         .catch(() => [] as ComboboxRow[]);
       while (rows.length === 0 && Date.now() < deadline) {
         await this.page.waitForTimeout(100);
-        rows = await this.page
+        rows = await dom
           .evaluate(visibleComboboxOptions, pattern.scopeId)
           .catch(() => [] as ComboboxRow[]);
       }
@@ -5947,20 +6015,39 @@ class PlaywrightPage implements EnginePage {
         rows.find((row) => !row.disabled && row.text.toLowerCase() === lowered) ??
         rows.find((row) => !row.disabled && row.text.toLowerCase().includes(lowered));
       if (match === undefined) {
-        const observed = rows.slice(0, 10).map((row) => row.text);
+        const listing = boundedComboboxListing(rows.slice(0, 10).map((row) => row.text));
         throw new EngineError(
           'TARGET_NOT_FOUND',
           `option "${value}" is not in the open combobox; visible options: ` +
-            (observed.length > 0 ? observed.map((text) => `"${text}"`).join(', ') : '(none)'),
+            (listing.text.length > 0 ? listing.text : '(none)'),
           false,
-          { requested: value, options: observed }
+          { requested: value, options: listing.items }
         );
       }
-      await this.page
-        .locator('[role="option"]')
-        .nth(match.index)
-        .click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
+      // Re-resolve the row inside the scan's own root/frame, then click the
+      // ElementHandle — a real gesture, never a main-frame ordinal lookup.
+      const handle = await dom.evaluateHandle(comboboxOptionAt, {
+        scopeId: pattern.scopeId,
+        index: match.index,
+        text: match.text,
+      });
+      const row = handle.asElement();
+      if (row === null) {
+        await handle.dispose().catch(() => {});
+        throw new EngineError(
+          'STALE_TARGET',
+          'Combobox option rows changed between scan and click; observe and select again',
+          false
+        );
+      }
+      try {
+        await row.click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+      matched.push(match.text);
     }
+    return matched;
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
@@ -6379,6 +6466,9 @@ class PlaywrightPage implements EnginePage {
     onDispatch();
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
+    // TD-18 gap 1 review R1: combobox picks surface the row they matched so
+    // a substring-match wrong-pick is visible to the caller.
+    let selectMatchedOption: string | undefined;
     switch (action.type) {
       case 'acceptDialog':
       case 'dismissDialog': {
@@ -6504,8 +6594,16 @@ class PlaywrightPage implements EnginePage {
           .evaluate((node) => node.tagName.toLowerCase())
           .catch(() => undefined);
         if (tag !== undefined && tag !== 'select') {
-          const pattern = await locator.evaluate(comboboxPattern).catch(() => undefined);
-          if (pattern === undefined || !pattern.drivable) {
+          const pattern = await locator.evaluate(comboboxPattern).catch(() => {
+            // The element answered the tag probe, so a failed classify read
+            // means it re-rendered or detached — stale, not undrivable.
+            throw new EngineError(
+              'STALE_TARGET',
+              'Select target re-rendered or detached during select; observe again',
+              false
+            );
+          });
+          if (!pattern.drivable) {
             throw new EngineError(
               'INVALID_REQUEST',
               pattern?.combobox === true
@@ -6524,8 +6622,13 @@ class PlaywrightPage implements EnginePage {
           if (values.length === 0) {
             throw new EngineError('INVALID_REQUEST', 'select requires at least one value');
           }
-          await this.driveComboboxSelect(locator, values);
+          // Scan and click must both run where the control lives: a combobox
+          // observed in a child iframe is driven through its frame, never the
+          // main frame (whose option rows are unrelated page data).
+          const dom = this.bindings.get((action.target as EngineTarget).ref)?.frame ?? this.page;
+          const matchedOptions = await this.driveComboboxSelect(dom, locator, values);
           this.bumpRevision();
+          selectMatchedOption = matchedOptions.at(-1);
           break;
         }
         await locator.selectOption((action.values as string[]) ?? []);
@@ -6805,7 +6908,10 @@ class PlaywrightPage implements EnginePage {
       endTimestamp,
       oldRevision,
       newRevision: this.revision,
-      result: { success: true },
+      result:
+        selectMatchedOption !== undefined
+          ? { success: true, matchedOption: selectMatchedOption }
+          : { success: true },
     };
   }
 
