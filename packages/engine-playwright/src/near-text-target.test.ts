@@ -31,6 +31,83 @@ async function newPage(session: EngineSession): Promise<EnginePage> {
 }
 
 describe('near-text targets (TD-BROWSER-18 gap 6, real Chromium)', () => {
+  it('row bands are per line box: a wrapped label does not steer row:true to another line', async () => {
+    // Adversarial-review D1 regression: ONE text node ("Billing\nsecond line
+    // here", white-space:pre-line) renders two line boxes. The only button is
+    // aligned with LINE 2. Per-line rects mean 'Billing' (line 1) has no row
+    // candidate and must refuse; pre-fix, the node's union rect smeared the
+    // band across both lines and the line-2 button was clicked.
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<title>Wrapped</title><style>div.wrap{position:relative;white-space:pre-line;line-height:20px}button{position:absolute;left:250px;width:40px;height:10px}</style>' +
+          '<div class="wrap">Billing%0Asecond line here' +
+          '<button id="row2" style="top:28px">+</button></div>',
+      });
+      const native = backingPage(page);
+      await native.evaluate(() => {
+        const clicked: string[] = [];
+        (globalThis as unknown as { __clicked: string[] }).__clicked = clicked;
+        document.getElementById('row2')?.addEventListener('click', () => clicked.push('row2'));
+      });
+
+      // The needle's own line (1) has no control in its band: refuse.
+      await expect(
+        page.act({ type: 'click', target: { nearText: 'Billing', row: true } })
+      ).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND' });
+      expect(
+        await native.evaluate(() => (globalThis as unknown as { __clicked: string[] }).__clicked)
+      ).toEqual([]);
+
+      // The line-2 needle still resolves to the line-2-aligned button.
+      await page.act({ type: 'click', target: { nearText: 'second line', row: true } });
+      expect(
+        await native.evaluate(() => (globalThis as unknown as { __clicked: string[] }).__clicked)
+      ).toEqual(['row2']);
+    } finally {
+      await session?.close();
+    }
+  });
+
+  it('invisible text does not steer targeting (opacity:0 labels are not candidates)', async () => {
+    // Adversarial-review D2 regression: a planted opacity:0 "Billing" span
+    // next to a decoy button once out-competed the visible pairing (distance
+    // 0 to the invisible text vs 137px to the visible one).
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<title>Ghost</title><style>div.stage{position:relative;height:30px}button{position:absolute;width:40px;height:20px}span{position:absolute;top:5px}</style>' +
+          '<div class="stage">' +
+          '<span style="left:8px">Billing</span>' +
+          '<button id="visible" style="left:200px;top:2px">+</button>' +
+          '<span style="left:600px;opacity:0">Billing</span>' +
+          '<button id="ghost" style="left:620px;top:2px">+</button>' +
+          '</div>',
+      });
+      const native = backingPage(page);
+      await native.evaluate(() => {
+        const clicked: string[] = [];
+        (globalThis as unknown as { __clicked: string[] }).__clicked = clicked;
+        for (const id of ['visible', 'ghost']) {
+          document.getElementById(id)?.addEventListener('click', () => clicked.push(id));
+        }
+      });
+
+      await page.act({ type: 'click', target: { nearText: 'Billing' } });
+      expect(
+        await native.evaluate(() => (globalThis as unknown as { __clicked: string[] }).__clicked)
+      ).toEqual(['visible']);
+    } finally {
+      await session?.close();
+    }
+  });
+
   it('row:true clicks the trailing button of the matching row, not another row', async () => {
     let session: EngineSession | undefined;
     try {

@@ -768,7 +768,7 @@ export const NearTextTargetSchema = Type.Object(
       minLength: 1,
       maxLength: 200,
       description:
-        'Case-insensitive visible-text needle; resolves at act time to the nearest interactive element.',
+        'Case-insensitive visible-text needle; resolves at act time to the nearest interactive element. Main frame only: text inside child frames is not probed.',
     }),
     row: Type.Optional(
       Type.Boolean({

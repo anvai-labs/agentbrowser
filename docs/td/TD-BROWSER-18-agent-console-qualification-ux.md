@@ -79,11 +79,16 @@ roughly the order it cost us time.
    element nearest text X" / "in the same visual row as text X".
    **Status: DONE (2026-11-09).** `{ nearText, row? }` is a second
    `ElementTarget` form (protocol schemas/types, wire-validated like `{ ref }`);
-   the Playwright engine resolves it at act time — bounded visible-text probe,
-   nearest interactive element by rect distance, or with `row: true` the
-   trailing element in the text's visual row — and mints the chosen element a
-   ref in the same binding store, so staleness, visibility/enabled gating and
-   remap run unchanged. Zero matches → `TARGET_NOT_FOUND`; a geometric tie →
+   the Playwright engine resolves it at act time — bounded visible-text probe
+   (one rect per match, so a wrapped label contributes its match's line box;
+   text and controls pass the same visibility gate; MAIN FRAME only), nearest
+   interactive element by rect distance, or with `row: true` the trailing
+   element in the matched line's visual row — and mints the chosen element a
+   ref in the same binding store. Staleness and visibility/enabled gates apply
+   at dispatch on that freshly bound element; remap does NOT apply to
+   near-text targets — retrying the act re-resolves against live geometry.
+   Zero matches → `TARGET_NOT_FOUND` (final; the message discloses the
+   main-frame scope and probe truncation); a geometric tie →
    `TARGET_AMBIGUOUS` with a bounded candidate list. CLI: `--near-text` /
    `--row` on click, dblclick, fill, select, check, uncheck, hover, clear
    (ref XOR `--at` XOR `--near-text`); MCP `act` accepts the same target form.
