@@ -828,12 +828,16 @@ clicks):
 
 1. `screenshot` the page and read the pane's layout from the image.
 2. `act click SESSION PAGE --at X,Y` with image coordinates for targets you
-   have visually identified. Re-screenshot after each click; there is no
+   have visually identified. Coordinate clicks are gated: the service classifies
+   them as high-risk and requires a one-use approval token even in local
+   deployments — obtain one via the approvals command and pass
+   `act --approval-token`. Re-screenshot after each click; there is no
    staleness protection on coordinate paths.
-3. For same-origin child frames, an engine-level `Runtime.evaluate`
-   deep-walk (`frame.contentDocument` recursion) can read pane text that the
-   top document cannot see. Cross-origin (OOPIF) frames are unreachable by
-   this walk.
+3. Same-origin child frames may be readable by an engine-side frame walk, but
+   no CLI/MCP command exposes one today — treat pane text in frames as
+   unavailable through agentbrowser until
+   [TD-BROWSER-17](td/TD-BROWSER-17-nested-app-observability.md) lands; do not
+   improvise raw CDP access outside the service boundary.
 
 Frame-qualified refs for these panes have landed (child-frame elements mint
 `f<index>_e<revision>_<ordinal>`; top-document refs stay unprefixed), and
