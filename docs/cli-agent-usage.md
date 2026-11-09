@@ -448,6 +448,34 @@ inspect receipts and per-step outcomes. Other action commands retain existing ex
 does not establish an application commit. Existing commands have command-specific
 output: use `--json` for structured results; raw HTML is sensitive even in JSON form.
 
+### Unlabeled controls: `--near-text` (TD-BROWSER-18 gap 6)
+
+Settings rows often carry a bare "+ Add" with no accessible name — no ref from
+`observe` can address it. One target form per act: a ref, `--at` (approved
+coordinates), or `--near-text` on `click`, `dblclick`, `fill`, `select`,
+`check`, `uncheck`, `hover` and `clear`.
+
+```sh
+# The trailing button in the visual row of the "Billing" label:
+agentbrowser act click "$session_id" "$page_id" --near-text Billing --row
+
+# The interactive element nearest a text (any direction):
+agentbrowser act check "$session_id" "$page_id" --near-text Subscribe
+
+# fill/select take the value positional, ref-less:
+agentbrowser act fill "$session_id" "$page_id" draft --near-text Bio
+```
+
+| Behavior | Result |
+| --- | --- |
+| Resolution time | act time, against live geometry (case-insensitive visible-text match, bounded probe) |
+| Scope | MAIN FRAME only: text inside child frames is not probed |
+| Text visibility | both the text and the controls pass the same visibility gate — `opacity:0`/transparent/clipped labels do not steer targeting |
+| `--row` | restricts candidates to the matched text's own line box band and prefers the trailing element |
+| No matching text or control | `TARGET_NOT_FOUND` (final — rerun the act to re-resolve; child-frame text reports main-frame scope) |
+| Several equidistant candidates | `TARGET_AMBIGUOUS` with a bounded role+text candidate list — tighten the needle or drop `--row` |
+| Staleness and remap | staleness and visibility/enabled gates apply at dispatch on the freshly bound element; remap does NOT apply to near-text targets — rerun the act (it re-resolves against live geometry) |
+
 ## Choose the execution primitive
 
 | Need | Surface today |

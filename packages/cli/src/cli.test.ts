@@ -1177,6 +1177,53 @@ describe('AgentBrowser CLI', () => {
       expect(err.join('\n')).toContain('button.submit');
     });
 
+    it('near-text: click --near-text --row posts the geometric target (TD-BROWSER-18 gap 6)', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', '--near-text', 'Billing', '--row');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'click',
+        target: { nearText: 'Billing', row: true },
+      });
+    });
+
+    it('near-text: fill takes the value positional and omits row when unset', async () => {
+      const code = await run('act', 'fill', 'ses_1', 'pg_1', 'draft', '--near-text', 'Bio');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'fill',
+        target: { nearText: 'Bio' },
+        value: 'draft',
+      });
+    });
+
+    it('near-text: rejects a ref combined with --near-text', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0', '--near-text', 'Billing');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('one target form');
+    });
+
+    it('near-text: rejects --row without --near-text', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', '--row');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('--row requires --near-text');
+    });
+
+    it('near-text: check works without a positional ref', async () => {
+      const code = await run('act', 'check', 'ses_1', 'pg_1', '--near-text', 'Subscribe');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'check',
+        target: { nearText: 'Subscribe' },
+      });
+    });
+
     it('upload: takes a single absolute path as the file list, not a ref', async () => {
       // commander fills [ref] before the variadic paths, so the natural
       // no-ref invocation would otherwise die as "missing required argument

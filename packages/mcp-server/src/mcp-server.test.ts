@@ -1001,14 +1001,19 @@ describe('AgentBrowser MCP server', () => {
       }
     });
 
-    it('should require element refs, never selectors, on act', async () => {
+    it('should require element refs or bounded nearText, never selectors, on act', async () => {
       const response = JSON.parse(await request('5', 'tools/list'));
       const act = response.result.tools.find((t: { name: string }) => t.name === 'act');
 
-      expect(act.inputSchema.properties.target.properties.ref.pattern).toBe(
-        '^(?:f\\d+_)?e\\d+_\\d+$'
-      );
-      expect(JSON.stringify(act.inputSchema.properties.target)).not.toMatch(/selector|xpath/i);
+      // TD-BROWSER-18 gap 6: the act target is a union — an observed ref
+      // (frame-qualified grammar) or a bounded geometric nearText needle.
+      // Assert the emitted schema carries both branches and never a
+      // selector-shaped property.
+      const target = act.inputSchema.properties.target;
+      const targetJson = JSON.stringify(target);
+      expect(targetJson).toContain('^(?:f\\\\d+_)?e\\\\d+_\\\\d+$');
+      expect(targetJson).toContain('nearText');
+      expect(targetJson).not.toMatch(/selector|xpath/i);
       expect(JSON.stringify(act.inputSchema)).not.toMatch(/xpath/i);
       // F6: the ONE deliberate exception - selectorVisible is a wait poll,
       // never a way to address an action target. Assert it stays confined
@@ -1019,7 +1024,6 @@ describe('AgentBrowser MCP server', () => {
             variant.properties.selector !== undefined
         )
       ).toBe(true);
-      expect(act.inputSchema.properties.target.properties.selector).toBeUndefined();
     });
   });
 
