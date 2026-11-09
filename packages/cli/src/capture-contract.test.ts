@@ -86,6 +86,21 @@ describe.each(['observe', 'screenshot'] as const)('%s capture CLI', (operation) 
       expect(await cli.run(['observe', 'ses_1', 'pg_1'])).toBe(0);
       expect(out.join('\n')).toContain('empty-snapshot-nonempty-dom');
     });
+  if (operation === 'observe')
+    it('renders the nested_content_unobservable marker with the TD-BROWSER-17 fallback', async () => {
+      const { cli, invoke, out } = setup();
+      invoke.mockResolvedValue({
+        elements: [],
+        degraded: true,
+        degradedReason: 'nested_content_unobservable',
+      });
+      expect(await cli.run(['observe', 'ses_1', 'pg_1'])).toBe(0);
+      const output = out.join('\n');
+      expect(output).toContain('nested_content_unobservable');
+      expect(output).toContain('screenshot');
+      expect(output).toContain('--at');
+      expect(output).toContain('TD-BROWSER-17');
+    });
 });
 
 it('forwards explicit text projection and advertises it in the shared observation schema', async () => {

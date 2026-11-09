@@ -239,8 +239,15 @@ export interface RawPageState {
    * Why the observation has reduced semantic coverage.
    * 'empty-snapshot-nonempty-dom': ariaSnapshot succeeded but surfaced no
    * elements while the DOM holds content (JS SPA not mounted/hydrated yet).
+   * 'nested_content_unobservable' (TD-BROWSER-17): child frames or inline
+   * iframes hold content this observation could not fold; the element list
+   * is the reachable shell only.
    */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
+  degradedReason?:
+    | 'aria-snapshot-timeout'
+    | 'dom-semantic-subset'
+    | 'empty-snapshot-nonempty-dom'
+    | 'nested_content_unobservable';
 }
 
 /**

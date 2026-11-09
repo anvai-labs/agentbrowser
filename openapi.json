@@ -12070,6 +12070,10 @@
               {
                 "const": "empty-snapshot-nonempty-dom",
                 "type": "string"
+              },
+              {
+                "const": "nested_content_unobservable",
+                "type": "string"
               }
             ]
           }
@@ -15185,6 +15189,10 @@
                   },
                   {
                     "const": "empty-snapshot-nonempty-dom",
+                    "type": "string"
+                  },
+                  {
+                    "const": "nested_content_unobservable",
                     "type": "string"
                   }
                 ]

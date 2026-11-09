@@ -4734,10 +4734,14 @@ function renderObservation(observation: ObservationResponse): string[] {
   }
 
   if (observation.interactionHint) lines.push(`  Hint: ${observation.interactionHint}`);
-  if (observation.degraded)
+  if (observation.degraded) {
+    const reason = observation.degradedReason ?? 'unknown';
     lines.push(
-      `  Warning: degraded observation (${observation.degradedReason ?? 'unknown'}). Wait for readiness or inspect HTML before acting.`
+      reason === 'nested_content_unobservable'
+        ? '  Warning: degraded observation (nested_content_unobservable). Nested-app content (child frames/iframes) is present but not observable from the top document; the element list is the reachable shell only. Fall back to a screenshot plus coordinate interaction (act click --at X,Y) per TD-BROWSER-17 and docs/cli-agent-usage.md ("Nested-app panes observation cannot see").'
+        : `  Warning: degraded observation (${reason}). Wait for readiness or inspect HTML before acting.`
     );
+  }
 
   lines.push('', 'Elements:');
 

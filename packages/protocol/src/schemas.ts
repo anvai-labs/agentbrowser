@@ -738,6 +738,7 @@ export const PageStateSchema = Type.Object({
       Type.Literal('aria-snapshot-timeout'),
       Type.Literal('dom-semantic-subset'),
       Type.Literal('empty-snapshot-nonempty-dom'),
+      Type.Literal('nested_content_unobservable'),
     ])
   ),
 });
