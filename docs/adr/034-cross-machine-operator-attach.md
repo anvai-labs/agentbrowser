@@ -5,7 +5,11 @@ Error-surface hints (frictions 2-3) landed in #712; the plist-regeneration
 warning is surfaced in `CDP_ATTACH_DISABLED` and operations.md. The
 session-create self-identifying attachment line has landed: the session
 view carries `attachment: { kind: spawned | cdp_attach, hostHint,
-profileHint? }` — hostHint defaults to the daemon hostname's first label,
+profileHint? }` — hostHint defaults to the daemon hostname's first label in
+LOCAL deployments only; hosted and multi-tenant deployments ship no host
+hint unless the operator names one (`AGENTBROWSER_HOST_HINT`), and engine
+diagnostics saying `remote_cdp` always refuse the host claim (a second
+daemon against a tunneled CDP endpoint drives a browser off this host).
 profileHint (cdp_attach only) comes from `AGENTBROWSER_CDP_PROFILE_HINT`.
 Still open: the Homebrew override-file mechanism.
 **Context:** 2026-11-09

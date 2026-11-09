@@ -111,14 +111,18 @@ export function attachmentHintFromHostname(hostname: string): string | undefined
 
 /**
  * Derive the honest self-identifying kind. An operator-profile attachment is
- * `cdp_attach`; anything the service launched itself is `spawned`. A remote
- * CDP browser lives on another machine, and an unknown attachment is
- * unproven — both refuse to claim an identity.
+ * `cdp_attach`; anything the service launched itself is `spawned`. Engine
+ * diagnostics saying `remote_cdp` always refuse the claim — even when the
+ * service recorded an attach admission, a second daemon pointed at a tunneled
+ * CDP endpoint (ADR-034 friction 4) drives a browser on ANOTHER machine, and
+ * the honest diagnostics win over the daemon-host assumption. `unknown` is
+ * unproven and refuses too.
  */
 export function attachmentIdentityKind(
   attachment: SessionDiagnostics['attachment'] | undefined,
   attachedToOperatorProfile: boolean
 ): 'spawned' | 'cdp_attach' | undefined {
+  if (attachment === 'remote_cdp' || attachment === 'unknown') return undefined;
   if (attachedToOperatorProfile) return 'cdp_attach';
   if (attachment === 'local_launch' || attachment === undefined) return 'spawned';
   return undefined;

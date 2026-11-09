@@ -8,7 +8,11 @@ import {
   validateSessionReseedRequest,
 } from '@agentbrowser/protocol';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
-import { hostHintFromHostname, profileHintFromEnvironment } from './cdp-startup.js';
+import {
+  hostHintFromEnvironment,
+  hostHintFromHostname,
+  profileHintFromEnvironment,
+} from './cdp-startup.js';
 import {
   cdpAttachAdmission,
   FLOOR_DELEGATED_REQUIRES_OPERATOR,
@@ -134,7 +138,8 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /**
    * ADR-034: overrides for the daemon host/profile hints in the session view's
    * self-identifying `attachment` line. Defaults: the hostname's first label
-   * and AGENTBROWSER_CDP_PROFILE_HINT (operator profile basename). Tests and
+   * — LOCAL deployments only (hosted/multi-tenant suppress it; R4) — and
+   * AGENTBROWSER_CDP_PROFILE_HINT (operator profile basename). Tests and
    * embedders inject deterministic hints here; hints are validated against the
    * bounded protocol shape, and an invalid hint omits the identity.
    */
@@ -653,14 +658,27 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   for (const warning of journalHistoryWarnings(journalSet?.history ?? []))
     console.warn(`[agentbrowser] ${warning}`);
   // ADR-034: the daemon host/profile hints behind the session view's
-  // self-identifying `attachment` line. Defaults come from this host's
-  // hostname and AGENTBROWSER_CDP_PROFILE_HINT; embedders and tests override.
+  // self-identifying `attachment` line. The hostname default is LOCAL-ONLY
+  // (adversarial review R4): a hostname is the first host-identity fact the
+  // session view has ever carried, and labels like `ip-10-0-5-42` publish
+  // private addressing to every tenant's agent — hosted and multi-tenant
+  // deployments ship no hostHint unless the operator names one
+  // (AGENTBROWSER_HOST_HINT or the embedder override). profileHint comes
+  // from AGENTBROWSER_CDP_PROFILE_HINT. An empty hostHint fails closed: the
+  // capture omits the whole attachment object.
   const profileHintParsed = profileHintFromEnvironment(process.env);
   if (profileHintParsed.warning !== undefined)
     console.warn(`[agentbrowser] ${profileHintParsed.warning}`);
+  const hostHintParsed = hostHintFromEnvironment(process.env);
+  if (hostHintParsed.warning !== undefined)
+    console.warn(`[agentbrowser] ${hostHintParsed.warning}`);
   const attachmentIdentity = (() => {
     const overrides = options.attachmentIdentity;
-    const hostHint = overrides?.hostHint ?? hostHintFromHostname(hostname()) ?? '';
+    const localDefault =
+      deploymentMode === 'local' && attachAdmission !== 'multi_tenant'
+        ? (hostHintFromHostname(hostname()) ?? '')
+        : '';
+    const hostHint = overrides?.hostHint ?? hostHintParsed.hostHint ?? localDefault;
     return {
       hostHint,
       ...(overrides?.profileHint !== undefined

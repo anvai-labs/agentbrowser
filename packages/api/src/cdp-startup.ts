@@ -29,6 +29,29 @@ export function hostHintFromHostname(hostname: string): string | undefined {
 }
 
 /**
+ * ADR-034 (adversarial review R4): explicit daemon host identity override.
+ * The hostname default is suppressed in hosted and multi-tenant deployments —
+ * a hostname is the first host-identity fact the session view has ever
+ * carried, and labels like `ip-10-0-5-42` publish private addressing to
+ * every tenant's agent — so an operator who still wants the line names it
+ * here. A path-like value is refused.
+ */
+export function hostHintFromEnvironment(env: { AGENTBROWSER_HOST_HINT?: string | undefined }): {
+  hostHint?: string;
+  warning?: string;
+} {
+  const raw = env.AGENTBROWSER_HOST_HINT;
+  if (raw === undefined) return {};
+  const hint = captureAttachmentHint(raw);
+  if (hint === undefined)
+    return {
+      warning:
+        'AGENTBROWSER_HOST_HINT must be a short hostname label (letters, digits, dot, dash; no path separators) — the session view will carry no host hint.',
+    };
+  return { hostHint: hint };
+}
+
+/**
  * ADR-034: the operator profile basename hint (AGENTBROWSER_CDP_PROFILE_HINT).
  * The daemon cannot discover the attached Chrome's profile directory over CDP,
  * so the operator who launched Chrome with `--user-data-dir` names its

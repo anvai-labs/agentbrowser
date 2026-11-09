@@ -1999,7 +1999,7 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).not.toContain('profile');
     });
 
-    it('session create renders the attachment line and --json passes it through', async () => {
+    it('session create renders the attachment line', async () => {
       sessions.create.mockResolvedValue({
         sessionId: 'ses_1',
         status: 'ready',
@@ -2008,6 +2008,25 @@ describe('AgentBrowser CLI', () => {
       });
       expect(await run('session', 'create', '--tenant', 'local')).toBe(0);
       expect(out.join('\n')).toContain('attachment: cdp_attach on ops-macbook (profile Operator)');
+    });
+
+    it('session get --json passes the attachment object through untouched', async () => {
+      sessions.get.mockResolvedValue({
+        sessionId: 'ses_1',
+        createdAt: '2026-08-23T10:00:00Z',
+        ttlMs: 12600000,
+        idleTimeoutMs: 600000,
+        attachment: { kind: 'cdp_attach', hostHint: 'ops-macbook', profileHint: 'Operator' },
+      });
+      expect(await run('session', 'get', 'ses_1', '--json')).toBe(0);
+      const json = JSON.parse(out.join('\n')) as {
+        attachment?: { kind?: string; hostHint?: string; profileHint?: string };
+      };
+      expect(json.attachment).toEqual({
+        kind: 'cdp_attach',
+        hostHint: 'ops-macbook',
+        profileHint: 'Operator',
+      });
     });
 
     it('renders scoped pacing and budget facts', async () => {

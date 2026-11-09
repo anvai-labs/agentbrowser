@@ -93,6 +93,97 @@ it('omits the attachment identity when no valid host hint exists', async () => {
   }
 });
 
+// R4: a hostname is the first host-identity fact the session view has ever
+// carried; labels like `ip-10-0-5-42` publish private addressing to every
+// tenant's agent — so the hostname default exists only outside hosted and
+// multi-tenant deployments.
+it('suppresses the host hint in hosted deployments', async () => {
+  const app = await buildServer({
+    engine: new FakeEngine(),
+    deploymentMode: 'hosted',
+  });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      payload: { tenantId: 'one' },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().attachment).toBeUndefined();
+  } finally {
+    await app.close();
+  }
+});
+
+it('suppresses the host hint in multi-tenant deployments', async () => {
+  const app = await buildServer({
+    engine: new FakeEngine(),
+    apiKeys: new Map([
+      [key('a'), 'one'],
+      [key('b'), 'two'],
+    ]),
+  });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: { authorization: 'Bearer a' },
+      payload: { tenantId: 'one' },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().attachment).toBeUndefined();
+  } finally {
+    await app.close();
+  }
+});
+
+it('an explicit AGENTBROWSER_HOST_HINT override wins even in hosted mode', async () => {
+  vi.stubEnv('AGENTBROWSER_HOST_HINT', 'explicit-host');
+  try {
+    const app = await buildServer({
+      engine: new FakeEngine(),
+      deploymentMode: 'hosted',
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        payload: { tenantId: 'one' },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().attachment).toEqual({ kind: 'spawned', hostHint: 'explicit-host' });
+    } finally {
+      await app.close();
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it('an invalid AGENTBROWSER_HOST_HINT ships no identity', async () => {
+  vi.stubEnv('AGENTBROWSER_HOST_HINT', 'ip-10-0-5-42/../etc');
+  try {
+    const app = await buildServer({
+      engine: new FakeEngine(),
+      // Suppress the hostname default so only the (invalid) env answer exists.
+      deploymentMode: 'hosted',
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        payload: { tenantId: 'one' },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().attachment).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 it('defaults the host hint to this machine, never a credential', async () => {
   const { hostname } = await import('node:os');
   const expected = hostname().split('.')[0];

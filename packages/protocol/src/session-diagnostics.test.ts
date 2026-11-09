@@ -174,12 +174,15 @@ describe('self-identifying attachment identity (ADR-034)', () => {
     // The cdp_attach claim comes only from the service's own admission record;
     // engine diagnostics alone never mint it.
     expect(attachmentIdentityKind('cdp_attach', false)).toBeUndefined();
-    // A remote CDP browser lives on another machine: no host identity is honest.
+    // A remote CDP browser lives on another machine: no host identity is
+    // honest. Diagnostics WIN even over the service's own attach admission —
+    // a second daemon against a tunneled CDP endpoint (ADR-034 friction 4)
+    // records an admission but drives a browser off this host, so the daemon
+    // hostHint would lie.
     expect(attachmentIdentityKind('remote_cdp', false)).toBeUndefined();
-    // The service's own admission record is authoritative over engine
-    // diagnostics: an admitted attach is on the daemon host by topology.
-    expect(attachmentIdentityKind('remote_cdp', true)).toBe('cdp_attach');
+    expect(attachmentIdentityKind('remote_cdp', true)).toBeUndefined();
     expect(attachmentIdentityKind('unknown', false)).toBeUndefined();
+    expect(attachmentIdentityKind('unknown', true)).toBeUndefined();
   });
 
   it('validates the schema shape on the session view', async () => {
