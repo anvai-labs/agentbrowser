@@ -1040,7 +1040,7 @@ export function buildCli(deps: CliDependencies): Cli {
 
       const sessionCreate = withUsage(session.command('create'), SESSION_CREATE_USAGE)
         .description(
-          'create an isolated session; --tenant is required; use --no-headless for a visible browser on the server host'
+          'create an isolated session; --tenant is required; use --no-headless for a visible browser on the server host. WebAuthn/passkey ceremonies need the operator Chrome via CDP attach (ADR-034) — service-spawned browsers cannot use platform authenticators.'
         )
         .requiredOption('--tenant <id>', 'tenant identifier')
         .option(
@@ -2111,6 +2111,25 @@ export function buildCli(deps: CliDependencies): Cli {
                 request.maxBytes = captureInteger(options.maxBytes, '--max-bytes');
               }
               if (options.include && options.include.length > 0) {
+                // TD-BROWSER-18 gap 7: element fields (href | attributes |
+                // required) belong to --include-fields; sending them here
+                // reached the server as a bare "Expected union value".
+                const elementFields = new Set(['href', 'attributes', 'required']);
+                for (const token of options.include) {
+                  if (elementFields.has(token))
+                    throw new UsageError(
+                      `'${token}' is an element field, not an enrichment token - ` +
+                        'pass it via --include-fields instead.'
+                    );
+                }
+                const valid = new Set(['overlays', 'fileInputs', 'formControls']);
+                for (const token of options.include) {
+                  if (!valid.has(token))
+                    throw new UsageError(
+                      `Unknown --include token '${token}' - valid tokens: ` +
+                        'overlays | fileInputs | formControls.'
+                    );
+                }
                 request.include = options.include as NonNullable<ObservationRequest['include']>;
               }
               if (options.continueFrom !== undefined) {

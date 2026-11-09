@@ -1004,7 +1004,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply.code(403).send({
               error: {
                 code: 'FORBIDDEN',
-                message: 'Operator keys are not valid on this route',
+                // ADR-034: the operator-key vs API-key split cost a failed
+                // attempt in first production use. Name the split, not just
+                // the refusal.
+                message:
+                  'Operator keys are not valid on this route: they authenticate operator ' +
+                  'routes only (login browser, approvals, leases). Session creation and ' +
+                  'page actions need an API key bound to the tenant ' +
+                  '(AGENTBROWSER_API_KEYS=key:tenant, sent as Bearer).',
                 retryable: false,
               },
             });

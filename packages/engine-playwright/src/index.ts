@@ -6098,6 +6098,23 @@ class PlaywrightPage implements EnginePage {
       }
       case 'select': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
+        // TD-BROWSER-18 gap 1: `selectOption` only drives a native <select>.
+        // On a custom combobox it waits out the full actionability timeout
+        // and fails with a generic timeout (observed on Cloudflare settings
+        // rows and member selects). Fail fast, naming the actual element.
+        const tag = await locator
+          .evaluate((node) => node.tagName.toLowerCase())
+          .catch(() => undefined);
+        if (tag !== undefined && tag !== 'select') {
+          throw new EngineError(
+            'INVALID_REQUEST',
+            `select requires a native <select> element; the target is a <${tag}> ` +
+              '(custom combobox). Click the control to open it, then observe and ' +
+              'click the option row.',
+            false,
+            { actualTag: tag }
+          );
+        }
         await locator.selectOption((action.values as string[]) ?? []);
         this.bumpRevision();
         break;

@@ -68,6 +68,30 @@ describe('delivered action matrix gaps (real Chromium)', () => {
     }
   });
 
+  it('fails fast with the actual tag when select targets a custom combobox (TD-18 gap 1)', async () => {
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url: 'data:text/html,<div role="combobox" aria-label="Pattern" tabindex="0">Auto</div>',
+      });
+      const comboRef = await refOf(page, 'combobox', 'Pattern');
+
+      // A custom widget must be refused immediately with the element it is,
+      // not burned through the full actionability timeout.
+      await expect(
+        page.act({ type: 'select', target: { ref: comboRef }, values: ['X'] })
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        message: expect.stringContaining('<div>'),
+        details: { actualTag: 'div' },
+      });
+    } finally {
+      await session?.close();
+    }
+  });
+
   it('bumps the revision on goBack across real http history and records unknown action types without one', async () => {
     const server = http.createServer((request, response) => {
       response
