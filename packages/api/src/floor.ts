@@ -60,7 +60,7 @@ export function requireCdpAttachAdmission(admission: CdpAttachAdmission): void {
     ],
     disabled: [
       'CDP_ATTACH_DISABLED',
-      'Operator attachment is disabled. Start a local service with AGENTBROWSER_CDP_ENDPOINT and AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true; use a dedicated Chrome profile.',
+      'Operator attachment is disabled. Start a local service with AGENTBROWSER_CDP_ENDPOINT and AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true; use a dedicated Chrome profile. If the daemon runs under a service manager (e.g. brew services), set the variables through the documented service-environment path — a hand-edited generated plist is silently rewritten on the next restart (ADR-034).',
     ],
     egress: [
       'EGRESS_UNSUPPORTED',

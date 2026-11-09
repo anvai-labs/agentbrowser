@@ -806,3 +806,31 @@ bounded stage/correlation diagnostic. Retry a read to reconcile, not a submitted
 mutation. These reads do not reload tabs, clear storage or restart the service.
 If manual reload is necessary, inspect/preserve recoverable drafts first and
 reload only the affected tab with the user's authorization.
+
+### Nested-app panes observation cannot see (TD-BROWSER-17)
+
+Some console panes (Cloudflare Zero Trust, GCP console panes, Azure Portal
+blades) render inside portaled cross-origin child frames (OOPIF) or
+shadow-root subtrees that top-document reads cannot reach. The symptom:
+`observe`/`snapshot`/`extract` return the page shell or sidebar navigation
+only, and the main pane reads as empty — sometimes behind a placeholder
+inline iframe whose body is an empty document. Empty observation of a
+visually populated pane means this class of surface, not "nothing to do".
+
+Working fallback today (loses semantic refs, scope accounting and the
+snapshot staleness contract — use only for reads and deliberate, reviewed
+clicks):
+
+1. `screenshot` the page and read the pane's layout from the image.
+2. `act click SESSION PAGE --at X,Y` with image coordinates for targets you
+   have visually identified. Re-screenshot after each click; there is no
+   staleness protection on coordinate paths.
+3. For same-origin child frames, an engine-level `Runtime.evaluate`
+   deep-walk (`frame.contentDocument` recursion) can read pane text that the
+   top document cannot see. Cross-origin (OOPIF) frames are unreachable by
+   this walk.
+
+Frame-qualified refs for these panes are planned in
+[TD-BROWSER-17](td/TD-BROWSER-17-nested-app-observability.md); until it
+lands, treat sidebar-only observations of these consoles as incomplete
+coverage, not an empty page.

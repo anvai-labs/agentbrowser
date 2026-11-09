@@ -144,6 +144,14 @@ Engines that cannot run headless (Safari) declare `alwaysHeaded`; the service
 rejects explicit `headless: true` for them loudly
 (`SAFARI_HEADLESS_UNSUPPORTED`) instead of silently running headed.
 
+**Passkey/WebAuthn ceremonies need operator attach, not spawned sessions.**
+Service-spawned browsers (headed or headless) cannot use the platform
+authenticator — Touch ID/Windows Hello refuses them instantly
+(`NotAllowedError`). Attach to the operator Chrome instead:
+[ADR-034](docs/adr/034-cross-machine-operator-attach.md) documents the
+cross-machine topology (daemon on the Chrome host, agent drives it over an
+authenticated forwarded port).
+
 ## Branching & releases
 
 **`develop` is the integration branch** — feature PRs target `develop`

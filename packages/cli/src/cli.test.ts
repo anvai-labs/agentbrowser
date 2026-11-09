@@ -727,6 +727,18 @@ describe('AgentBrowser CLI', () => {
       });
     });
 
+    it('routes element fields given to --include to the --include-fields hint (TD-18 gap 7)', async () => {
+      expect(await run('observe', 'ses_1', 'pg_1', '--include', 'attributes')).toBe(1);
+      expect(err.join('\n')).toContain('--include-fields');
+      expect(sessions.observe).not.toHaveBeenCalled();
+    });
+
+    it('names the valid tokens when --include gets an unknown value', async () => {
+      expect(await run('observe', 'ses_1', 'pg_1', '--include', 'state')).toBe(1);
+      expect(err.join('\n')).toContain('overlays | fileInputs | formControls');
+      expect(sessions.observe).not.toHaveBeenCalled();
+    });
+
     it('should omit include when the flag is absent', async () => {
       await run('observe', 'ses_1', 'pg_1', '--mode', 'content');
 
