@@ -4961,7 +4961,8 @@ export class AgentBrowserService {
     degradedReason?:
       | 'aria-snapshot-timeout'
       | 'dom-semantic-subset'
-      | 'empty-snapshot-nonempty-dom';
+      | 'empty-snapshot-nonempty-dom'
+      | 'nested_content_unobservable';
   }> {
     // ONE engine observe for everything (adversarial review round-5/F1):
     // a second observe with a differing include set trips the engine's

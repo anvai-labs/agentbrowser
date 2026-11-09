@@ -1,8 +1,8 @@
 # TD-BROWSER-17: Nested-app (cross-origin iframe / shadow-root) content observability
 
-**Status:** open (repro archived 2026-11-09) — ask 3 (fallback recipe)
-documented in cli-agent-usage.md (#712); asks 1-2 (frame traversal +
-degradation marker) remain open.
+**Status:** ask 3 (fallback recipe) documented in cli-agent-usage.md (#712);
+ask 2 (degradation marker) landed 2026-11-09 on `feat/td17-unobservable-marker`;
+ask 1 (frame traversal) remains open (repro archived 2026-11-09)
 **Source:** first production use of cross-machine operator attach
 ([ADR-034](../adr/034-cross-machine-operator-attach.md)) — driving the
 Cloudflare Zero Trust dashboard.
@@ -39,6 +39,25 @@ inline iframe is a placeholder that never receives content in this state.
    iframe set whose content is unobservable, `observe` should emit a
    `nested_content_unobservable` warning (today the empty-iframe placeholder
    reads as "nothing here", which sent the agent down a wrong path twice).
+   **Landed** (ask 2, additive only — no refs minted, element lists
+   unchanged). Detection (`packages/engine-playwright/src/nested-content.ts`)
+   fires when either branch holds:
+   - a child frame (OOPIF or same-origin) contributed zero observed elements
+     while a bounded probe shows it holds real content (same
+     `AGENTBROWSER_EMPTY_DOM_MIN_*` thresholds as
+     `empty-snapshot-nonempty-dom`), or
+   - every child frame is an empty placeholder **and** a large visible
+     inline iframe slot (≥ 200×150 CSS px) renders where the pane should be
+     **and** the top-level observation is sparse (≤
+     `AGENTBROWSER_NESTED_UNOBSERVABLE_MAX_TOP_ELEMENTS`, default 20).
+   Hidden/zero-size analytics frames and unknown (unprobed) frame documents
+   never fire it. Precedence: `aria-snapshot-timeout` >
+   `nested_content_unobservable` > `empty-snapshot-nonempty-dom` (a
+   zero-element top document stays an SPA-not-mounted diagnosis). Note the
+   semantic overlap with ask 1: once recursive traversal folds a frame's
+   content, that frame contributes elements and the marker stops firing —
+   the marker is the honest "we could not fold it" signal, not a frame
+   detector.
 3. **Documented fallback recipe** in `cli-agent-usage.md`: screenshot +
    `clickAt` on image coordinates, plus the `Runtime.evaluate` deep-walk
    helper pattern for same-origin iframes (the part that works today).

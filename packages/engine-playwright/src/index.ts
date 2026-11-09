@@ -110,6 +110,12 @@ const admissionByContext = new WeakMap<
 >();
 
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
+import {
+  classifyNestedContentUnobservable,
+  type FrameContentProbe,
+  hasLargeVisibleIframeSlot,
+  iframeSlotPageFunction,
+} from './nested-content.js';
 import { ObservationReads } from './observation-read.js';
 import {
   classifyEmptyObservation,
@@ -4047,6 +4053,10 @@ class PlaywrightPage implements EnginePage {
     const mainFrame = this.page.mainFrame();
     const frameCoverage: RawFrameCoverage[] = [];
     const uncommittedFrames = new Set<import('playwright').Frame>();
+    // TD-BROWSER-17 ask 2: per-frame element contributions, so the nested-
+    // content marker can tell "frame folded its content" from "frame holds
+    // content observation never surfaced".
+    const frameContributions = new Map<import('playwright').Frame, number>();
     // Bounded frame identity: URL origin+path when meaningful, else the
     // frame's name, else its traversal ordinal.
     const frameIdentity = (frame: import('playwright').Frame, ordinal: number): string => {
@@ -4155,6 +4165,7 @@ class PlaywrightPage implements EnginePage {
             blockOfFrame.set(frame, blockCounter);
           }
           for (const element of parsed) this.frameOfElement.set(element, frame);
+          frameContributions.set(frame, parsed.length);
           refOffset += parsed.length;
           elements.push(...parsed);
           // A frame with no committed document (empty/about:blank URL) and
@@ -4964,6 +4975,72 @@ class PlaywrightPage implements EnginePage {
       });
     }
 
+    // TD-BROWSER-17 ask 2: an honest marker when nested content is present
+    // but unobservable. Today such a page reads as "nothing here" (or shell
+    // only) and the agent drives the wrong surface. The marker is strictly
+    // additive: it names a degradedReason, never mints refs or changes the
+    // element list. Only probed when the successful snapshot left child
+    // frames that contributed nothing — never on single-frame pages, and
+    // never instead of the more specific aria-snapshot-timeout signal.
+    let nestedUnobservable = false;
+    const childFrames = this.page.frames().filter((frame) => frame !== mainFrame);
+    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && childFrames.length > 0) {
+      // Frames whose body count was already measured as zero during
+      // traversal are known-empty placeholders — no second probe needed.
+      // Unknown documents (probe failed / probe budget spent) are neither
+      // content-rich nor provably empty and never feed the marker.
+      const probes: FrameContentProbe[] = [];
+      let probesLeft = 8;
+      for (const frame of childFrames) {
+        const contributedElements = frameContributions.get(frame) ?? 0;
+        if (contributedElements > 0 || uncommittedFrames.has(frame)) {
+          probes.push(
+            contributedElements > 0
+              ? { contributedElements, bodyTextLength: undefined, domNodeCount: undefined }
+              : { contributedElements: 0, bodyTextLength: 0, domNodeCount: 0 }
+          );
+          continue;
+        }
+        let probe: { bodyTextLength: number; domNodeCount: number } | undefined;
+        if (probesLeft > 0) {
+          probesLeft -= 1;
+          probe = await reads
+            .read('nested_content', () => this.measureRootDomContent(frame), 500)
+            .catch(() => undefined);
+        }
+        probes.push({
+          contributedElements: 0,
+          bodyTextLength: probe?.bodyTextLength,
+          domNodeCount: probe?.domNodeCount,
+        });
+      }
+      nestedUnobservable = classifyNestedContentUnobservable({
+        childFrameCount: childFrames.length,
+        frames: probes,
+        hasLargeVisibleIframeSlot: false,
+        topElementCount: baseElements.length,
+      });
+      if (!nestedUnobservable) {
+        // Branch 2 needs the top document's rendered iframe slots (a large
+        // VISIBLE empty slot is the displaced-pane signature; hidden
+        // analytics frames never count). Untrusted page data: validated in
+        // Node by hasLargeVisibleIframeSlot before it decides anything.
+        const slots = await reads
+          .read(
+            'nested_content',
+            () => this.page.locator('iframe').evaluateAll(iframeSlotPageFunction),
+            500
+          )
+          .catch(() => undefined);
+        nestedUnobservable = classifyNestedContentUnobservable({
+          childFrameCount: childFrames.length,
+          frames: probes,
+          hasLargeVisibleIframeSlot: slots !== undefined && hasLargeVisibleIframeSlot(slots),
+          topElementCount: baseElements.length,
+        });
+      }
+    }
+
     let interactionHint: string | undefined;
     if (this.engine.supportsCoordinateInput && baseElements.length <= 5) {
       const closed = await withDeadline(this.coordinates().hasClosedShadowRoot(), 1000).catch(
@@ -5003,9 +5080,11 @@ class PlaywrightPage implements EnginePage {
       ...(frameCoverage.length > 0 ? { frameCoverage } : {}),
       ...(ariaSnapshotDegraded
         ? { degraded: true, degradedReason: 'aria-snapshot-timeout' as const }
-        : emptyOverNonEmptyDom
-          ? { degraded: true, degradedReason: 'empty-snapshot-nonempty-dom' as const }
-          : {}),
+        : nestedUnobservable
+          ? { degraded: true, degradedReason: 'nested_content_unobservable' as const }
+          : emptyOverNonEmptyDom
+            ? { degraded: true, degradedReason: 'empty-snapshot-nonempty-dom' as const }
+            : {}),
     };
   }
 
@@ -5014,8 +5093,22 @@ class PlaywrightPage implements EnginePage {
    * Best-effort: a detached/navigating page yields zeros rather than throwing.
    */
   private async measureDomContent(): Promise<{ bodyTextLength: number; domNodeCount: number }> {
+    const probe = await this.measureRootDomContent(this.page);
+    return probe ?? { bodyTextLength: 0, domNodeCount: 0 };
+  }
+
+  /**
+   * Cheap DOM-content measurement of any observation root (top document or
+   * child frame), for the empty-snapshot-nonempty-dom and
+   * nested_content_unobservable signals. Undefined means the document could
+   * not be read (detached/uncommitted) — unknown, not empty. Each read is
+   * tightly bounded: this runs only for frames whose content never surfaced.
+   */
+  private async measureRootDomContent(
+    root: import('playwright').Page | import('playwright').Frame
+  ): Promise<{ bodyTextLength: number; domNodeCount: number } | undefined> {
     try {
-      const body = this.page.locator('body');
+      const body = root.locator('body');
       const [text, domNodeCount] = await Promise.all([
         // textContent over innerText (biome useDomNodeTextContent): no layout
         // dependency, so the measurement survives detached/navigating pages;
@@ -5023,15 +5116,16 @@ class PlaywrightPage implements EnginePage {
         body
           .textContent({ timeout: 1000 })
           .then((bodyText) => bodyText ?? '')
-          .catch(() => ''),
-        this.page
+          .catch(() => null),
+        root
           .locator('body *')
           .count()
-          .catch(() => 0),
+          .catch(() => -1),
       ]);
+      if (text === null || domNodeCount < 0) return undefined;
       return { bodyTextLength: text.length, domNodeCount };
     } catch {
-      return { bodyTextLength: 0, domNodeCount: 0 };
+      return undefined;
     }
   }
 

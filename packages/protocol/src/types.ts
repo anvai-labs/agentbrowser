@@ -372,10 +372,20 @@ export interface PageState {
    * DOM plainly holds content - the common JS-SPA-not-mounted-yet failure. Wait
    * for readiness (observe/screenshot `wait`) and retry, or read via
    * browser_html.
+   *
+   * 'nested_content_unobservable' (TD-BROWSER-17): child frames or inline
+   * iframes carry content this observation could not fold - e.g. a portaled
+   * OOPIF pane rendering beside an empty inline placeholder iframe. The
+   * element list is the reachable shell only; fall back to a screenshot plus
+   * coordinate interaction (`click --at X,Y`).
    */
   degraded?: boolean;
   /** Why the observation has reduced semantic coverage. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
+  degradedReason?:
+    | 'aria-snapshot-timeout'
+    | 'dom-semantic-subset'
+    | 'empty-snapshot-nonempty-dom'
+    | 'nested_content_unobservable';
 }
 
 /**

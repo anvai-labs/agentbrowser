@@ -83,7 +83,7 @@ export function snapshotDigest(value: string | undefined): string | undefined {
 const DEFAULT_EMPTY_DOM_MIN_TEXT = 200;
 const DEFAULT_EMPTY_DOM_MIN_NODES = 150;
 
-function positiveIntEnv(name: string, fallback: number): number {
+export function positiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name]?.trim() ?? '';
   const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
