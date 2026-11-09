@@ -30,6 +30,27 @@ roughly the order it cost us time.
    "not a native `<select>`" up front and say so; better, implement combobox
    driving (open → list options → pick) under the same `act select`.
 
+   **Delivered** (2026-11-09): `act select` classifies the target and drives
+   click-open ARIA comboboxes — open (bounded 5 s, not the 30 s default) →
+   wait for visible `role=option` rows (popup scoped by `aria-controls` /
+   `aria-owns`, portaled listboxes included) → match by exact-then-substring
+   case-insensitive row text → click the row with a real gesture. Scan and
+   click run in the control's owning frame (frame-qualified refs) and address
+   rows through the same scoped NodeList, so a second DOM-resident listbox or
+   a child-iframe widget can never shift the ordinal. Multi-value reuses an
+   open popup and reopens per pick when the widget closes it; `values` is
+   capped at 20 (schema-level). Substring matching picks the first DOM-order
+   match — the act result carries `matchedOption` (the row text actually
+   picked) so a wrong substring pick is visible to the caller. Errors: no rows
+   render → `ACTION_TIMEOUT` (bounded, names typing-filter comboboxes as
+   unsupported); value absent → `TARGET_NOT_FOUND` listing up to 10 observed
+   option names, byte-capped (1 KiB) with per-item clipping and quote/newline
+   stripping; a control that re-renders mid-flow → `STALE_TARGET`. Widget-
+   shaped elements with no open affordance (bare `role=combobox` div, plain
+   div/button) keep the tier-1 fast-fail (`INVALID_REQUEST` naming the tag).
+   Out of scope: typing-filter comboboxes (`input` + `aria-autocomplete` where
+   rows only appear after keystrokes).
+
 2. **Refs go stale after every mutation (STALE_TARGET) — an act→observe→act
    helper is missing.** Each fill bumps the revision, so the caller re-observes
    between every step. The `plan` command exists but requires refs up front.

@@ -414,6 +414,130 @@ interface FormIdentityState {
   popups?: WeakMap<object, FormPopupEvidence>;
 }
 
+// --- TD-BROWSER-18 gap 1: custom combobox driving --------------------------
+// Structural DOM views for the click-open combobox flow (this package
+// compiles without DOM lib, mirroring the FormEvidence* pattern above).
+
+interface ComboboxControlNode {
+  getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
+}
+
+interface ComboboxOptionNode {
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): { width: number; height: number };
+  textContent: string | null;
+}
+
+interface ComboboxDocument {
+  getElementById(id: string): {
+    querySelectorAll(selector: string): ArrayLike<ComboboxOptionNode>;
+  } | null;
+  querySelectorAll(selector: string): ArrayLike<ComboboxOptionNode>;
+  defaultView: {
+    getComputedStyle(node: ComboboxOptionNode): { display: string; visibility: string };
+  } | null;
+}
+
+interface ComboboxPattern {
+  /** role=combobox or aria-haspopup=listbox — widget-shaped like a combobox. */
+  combobox: boolean;
+  /** combobox AND a drivable open affordance (see comboboxPattern below). */
+  drivable: boolean;
+  expanded: string | null;
+  scopeId: string | null;
+  autocomplete: string | null;
+}
+
+interface ComboboxRow {
+  /** Index in the UNfiltered [role="option"] list, so Playwright can
+   * re-address the row for a real (trusted) click after visibility filtering. */
+  index: number;
+  text: string;
+  disabled: boolean;
+}
+
+/**
+ * Classify a select target as a drivable ARIA combobox (TD-18 gap 1).
+ * `combobox` admits role=combobox or aria-haspopup=listbox; `drivable` also
+ * requires an open affordance — aria-expanded present, an id-referenced popup
+ * (aria-controls/aria-owns), or the listbox popup token itself — so a bare
+ * widget-shaped div keeps the tier-1 fast-fail instead of a blind click.
+ */
+function comboboxPattern(node: ComboboxControlNode): ComboboxPattern {
+  const role = (node.getAttribute('role') ?? '').toLowerCase();
+  const popup = (node.getAttribute('aria-haspopup') ?? '').toLowerCase();
+  const listboxPopup = popup.split(/\s+/).includes('listbox');
+  const combobox = role === 'combobox' || listboxPopup;
+  const scopeId = node.getAttribute('aria-controls') ?? node.getAttribute('aria-owns');
+  const drivable =
+    combobox && (node.hasAttribute('aria-expanded') || scopeId !== null || listboxPopup);
+  return {
+    combobox,
+    drivable,
+    expanded: node.getAttribute('aria-expanded'),
+    scopeId,
+    autocomplete: node.getAttribute('aria-autocomplete'),
+  };
+}
+
+/**
+ * Visible option rows for an open combobox: scoped to the aria-controls /
+ * aria-owns popup when it resolves, document-wide otherwise (portaled
+ * popups), with hidden rows filtered out. Capped at 100 rows — options are
+ * page data, and the list only feeds matching and a bounded not-found report.
+ */
+function visibleComboboxOptions(scopeId: string | null): ComboboxRow[] {
+  const doc = (globalThis as unknown as { document: ComboboxDocument }).document;
+  const view = doc.defaultView;
+  const scope = (scopeId !== null ? doc.getElementById(scopeId) : null) ?? doc;
+  const nodes = scope.querySelectorAll('[role="option"]');
+  const rows: ComboboxRow[] = [];
+  const limit = Math.min(nodes.length, 500);
+  for (let i = 0; i < limit; i++) {
+    const node = nodes[i];
+    if (!node) continue;
+    const box = node.getBoundingClientRect();
+    const style = view?.getComputedStyle(node);
+    if (box.width <= 0 || box.height <= 0) continue;
+    if (
+      style !== undefined &&
+      (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse')
+    ) {
+      continue;
+    }
+    rows.push({
+      index: i,
+      text: (node.getAttribute('aria-label') ?? node.textContent ?? '').trim().replace(/\s+/g, ' '),
+      disabled: node.getAttribute('aria-disabled') === 'true',
+    });
+  }
+  return rows.slice(0, 100);
+}
+
+/**
+ * Re-resolve one scanned row for the click, inside the SAME root the scan
+ * used (popup element when its id resolves, else the document) so the
+ * ordinal can never drift because a second DOM-resident listbox sits
+ * earlier in the DOM. The row's text is re-verified: if the widget
+ * re-rendered between scan and click, refusing (stale) beats clicking a
+ * neighboring row.
+ */
+function comboboxOptionAt(args: {
+  scopeId: string | null;
+  index: number;
+  text: string;
+}): ComboboxOptionNode | null {
+  const doc = (globalThis as unknown as { document: ComboboxDocument }).document;
+  const scope = (args.scopeId !== null ? doc.getElementById(args.scopeId) : null) ?? doc;
+  const node = scope.querySelectorAll('[role="option"]')[args.index];
+  if (!node) return null;
+  const text = (node.getAttribute('aria-label') ?? node.textContent ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return text === args.text ? node : null;
+}
+
 /** Browser-only structural views keep this engine free of DOM runtime/type dependencies. */
 interface NativeCaptureNode extends FormEvidenceNode {
   name: string;
@@ -903,6 +1027,40 @@ const VALUE_BEARING_ROLES = new Set([
 // Late async normalization (masking, formatting) can race the post-fill readback;
 // a mismatching value is re-read once after this much settle time.
 const FILL_VERIFY_SETTLE_MS = 250;
+// TD-BROWSER-18 gap 1: bound on every step of custom-combobox driving (control
+// click, popup-open wait, option-row click). The point of the combobox path is
+// to never wait out the 30s actionability default again.
+const COMBOBOX_OPEN_TIMEOUT_MS = 5000;
+// Review R3: the not-found listing quotes page data into an error message —
+// cap the total, clip each item, and strip quotes/newlines so the list stays
+// bounded and unambiguous.
+const COMBOBOX_LISTING_ITEM_MAX_CHARS = 120;
+const COMBOBOX_LISTING_MAX_BYTES = 1024;
+
+function boundedComboboxListing(options: string[]): { text: string; items: string[] } {
+  const clean = (raw: string) => raw.replace(/["\\\n\r\t]/g, ' ').trim();
+  const lines: string[] = [];
+  const items: string[] = [];
+  let bytes = 0;
+  let omitted = 0;
+  for (const option of options) {
+    let cleaned = clean(option);
+    if (cleaned.length > COMBOBOX_LISTING_ITEM_MAX_CHARS) {
+      cleaned = `${cleaned.slice(0, COMBOBOX_LISTING_ITEM_MAX_CHARS - 1)}…`;
+    }
+    const entry = `"${cleaned}"`;
+    const cost = Buffer.byteLength(entry) + 2;
+    if (bytes + cost > COMBOBOX_LISTING_MAX_BYTES) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(entry);
+    items.push(cleaned);
+    bytes += cost;
+  }
+  if (omitted > 0) lines.push(`(+${omitted} more omitted)`);
+  return { text: lines.join(', '), items };
+}
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
 function unquote(value: string): string {
@@ -5798,6 +5956,100 @@ class PlaywrightPage implements EnginePage {
     return binding.handle;
   }
 
+  /**
+   * TD-BROWSER-18 gap 1: drive a custom ARIA combobox under `act select`
+   * (Cloudflare settings rows, member selects). Click-open flow only: toggle
+   * the popup open (skipped when aria-expanded already reads true), wait
+   * bounded for visible option rows, match the requested value against row
+   * text (exact, then substring, case-insensitive — first DOM-order match
+   * wins), and click the row with a real Playwright gesture. Scan AND click
+   * run in the control's owning frame and address rows through the same
+   * NodeList semantics, so a second DOM-resident listbox elsewhere can never
+   * shift the ordinal. Multi-value reuses an open popup and reopens between
+   * picks when the widget closes it. Typing-filter comboboxes (input with
+   * aria-autocomplete) are out of scope and the open timeout says so.
+   * Returns the matched row text per picked value, in order.
+   */
+  private async driveComboboxSelect(
+    dom: Page | import('playwright').Frame,
+    control: ElementHandle,
+    values: string[]
+  ): Promise<string[]> {
+    const matched: string[] = [];
+    for (const value of values) {
+      const pattern = await control.evaluate(comboboxPattern).catch(() => {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Combobox control re-rendered or detached during select; observe again',
+          false
+        );
+      });
+      if ((pattern.expanded ?? '') !== 'true') {
+        await control.click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
+      }
+      // Wait bounded for the popup's visible rows — portaled listboxes render
+      // a tick after the click, so poll instead of asserting immediately.
+      const deadline = Date.now() + COMBOBOX_OPEN_TIMEOUT_MS;
+      let rows: ComboboxRow[] = await dom
+        .evaluate(visibleComboboxOptions, pattern.scopeId)
+        .catch(() => [] as ComboboxRow[]);
+      while (rows.length === 0 && Date.now() < deadline) {
+        await this.page.waitForTimeout(100);
+        rows = await dom
+          .evaluate(visibleComboboxOptions, pattern.scopeId)
+          .catch(() => [] as ComboboxRow[]);
+      }
+      if (rows.length === 0) {
+        throw new EngineError(
+          'ACTION_TIMEOUT',
+          `combobox did not open a visible option list within ${COMBOBOX_OPEN_TIMEOUT_MS}ms` +
+            (pattern.autocomplete !== null
+              ? '; typing-filter comboboxes (aria-autocomplete) are not supported by act select — fill and observe the filtered rows manually'
+              : ''),
+          false,
+          { timeoutMs: COMBOBOX_OPEN_TIMEOUT_MS }
+        );
+      }
+      const lowered = value.trim().toLowerCase();
+      const match =
+        rows.find((row) => !row.disabled && row.text.toLowerCase() === lowered) ??
+        rows.find((row) => !row.disabled && row.text.toLowerCase().includes(lowered));
+      if (match === undefined) {
+        const listing = boundedComboboxListing(rows.slice(0, 10).map((row) => row.text));
+        throw new EngineError(
+          'TARGET_NOT_FOUND',
+          `option "${value}" is not in the open combobox; visible options: ` +
+            (listing.text.length > 0 ? listing.text : '(none)'),
+          false,
+          { requested: value, options: listing.items }
+        );
+      }
+      // Re-resolve the row inside the scan's own root/frame, then click the
+      // ElementHandle — a real gesture, never a main-frame ordinal lookup.
+      const handle = await dom.evaluateHandle(comboboxOptionAt, {
+        scopeId: pattern.scopeId,
+        index: match.index,
+        text: match.text,
+      });
+      const row = handle.asElement();
+      if (row === null) {
+        await handle.dispose().catch(() => {});
+        throw new EngineError(
+          'STALE_TARGET',
+          'Combobox option rows changed between scan and click; observe and select again',
+          false
+        );
+      }
+      try {
+        await row.click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+      matched.push(match.text);
+    }
+    return matched;
+  }
+
   async act(action: EngineAction): Promise<ActionEffect> {
     const coordinate = action.type === 'clickAt' || action.type === 'uploadAt';
     const probe = action.type === 'fetch';
@@ -6214,6 +6466,9 @@ class PlaywrightPage implements EnginePage {
     onDispatch();
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
+    // TD-18 gap 1 review R1: combobox picks surface the row they matched so
+    // a substring-match wrong-pick is visible to the caller.
+    let selectMatchedOption: string | undefined;
     switch (action.type) {
       case 'acceptDialog':
       case 'dismissDialog': {
@@ -6331,19 +6586,50 @@ class PlaywrightPage implements EnginePage {
         // TD-BROWSER-18 gap 1: `selectOption` only drives a native <select>.
         // On a custom combobox it waits out the full actionability timeout
         // and fails with a generic timeout (observed on Cloudflare settings
-        // rows and member selects). Fail fast, naming the actual element.
+        // rows and member selects). Classify the target first: a drivable
+        // ARIA combobox (role=combobox or aria-haspopup=listbox, with an
+        // open affordance) is driven open→pick; anything else fast-fails
+        // naming the actual element.
         const tag = await locator
           .evaluate((node) => node.tagName.toLowerCase())
           .catch(() => undefined);
         if (tag !== undefined && tag !== 'select') {
-          throw new EngineError(
-            'INVALID_REQUEST',
-            `select requires a native <select> element; the target is a <${tag}> ` +
-              '(custom combobox). Click the control to open it, then observe and ' +
-              'click the option row.',
-            false,
-            { actualTag: tag }
-          );
+          const pattern = await locator.evaluate(comboboxPattern).catch(() => {
+            // The element answered the tag probe, so a failed classify read
+            // means it re-rendered or detached — stale, not undrivable.
+            throw new EngineError(
+              'STALE_TARGET',
+              'Select target re-rendered or detached during select; observe again',
+              false
+            );
+          });
+          if (!pattern.drivable) {
+            throw new EngineError(
+              'INVALID_REQUEST',
+              pattern?.combobox === true
+                ? `select requires a native <select>; the target is a <${tag}> combobox with ` +
+                    'no drivable open affordance (aria-expanded, aria-haspopup=listbox, or ' +
+                    'aria-controls/aria-owns). Click the control to open it, then observe and ' +
+                    'click the option row.'
+                : `select requires a native <select> element; the target is a <${tag}> ` +
+                    '(custom combobox). Click the control to open it, then observe and ' +
+                    'click the option row.',
+              false,
+              { actualTag: tag }
+            );
+          }
+          const values = (action.values as string[] | undefined) ?? [];
+          if (values.length === 0) {
+            throw new EngineError('INVALID_REQUEST', 'select requires at least one value');
+          }
+          // Scan and click must both run where the control lives: a combobox
+          // observed in a child iframe is driven through its frame, never the
+          // main frame (whose option rows are unrelated page data).
+          const dom = this.bindings.get((action.target as EngineTarget).ref)?.frame ?? this.page;
+          const matchedOptions = await this.driveComboboxSelect(dom, locator, values);
+          this.bumpRevision();
+          selectMatchedOption = matchedOptions.at(-1);
+          break;
         }
         await locator.selectOption((action.values as string[]) ?? []);
         this.bumpRevision();
@@ -6622,7 +6908,10 @@ class PlaywrightPage implements EnginePage {
       endTimestamp,
       oldRevision,
       newRevision: this.revision,
-      result: { success: true },
+      result:
+        selectMatchedOption !== undefined
+          ? { success: true, matchedOption: selectMatchedOption }
+          : { success: true },
     };
   }
 

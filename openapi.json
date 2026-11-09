@@ -5094,6 +5094,7 @@
                   },
                   "values": {
                     "minItems": 1,
+                    "maxItems": 20,
                     "type": "array",
                     "items": {
                       "type": "string"
@@ -12830,6 +12831,7 @@
           },
           "values": {
             "minItems": 1,
+            "maxItems": 20,
             "type": "array",
             "items": {
               "type": "string"
@@ -13660,6 +13662,7 @@
                 },
                 "values": {
                   "minItems": 1,
+                  "maxItems": 20,
                   "type": "array",
                   "items": {
                     "type": "string"
