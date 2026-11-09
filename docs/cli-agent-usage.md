@@ -690,6 +690,11 @@ Inspection does not refresh idle activity. TTL expires at its deadline; idle exp
 uses the existing strictly-after boundary. Grants and browser attachment can end sooner.
 Older servers or non-active session states may omit the lease: absence means unknown,
 not unlimited lifetime. See [R5a design](spec/design/session-lease-visibility.md).
+Idle expiry also destroys the session browser profile: a credential created inside
+the session (e.g. a WebAuthn passkey) is gone with the context and needs an
+operator-side credential reset. Raise `--idle-timeout` (bounty preset: 1 h) for
+flows that create profile-bound state; the service logs `session.idle-expired`
+when it happens.
 
 An authenticated `session get` for a recently ended owned session keeps the existing
 not-found error and may add bounded close cause, end time and sampled deadlines.

@@ -1046,7 +1046,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           return reply.code(401).send({
             error: {
               code: 'UNAUTHORIZED',
-              message: 'A valid bearer credential is required',
+              // TD-BROWSER-18 gap 5: name the expected credential shape —
+              // the bearer is the key segment of a key:tenant entry, not the
+              // pair, and operator keys authenticate operator routes only.
+              message:
+                'A valid bearer credential is required: the bearer must be a key value from ' +
+                'AGENTBROWSER_API_KEYS (the key segment of a key:tenant entry, not the pair); ' +
+                'operator keys authenticate operator routes only.',
               retryable: false,
             },
           });

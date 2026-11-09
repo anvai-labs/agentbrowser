@@ -4829,6 +4829,37 @@ class PlaywrightPage implements EnginePage {
               element.checked = checked;
             }
           }
+          // TD-BROWSER-18 gap 3: the `state` include widens population, not
+          // schema. Elements the gated reads above miss (e.g. a toggle whose
+          // snapshot role is `button` carrying aria-checked) get their ARIA
+          // state here. Fill-down only: an authoritative read above wins,
+          // `mixed` stays unset (present-but-undefined reads as unknown, not
+          // false), and read failure leaves the keys absent - unknowable,
+          // not false. Mints no rows, so base/change-detection counts are
+          // untouched and default observations stay byte-identical.
+          if (request.include?.includes('state')) {
+            const aria = await reads
+              .read('aria_state', () =>
+                handle.evaluate((node) => ({
+                  checked: node.getAttribute('aria-checked'),
+                  expanded: node.getAttribute('aria-expanded'),
+                  disabled: node.getAttribute('aria-disabled'),
+                  hidden: node.getAttribute('aria-hidden'),
+                }))
+              )
+              .catch(() => undefined);
+            if (aria !== undefined) {
+              if (!('checked' in element) && (aria.checked === 'true' || aria.checked === 'false'))
+                element.checked = aria.checked === 'true';
+              if (
+                element.expanded === undefined &&
+                (aria.expanded === 'true' || aria.expanded === 'false')
+              )
+                element.expanded = aria.expanded === 'true';
+              if (aria.disabled === 'true' && element.enabled !== false) element.enabled = false;
+              if (aria.hidden === 'true' && element.visible) element.visible = false;
+            }
+          }
         })
       );
       const failedEnrichment = enrichments.find((result) => result.status === 'rejected');

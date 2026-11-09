@@ -727,6 +727,14 @@ describe('AgentBrowser CLI', () => {
       });
     });
 
+    it('passes the state enrichment token through (TD-18 gap 3)', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--include', 'state');
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        include: ['state'],
+      });
+    });
+
     it('routes element fields given to --include to the --include-fields hint (TD-18 gap 7)', async () => {
       expect(await run('observe', 'ses_1', 'pg_1', '--include', 'attributes')).toBe(1);
       expect(err.join('\n')).toContain('--include-fields');
@@ -734,8 +742,8 @@ describe('AgentBrowser CLI', () => {
     });
 
     it('names the valid tokens when --include gets an unknown value', async () => {
-      expect(await run('observe', 'ses_1', 'pg_1', '--include', 'state')).toBe(1);
-      expect(err.join('\n')).toContain('overlays | fileInputs | formControls');
+      expect(await run('observe', 'ses_1', 'pg_1', '--include', 'widgets')).toBe(1);
+      expect(err.join('\n')).toContain('overlays | fileInputs | formControls | state');
       expect(sessions.observe).not.toHaveBeenCalled();
     });
 
@@ -1103,6 +1111,52 @@ describe('AgentBrowser CLI', () => {
         target: { ref: 'e1_0' },
         value: 'hello@example.com',
       });
+    });
+
+    it('forwards --observe after and renders the returned observation (TD-18 gap 2)', async () => {
+      sessions.executeAction.mockResolvedValueOnce({
+        status: 'success',
+        actionId: 'act_2',
+        newRevision: 3,
+        observation: {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          revision: 3,
+          url: 'https://example.com/form',
+          title: 'Form',
+          status: 'interactive',
+          elements: [{ ref: 'e3_1', role: 'textbox', name: 'Email', visible: true, enabled: true }],
+          truncated: false,
+          untrustedContent: true,
+        },
+      });
+      const code = await run(
+        'act',
+        'fill',
+        'ses_1',
+        'pg_1',
+        'e1_0',
+        'hello@example.com',
+        '--observe',
+        'after'
+      );
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'fill',
+        target: { ref: 'e1_0' },
+        value: 'hello@example.com',
+        observe: 'after',
+      });
+      expect(out.join('\n')).toContain('e3_1');
+    });
+
+    it('refuses an invalid --observe value before calling the API', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0', '--observe', 'before');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('--observe');
     });
 
     it('should execute a select', async () => {

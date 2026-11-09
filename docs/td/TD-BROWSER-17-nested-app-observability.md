@@ -1,6 +1,8 @@
 # TD-BROWSER-17: Nested-app (cross-origin iframe / shadow-root) content observability
 
-**Status:** open (repro archived 2026-11-09)
+**Status:** open (repro archived 2026-11-09) — ask 3 (fallback recipe)
+documented in cli-agent-usage.md (#712); asks 1-2 (frame traversal +
+degradation marker) remain open.
 **Source:** first production use of cross-machine operator attach
 ([ADR-034](../adr/034-cross-machine-operator-attach.md)) — driving the
 Cloudflare Zero Trust dashboard.

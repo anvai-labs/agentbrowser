@@ -623,6 +623,9 @@ export function buildCli(deps: CliDependencies): Cli {
               ...(act.opts().executionRequirement !== undefined
                 ? { actExecutionRequirement: String(act.opts().executionRequirement) }
                 : {}),
+              ...(act.opts().observe !== undefined
+                ? { actObserve: String(act.opts().observe) }
+                : {}),
               baseUrl: globals.baseUrl ?? 'http://localhost:5709',
               ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
               out: deps.out,
@@ -1080,7 +1083,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--ttl <ms>', 'session TTL in milliseconds')
         .option(
           '--idle-timeout <ms>',
-          'idle timeout in ms (server default 600000 = 10 min — raise this for headed human-in-the-loop logins; server caps at 3600000)'
+          'idle timeout in ms (server default 600000 = 10 min — raise this for headed human-in-the-loop logins; server caps at 3600000). Idle expiry destroys the session browser profile: a credential created inside it (e.g. a WebAuthn passkey) is gone with the context'
         )
         .option('--locale <tag>', 'locale, e.g. en-US')
         .option('--timezone-id <tz>', 'IANA timezone, e.g. America/New_York')
@@ -2029,7 +2032,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--max-bytes <n>', 'maximum observation size in bytes')
         .option(
           '--include <token>',
-          'enrichment token, repeatable: overlays | fileInputs | formControls',
+          'enrichment token, repeatable: overlays | fileInputs | formControls | state',
           (token: string, acc: string[]) => [...acc, token],
           []
         )
@@ -2122,12 +2125,12 @@ export function buildCli(deps: CliDependencies): Cli {
                         'pass it via --include-fields instead.'
                     );
                 }
-                const valid = new Set(['overlays', 'fileInputs', 'formControls']);
+                const valid = new Set(['overlays', 'fileInputs', 'formControls', 'state']);
                 for (const token of options.include) {
                   if (!valid.has(token))
                     throw new UsageError(
                       `Unknown --include token '${token}' - valid tokens: ` +
-                        'overlays | fileInputs | formControls.'
+                        'overlays | fileInputs | formControls | state.'
                     );
                 }
                 request.include = options.include as NonNullable<ObservationRequest['include']>;
@@ -2600,6 +2603,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--execution-requirement <requirement>',
           'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
+        )
+        .option(
+          '--observe <when>',
+          'after: return a fresh observation (re-minted refs) in the same call, so the next act needs no separate observe (TD-BROWSER-18 gap 2)'
         );
 
       withCoordinateOptions(act.command('click'))
@@ -4476,6 +4483,8 @@ interface CommandContext {
   approvalToken?: string;
   /** T5 B-dur: `act --execution-requirement`, validated where it is used. */
   actExecutionRequirement?: string;
+  /** TD-BROWSER-18 gap 2: `act --observe after`, validated in runAction. */
+  actObserve?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
   /** TD-BROWSER-16: the human-operator key for approval commands; never env. */
@@ -4508,10 +4517,15 @@ async function runAction(
   pageId: string,
   input: unknown
 ): Promise<void> {
+  const observeAfter = actObserve(ctx.actObserve);
+  const base =
+    observeAfter === undefined || input === null || typeof input !== 'object'
+      ? input
+      : { ...input, observe: observeAfter };
   const validated = validateWireAction(
-    ctx.approvalToken && input && typeof input === 'object'
-      ? { ...input, approvalToken: ctx.approvalToken }
-      : input
+    ctx.approvalToken && base && typeof base === 'object'
+      ? { ...base, approvalToken: ctx.approvalToken }
+      : base
   );
   if (!validated.ok)
     throw new UsageError(
@@ -4545,7 +4559,19 @@ async function runAction(
           `  navigation observed during action: blocked (${navigationObservation.scope}); action completed, do not replay`,
         ]
       : []),
+    // TD-BROWSER-18 gap 2: the server's act→observe round trip returns the
+    // fresh observation with re-minted refs; render it so the next act needs
+    // no separate observe call.
+    ...(result.observation ? renderObservation(result.observation) : []),
   ]);
+}
+
+/** TD-BROWSER-18 gap 2: validate `act --observe`; undefined means unchanged. */
+function actObserve(value: string | undefined): 'after' | 'none' | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 'after' && value !== 'none')
+    throw new UsageError('--observe must be "after" or "none"');
+  return value;
 }
 
 /** T5 B-dur: `--execution-requirement` for act, plan and autofill; omitted means unchanged. */

@@ -433,6 +433,18 @@ export class SessionCoordinator {
     this.sessions.delete(session.id);
     this.recordTerminal(session);
     session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
+    // TD-BROWSER-18 gap 4: idle expiry is silent by default, but it
+    // destroys everything bound to the session's browser profile - a
+    // WebAuthn credential created mid-ceremony is gone with the context,
+    // recoverable only by an operator-side credential reset. Say so, on
+    // both the sweep and lazy paths; callers raising --idle-timeout is the
+    // mitigation (bounty preset: 1h).
+    if (cause === 'idle_expired')
+      this.logger?.warn('session.idle-expired', {
+        sessionId: session.id,
+        idleTimeoutMs: session.metadata.idleTimeoutMs,
+        note: 'idle expiry closed the session browser profile; credentials created inside it (e.g. a WebAuthn passkey) were destroyed with the context',
+      });
     if (alreadyClosing) return;
     session.engineSession.close('expired').catch((error) => {
       if (logFailure)

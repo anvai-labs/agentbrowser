@@ -915,7 +915,12 @@ export type WaitType =
 /**
  * Observation request
  */
-export const DELIVERED_OBSERVATION_INCLUDES = ['overlays', 'fileInputs', 'formControls'] as const;
+export const DELIVERED_OBSERVATION_INCLUDES = [
+  'overlays',
+  'fileInputs',
+  'formControls',
+  'state',
+] as const;
 
 /** Additive element-field opt-ins for compact projection (protected core excluded). */
 export const DELIVERED_PROJECTION_FIELDS = ['href', 'attributes', 'required'] as const;

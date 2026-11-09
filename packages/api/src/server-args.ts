@@ -28,7 +28,7 @@ Usage:
 Configuration is read from the environment:
   HOST                                  listen address (default 127.0.0.1)
   PORT                                  listen port (default 5709)
-  AGENTBROWSER_API_KEYS                 key:tenant[,key:tenant] bearer keys; unset = local no-keys mode
+  AGENTBROWSER_API_KEYS                 key:tenant[,key:tenant] bearer keys (bearer = key segment only); unset = local no-keys mode
   AGENTBROWSER_ALLOWED_HOSTS            extra trusted Host names (default: loopback only without keys)
   AGENTBROWSER_CORS_ORIGINS             exact browser origins allowed to call the API
   AGENTBROWSER_LOG_LEVEL                debug, info (default), warn or error
