@@ -1002,4 +1002,48 @@ describe('ActionExecutor', () => {
       expect(mockEnginePage.resolve).not.toHaveBeenCalled();
     });
   });
+
+  describe('near-text targets (TD-BROWSER-18 gap 6)', () => {
+    it('passes a near-text target straight to the engine act without resolving a ref', async () => {
+      (mockEnginePage.act as any).mockResolvedValue(effect({ newRevision: 2 }));
+      const result = await executor.execute(
+        req({ type: 'click', target: { nearText: 'Billing', row: true } }),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+      expect(mockEnginePage.act).toHaveBeenCalledWith({
+        type: 'click',
+        target: { nearText: 'Billing', row: true },
+      });
+    });
+
+    it('still enforces the caller expectedRevision assertion on a near-text target', async () => {
+      const result = await executor.execute(
+        req({ type: 'click', target: { nearText: 'Billing' } }, { expectedRevision: 2 }),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+      expect(result.error?.code).toBe('STALE_TARGET');
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
+    });
+
+    it('refuses an empty near-text needle as INVALID_REQUEST', async () => {
+      const result = await executor.execute(req({ type: 'click', target: { nearText: '' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
+    });
+
+    it('revalidateTarget has nothing to recheck for a near-text target', async () => {
+      await expect(
+        executor.revalidateTarget(req({ type: 'click', target: { nearText: 'Billing' } }), {
+          enginePage: mockEnginePage,
+          observation: mockObservation,
+        })
+      ).resolves.toBeNull();
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+    });
+  });
 });

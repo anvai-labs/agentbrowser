@@ -184,6 +184,7 @@ export {
   DELIVERED_EXTRACT_FORMATS,
   downloadFailureDetail,
   formatErrorForUser,
+  isRefTarget,
   navigationFailureDetail,
   parseActionNavigationObservation,
   parseAutofillRequest,

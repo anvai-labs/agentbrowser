@@ -5078,16 +5078,42 @@
                     ]
                   },
                   "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
-                        "type": "string"
+                    "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "ref"
+                        ],
+                        "properties": {
+                          "ref": {
+                            "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                            "description": "Element ref (ADR-004)",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "nearText"
+                        ],
+                        "properties": {
+                          "nearText": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element.",
+                            "type": "string"
+                          },
+                          "row": {
+                            "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                            "type": "boolean"
+                          }
+                        }
                       }
-                    }
+                    ]
                   },
                   "value": {
                     "type": "string"
@@ -12186,16 +12212,42 @@
         }
       },
       "ElementTarget": {
-        "type": "object",
-        "required": [
-          "ref"
-        ],
-        "properties": {
-          "ref": {
-            "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
-            "type": "string"
+        "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "ref"
+            ],
+            "properties": {
+              "ref": {
+                "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                "description": "Element ref (ADR-004)",
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "nearText"
+            ],
+            "properties": {
+              "nearText": {
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element.",
+                "type": "string"
+              },
+              "row": {
+                "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                "type": "boolean"
+              }
+            }
           }
-        }
+        ]
       },
       "ObservationRequest": {
         "additionalProperties": false,
@@ -12815,16 +12867,42 @@
             ]
           },
           "target": {
-            "type": "object",
-            "required": [
-              "ref"
-            ],
-            "properties": {
-              "ref": {
-                "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
-                "type": "string"
+            "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "ref"
+                ],
+                "properties": {
+                  "ref": {
+                    "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                    "description": "Element ref (ADR-004)",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "nearText"
+                ],
+                "properties": {
+                  "nearText": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element.",
+                    "type": "string"
+                  },
+                  "row": {
+                    "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                    "type": "boolean"
+                  }
+                }
               }
-            }
+            ]
           },
           "value": {
             "type": "string"
@@ -13646,16 +13724,42 @@
                   ]
                 },
                 "target": {
-                  "type": "object",
-                  "required": [
-                    "ref"
-                  ],
-                  "properties": {
-                    "ref": {
-                      "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
-                      "type": "string"
+                  "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "ref"
+                      ],
+                      "properties": {
+                        "ref": {
+                          "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                          "description": "Element ref (ADR-004)",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "nearText"
+                      ],
+                      "properties": {
+                        "nearText": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element.",
+                          "type": "string"
+                        },
+                        "row": {
+                          "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                          "type": "boolean"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "value": {
                   "type": "string"

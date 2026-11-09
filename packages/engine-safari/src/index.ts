@@ -44,6 +44,7 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import { EngineError } from '@agentbrowser/engine';
+import { isRefTarget } from '@agentbrowser/protocol';
 import { OperationQueue } from './operation-queue.js';
 import { SafaridriverError, SafaridriverProcess, type WebDriverTransport } from './webdriver.js';
 
@@ -617,6 +618,12 @@ class SafariPage implements EnginePage {
 
   private async resolveUnlocked(target: EngineTarget): Promise<ResolvedTarget> {
     this.assertOpen();
+    if (!isRefTarget(target)) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Safari resolves ref targets only; near-text targeting is not supported by this engine'
+      );
+    }
     const descriptor = this.descriptorFor(target.ref);
     return {
       ref: descriptor.ref,
@@ -639,6 +646,11 @@ class SafariPage implements EnginePage {
     this.assertOpen();
     if (action.expectValue !== undefined)
       throw new EngineError('ENGINE_UNSUPPORTED', 'Fill verification is not qualified for Safari');
+    if (action.target !== undefined && !isRefTarget(action.target))
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Safari acts on ref targets only; near-text targeting is not supported by this engine'
+      );
     await this.switchTo();
     const actionId = `action-${Date.now()}`;
     const oldRevision = this.revision;

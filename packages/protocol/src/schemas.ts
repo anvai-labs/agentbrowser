@@ -747,8 +747,42 @@ export const PageStateSchema = Type.Object({
 // Action Schemas
 // ============================================================================
 
-export const ElementTargetSchema = Type.Object({
-  ref: Type.String({ pattern: REF_PATTERN.source }),
+/**
+ * Element target forms (TD-BROWSER-18 gap 6). The ref form addresses an
+ * observed element; the nearText form is the geometric escape hatch for
+ * controls with no accessible name — resolve at act time to the interactive
+ * element nearest visible text containing the needle. Exactly one form
+ * carries a payload; `additionalProperties: false` keeps the branches
+ * mutually exclusive on the wire.
+ */
+export const RefTargetSchema = Type.Object(
+  {
+    ref: Type.String({ pattern: REF_PATTERN.source, description: 'Element ref (ADR-004)' }),
+  },
+  { additionalProperties: false }
+);
+
+export const NearTextTargetSchema = Type.Object(
+  {
+    nearText: Type.String({
+      minLength: 1,
+      maxLength: 200,
+      description:
+        'Case-insensitive visible-text needle; resolves at act time to the nearest interactive element.',
+    }),
+    row: Type.Optional(
+      Type.Boolean({
+        description:
+          "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+      })
+    ),
+  },
+  { additionalProperties: false }
+);
+
+export const ElementTargetSchema = Type.Union([RefTargetSchema, NearTextTargetSchema], {
+  description:
+    'A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.',
 });
 
 export const NavigateActionSchema = Type.Object({
@@ -943,7 +977,7 @@ export const DeliveredWaitConditionSchema = Type.Union(
 export const PlanStepSchema = Type.Object({
   at: Type.Optional(CoordinatePointSchema),
   action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
-  target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
+  target: Type.Optional(ElementTargetSchema),
   value: Type.Optional(Type.String()),
   // `values` only select carries; bounded like MAX_BATCH_STEPS because each
   // value drives an open→pick round-trip on custom comboboxes.

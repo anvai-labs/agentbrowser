@@ -24,6 +24,9 @@ import {
   createApiErrorDetail,
   DELIVERED_ACTION_TYPES,
   ErrorCode,
+  isNearTextTarget,
+  isRefTarget,
+  NEAR_TEXT_MAX_LENGTH,
   parseActionNavigationObservation,
   parseFetchAction,
   parseRef,
@@ -89,7 +92,7 @@ export class ActionExecutor {
         return this.failure(staleError, startTimestamp, revision);
       }
 
-      if (target) {
+      if (target && isRefTarget(target)) {
         resolvedTarget = await enginePage.resolve({ ref: target.ref });
 
         // Upload is exempt from the visibility gate: Dropzone-style file
@@ -119,8 +122,12 @@ export class ActionExecutor {
           );
         }
       }
+      // A near-text target (TD-BROWSER-18 gap 6) has no ref to pre-resolve:
+      // the engine resolves it at act time and gates visibility/enabled
+      // against the freshly bound element, so the executor skips the
+      // observation-fingerprint machinery entirely.
 
-      if (target && resolvedTarget) {
+      if (isRefTarget(target) && resolvedTarget) {
         const fingerprintError = this.verifyFingerprint(
           target.ref,
           resolvedTarget,
@@ -195,6 +202,16 @@ export class ActionExecutor {
   private validateAction(action: SupportedAction): ApiErrorDetail | null {
     const integrityError = validateUploadIntegrity(action);
     if (integrityError) return invalidRequest(integrityError);
+    // Semantic bounds for direct callers (REST /plan and the surfaces pass
+    // through the compiled wire schema; in-process embedders do not).
+    if ('target' in action && action.target && isNearTextTarget(action.target)) {
+      const needle = action.target.nearText;
+      if (typeof needle !== 'string' || needle.length < 1 || needle.length > NEAR_TEXT_MAX_LENGTH) {
+        return invalidRequest(
+          `nearText target requires a non-empty needle of at most ${NEAR_TEXT_MAX_LENGTH} characters`
+        );
+      }
+    }
     if (!isSupportedActionType(action.type)) {
       return invalidRequest(`Unsupported action type: ${action.type}`, {
         actionType: action.type,
@@ -286,7 +303,9 @@ export class ActionExecutor {
       );
     }
 
-    if (!target) {
+    if (!target || !isRefTarget(target)) {
+      // A near-text target encodes no observed revision; only the caller's
+      // own expectedRevision assertion (checked above) applies.
       return null;
     }
 
@@ -332,7 +351,7 @@ export class ActionExecutor {
     const target = targetOf(request.action);
     const stale = this.checkStaleness(request, target, currentRevision ?? observation.revision);
     if (stale) return stale;
-    if (!target) return null;
+    if (!target || !isRefTarget(target)) return null;
     const ref = target.ref;
     const actionType = request.action.type;
     let resolved: ResolvedTarget;

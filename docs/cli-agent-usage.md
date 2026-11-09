@@ -448,6 +448,32 @@ inspect receipts and per-step outcomes. Other action commands retain existing ex
 does not establish an application commit. Existing commands have command-specific
 output: use `--json` for structured results; raw HTML is sensitive even in JSON form.
 
+### Unlabeled controls: `--near-text` (TD-BROWSER-18 gap 6)
+
+Settings rows often carry a bare "+ Add" with no accessible name — no ref from
+`observe` can address it. One target form per act: a ref, `--at` (approved
+coordinates), or `--near-text` on `click`, `dblclick`, `fill`, `select`,
+`check`, `uncheck`, `hover` and `clear`.
+
+```sh
+# The trailing button in the visual row of the "Billing" label:
+agentbrowser act click "$session_id" "$page_id" --near-text Billing --row
+
+# The interactive element nearest a text (any direction):
+agentbrowser act check "$session_id" "$page_id" --near-text Subscribe
+
+# fill/select take the value positional, ref-less:
+agentbrowser act fill "$session_id" "$page_id" draft --near-text Bio
+```
+
+| Behavior | Result |
+| --- | --- |
+| Resolution time | act time, against live geometry (case-insensitive visible-text match, bounded probe) |
+| `--row` | restricts candidates to the text's visual row band and prefers the trailing element |
+| No matching text or control | `TARGET_NOT_FOUND` |
+| Several equidistant candidates | `TARGET_AMBIGUOUS` with a bounded role+text candidate list — tighten the needle or drop `--row` |
+| Staleness | unchanged: resolution lands in the same ref machinery, so revision checks and remap apply |
+
 ## Choose the execution primitive
 
 | Need | Surface today |

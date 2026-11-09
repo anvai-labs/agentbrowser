@@ -31,7 +31,24 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import { EngineError } from '@agentbrowser/engine';
-import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
+import {
+  DELIVERED_ACTION_TYPES,
+  DELIVERED_OBSERVATION_MODES,
+  isRefTarget,
+  type RefTarget,
+} from '@agentbrowser/protocol';
+
+/**
+ * The ref form of an action's target, or undefined. FakeEngine addresses
+ * elements by observed refs only: near-text targeting (TD-BROWSER-18 gap 6)
+ * is a geometric resolution performed by live engines, refused at act().
+ */
+function refTargetOf(action: EngineAction): RefTarget | undefined {
+  return action.target !== undefined && isRefTarget(action.target) ? action.target : undefined;
+}
+
+const NEAR_TEXT_UNSUPPORTED =
+  'FakeEngine resolves ref targets only; near-text targeting needs a real engine';
 
 /**
  * Fake engine for testing
@@ -556,6 +573,9 @@ class FakePage implements EnginePage {
     if (this.closed) {
       throw new Error('Page is closed');
     }
+    if (!isRefTarget(target)) {
+      throw new EngineError('ENGINE_UNSUPPORTED', NEAR_TEXT_UNSUPPORTED, false);
+    }
 
     // Find element by ref using Map for O(1) lookup
     const element = this.elementByRef.get(target.ref);
@@ -600,6 +620,9 @@ class FakePage implements EnginePage {
     if (this.closed) {
       throw new Error('Page is closed');
     }
+    if (action.target !== undefined && !isRefTarget(action.target)) {
+      throw new EngineError('ENGINE_UNSUPPORTED', NEAR_TEXT_UNSUPPORTED, false);
+    }
 
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
@@ -607,7 +630,7 @@ class FakePage implements EnginePage {
 
     // F2 remap emulation: a dead ref with remap opted in heals onto the
     // single surviving element matching the dropped element's role+name.
-    const target = action.target as EngineTarget | undefined;
+    const target = refTargetOf(action);
     if (action.remap === true && target !== undefined && !this.elementByRef.has(target.ref)) {
       const baseline = this.removedByRef.get(target.ref);
       if (baseline === undefined) {
@@ -655,7 +678,7 @@ class FakePage implements EnginePage {
       }
       case 'click': {
         this.revision++;
-        const target = action.target as EngineTarget | undefined;
+        const target = refTargetOf(action);
         const clicked = target ? this.elementByRef.get(target.ref) : undefined;
         const revealIndex = clicked
           ? this.pendingReveals.findIndex((r) => r.matchName === clicked.name)
@@ -676,7 +699,7 @@ class FakePage implements EnginePage {
       }
       case 'fill': {
         // A real page keeps the typed value; so does the fake.
-        const target = action.target as EngineTarget | undefined;
+        const target = refTargetOf(action);
         if (target) {
           const element = this.elementByRef.get(target.ref);
           if (element && typeof action.value === 'string') {
@@ -687,7 +710,7 @@ class FakePage implements EnginePage {
         break;
       }
       case 'select': {
-        const target = action.target as EngineTarget | undefined;
+        const target = refTargetOf(action);
         if (target) {
           const element = this.elementByRef.get(target.ref);
           const values = action.values as string[] | undefined;
@@ -724,7 +747,7 @@ class FakePage implements EnginePage {
         // Refusal parity with the real engines, checked BEFORE the revision
         // bump: a targeted ref must exist, and un-targeted uploads need
         // exactly one file input on the page.
-        const uploadTarget = action.target as EngineTarget | undefined;
+        const uploadTarget = refTargetOf(action);
         if (uploadTarget !== undefined) {
           if (!this.elementByRef.has(uploadTarget.ref)) {
             throw new EngineError('TARGET_NOT_FOUND', `Element not found: ${uploadTarget.ref}`);
@@ -780,7 +803,7 @@ class FakePage implements EnginePage {
         // Non-mutating: no state change, no revision bump.
         break;
       case 'clear': {
-        const target = action.target as EngineTarget | undefined;
+        const target = refTargetOf(action);
         if (target) {
           const element = this.elementByRef.get(target.ref);
           if (element) {
@@ -792,7 +815,7 @@ class FakePage implements EnginePage {
       }
       case 'check':
       case 'uncheck': {
-        const target = action.target as EngineTarget | undefined;
+        const target = refTargetOf(action);
         if (target) {
           const element = this.elementByRef.get(target.ref);
           if (element) {
