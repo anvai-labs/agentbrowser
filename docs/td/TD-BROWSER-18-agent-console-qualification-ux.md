@@ -1,6 +1,10 @@
 # TD-BROWSER-18: Agent-Driven Console & Dashboard Qualification — Semantic-Layer Gaps
 
-**Status:** Proposed — eight gaps recorded from two days of production dogfooding; each is small, none blocking
+**Status:** In progress — eight gaps recorded from two days of production dogfooding; each is small, none blocking.
+Landed: gap 1 (detection half), 7, 8 + ADR-034 error hints in #712; gap 2
+(`act --observe after`), 3 (`--include state`), 4 (idle-expiry warning), 5
+(401 bearer-format hint) in the tier-2 PR. Open: gap 1 (combobox driving),
+gap 6 (nearest-text locator).
 **Context:** 2026-11-07/08
 **Related:** [ADR-034](../adr/034-cross-machine-operator-attach.md) (operator attach),
 [ADR-013](../adr/013-headed-sessions-and-walled-logins.md) (headed sessions),

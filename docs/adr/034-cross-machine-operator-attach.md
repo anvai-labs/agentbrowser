@@ -1,6 +1,10 @@
 # ADR-034: Cross-machine operator Chrome attach (remote-login browsing topology)
 
-**Status:** Accepted (pattern documented; service-env improvement proposed)
+**Status:** Accepted (pattern documented; service-env improvement proposed).
+Error-surface hints (frictions 2-3) landed in #712; the plist-regeneration
+warning is surfaced in `CDP_ATTACH_DISABLED` and operations.md. Still open:
+the Homebrew override-file mechanism and the session-create
+self-identifying attachment line.
 **Context:** 2026-11-09
 **Related:** [ADR-025](025-operator-cookie-handoff.md) (operator cookie handoff),
 [ADR-006](006-network-egress-policy-ssrf.md) (egress boundary),

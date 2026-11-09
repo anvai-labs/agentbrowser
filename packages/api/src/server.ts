@@ -1046,7 +1046,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           return reply.code(401).send({
             error: {
               code: 'UNAUTHORIZED',
-              message: 'A valid bearer credential is required',
+              // TD-BROWSER-18 gap 5: name the expected credential shape —
+              // the bearer is the key segment of a key:tenant entry, not the
+              // pair, and operator keys authenticate operator routes only.
+              // A stale delegated grant lands here too (review F7): name the
+              // fresh-grant path so that audience is not told to fetch an
+              // API key it must not have.
+              message:
+                'A valid bearer credential is required: the bearer must be a key value from ' +
+                'AGENTBROWSER_API_KEYS (the key segment of a key:tenant entry, not the pair); ' +
+                'operator keys authenticate operator routes only; delegated session grants ' +
+                'expire with their session — request a fresh grant if you hold one.',
               retryable: false,
             },
           });

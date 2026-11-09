@@ -807,6 +807,44 @@ describe('SessionCoordinator', () => {
       expect(context?.signal.reason).toMatchObject({ code: 'SESSION_EXPIRED' });
       await idleCoordinator.shutdown();
     });
+
+    it('warns through the injected logger on idle expiry with the credential note (TD-18 gap 4)', async () => {
+      const lines: string[] = [];
+      const logger = new StructuredLogger({ sink: (line) => lines.push(line) });
+      const idleCoordinator = new SessionCoordinator({
+        cleanupCheckIntervalMs: 30,
+        logger,
+      });
+      const created = await idleCoordinator.create(
+        { engine: 'mock-engine', ttlMs: 3_600_000, idleTimeoutMs: 30 },
+        mockEngine
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(idleCoordinator.get(created.sessionId)).toBeUndefined();
+      const idleLines = lines.filter((line) => line.includes('session.idle-expired'));
+      expect(idleLines).toHaveLength(1);
+      // The note must name the credential-binding consequence, not just the
+      // close: an orphaned passkey is otherwise undiagnosable.
+      expect(idleLines[0]).toContain('WebAuthn');
+      await idleCoordinator.shutdown();
+    });
+
+    it('does not emit the idle-expiry warning for a ttl expiry', async () => {
+      const lines: string[] = [];
+      const logger = new StructuredLogger({ sink: (line) => lines.push(line) });
+      const ttlCoordinator = new SessionCoordinator({
+        cleanupCheckIntervalMs: 30,
+        logger,
+      });
+      await ttlCoordinator.create({ engine: 'mock-engine', ttlMs: 50 }, mockEngine);
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(lines.some((line) => line.includes('session.idle-expired'))).toBe(false);
+      await ttlCoordinator.shutdown();
+    });
   });
 
   describe('bounded terminal facts', () => {
