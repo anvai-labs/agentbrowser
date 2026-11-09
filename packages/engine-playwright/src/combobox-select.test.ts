@@ -2,17 +2,10 @@ import http from 'node:http';
 import type { EnginePage, EngineSession } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { backingPage } from './test-support/backing-page.js';
+import { refOf } from './test-support/observation-refs.js';
 import { sharedEngine } from './test-support/shared-engine.js';
 
 const engine = sharedEngine();
-
-/** Fresh observation per action: any mutation invalidates the previous refs. */
-async function refOf(page: EnginePage, role: string, name: string): Promise<string> {
-  const state = await page.observe({});
-  const element = state.elements.find((el) => el.role === role && el.name === name);
-  if (!element?.ref) throw new Error(`missing observed ${role} "${name}"`);
-  return element.ref;
-}
 
 /** Poll until an observation surfaces the element (frames attach async). */
 async function refOfEventually(
