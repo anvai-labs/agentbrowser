@@ -3,6 +3,12 @@ import {
   coordinatePoint,
   withCoordinateOptions,
 } from './coordinate-options.js';
+import {
+  assertSingleTargetForm,
+  type NearTextOptions,
+  nearTextTarget,
+  withNearTextOptions,
+} from './near-text-options.js';
 import { adoptScopeAssets } from './scope-assets-file.js';
 /**
  * AgentBrowser CLI
@@ -70,6 +76,7 @@ import {
   INTERACTION_GUIDANCE,
   isAgentMode,
   isPassingOutcome,
+  isRefTarget,
   listFormMappingStages,
   materializeAutofillMapping,
   navigationFailureDetail,
@@ -2622,8 +2629,8 @@ export function buildCli(deps: CliDependencies): Cli {
           'after: return a fresh observation (re-minted refs) in the same call, so the next act needs no separate observe (TD-BROWSER-18 gap 2)'
         );
 
-      withCoordinateOptions(act.command('click'))
-        .description('click an element or an explicitly approved viewport point')
+      withCoordinateOptions(withNearTextOptions(act.command('click')))
+        .description('click an element, an approved viewport point, or the element nearest a text')
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('[ref]')
@@ -2634,13 +2641,17 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               pageId: string,
               ref: string | undefined,
-              options: CoordinateOptions
+              options: CoordinateOptions & NearTextOptions
             ) => {
               const at = coordinatePoint(options);
-              if (at && ref) throw new UsageError('Choose an element ref or --at');
+              const near = nearTextTarget(options);
+              assertSingleTargetForm({ ref, at, near });
               if (at) await runAction(ctx, sessionId, pageId, { action: 'clickAt', at });
+              else if (near)
+                await runAction(ctx, sessionId, pageId, { action: 'click', target: near });
               else {
-                if (ref === undefined) throw new UsageError('click requires a ref or --at');
+                if (ref === undefined)
+                  throw new UsageError('click requires a ref, --at, or --near-text');
                 await runAction(ctx, sessionId, pageId, {
                   action: 'click',
                   target: refTarget(ref),
@@ -2650,50 +2661,82 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
 
-      act
-        .command('fill')
-        .description('fill an input')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .argument('<value>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string, value: string) => {
-            await runAction(ctx, sessionId, pageId, {
-              action: 'fill',
-              target: refTarget(ref),
-              value,
-            });
-          })
-        );
+      /**
+       * TD-BROWSER-18 gap 6: fill/select accept either a positional ref + value
+       * or --near-text + value. With one positional and no value, a ref-shaped
+       * token is a missing value; anything else is the value of a near-text
+       * invocation (refs are engine-minted short tokens and never prose, so
+       * the reassignment is deterministic, not a guess).
+       */
+      const valueAction = (actionName: 'fill' | 'select', command: Command, description: string) =>
+        withNearTextOptions(command)
+          .description(description)
+          .argument('<sessionId>')
+          .argument('<pageId>')
+          .argument('[ref]')
+          .argument('[value]')
+          .action(
+            action(
+              async (
+                ctx,
+                sessionId: string,
+                pageId: string,
+                refArg: string | undefined,
+                valueArg: string | undefined,
+                options: NearTextOptions
+              ) => {
+                let ref = refArg;
+                let value = valueArg;
+                if (ref !== undefined && value === undefined) {
+                  if (REF_PATTERN.test(ref)) throw new UsageError(`${actionName} requires a value`);
+                  value = ref;
+                  ref = undefined;
+                }
+                const near = nearTextTarget(options);
+                assertSingleTargetForm({ ref, near });
+                if (ref === undefined && near === undefined)
+                  throw new UsageError(`${actionName} requires a ref or --near-text`);
+                if (value === undefined) throw new UsageError(`${actionName} requires a value`);
+                await runAction(ctx, sessionId, pageId, {
+                  action: actionName,
+                  target: near ?? refTarget(ref as string),
+                  value: value as string,
+                });
+              }
+            )
+          );
 
-      act
-        .command('select')
-        .description('select an option')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .argument('<value>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string, value: string) => {
-            await runAction(ctx, sessionId, pageId, {
-              action: 'select',
-              target: refTarget(ref),
-              value,
-            });
-          })
-        );
+      valueAction('fill', act.command('fill'), 'fill an input');
+      valueAction('select', act.command('select'), 'select an option');
 
-      act
-        .command('dblclick')
+      withNearTextOptions(act.command('dblclick'))
         .description('double-click an element')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('<ref>')
+        .argument('[ref]')
         .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'dblclick', target: refTarget(ref) });
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              ref: string | undefined,
+              options: NearTextOptions
+            ) => {
+              const near = nearTextTarget(options);
+              assertSingleTargetForm({ ref, near });
+              if (near)
+                await runAction(ctx, sessionId, pageId, { action: 'dblclick', target: near });
+              else {
+                if (ref === undefined)
+                  throw new UsageError('dblclick requires a ref or --near-text');
+                await runAction(ctx, sessionId, pageId, {
+                  action: 'dblclick',
+                  target: refTarget(ref),
+                });
+              }
+            }
+          )
         );
 
       withCoordinateOptions(act.command('upload'))
@@ -2759,53 +2802,49 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
 
-      act
-        .command('hover')
-        .description('hover an element; page handlers may cause effects')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'hover', target: refTarget(ref) });
-          })
-        );
+      /**
+       * TD-BROWSER-18 gap 6: single-positional act commands accept a ref or
+       * --near-text, never both.
+       */
+      const refAction = (
+        actionName: 'hover' | 'clear' | 'check' | 'uncheck',
+        command: Command,
+        description: string
+      ) =>
+        withNearTextOptions(command)
+          .description(description)
+          .argument('<sessionId>')
+          .argument('<pageId>')
+          .argument('[ref]')
+          .action(
+            action(
+              async (
+                ctx,
+                sessionId: string,
+                pageId: string,
+                ref: string | undefined,
+                options: NearTextOptions
+              ) => {
+                const near = nearTextTarget(options);
+                assertSingleTargetForm({ ref, near });
+                if (near)
+                  await runAction(ctx, sessionId, pageId, { action: actionName, target: near });
+                else {
+                  if (ref === undefined)
+                    throw new UsageError(`${actionName} requires a ref or --near-text`);
+                  await runAction(ctx, sessionId, pageId, {
+                    action: actionName,
+                    target: refTarget(ref),
+                  });
+                }
+              }
+            )
+          );
 
-      act
-        .command('clear')
-        .description('clear an input')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'clear', target: refTarget(ref) });
-          })
-        );
-
-      act
-        .command('check')
-        .description('tick a checkbox or radio')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'check', target: refTarget(ref) });
-          })
-        );
-
-      act
-        .command('uncheck')
-        .description('untick a checkbox')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'uncheck', target: refTarget(ref) });
-          })
-        );
+      refAction('hover', act.command('hover'), 'hover an element; page handlers may cause effects');
+      refAction('clear', act.command('clear'), 'clear an input');
+      refAction('check', act.command('check'), 'tick a checkbox or radio');
+      refAction('uncheck', act.command('uncheck'), 'untick a checkbox');
 
       act
         .command('wait')
@@ -4565,7 +4604,7 @@ async function runAction(
             'WARNING: Visual verification unavailable after dispatch. Inspect current state before any retry.',
           ]
         : []),
-    `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
+    `${request.action}${'target' in request && isRefTarget(request.target) ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
     ...(navigationObservation
       ? [

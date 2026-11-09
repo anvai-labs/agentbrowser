@@ -554,11 +554,44 @@ export interface ClickAction extends Action {
 }
 
 /**
- * Element target
+ * Element target, ref form (ADR-004): an engine-minted reference from an
+ * observation, e.g. `e1_0`.
  */
-export interface ElementTarget {
+export interface RefTarget {
   ref: string;
 }
+
+/**
+ * Element target, geometric form (TD-BROWSER-18 gap 6): the interactive
+ * element nearest visible text containing `nearText` (case-insensitive,
+ * bounded probe). `row: true` restricts candidates to the text's visual row
+ * band and prefers the element horizontally trailing the label — the shape
+ * of settings rows with unlabeled trailing actions ("+ Add"). Resolution
+ * happens at act time and lands in the same ref machinery (a ref is minted
+ * for the resolved element), so staleness and remap behavior are unchanged.
+ */
+export interface NearTextTarget {
+  nearText: string;
+  row?: boolean;
+}
+
+/**
+ * Element target: a ref, or a geometric near-text resolution. Exactly one
+ * form is meaningful; the wire schema enforces the shapes and the engine
+ * resolves the geometric form before dispatch.
+ */
+export type ElementTarget = RefTarget | NearTextTarget;
+
+export function isRefTarget(target: ElementTarget | undefined): target is RefTarget {
+  return typeof target === 'object' && target !== null && 'ref' in target;
+}
+
+export function isNearTextTarget(target: ElementTarget | undefined): target is NearTextTarget {
+  return typeof target === 'object' && target !== null && 'nearText' in target;
+}
+
+/** Longest accepted near-text needle (mirrors the wire schema bound). */
+export const NEAR_TEXT_MAX_LENGTH = 200;
 
 /**
  * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`,

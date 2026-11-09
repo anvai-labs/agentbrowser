@@ -77,6 +77,22 @@ roughly the order it cost us time.
    rows ("+ Add") have no accessible name; only engine-level bounding-box
    matching could reach them. Ask: a first-class locator — "the interactive
    element nearest text X" / "in the same visual row as text X".
+   **Status: DONE (2026-11-09).** `{ nearText, row? }` is a second
+   `ElementTarget` form (protocol schemas/types, wire-validated like `{ ref }`);
+   the Playwright engine resolves it at act time — bounded visible-text probe
+   (one rect per match, so a wrapped label contributes its match's line box;
+   text and controls pass the same visibility gate; MAIN FRAME only), nearest
+   interactive element by rect distance, or with `row: true` the trailing
+   element in the matched line's visual row — and mints the chosen element a
+   ref in the same binding store. Staleness and visibility/enabled gates apply
+   at dispatch on that freshly bound element; remap does NOT apply to
+   near-text targets — retrying the act re-resolves against live geometry.
+   Zero matches → `TARGET_NOT_FOUND` (final; the message discloses the
+   main-frame scope and probe truncation); a geometric tie →
+   `TARGET_AMBIGUOUS` with a bounded candidate list. CLI: `--near-text` /
+   `--row` on click, dblclick, fill, select, check, uncheck, hover, clear
+   (ref XOR `--at` XOR `--near-text`); MCP `act` accepts the same target form.
+   See [CLI usage](../cli-agent-usage.md#unlabeled-controls---near-text-td-browser-18-gap-6).
 
 7. **`--include attributes` is rejected** ("Expected union value") while the
    help lists it — help/docs drift between the CLI and the service schema.
