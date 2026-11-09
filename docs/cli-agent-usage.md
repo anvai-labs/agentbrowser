@@ -448,6 +448,34 @@ inspect receipts and per-step outcomes. Other action commands retain existing ex
 does not establish an application commit. Existing commands have command-specific
 output: use `--json` for structured results; raw HTML is sensitive even in JSON form.
 
+### Unlabeled controls: `--near-text` (TD-BROWSER-18 gap 6)
+
+Settings rows often carry a bare "+ Add" with no accessible name — no ref from
+`observe` can address it. One target form per act: a ref, `--at` (approved
+coordinates), or `--near-text` on `click`, `dblclick`, `fill`, `select`,
+`check`, `uncheck`, `hover` and `clear`.
+
+```sh
+# The trailing button in the visual row of the "Billing" label:
+agentbrowser act click "$session_id" "$page_id" --near-text Billing --row
+
+# The interactive element nearest a text (any direction):
+agentbrowser act check "$session_id" "$page_id" --near-text Subscribe
+
+# fill/select take the value positional, ref-less:
+agentbrowser act fill "$session_id" "$page_id" draft --near-text Bio
+```
+
+| Behavior | Result |
+| --- | --- |
+| Resolution time | act time, against live geometry (case-insensitive visible-text match, bounded probe) |
+| Scope | MAIN FRAME only: text inside child frames is not probed |
+| Text visibility | both the text and the controls pass the same visibility gate — `opacity:0`/transparent/clipped labels do not steer targeting |
+| `--row` | restricts candidates to the matched text's own line box band and prefers the trailing element |
+| No matching text or control | `TARGET_NOT_FOUND` (final — rerun the act to re-resolve; child-frame text reports main-frame scope) |
+| Several equidistant candidates | `TARGET_AMBIGUOUS` with a bounded role+text candidate list — tighten the needle or drop `--row` |
+| Staleness and remap | staleness and visibility/enabled gates apply at dispatch on the freshly bound element; remap does NOT apply to near-text targets — rerun the act (it re-resolves against live geometry) |
+
 ## Choose the execution primitive
 
 | Need | Surface today |
@@ -690,6 +718,11 @@ Inspection does not refresh idle activity. TTL expires at its deadline; idle exp
 uses the existing strictly-after boundary. Grants and browser attachment can end sooner.
 Older servers or non-active session states may omit the lease: absence means unknown,
 not unlimited lifetime. See [R5a design](spec/design/session-lease-visibility.md).
+Idle expiry also destroys the session browser profile: a credential created inside
+the session (e.g. a WebAuthn passkey) is gone with the context and needs an
+operator-side credential reset. Raise `--idle-timeout` (bounty preset: 1 h) for
+flows that create profile-bound state; the service logs `session.idle-expired`
+at the cleanup sweep, which can lag actual expiry by up to the sweep interval.
 
 An authenticated `session get` for a recently ended owned session keeps the existing
 not-found error and may add bounded close cause, end time and sampled deadlines.
@@ -806,3 +839,40 @@ bounded stage/correlation diagnostic. Retry a read to reconcile, not a submitted
 mutation. These reads do not reload tabs, clear storage or restart the service.
 If manual reload is necessary, inspect/preserve recoverable drafts first and
 reload only the affected tab with the user's authorization.
+
+### Nested-app panes observation cannot see (TD-BROWSER-17)
+
+Some console panes (Cloudflare Zero Trust, GCP console panes, Azure Portal
+blades) render inside portaled cross-origin child frames (OOPIF) or
+shadow-root subtrees that top-document reads cannot reach. The symptom:
+`observe`/`snapshot`/`extract` return the page shell or sidebar navigation
+only, and the main pane reads as empty — sometimes behind a placeholder
+inline iframe whose body is an empty document. Empty observation of a
+visually populated pane means this class of surface, not "nothing to do".
+
+Working fallback today (loses semantic refs, scope accounting and the
+snapshot staleness contract — use only for reads and deliberate, reviewed
+clicks):
+
+1. `screenshot` the page and read the pane's layout from the image.
+2. `act click SESSION PAGE --at X,Y` with image coordinates for targets you
+   have visually identified. Coordinate clicks are gated: the service classifies
+   them as high-risk and requires a one-use approval token even in local
+   deployments — obtain one via the approvals command and pass
+   `act --approval-token`. Re-screenshot after each click; there is no
+   staleness protection on coordinate paths.
+3. Same-origin child frames may be readable by an engine-side frame walk, but
+   no CLI/MCP command exposes one today — treat pane text in frames as
+   unavailable through agentbrowser until
+   [TD-BROWSER-17](td/TD-BROWSER-17-nested-app-observability.md) lands; do not
+   improvise raw CDP access outside the service boundary.
+
+Frame-qualified refs for these panes have landed (child-frame elements mint
+`f<index>_e<revision>_<ordinal>`; top-document refs stay unprefixed), and
+`observe` now reports `degradedReason: 'nested_content_unobservable'` when a
+pane renders where observation cannot fold — treat that reason as
+incomplete coverage, not an empty page. Compatibility note: on pages WITH
+iframes, child-frame refs changed namespace (previously unprefixed); refs
+held across the upgrade fail closed as TARGET_NOT_FOUND (remap-eligible),
+and clients pinned to the pre-change published ref pattern reject
+qualified refs until updated.

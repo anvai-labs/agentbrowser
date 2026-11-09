@@ -52,9 +52,12 @@ import {
   DELIVERED_OBSERVATION_MODES,
   headedDisplayWarnings,
   isNavigationFailureReason,
+  isNearTextTarget,
+  isRefTarget,
   isScopeDenialCode,
   MAX_FORM_CONTROLS_PER_ROOT,
   type NavigationFailureReason,
+  type NearTextTarget,
   type ScopeDenialCode,
   type SessionDiagnostics,
   validateUploadIntegrity,
@@ -110,6 +113,13 @@ const admissionByContext = new WeakMap<
 >();
 
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
+import {
+  classifyNestedContentUnobservable,
+  type FrameContentProbe,
+  frameElementProbePageFunction,
+  hasLargeVisibleIframeSlot,
+  iframeSlotPageFunction,
+} from './nested-content.js';
 import { ObservationReads } from './observation-read.js';
 import {
   classifyEmptyObservation,
@@ -405,6 +415,130 @@ interface FormIdentityState {
   ownerDocument: object;
   token(node: object): string;
   popups?: WeakMap<object, FormPopupEvidence>;
+}
+
+// --- TD-BROWSER-18 gap 1: custom combobox driving --------------------------
+// Structural DOM views for the click-open combobox flow (this package
+// compiles without DOM lib, mirroring the FormEvidence* pattern above).
+
+interface ComboboxControlNode {
+  getAttribute(name: string): string | null;
+  hasAttribute(name: string): boolean;
+}
+
+interface ComboboxOptionNode {
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): { width: number; height: number };
+  textContent: string | null;
+}
+
+interface ComboboxDocument {
+  getElementById(id: string): {
+    querySelectorAll(selector: string): ArrayLike<ComboboxOptionNode>;
+  } | null;
+  querySelectorAll(selector: string): ArrayLike<ComboboxOptionNode>;
+  defaultView: {
+    getComputedStyle(node: ComboboxOptionNode): { display: string; visibility: string };
+  } | null;
+}
+
+interface ComboboxPattern {
+  /** role=combobox or aria-haspopup=listbox — widget-shaped like a combobox. */
+  combobox: boolean;
+  /** combobox AND a drivable open affordance (see comboboxPattern below). */
+  drivable: boolean;
+  expanded: string | null;
+  scopeId: string | null;
+  autocomplete: string | null;
+}
+
+interface ComboboxRow {
+  /** Index in the UNfiltered [role="option"] list, so Playwright can
+   * re-address the row for a real (trusted) click after visibility filtering. */
+  index: number;
+  text: string;
+  disabled: boolean;
+}
+
+/**
+ * Classify a select target as a drivable ARIA combobox (TD-18 gap 1).
+ * `combobox` admits role=combobox or aria-haspopup=listbox; `drivable` also
+ * requires an open affordance — aria-expanded present, an id-referenced popup
+ * (aria-controls/aria-owns), or the listbox popup token itself — so a bare
+ * widget-shaped div keeps the tier-1 fast-fail instead of a blind click.
+ */
+function comboboxPattern(node: ComboboxControlNode): ComboboxPattern {
+  const role = (node.getAttribute('role') ?? '').toLowerCase();
+  const popup = (node.getAttribute('aria-haspopup') ?? '').toLowerCase();
+  const listboxPopup = popup.split(/\s+/).includes('listbox');
+  const combobox = role === 'combobox' || listboxPopup;
+  const scopeId = node.getAttribute('aria-controls') ?? node.getAttribute('aria-owns');
+  const drivable =
+    combobox && (node.hasAttribute('aria-expanded') || scopeId !== null || listboxPopup);
+  return {
+    combobox,
+    drivable,
+    expanded: node.getAttribute('aria-expanded'),
+    scopeId,
+    autocomplete: node.getAttribute('aria-autocomplete'),
+  };
+}
+
+/**
+ * Visible option rows for an open combobox: scoped to the aria-controls /
+ * aria-owns popup when it resolves, document-wide otherwise (portaled
+ * popups), with hidden rows filtered out. Capped at 100 rows — options are
+ * page data, and the list only feeds matching and a bounded not-found report.
+ */
+function visibleComboboxOptions(scopeId: string | null): ComboboxRow[] {
+  const doc = (globalThis as unknown as { document: ComboboxDocument }).document;
+  const view = doc.defaultView;
+  const scope = (scopeId !== null ? doc.getElementById(scopeId) : null) ?? doc;
+  const nodes = scope.querySelectorAll('[role="option"]');
+  const rows: ComboboxRow[] = [];
+  const limit = Math.min(nodes.length, 500);
+  for (let i = 0; i < limit; i++) {
+    const node = nodes[i];
+    if (!node) continue;
+    const box = node.getBoundingClientRect();
+    const style = view?.getComputedStyle(node);
+    if (box.width <= 0 || box.height <= 0) continue;
+    if (
+      style !== undefined &&
+      (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse')
+    ) {
+      continue;
+    }
+    rows.push({
+      index: i,
+      text: (node.getAttribute('aria-label') ?? node.textContent ?? '').trim().replace(/\s+/g, ' '),
+      disabled: node.getAttribute('aria-disabled') === 'true',
+    });
+  }
+  return rows.slice(0, 100);
+}
+
+/**
+ * Re-resolve one scanned row for the click, inside the SAME root the scan
+ * used (popup element when its id resolves, else the document) so the
+ * ordinal can never drift because a second DOM-resident listbox sits
+ * earlier in the DOM. The row's text is re-verified: if the widget
+ * re-rendered between scan and click, refusing (stale) beats clicking a
+ * neighboring row.
+ */
+function comboboxOptionAt(args: {
+  scopeId: string | null;
+  index: number;
+  text: string;
+}): ComboboxOptionNode | null {
+  const doc = (globalThis as unknown as { document: ComboboxDocument }).document;
+  const scope = (args.scopeId !== null ? doc.getElementById(args.scopeId) : null) ?? doc;
+  const node = scope.querySelectorAll('[role="option"]')[args.index];
+  if (!node) return null;
+  const text = (node.getAttribute('aria-label') ?? node.textContent ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return text === args.text ? node : null;
 }
 
 /** Browser-only structural views keep this engine free of DOM runtime/type dependencies. */
@@ -896,6 +1030,40 @@ const VALUE_BEARING_ROLES = new Set([
 // Late async normalization (masking, formatting) can race the post-fill readback;
 // a mismatching value is re-read once after this much settle time.
 const FILL_VERIFY_SETTLE_MS = 250;
+// TD-BROWSER-18 gap 1: bound on every step of custom-combobox driving (control
+// click, popup-open wait, option-row click). The point of the combobox path is
+// to never wait out the 30s actionability default again.
+const COMBOBOX_OPEN_TIMEOUT_MS = 5000;
+// Review R3: the not-found listing quotes page data into an error message —
+// cap the total, clip each item, and strip quotes/newlines so the list stays
+// bounded and unambiguous.
+const COMBOBOX_LISTING_ITEM_MAX_CHARS = 120;
+const COMBOBOX_LISTING_MAX_BYTES = 1024;
+
+function boundedComboboxListing(options: string[]): { text: string; items: string[] } {
+  const clean = (raw: string) => raw.replace(/["\\\n\r\t]/g, ' ').trim();
+  const lines: string[] = [];
+  const items: string[] = [];
+  let bytes = 0;
+  let omitted = 0;
+  for (const option of options) {
+    let cleaned = clean(option);
+    if (cleaned.length > COMBOBOX_LISTING_ITEM_MAX_CHARS) {
+      cleaned = `${cleaned.slice(0, COMBOBOX_LISTING_ITEM_MAX_CHARS - 1)}…`;
+    }
+    const entry = `"${cleaned}"`;
+    const cost = Buffer.byteLength(entry) + 2;
+    if (bytes + cost > COMBOBOX_LISTING_MAX_BYTES) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(entry);
+    items.push(cleaned);
+    bytes += cost;
+  }
+  if (omitted > 0) lines.push(`(+${omitted} more omitted)`);
+  return { text: lines.join(', '), items };
+}
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
 function unquote(value: string): string {
@@ -1026,6 +1194,356 @@ function canonicalFingerprint(element: StoredElement): string {
   ]
     .filter(Boolean)
     .join('_');
+}
+
+/**
+ * The ref of an action's target. Near-text targets (TD-BROWSER-18 gap 6)
+ * are rewritten to minted refs before dispatch, so by the time a handler
+ * reads the target there is always a ref; anything else is an internal
+ * ordering bug, not a caller error.
+ */
+function targetRef(action: EngineAction): string {
+  const target = action.target;
+  if (target === undefined || !isRefTarget(target)) {
+    throw new EngineError('INTERNAL', 'Action dispatched without a resolved ref target', false);
+  }
+  return target.ref;
+}
+
+// ============================================================================
+// Near-text targeting (TD-BROWSER-18 gap 6): the geometric escape hatch for
+// controls with no accessible name (settings rows with a bare "+ Add").
+// ============================================================================
+
+/** Longest accepted needle, mirroring the protocol bound. */
+const NEAR_TEXT_MAX_LENGTH = 200;
+/** Bounded refusal detail: candidates listed on TARGET_AMBIGUOUS. */
+const NEAR_TEXT_MAX_CANDIDATES = 10;
+/** Minted-ref ordinal space, disjoint from observation ordinals. */
+const NEAR_TEXT_REF_BASE = 1_000_000;
+/** A candidate is "in the text's row" when its band overlap is within this slack. */
+const NEAR_TEXT_ROW_SLACK_PX = 2;
+
+interface NearTextRect {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+}
+
+interface NearTextControl {
+  role: string;
+  text: string;
+  /** Absolute main-frame XPath; the locator that re-identifies the node. */
+  xpath: string;
+  rect: NearTextRect;
+}
+
+interface NearTextProbe {
+  texts: NearTextRect[];
+  controls: NearTextControl[];
+  /** A probe bound was hit before the whole document was examined. */
+  truncatedText: boolean;
+  truncatedControls: boolean;
+}
+
+/**
+ * Evaluated in the page: bounded visible-text and interactive-control probe.
+ * Self-contained (page functions serialize without their module scope); the
+ * fixed interactive-element selector — never a caller-supplied selector —
+ * and the probe bounds live inside the function body.
+ */
+interface NearTextNode {
+  textContent: string | null;
+  parentElement: NearTextElement | null;
+}
+interface NearTextElement {
+  tagName: string;
+  textContent: string | null;
+  disabled?: boolean;
+  type?: string;
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
+  checkVisibility?(options?: { checkOpacity?: boolean; checkVisibilityCSS?: boolean }): boolean;
+  previousElementSibling: NearTextElement | null;
+  parentElement: NearTextElement | null;
+}
+interface NearTextRange {
+  setStart(node: NearTextNode, offset: number): void;
+  setEnd(node: NearTextNode, offset: number): void;
+  getBoundingClientRect(): {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
+}
+interface NearTextDocument {
+  body: NearTextElement | null;
+  documentElement: NearTextElement;
+  createTreeWalker(root: NearTextElement, whatToShow: number): { nextNode(): NearTextNode | null };
+  createRange(): NearTextRange;
+  querySelectorAll(selector: string): ArrayLike<NearTextElement>;
+}
+/**
+ * Evaluated in the page: bounded visible-text and interactive-control probe.
+ * Self-contained (page functions serialize without their module scope) and
+ * structurally typed (this package compiles without the DOM lib).
+ */
+function probeNearText(needle: string): NearTextProbe {
+  const SELECTOR = [
+    'button',
+    'a',
+    'summary',
+    'input',
+    'select',
+    'textarea',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="switch"]',
+    '[role="menuitem"]',
+    '[role="tab"]',
+    '[role="option"]',
+    '[role="clickable"]',
+  ].join(',');
+  const MAX_TEXTS = 200;
+  const MAX_CONTROLS = 500;
+  const MAX_SCANNED_NODES = 4000;
+  let truncatedText = false;
+  let truncatedControls = false;
+  // Same visibility gate for text containers as for controls: an invisible
+  // (opacity 0, transparent, clipped) label must not steer targeting.
+  const visiblyRendered = (el: NearTextElement): boolean => {
+    if (
+      typeof el.checkVisibility === 'function' &&
+      !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+    )
+      return false;
+    const box = el.getBoundingClientRect();
+    return box.width > 0 && box.height > 0;
+  };
+  // Self-contained page function: no module closures survive serialization.
+  const doc = (globalThis as unknown as { document: NearTextDocument }).document;
+  const texts: NearTextRect[] = [];
+  const root = doc.body ?? doc.documentElement;
+  if (root !== null) {
+    // 4 = NodeFilter.SHOW_TEXT (the global is not typed without the DOM lib).
+    const walker = doc.createTreeWalker(root, 4);
+    const lower = needle.toLowerCase();
+    let scanned = 0;
+    while (texts.length < MAX_TEXTS && scanned < MAX_SCANNED_NODES) {
+      const node = walker.nextNode();
+      if (node === null) break;
+      scanned += 1;
+      const content = node.textContent ?? '';
+      if (!content.toLowerCase().includes(lower)) continue;
+      // Visibility is judged on the element RENDERING the text, not the raw
+      // rect: opacity/color/clip hiding otherwise passes a bounds check.
+      const parent = node.parentElement;
+      if (parent === null || !visiblyRendered(parent)) continue;
+      // One rect PER MATCH, not per node: a wrapped label's node rect is the
+      // union of its line boxes, which would smear the row band across the
+      // whole paragraph. The sub-range rect is the line box the match sits in.
+      let offset = content.toLowerCase().indexOf(lower);
+      while (offset !== -1) {
+        const range = doc.createRange();
+        range.setStart(node, offset);
+        range.setEnd(node, offset + needle.length);
+        const rect = range.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          texts.push({ top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom });
+          if (texts.length >= MAX_TEXTS) {
+            truncatedText = true;
+            break;
+          }
+        }
+        offset = content.toLowerCase().indexOf(lower, offset + needle.length);
+      }
+    }
+    if (scanned >= MAX_SCANNED_NODES && walker.nextNode() !== null) truncatedText = true;
+  }
+
+  const implicitRole = (el: NearTextElement): string => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'button' || tag === 'summary') return 'button';
+    if (tag === 'a') return 'link';
+    if (tag === 'select') return 'combobox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'input') {
+      const type = el.type;
+      if (type === 'button' || type === 'submit' || type === 'reset') return 'button';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      return 'textbox';
+    }
+    return 'generic';
+  };
+  const xpathOf = (el: NearTextElement): string | null => {
+    const parts: string[] = [];
+    let node: NearTextElement | null = el;
+    while (node !== null && node !== doc.body) {
+      if (node.parentElement === null) return null;
+      let index = 1;
+      let sibling = node.previousElementSibling;
+      while (sibling !== null) {
+        if (sibling.tagName === node.tagName) index += 1;
+        sibling = sibling.previousElementSibling;
+      }
+      parts.unshift(`${node.tagName.toLowerCase()}[${index}]`);
+      node = node.parentElement;
+    }
+    if (node !== doc.body) return null;
+    return `/html/body/${parts.join('/')}`;
+  };
+
+  const controls: NearTextControl[] = [];
+  const elements = doc.querySelectorAll(SELECTOR);
+  const limit = Math.min(elements.length, MAX_CONTROLS);
+  if (elements.length > MAX_CONTROLS) truncatedControls = true;
+  for (let index = 0; index < limit; index += 1) {
+    const el = elements[index];
+    if (el === undefined) break;
+    const box = el.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) continue;
+    if (
+      typeof el.checkVisibility === 'function' &&
+      !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+    )
+      continue;
+    if (el.disabled === true) continue;
+    if (el.getAttribute('aria-disabled') === 'true') continue;
+    // Shadow-DOM hosts cannot be re-identified by a main-frame XPath; skip
+    // rather than mint a binding that refuses on first use.
+    const xpath = xpathOf(el);
+    if (xpath === null) continue;
+    controls.push({
+      role: el.getAttribute('role') ?? implicitRole(el),
+      text: (el.textContent ?? '').trim().slice(0, 120),
+      xpath: xpath,
+      rect: { top: box.top, left: box.left, right: box.right, bottom: box.bottom },
+    });
+  }
+  return { texts, controls, truncatedText, truncatedControls };
+}
+
+/** Gap between rects on one axis: 0 when they overlap, else the separation. */
+function axisGap(a: number, b: number, aEnd: number, bEnd: number): number {
+  return Math.max(0, a - bEnd, b - aEnd);
+}
+
+function rectDistance(a: NearTextRect, b: NearTextRect): number {
+  return Math.hypot(
+    axisGap(a.left, b.left, a.right, b.right),
+    axisGap(a.top, b.top, a.bottom, b.bottom)
+  );
+}
+
+/** Horizontal gap between the text and the control (0 when overlapping). */
+function horizontalGap(text: NearTextRect, control: NearTextRect): number {
+  return axisGap(text.left, control.left, text.right, control.right);
+}
+
+/** True when the control sits at or right of the text's trailing edge (row actions trail labels). */
+function trailsText(text: NearTextRect, control: NearTextRect): boolean {
+  return control.left >= text.right - NEAR_TEXT_ROW_SLACK_PX;
+}
+
+interface NearTextChoice {
+  outcome: 'ok' | 'no-text' | 'no-control' | 'no-row' | 'ambiguous';
+  control?: NearTextControl;
+  /** Listed (bounded) candidates when the outcome is ambiguous. */
+  candidates?: NearTextControl[];
+}
+
+/**
+ * Geometric selection over the bounded probe. Nearest mode: the unique
+ * control with the smallest rect-to-rect distance to any needle match.
+ * Row mode: controls vertically overlapping the needle's band, preferring
+ * those trailing the label, then the horizontally nearest.
+ */
+function chooseNearControl(probe: NearTextProbe, row: boolean): NearTextChoice {
+  if (probe.texts.length === 0) return { outcome: 'no-text' };
+  if (probe.controls.length === 0) return { outcome: 'no-control' };
+
+  if (!row) {
+    let best = Number.POSITIVE_INFINITY;
+    let chosen: NearTextControl | undefined;
+    let ties: NearTextControl[] = [];
+    for (const control of probe.controls) {
+      let distance = Number.POSITIVE_INFINITY;
+      for (const text of probe.texts)
+        distance = Math.min(distance, rectDistance(text, control.rect));
+      if (distance < best) {
+        best = distance;
+        chosen = control;
+        ties = [control];
+      } else if (distance === best) {
+        ties.push(control);
+      }
+    }
+    if (ties.length !== 1 || chosen === undefined) {
+      return { outcome: 'ambiguous', candidates: ties.slice(0, NEAR_TEXT_MAX_CANDIDATES) };
+    }
+    return { outcome: 'ok', control: chosen };
+  }
+
+  // Row mode: band overlap, trailing preference, horizontal proximity.
+  let bestKey: [number, number] | null = null;
+  let chosen: NearTextControl | undefined;
+  let ties: NearTextControl[] = [];
+  for (const control of probe.controls) {
+    let key: [number, number] | null = null;
+    for (const text of probe.texts) {
+      const vertical = axisGap(text.top, control.rect.top, text.bottom, control.rect.bottom);
+      if (vertical > NEAR_TEXT_ROW_SLACK_PX) continue;
+      const candidateKey: [number, number] = [
+        trailsText(text, control.rect) ? 0 : 1,
+        horizontalGap(text, control.rect),
+      ];
+      if (
+        key === null ||
+        candidateKey[0] < key[0] ||
+        (candidateKey[0] === key[0] && candidateKey[1] < key[1])
+      ) {
+        key = candidateKey;
+      }
+    }
+    if (key === null) continue;
+    if (bestKey === null || key[0] < bestKey[0] || (key[0] === bestKey[0] && key[1] < bestKey[1])) {
+      bestKey = key;
+      chosen = control;
+      ties = [control];
+    } else if (key[0] === bestKey[0] && key[1] === bestKey[1]) {
+      ties.push(control);
+    }
+  }
+  if (chosen === undefined) return { outcome: 'no-row' };
+  if (ties.length !== 1) {
+    return {
+      outcome: 'ambiguous',
+      control: chosen,
+      candidates: ties.slice(0, NEAR_TEXT_MAX_CANDIDATES),
+    };
+  }
+  return { outcome: 'ok', control: chosen };
+}
+
+function describeNearCandidates(candidates: NearTextControl[]): string {
+  return candidates
+    .slice(0, 10)
+    .map((c) => `${c.role} "${c.text === '' ? '(no text)' : c.text}"`)
+    .join(', ');
 }
 
 /**
@@ -4047,6 +4565,36 @@ class PlaywrightPage implements EnginePage {
     const mainFrame = this.page.mainFrame();
     const frameCoverage: RawFrameCoverage[] = [];
     const uncommittedFrames = new Set<import('playwright').Frame>();
+    // TD-BROWSER-17 ask 2 (review F4): frames traversal skipped for budget,
+    // depth or timeout reasons were NOT "tried and empty" — probing their
+    // DOM below would conflate envelope starvation with unobservability.
+    // They read as unknown, never as content-bearing or placeholder.
+    const unprobeableFrames = new Set<import('playwright').Frame>();
+    // TD-BROWSER-17 ask 2: per-frame element contributions, so the nested-
+    // content marker can tell "frame folded its content" from "frame holds
+    // content observation never surfaced".
+    const frameContributions = new Map<import('playwright').Frame, number>();
+    // TD-BROWSER-17 frame-qualified refs: elements observed in a child frame
+    // mint `f<index>_e<revision>_<ordinal>`, where <index> is the frame's
+    // position in the engine's frame list (main frame = 0, never prefixed —
+    // top-document refs stay unprefixed `e<revision>_<ordinal>` so
+    // single-frame snapshots stay byte-identical to the pre-frame grammar).
+    // The per-element map lets the post-binding renumbering re-stamp the
+    // same qualifier on the next revision; the per-frame cache keeps the
+    // index computation to one lookup per frame per observation.
+    const frameRefPrefix = new Map<import('playwright').Frame, string>();
+    const refPrefixOf = new WeakMap<StoredElement, string>();
+    const prefixFor = (frame: import('playwright').Frame): string => {
+      const cached = frameRefPrefix.get(frame);
+      if (cached !== undefined) return cached;
+      const index = this.page.frames().indexOf(frame);
+      // A frame detached mid-observation has no index; it degrades to the
+      // shared (unprefixed) namespace rather than mint an unparseable
+      // qualifier — its reads already fail closed into the coverage block.
+      const prefix = index >= 0 ? `f${index}_` : '';
+      frameRefPrefix.set(frame, prefix);
+      return prefix;
+    };
     // Bounded frame identity: URL origin+path when meaningful, else the
     // frame's name, else its traversal ordinal.
     const frameIdentity = (frame: import('playwright').Frame, ordinal: number): string => {
@@ -4112,6 +4660,7 @@ class PlaywrightPage implements EnginePage {
           const depth = depthOf(frame);
           if (depth > MAX_FRAME_DEPTH) {
             frameCoverage.push({ frame: identity, status: 'depth_exceeded' });
+            unprobeableFrames.add(frame);
             continue;
           }
           // Per-frame slice: the remaining envelope re-split evenly across
@@ -4123,6 +4672,7 @@ class PlaywrightPage implements EnginePage {
           const slice = frameSliceMs(snapshotBudget.remaining(), framesLeft - frameIndex);
           if (snapshotBudget.exhausted || slice <= 0) {
             frameCoverage.push({ frame: identity, status: 'budget_exceeded' });
+            unprobeableFrames.add(frame);
             continue;
           }
           let frameYaml: string | undefined;
@@ -4132,6 +4682,7 @@ class PlaywrightPage implements EnginePage {
             // A frame detaching mid-traversal must not reject the whole
             // observation; it reads as an uninspectable frame.
             frameCoverage.push({ frame: identity, status: 'unavailable', reason: 'detached' });
+            unprobeableFrames.add(frame);
             continue;
           }
           if (frameYaml === undefined) {
@@ -4140,6 +4691,10 @@ class PlaywrightPage implements EnginePage {
             // rather than read the shell as complete coverage.
             const status = frame.url() === '' ? 'loading' : 'timeout';
             frameCoverage.push({ frame: identity, status });
+            // Review F3: a still-loading or timed-out frame is not a
+            // provably empty placeholder — it must read as unknown to the
+            // nested-content classifier, never satisfy branch 2.
+            (status === 'loading' ? uncommittedFrames : unprobeableFrames).add(frame);
             continue;
           }
           const parsed = this.parseAriaSnapshot(
@@ -4148,13 +4703,19 @@ class PlaywrightPage implements EnginePage {
             refOffset,
             // Frame content is a separate snapshot block: depth restarts and
             // the merged list position does not imply main-tree nesting.
-            blockCounter + 1
+            blockCounter + 1,
+            prefixFor(frame)
           );
           if (parsed.length > 0) {
             blockCounter += 1;
             blockOfFrame.set(frame, blockCounter);
           }
-          for (const element of parsed) this.frameOfElement.set(element, frame);
+          const framePrefix = frameRefPrefix.get(frame) ?? '';
+          for (const element of parsed) {
+            this.frameOfElement.set(element, frame);
+            refPrefixOf.set(element, framePrefix);
+          }
+          frameContributions.set(frame, parsed.length);
           refOffset += parsed.length;
           elements.push(...parsed);
           // A frame with no committed document (empty/about:blank URL) and
@@ -4214,6 +4775,7 @@ class PlaywrightPage implements EnginePage {
       const formControlsRequested = request.include?.includes('formControls') === true;
       for (const root of summaryRoots) {
         const block = root === this.page ? undefined : blockOfFrame.get(root);
+        const refPrefix = root === this.page ? '' : prefixFor(root as import('playwright').Frame);
         // The main frame is labelled 'main' (as the formControls scan does), never by URL, so a
         // coverage entry about it cannot be mistaken for a child frame at the same address.
         const identity =
@@ -4269,7 +4831,7 @@ class PlaywrightPage implements EnginePage {
         }
         for (const info of selected.rows) {
           elements.push({
-            ref: `e${this.revision}_${elements.length}`,
+            ref: `${refPrefix}e${this.revision}_${elements.length}`,
             role: 'html-summary',
             name: info.name,
             visible: true,
@@ -4281,19 +4843,23 @@ class PlaywrightPage implements EnginePage {
             attributes: { tag: 'summary' },
           });
           const merged = elements.at(-1);
-          if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+          if (merged !== undefined) {
+            if (root !== this.page) this.frameOfElement.set(merged, root);
+            refPrefixOf.set(merged, refPrefix);
+          }
         }
       }
       if (request.include?.includes('fileInputs') === true) {
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
+          const refPrefix = root === this.page ? '' : prefixFor(root as import('playwright').Frame);
           for (const info of await reads.read(
             'file_inputs',
             () => this.describeFileInputs(root),
             root === this.page ? 15000 : 500
           )) {
             elements.push({
-              ref: `e${this.revision}_${elements.length}`,
+              ref: `${refPrefix}e${this.revision}_${elements.length}`,
               role: 'fileinput',
               ...(info.name !== undefined ? { name: info.name } : {}),
               visible: info.visible,
@@ -4308,7 +4874,10 @@ class PlaywrightPage implements EnginePage {
               },
             });
             const merged = elements.at(-1);
-            if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+            if (merged !== undefined) {
+              if (root !== this.page) this.frameOfElement.set(merged, root);
+              refPrefixOf.set(merged, refPrefix);
+            }
           }
         }
       }
@@ -4407,6 +4976,7 @@ class PlaywrightPage implements EnginePage {
 
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
+          const refPrefix = root === this.page ? '' : prefixFor(root as import('playwright').Frame);
           for (const info of await scanSafely(
             root,
             () =>
@@ -4415,7 +4985,7 @@ class PlaywrightPage implements EnginePage {
             2
           )) {
             elements.push({
-              ref: `e${this.revision}_${elements.length}`,
+              ref: `${refPrefix}e${this.revision}_${elements.length}`,
               role: 'control',
               ...(info.name !== undefined ? { name: info.name } : {}),
               ...(info.context !== undefined ? { context: info.context } : {}),
@@ -4433,7 +5003,10 @@ class PlaywrightPage implements EnginePage {
               },
             });
             const merged = elements.at(-1);
-            if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+            if (merged !== undefined) {
+              if (root !== this.page) this.frameOfElement.set(merged, root);
+              refPrefixOf.set(merged, refPrefix);
+            }
           }
         }
         // Round-16/F4: the identity-string recovery filter is REMOVED —
@@ -4829,6 +5402,39 @@ class PlaywrightPage implements EnginePage {
               element.checked = checked;
             }
           }
+          // TD-BROWSER-18 gap 3: the `state` include widens population, not
+          // schema. Elements the gated reads above miss (e.g. a toggle whose
+          // snapshot role is `button` carrying aria-checked) get their ARIA
+          // state here. Fill-down only: an authoritative read above wins,
+          // `mixed` stays unset (present-but-undefined reads as unknown, not
+          // false), and read failure leaves the keys absent - unknowable,
+          // not false. Mints no rows, so base/change-detection counts are
+          // untouched and default observations stay byte-identical.
+          // aria-hidden is deliberately NOT mapped: `visible` means rendered
+          // and interactable (it gates action dispatch), and overwriting it
+          // with a11y-tree membership would hide rendered-but-aria-hidden
+          // controls from agents filtering visible:true (review F3).
+          if (request.include?.includes('state')) {
+            const aria = await reads
+              .read('aria_state', () =>
+                handle.evaluate((node) => ({
+                  checked: node.getAttribute('aria-checked'),
+                  expanded: node.getAttribute('aria-expanded'),
+                  disabled: node.getAttribute('aria-disabled'),
+                }))
+              )
+              .catch(() => undefined);
+            if (aria !== undefined) {
+              if (!('checked' in element) && (aria.checked === 'true' || aria.checked === 'false'))
+                element.checked = aria.checked === 'true';
+              if (
+                element.expanded === undefined &&
+                (aria.expanded === 'true' || aria.expanded === 'false')
+              )
+                element.expanded = aria.expanded === 'true';
+              if (aria.disabled === 'true' && element.enabled !== false) element.enabled = false;
+            }
+          }
         })
       );
       const failedEnrichment = enrichments.find((result) => result.status === 'rejected');
@@ -4894,7 +5500,9 @@ class PlaywrightPage implements EnginePage {
       const states = new Map<string, StoredElement>();
       for (const [index, element] of elements.entries()) {
         const oldRef = element.ref ?? '';
-        const newRef = `e${this.revision}_${index}`;
+        // Re-stamp the frame qualifier (TD-BROWSER-17) so a re-minted frame
+        // ref keeps its owning-frame namespace across revisions.
+        const newRef = `${refPrefixOf.get(element) ?? ''}e${this.revision}_${index}`;
         const binding = this.bindings.get(oldRef);
         const state = this.refStore.get(oldRef);
         if (binding) bindings.set(newRef, binding);
@@ -4929,6 +5537,119 @@ class PlaywrightPage implements EnginePage {
         bodyTextLength,
         domNodeCount,
       });
+    }
+
+    // TD-BROWSER-17 ask 2: an honest marker when nested content is present
+    // but unobservable. Today such a page reads as "nothing here" (or shell
+    // only) and the agent drives the wrong surface. The marker is strictly
+    // additive: it names a degradedReason, never mints refs or changes the
+    // element list. Only probed when the successful snapshot left child
+    // frames that contributed nothing — never on single-frame pages, and
+    // never instead of the more specific aria-snapshot-timeout signal.
+    let nestedUnobservable = false;
+    const childFrames = this.page.frames().filter((frame) => frame !== mainFrame);
+    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && childFrames.length > 0) {
+      // Review F3: uncommitted (still-loading) frames are unknown — neither
+      // content-rich nor provably empty placeholders; "wait and re-observe"
+      // is the honest state, so they satisfy neither classifier branch.
+      // Unprobeable frames (budget/depth/timeout skips, review F4) likewise.
+      const probes: FrameContentProbe[] = [];
+      let probesLeft = 8;
+      for (const frame of childFrames) {
+        const contributedElements = frameContributions.get(frame) ?? 0;
+        if (
+          contributedElements > 0 ||
+          uncommittedFrames.has(frame) ||
+          unprobeableFrames.has(frame)
+        ) {
+          probes.push({ contributedElements, bodyTextLength: undefined, domNodeCount: undefined });
+          continue;
+        }
+        let probe: { bodyTextLength: number; domNodeCount: number } | undefined;
+        let visible: boolean | undefined;
+        if (probesLeft > 0) {
+          probesLeft -= 1;
+          // Frame-element facts from the parent document (review F1 + F3):
+          // visibility gates branch 1; a declared src while the frame still
+          // sits at about:blank means a navigation is in flight — the
+          // provisional blank document probes identical to the repro's
+          // placeholder, so it reads as unknown instead.
+          const elementProbe = await reads
+            .read('nested_content', () =>
+              frame.frameElement().then((el) => el.evaluate(frameElementProbePageFunction))
+            )
+            .catch(() => undefined);
+          const pendingNavigation =
+            elementProbe !== undefined &&
+            typeof elementProbe.src === 'string' &&
+            elementProbe.src.length > 0 &&
+            (frame.url() === '' || frame.url() === 'about:blank');
+          if (pendingNavigation) {
+            probes.push({
+              contributedElements: 0,
+              bodyTextLength: undefined,
+              domNodeCount: undefined,
+            });
+            continue;
+          }
+          // Review F3 (committed case): a document that committed but has
+          // not finished loading measures as a tiny partial body — which is
+          // NOT a placeholder. Unknown until readyState completes.
+          const readyState = await reads
+            .read('nested_content', () =>
+              frame.evaluate(
+                () => (globalThis as { document?: { readyState?: string } }).document?.readyState
+              )
+            )
+            .catch(() => undefined);
+          if (readyState !== 'complete') {
+            probes.push({
+              contributedElements: 0,
+              bodyTextLength: undefined,
+              domNodeCount: undefined,
+            });
+            continue;
+          }
+          probe = await reads
+            .read('nested_content', () => this.measureRootDomContent(frame), 500)
+            .catch(() => undefined);
+          // Review F1: branch 1 requires the frame element to render
+          // visibly — a display:none mount's body text is the benign
+          // analytics shape. Unknown visibility never fires branch 1.
+          visible = elementProbe?.visible;
+        }
+        probes.push({
+          contributedElements: 0,
+          bodyTextLength: probe?.bodyTextLength,
+          domNodeCount: probe?.domNodeCount,
+          ...(visible !== undefined ? { visible } : {}),
+        });
+      }
+      nestedUnobservable = classifyNestedContentUnobservable({
+        childFrameCount: childFrames.length,
+        frames: probes,
+        hasLargeVisibleIframeSlot: false,
+        topElementCount: baseElements.length,
+      });
+      if (!nestedUnobservable) {
+        // Branch 2 needs the top document's rendered iframe slots (a large
+        // VISIBLE empty slot is the displaced-pane signature; hidden
+        // analytics frames never count). Untrusted page data: validated in
+        // Node by hasLargeVisibleIframeSlot before it decides anything.
+        const slots = await reads
+          .read(
+            'nested_content',
+            () => this.page.locator('iframe').evaluateAll(iframeSlotPageFunction),
+            500
+          )
+          .catch(() => undefined);
+        nestedUnobservable = classifyNestedContentUnobservable({
+          childFrameCount: childFrames.length,
+          frames: probes,
+          hasLargeVisibleIframeSlot: slots !== undefined && hasLargeVisibleIframeSlot(slots),
+          topElementCount: baseElements.length,
+        });
+      }
     }
 
     let interactionHint: string | undefined;
@@ -4970,9 +5691,11 @@ class PlaywrightPage implements EnginePage {
       ...(frameCoverage.length > 0 ? { frameCoverage } : {}),
       ...(ariaSnapshotDegraded
         ? { degraded: true, degradedReason: 'aria-snapshot-timeout' as const }
-        : emptyOverNonEmptyDom
-          ? { degraded: true, degradedReason: 'empty-snapshot-nonempty-dom' as const }
-          : {}),
+        : nestedUnobservable
+          ? { degraded: true, degradedReason: 'nested_content_unobservable' as const }
+          : emptyOverNonEmptyDom
+            ? { degraded: true, degradedReason: 'empty-snapshot-nonempty-dom' as const }
+            : {}),
     };
   }
 
@@ -4981,8 +5704,22 @@ class PlaywrightPage implements EnginePage {
    * Best-effort: a detached/navigating page yields zeros rather than throwing.
    */
   private async measureDomContent(): Promise<{ bodyTextLength: number; domNodeCount: number }> {
+    const probe = await this.measureRootDomContent(this.page);
+    return probe ?? { bodyTextLength: 0, domNodeCount: 0 };
+  }
+
+  /**
+   * Cheap DOM-content measurement of any observation root (top document or
+   * child frame), for the empty-snapshot-nonempty-dom and
+   * nested_content_unobservable signals. Undefined means the document could
+   * not be read (detached/uncommitted) — unknown, not empty. Each read is
+   * tightly bounded: this runs only for frames whose content never surfaced.
+   */
+  private async measureRootDomContent(
+    root: import('playwright').Page | import('playwright').Frame
+  ): Promise<{ bodyTextLength: number; domNodeCount: number } | undefined> {
     try {
-      const body = this.page.locator('body');
+      const body = root.locator('body');
       const [text, domNodeCount] = await Promise.all([
         // textContent over innerText (biome useDomNodeTextContent): no layout
         // dependency, so the measurement survives detached/navigating pages;
@@ -4990,15 +5727,16 @@ class PlaywrightPage implements EnginePage {
         body
           .textContent({ timeout: 1000 })
           .then((bodyText) => bodyText ?? '')
-          .catch(() => ''),
-        this.page
+          .catch(() => null),
+        root
           .locator('body *')
           .count()
-          .catch(() => 0),
+          .catch(() => -1),
       ]);
+      if (text === null || domNodeCount < 0) return undefined;
       return { bodyTextLength: text.length, domNodeCount };
     } catch {
-      return { bodyTextLength: 0, domNodeCount: 0 };
+      return undefined;
     }
   }
 
@@ -5014,7 +5752,10 @@ class PlaywrightPage implements EnginePage {
     yaml: string,
     revision: number,
     refOffset = 0,
-    block = 0
+    block = 0,
+    // TD-BROWSER-17: '' for the main frame (refs stay unprefixed), `f<index>_`
+    // for a child frame — see prefixFor in observeOnce.
+    refPrefix = ''
   ): StoredElement[] {
     const elements: StoredElement[] = [];
     const lines = yaml.split('\n');
@@ -5072,7 +5813,7 @@ class PlaywrightPage implements EnginePage {
       }
 
       const element: StoredElement = {
-        ref: `e${revision}_${refOffset + elements.length}`,
+        ref: `${refPrefix}e${revision}_${refOffset + elements.length}`,
         role,
         visible: true,
         enabled: true,
@@ -5430,6 +6171,13 @@ class PlaywrightPage implements EnginePage {
   }
 
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
+    if (!isRefTarget(target)) {
+      throw new EngineError(
+        'INVALID_REQUEST',
+        'resolve addresses observed refs; near-text targets resolve at act time',
+        false
+      );
+    }
     const stored = this.refStore.get(target.ref);
     const binding = this.bindings.get(target.ref);
     if (!stored) {
@@ -5568,6 +6316,207 @@ class PlaywrightPage implements EnginePage {
     return binding.handle;
   }
 
+  /**
+   * TD-BROWSER-18 gap 1: drive a custom ARIA combobox under `act select`
+   * (Cloudflare settings rows, member selects). Click-open flow only: toggle
+   * the popup open (skipped when aria-expanded already reads true), wait
+   * bounded for visible option rows, match the requested value against row
+   * text (exact, then substring, case-insensitive — first DOM-order match
+   * wins), and click the row with a real Playwright gesture. Scan AND click
+   * run in the control's owning frame and address rows through the same
+   * NodeList semantics, so a second DOM-resident listbox elsewhere can never
+   * shift the ordinal. Multi-value reuses an open popup and reopens between
+   * picks when the widget closes it. Typing-filter comboboxes (input with
+   * aria-autocomplete) are out of scope and the open timeout says so.
+   * Returns the matched row text per picked value, in order.
+   */
+  private async driveComboboxSelect(
+    dom: Page | import('playwright').Frame,
+    control: ElementHandle,
+    values: string[]
+  ): Promise<string[]> {
+    const matched: string[] = [];
+    for (const value of values) {
+      const pattern = await control.evaluate(comboboxPattern).catch(() => {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Combobox control re-rendered or detached during select; observe again',
+          false
+        );
+      });
+      if ((pattern.expanded ?? '') !== 'true') {
+        await control.click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
+      }
+      // Wait bounded for the popup's visible rows — portaled listboxes render
+      // a tick after the click, so poll instead of asserting immediately.
+      const deadline = Date.now() + COMBOBOX_OPEN_TIMEOUT_MS;
+      let rows: ComboboxRow[] = await dom
+        .evaluate(visibleComboboxOptions, pattern.scopeId)
+        .catch(() => [] as ComboboxRow[]);
+      while (rows.length === 0 && Date.now() < deadline) {
+        await this.page.waitForTimeout(100);
+        rows = await dom
+          .evaluate(visibleComboboxOptions, pattern.scopeId)
+          .catch(() => [] as ComboboxRow[]);
+      }
+      if (rows.length === 0) {
+        throw new EngineError(
+          'ACTION_TIMEOUT',
+          `combobox did not open a visible option list within ${COMBOBOX_OPEN_TIMEOUT_MS}ms` +
+            (pattern.autocomplete !== null
+              ? '; typing-filter comboboxes (aria-autocomplete) are not supported by act select — fill and observe the filtered rows manually'
+              : ''),
+          false,
+          { timeoutMs: COMBOBOX_OPEN_TIMEOUT_MS }
+        );
+      }
+      const lowered = value.trim().toLowerCase();
+      const match =
+        rows.find((row) => !row.disabled && row.text.toLowerCase() === lowered) ??
+        rows.find((row) => !row.disabled && row.text.toLowerCase().includes(lowered));
+      if (match === undefined) {
+        const listing = boundedComboboxListing(rows.slice(0, 10).map((row) => row.text));
+        throw new EngineError(
+          'TARGET_NOT_FOUND',
+          `option "${value}" is not in the open combobox; visible options: ` +
+            (listing.text.length > 0 ? listing.text : '(none)'),
+          false,
+          { requested: value, options: listing.items }
+        );
+      }
+      // Re-resolve the row inside the scan's own root/frame, then click the
+      // ElementHandle — a real gesture, never a main-frame ordinal lookup.
+      const handle = await dom.evaluateHandle(comboboxOptionAt, {
+        scopeId: pattern.scopeId,
+        index: match.index,
+        text: match.text,
+      });
+      const row = handle.asElement();
+      if (row === null) {
+        await handle.dispose().catch(() => {});
+        throw new EngineError(
+          'STALE_TARGET',
+          'Combobox option rows changed between scan and click; observe and select again',
+          false
+        );
+      }
+      try {
+        await row.click({ timeout: COMBOBOX_OPEN_TIMEOUT_MS });
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+      matched.push(match.text);
+    }
+    return matched;
+  }
+
+  /**
+   * TD-BROWSER-18 gap 6: resolve a near-text target to an element and bind
+   * it like an observed one. The probe (bounded: text nodes and controls,
+   * MAIN FRAME only) finds visible text containing the needle — one rect per
+   * match, so a wrapped label contributes its match's line box, not the
+   * union of all its lines — then picks the unique interactive element
+   * nearest it, or with `row: true` the trailing element in that line's
+   * visual row. The chosen element is minted a ref in the SAME
+   * refStore/bindings the observation path uses, so the staleness and
+   * visibility/enabled gates run unchanged on the ordinary ref path;
+   * locatorFor is never bypassed. Remap is NOT part of this flow: a
+   * near-text refusal is final; retrying the act re-resolves geometry.
+   *
+   * Refusal shapes: no text match, no interactive candidate, or no row
+   * candidate → TARGET_NOT_FOUND; several equidistant/equally-ranked
+   * candidates → TARGET_AMBIGUOUS with a bounded candidate listing.
+   */
+  private nearTextMintCounter = 0;
+
+  private async resolveNearTextTarget(target: NearTextTarget): Promise<string> {
+    const needle = target.nearText;
+    if (typeof needle !== 'string' || needle.length === 0 || needle.length > NEAR_TEXT_MAX_LENGTH) {
+      throw new EngineError(
+        'INVALID_REQUEST',
+        `nearText requires a non-empty needle of at most ${NEAR_TEXT_MAX_LENGTH} characters`,
+        false
+      );
+    }
+    const row = target.row === true;
+    const probe: NearTextProbe = await this.page.evaluate(probeNearText, needle);
+    const truncated =
+      probe.truncatedText || probe.truncatedControls
+        ? " (probe truncated: the page exceeded the probe's node bounds, so matches may be missing)"
+        : '';
+    const choice = chooseNearControl(probe, row);
+    switch (choice.outcome) {
+      case 'no-text':
+        // The text may genuinely be visible inside a CHILD FRAME: this probe
+        // never leaves the main frame, so the message says so and stays final.
+        throw new EngineError(
+          'TARGET_NOT_FOUND',
+          `No visible text matching '${needle}' in the main frame${truncated}`,
+          false
+        );
+      case 'no-control':
+        throw new EngineError(
+          'TARGET_NOT_FOUND',
+          `No interactive element near text '${needle}'${truncated}`,
+          false
+        );
+      case 'no-row':
+        throw new EngineError(
+          'TARGET_NOT_FOUND',
+          `No interactive element shares the text's visual row with '${needle}'${truncated}`,
+          false
+        );
+      case 'ambiguous':
+        throw new EngineError(
+          'TARGET_AMBIGUOUS',
+          `Multiple interactive elements ${row ? 'in the visual row of' : 'near'} '${needle}': ${describeNearCandidates(choice.candidates ?? [])}`,
+          true,
+          { candidates: choice.candidates?.length ?? 0, nearText: needle, row }
+        );
+      case 'ok':
+        break;
+    }
+    const chosen = choice.control;
+    if (chosen === undefined) {
+      throw new EngineError(
+        'TARGET_NOT_FOUND',
+        `No interactive element near '${needle}'${truncated}`,
+        false
+      );
+    }
+
+    // The probe's XPath re-identifies the node for both the handle and the
+    // binding locator. The probe→bind window is real and stated plainly: a
+    // hostile page's mutation observer can re-point the XPath at another node
+    // in that window, and the binding's later verification compares the
+    // binding against itself, which cannot catch a swap that happened before
+    // the bind. From the act's dispatch onward the ordinary machinery — DOM
+    // identity check, snapshot evidence, staleness on every later use —
+    // governs the minted ref like any observed one.
+    const locator = this.page.locator(`xpath=${chosen.xpath}`);
+    const handle = await locator.elementHandle({ timeout: 1000 });
+    if (handle === null) {
+      throw new EngineError(
+        'TARGET_NOT_FOUND',
+        `Element near '${needle}' vanished between probe and bind; retry`,
+        true
+      );
+    }
+    const snapshot: string | undefined = snapshotDigest(
+      await locator.ariaSnapshot({ timeout: this.snapshotTimeoutMs })
+    );
+    const ref = `e${this.revision}_${NEAR_TEXT_REF_BASE + this.nearTextMintCounter++}`;
+    this.refStore.set(ref, {
+      ref,
+      role: chosen.role,
+      ...(chosen.text !== '' ? { name: chosen.text } : {}),
+      visible: true,
+      enabled: true,
+    });
+    this.bindings.set(ref, { handle, locator, snapshot, documentSnapshot: undefined });
+    return ref;
+  }
+
   async act(action: EngineAction): Promise<ActionEffect> {
     const coordinate = action.type === 'clickAt' || action.type === 'uploadAt';
     const probe = action.type === 'fetch';
@@ -5605,7 +6554,9 @@ class PlaywrightPage implements EnginePage {
       // therefore never healed.
       if (
         action.remap === true &&
-        action.target !== undefined &&
+        // Remap heals observed refs (role+name matching); near-text targets
+        // never reach this path (their refusals are not STALE_TARGET).
+        isRefTarget(action.target) &&
         failure.code === 'STALE_TARGET' &&
         details?.remapEligible === true
       ) {
@@ -5634,7 +6585,11 @@ class PlaywrightPage implements EnginePage {
           candidates: remap.candidates,
         });
       }
-      if (failure.code === 'ACTION_TIMEOUT' && action.target && details?.blockedBy === undefined) {
+      if (
+        failure.code === 'ACTION_TIMEOUT' &&
+        isRefTarget(action.target) &&
+        details?.blockedBy === undefined
+      ) {
         // A blocked main thread is a common CAUSE of the timeout we are
         // describing; bound the diagnostic so it cannot outlive the error.
         const blockedBy = await withDeadline(this.describeBlocker(action.target.ref), 2_000).catch(
@@ -5660,7 +6615,7 @@ class PlaywrightPage implements EnginePage {
     includeTokens?: ObservationRequest['include']
   ): Promise<{ action: EngineAction; to: string } | { candidates: number }> {
     const target = action.target;
-    if (target === undefined) {
+    if (target === undefined || !isRefTarget(target)) {
       return { candidates: 0 };
     }
     const stored = this.refStore.get(target.ref);
@@ -5862,11 +6817,18 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async dispatchAction(
-    action: EngineAction,
+    requested: EngineAction,
     onDispatch: () => void
   ): Promise<ActionEffect> {
-    const integrityError = validateUploadIntegrity(action);
+    const integrityError = validateUploadIntegrity(requested);
     if (integrityError) throw new EngineError('INVALID_REQUEST', integrityError);
+    // TD-BROWSER-18 gap 6: a near-text target resolves NOW, at act time, and
+    // is rewritten to a minted ref so everything below — the staleness gate,
+    // visibility/enabled checks, locatorFor, remap — runs on the ordinary
+    // ref path unchanged.
+    const action: EngineAction = isNearTextTarget(requested.target)
+      ? { ...requested, target: { ref: await this.resolveNearTextTarget(requested.target) } }
+      : requested;
     // Upload skips the visibility gate: file inputs are hidden by design and
     // a targeted upload addresses an observed ref whose handle was bound
     // regardless of visibility.
@@ -5876,7 +6838,7 @@ class PlaywrightPage implements EnginePage {
       if (!live.enabled) throw new EngineError('TARGET_DISABLED', 'Target is disabled');
     }
     if (action.target !== undefined) {
-      const binding = this.bindings.get(action.target.ref);
+      const binding = this.bindings.get(targetRef(action));
       if (binding?.formEvidence) {
         // Frame-owned bindings re-verify against their own frame's identity
         // state; the main state handle lives in the main context and cannot
@@ -5984,6 +6946,9 @@ class PlaywrightPage implements EnginePage {
     onDispatch();
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
+    // TD-18 gap 1 review R1: combobox picks surface the row they matched so
+    // a substring-match wrong-pick is visible to the caller.
+    let selectMatchedOption: string | undefined;
     switch (action.type) {
       case 'acceptDialog':
       case 'dismissDialog': {
@@ -6026,13 +6991,13 @@ class PlaywrightPage implements EnginePage {
         await this.navigateInternal({ url: action.url as string });
         break;
       case 'click': {
-        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const locator = this.locatorFor(targetRef(action));
         await locator.click();
         this.bumpRevision();
         break;
       }
       case 'fill': {
-        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const locator = this.locatorFor(targetRef(action));
         const expected = action.expectValue;
         if (expected !== undefined && typeof expected !== 'string')
           throw new EngineError('INVALID_REQUEST', 'expectValue must be a string');
@@ -6071,9 +7036,9 @@ class PlaywrightPage implements EnginePage {
                 'Field value differs after filling. Inspect current state before another write.',
                 false,
                 sensitiveInput
-                  ? { ref: (action.target as EngineTarget).ref, reads: 2 }
+                  ? { ref: targetRef(action), reads: 2 }
                   : {
-                      ref: (action.target as EngineTarget).ref,
+                      ref: targetRef(action),
                       expected,
                       actual,
                       reads: 2,
@@ -6097,7 +7062,55 @@ class PlaywrightPage implements EnginePage {
         };
       }
       case 'select': {
-        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const locator = this.locatorFor(targetRef(action));
+        // TD-BROWSER-18 gap 1: `selectOption` only drives a native <select>.
+        // On a custom combobox it waits out the full actionability timeout
+        // and fails with a generic timeout (observed on Cloudflare settings
+        // rows and member selects). Classify the target first: a drivable
+        // ARIA combobox (role=combobox or aria-haspopup=listbox, with an
+        // open affordance) is driven open→pick; anything else fast-fails
+        // naming the actual element.
+        const tag = await locator
+          .evaluate((node) => node.tagName.toLowerCase())
+          .catch(() => undefined);
+        if (tag !== undefined && tag !== 'select') {
+          const pattern = await locator.evaluate(comboboxPattern).catch(() => {
+            // The element answered the tag probe, so a failed classify read
+            // means it re-rendered or detached — stale, not undrivable.
+            throw new EngineError(
+              'STALE_TARGET',
+              'Select target re-rendered or detached during select; observe again',
+              false
+            );
+          });
+          if (!pattern.drivable) {
+            throw new EngineError(
+              'INVALID_REQUEST',
+              pattern?.combobox === true
+                ? `select requires a native <select>; the target is a <${tag}> combobox with ` +
+                    'no drivable open affordance (aria-expanded, aria-haspopup=listbox, or ' +
+                    'aria-controls/aria-owns). Click the control to open it, then observe and ' +
+                    'click the option row.'
+                : `select requires a native <select> element; the target is a <${tag}> ` +
+                    '(custom combobox). Click the control to open it, then observe and ' +
+                    'click the option row.',
+              false,
+              { actualTag: tag }
+            );
+          }
+          const values = (action.values as string[] | undefined) ?? [];
+          if (values.length === 0) {
+            throw new EngineError('INVALID_REQUEST', 'select requires at least one value');
+          }
+          // Scan and click must both run where the control lives: a combobox
+          // observed in a child iframe is driven through its frame, never the
+          // main frame (whose option rows are unrelated page data).
+          const dom = this.bindings.get(targetRef(action))?.frame ?? this.page;
+          const matchedOptions = await this.driveComboboxSelect(dom, locator, values);
+          this.bumpRevision();
+          selectMatchedOption = matchedOptions.at(-1);
+          break;
+        }
         await locator.selectOption((action.values as string[]) ?? []);
         this.bumpRevision();
         break;
@@ -6147,7 +7160,7 @@ class PlaywrightPage implements EnginePage {
           // any other targeted action instead of failing inside Playwright.
           // Only the visibility pre-check is skipped for this action.
           await this.resolve(action.target as EngineTarget);
-          const handle = this.locatorFor((action.target as EngineTarget).ref);
+          const handle = this.locatorFor(targetRef(action));
           await handle.setInputFiles(upload);
           inputFiles = await handle.evaluate(readFileInputNames).catch(() => null);
           this.bumpRevision();
@@ -6196,9 +7209,7 @@ class PlaywrightPage implements EnginePage {
         // the whole run to share a single revision. Count is schema-bounded
         // (1-20); clamp defensively for engines reached without validation.
         const count = Math.max(1, Math.min(20, Math.trunc(Number(action.count ?? 1)) || 1));
-        const locator = action.target
-          ? this.locatorFor((action.target as EngineTarget).ref)
-          : undefined;
+        const locator = action.target ? this.locatorFor(targetRef(action)) : undefined;
         let delivered = 0;
         try {
           for (let i = 0; i < count; i += 1) {
@@ -6227,7 +7238,7 @@ class PlaywrightPage implements EnginePage {
             (action.direction === 'up' ? -amount : action.direction === 'down' ? amount : 0)
         );
         if (action.target) {
-          await this.locatorFor(action.target.ref).evaluate(
+          await this.locatorFor(targetRef(action)).evaluate(
             (element, delta) => element.scrollBy(delta.x, delta.y),
             { x: deltaX, y: deltaY }
           );
@@ -6238,7 +7249,7 @@ class PlaywrightPage implements EnginePage {
         break;
       }
       case 'dblclick': {
-        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const locator = this.locatorFor(targetRef(action));
         await locator.dblclick();
         this.bumpRevision();
         break;
@@ -6246,7 +7257,7 @@ class PlaywrightPage implements EnginePage {
       case 'hover': {
         // Hover is non-mutating observation support: no revision bump, so
         // refs live across it.
-        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const locator = this.locatorFor(targetRef(action));
         await locator.hover();
         break;
       }
@@ -6257,9 +7268,7 @@ class PlaywrightPage implements EnginePage {
         const text = String(action.value ?? '');
         if (!text) throw new EngineError('INVALID_REQUEST', 'typeText requires a value');
         const delay = Math.max(0, Math.min(1000, Math.trunc(Number(action.delay ?? 0)) || 0));
-        const locator = action.target
-          ? this.locatorFor((action.target as EngineTarget).ref)
-          : undefined;
+        const locator = action.target ? this.locatorFor(targetRef(action)) : undefined;
         try {
           // focus + keyboard.type is the same event stream Playwright's
           // pressSequentially produces (per-char keydown/textInput/keyup).
@@ -6277,14 +7286,14 @@ class PlaywrightPage implements EnginePage {
         break;
       }
       case 'clear': {
-        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const locator = this.locatorFor(targetRef(action));
         await locator.fill('');
         this.bumpRevision();
         break;
       }
       case 'check':
       case 'uncheck': {
-        const handle = this.locatorFor((action.target as EngineTarget).ref);
+        const handle = this.locatorFor(targetRef(action));
         const desired = action.type === 'check';
         // Preserve idempotence; choose the visible label BEFORE dispatch, never
         // retry a possibly applied native click after an ambiguous timeout.
@@ -6375,7 +7384,10 @@ class PlaywrightPage implements EnginePage {
       endTimestamp,
       oldRevision,
       newRevision: this.revision,
-      result: { success: true },
+      result:
+        selectMatchedOption !== undefined
+          ? { success: true, matchedOption: selectMatchedOption }
+          : { success: true },
     };
   }
 

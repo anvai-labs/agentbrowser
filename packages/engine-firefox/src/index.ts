@@ -21,6 +21,7 @@ import {
   type ResolvedTarget,
   type ScreenshotRequest,
 } from '@agentbrowser/engine';
+import { isRefTarget } from '@agentbrowser/protocol';
 import {
   type Browser,
   type ElementHandle,
@@ -354,6 +355,11 @@ class FirefoxPage implements EnginePage {
   }
 
   private async checked(target: EngineTarget): Promise<StoredElement> {
+    if (!isRefTarget(target))
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Firefox acts on ref targets only; near-text targeting is not supported by this engine'
+      );
     const stored = this.refs.get(target.ref);
     if (!stored) throw stale();
     let inspection: ReturnType<typeof describeElement>;
@@ -381,6 +387,11 @@ class FirefoxPage implements EnginePage {
 
   resolve(target: EngineTarget): Promise<ResolvedTarget> {
     return this.run(async () => {
+      if (!isRefTarget(target))
+        throw new EngineError(
+          'ENGINE_UNSUPPORTED',
+          'Firefox resolves ref targets only; near-text targeting is not supported by this engine'
+        );
       const { description } = await this.checked(target);
       return {
         ref: target.ref,

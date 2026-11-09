@@ -36,6 +36,7 @@ import type {
   SessionRequest,
   SupportedAction,
 } from './types.js';
+import { NEAR_TEXT_MAX_LENGTH, REF_PATTERN } from './types.js';
 import { validateUploadIntegrity } from './upload.js';
 
 /** One validation failure, addressed by pointer path. */
@@ -164,6 +165,86 @@ export function validateApprovalPolicy(
 const action = TypeCompiler.Compile(ActionSchema);
 
 /**
+ * Name a malformed element target before the compiled union surfaces it as
+ * an opaque "Expected union value". The target is a two-form union ({ ref }
+ * or { nearText, row? }); callers' most common failure is a ref-form typo
+ * (a CSS selector where a ref belongs), and it deserves its own pointer.
+ * Returns null when the shape is fine (or absent) and the compiled schema
+ * should speak for itself.
+ */
+function targetShapeIssues(body: unknown): ValidationIssue[] | null {
+  if (
+    typeof body !== 'object' ||
+    body === null ||
+    !('target' in body) ||
+    typeof (body as Record<string, unknown>).target !== 'object' ||
+    (body as Record<string, unknown>).target === null
+  ) {
+    return null;
+  }
+  const target = (body as Record<string, unknown>).target as Record<string, unknown>;
+  const keys = Object.keys(target);
+  const hasRef = 'ref' in target;
+  const hasNearText = 'nearText' in target;
+  if (hasRef && hasNearText) {
+    return [
+      {
+        path: '/target',
+        message:
+          "Element targets take exactly one form: { ref: 'e1_0' } or { nearText: 'Billing', row?: true }. Got both.",
+      },
+    ];
+  }
+  if (hasRef) {
+    if (typeof target.ref !== 'string' || !REF_PATTERN.test(target.ref)) {
+      return [
+        {
+          path: '/target/ref',
+          message: `Expected string to match pattern ${REF_PATTERN.source}: an element ref like e1_0, not '${String(target.ref)}'. Run observe to list current refs.`,
+        },
+      ];
+    }
+    if (keys.length > 1) {
+      return [
+        {
+          path: '/target',
+          message: 'A ref target carries only ref.',
+        },
+      ];
+    }
+    return null;
+  }
+  if (hasNearText) {
+    const issues: ValidationIssue[] = [];
+    if (typeof target.nearText !== 'string' || target.nearText.length < 1) {
+      issues.push({ path: '/target/nearText', message: 'Expected a non-empty string needle.' });
+    } else if (target.nearText.length > NEAR_TEXT_MAX_LENGTH) {
+      issues.push({
+        path: '/target/nearText',
+        message: `Expected string length <= ${NEAR_TEXT_MAX_LENGTH}.`,
+      });
+    }
+    if (target.row !== undefined && typeof target.row !== 'boolean') {
+      issues.push({ path: '/target/row', message: 'Expected boolean.' });
+    }
+    if (keys.some((key) => key !== 'nearText' && key !== 'row')) {
+      issues.push({
+        path: '/target',
+        message: 'A near-text target carries only nearText and the optional row flag.',
+      });
+    }
+    return issues.length > 0 ? issues : null;
+  }
+  return [
+    {
+      path: '/target',
+      message:
+        "Element targets take exactly one form: { ref: 'e1_0' } or { nearText: 'Billing', row?: true }. Got neither.",
+    },
+  ];
+}
+
+/**
  * Validate a constructed action (the protocol's nested SupportedAction
  * shape, not the flat wire body) against the ActionSchema union.
  * Enforced in the service immediately after construction, so REST /act,
@@ -172,6 +253,8 @@ const action = TypeCompiler.Compile(ActionSchema);
 export function validateAction(body: unknown): Validated<SupportedAction> {
   const integrityError = validateUploadIntegrity(body);
   if (integrityError) return { ok: false, issues: [{ path: '/sha256', message: integrityError }] };
+  const targetIssues = targetShapeIssues(body);
+  if (targetIssues) return { ok: false, issues: targetIssues };
   if (action.Check(body)) {
     return { ok: true, value: body as SupportedAction };
   }
@@ -216,6 +299,8 @@ export function validatePlanStep(body: unknown): Validated<Record<string, unknow
       ],
     };
   }
+  const targetIssues = targetShapeIssues(body);
+  if (targetIssues) return { ok: false, issues: targetIssues };
   if (planStep.Check(body)) {
     return { ok: true, value: body as Record<string, unknown> };
   }

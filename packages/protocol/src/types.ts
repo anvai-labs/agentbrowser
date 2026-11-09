@@ -372,10 +372,20 @@ export interface PageState {
    * DOM plainly holds content - the common JS-SPA-not-mounted-yet failure. Wait
    * for readiness (observe/screenshot `wait`) and retry, or read via
    * browser_html.
+   *
+   * 'nested_content_unobservable' (TD-BROWSER-17): child frames or inline
+   * iframes carry content this observation could not fold - e.g. a portaled
+   * OOPIF pane rendering beside an empty inline placeholder iframe. The
+   * element list is the reachable shell only; fall back to a screenshot plus
+   * coordinate interaction (`click --at X,Y`).
    */
   degraded?: boolean;
   /** Why the observation has reduced semantic coverage. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
+  degradedReason?:
+    | 'aria-snapshot-timeout'
+    | 'dom-semantic-subset'
+    | 'empty-snapshot-nonempty-dom'
+    | 'nested_content_unobservable';
 }
 
 /**
@@ -544,31 +554,77 @@ export interface ClickAction extends Action {
 }
 
 /**
- * Element target
+ * Element target, ref form (ADR-004): an engine-minted reference from an
+ * observation, e.g. `e1_0`.
  */
-export interface ElementTarget {
+export interface RefTarget {
   ref: string;
 }
 
 /**
- * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`.
- * Single source of truth (ADR-015): every surface derives from these
- * exports. `REF_PATTERN.source` must stay byte-for-byte stable — it is
- * embedded verbatim in the published OpenAPI and MCP schemas.
+ * Element target, geometric form (TD-BROWSER-18 gap 6): the interactive
+ * element nearest visible text containing `nearText` (case-insensitive,
+ * bounded probe). `row: true` restricts candidates to the text's visual row
+ * band and prefers the element horizontally trailing the label — the shape
+ * of settings rows with unlabeled trailing actions ("+ Add"). Resolution
+ * happens at act time and lands in the same ref machinery (a ref is minted
+ * for the resolved element), so staleness and remap behavior are unchanged.
  */
-export const REF_PATTERN = /^e\d+_\d+$/;
+export interface NearTextTarget {
+  nearText: string;
+  row?: boolean;
+}
 
-const REF_PARSE_PATTERN = /^e(\d+)_(\d+)$/;
+/**
+ * Element target: a ref, or a geometric near-text resolution. Exactly one
+ * form is meaningful; the wire schema enforces the shapes and the engine
+ * resolves the geometric form before dispatch.
+ */
+export type ElementTarget = RefTarget | NearTextTarget;
 
-/** Parse a ref into its revision and ordinal; null when malformed. */
-export function parseRef(ref: string): { revision: number; ordinal: number } | null {
+export function isRefTarget(target: ElementTarget | undefined): target is RefTarget {
+  return typeof target === 'object' && target !== null && 'ref' in target;
+}
+
+export function isNearTextTarget(target: ElementTarget | undefined): target is NearTextTarget {
+  return typeof target === 'object' && target !== null && 'nearText' in target;
+}
+
+/** Longest accepted near-text needle (mirrors the wire schema bound). */
+export const NEAR_TEXT_MAX_LENGTH = 200;
+
+/**
+ * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`,
+ * optionally frame-qualified (TD-BROWSER-17): `f<index>_e<revision>_<ordinal>`.
+ * The qualifier names the frame that owns the element — its index in the
+ * engine's frame list, where 0 is the main frame (and never prefixed:
+ * top-document refs stay unprefixed `e<revision>_<ordinal>` so single-frame
+ * snapshots are byte-identical to the pre-frame grammar). Single source of
+ * truth (ADR-015): every surface derives from these exports.
+ * `REF_PATTERN.source` must stay byte-for-byte stable — it is embedded
+ * verbatim in the published OpenAPI and MCP schemas.
+ */
+export const REF_PATTERN = /^(?:f\d+_)?e\d+_\d+$/;
+
+const REF_PARSE_PATTERN = /^(?:f(\d+)_)?e(\d+)_(\d+)$/;
+
+/**
+ * Parse a ref into its owning frame (present only on frame-qualified refs),
+ * revision and ordinal; null when malformed.
+ */
+export function parseRef(
+  ref: string
+): { frame?: number; revision: number; ordinal: number } | null {
   const match = REF_PARSE_PATTERN.exec(ref);
-  if (!match?.[1] || !match?.[2]) {
+  if (!match?.[2] || !match?.[3]) {
     return null;
   }
   return {
-    revision: Number.parseInt(match[1], 10),
-    ordinal: Number.parseInt(match[2], 10),
+    revision: Number.parseInt(match[2], 10),
+    ordinal: Number.parseInt(match[3], 10),
+    // The frame key is omitted (not undefined) on unprefixed refs so legacy
+    // structural comparisons keep passing.
+    ...(match[1] !== undefined ? { frame: Number.parseInt(match[1], 10) } : {}),
   };
 }
 
@@ -915,7 +971,12 @@ export type WaitType =
 /**
  * Observation request
  */
-export const DELIVERED_OBSERVATION_INCLUDES = ['overlays', 'fileInputs', 'formControls'] as const;
+export const DELIVERED_OBSERVATION_INCLUDES = [
+  'overlays',
+  'fileInputs',
+  'formControls',
+  'state',
+] as const;
 
 /** Additive element-field opt-ins for compact projection (protected core excluded). */
 export const DELIVERED_PROJECTION_FIELDS = ['href', 'attributes', 'required'] as const;

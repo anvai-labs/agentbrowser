@@ -77,6 +77,66 @@ describe('wire action contract', () => {
   ])('rejects invalid $action', (action) => {
     expect(validateWireAction(action).ok).toBe(false);
   });
+  describe('near-text target form (TD-BROWSER-18 gap 6)', () => {
+    it('accepts a click targeting text with row preference', () => {
+      expect(
+        decodeWireAction({ action: 'click', target: { nearText: 'Billing', row: true } })
+      ).toEqual({
+        ok: true,
+        value: { type: 'click', target: { nearText: 'Billing', row: true } },
+      });
+    });
+
+    it('accepts the near-text form without row and round-trips through validateWireAction', () => {
+      const result = validateWireAction({ action: 'click', target: { nearText: 'Security' } });
+      expect(result).toMatchObject({ ok: true, value: { target: { nearText: 'Security' } } });
+    });
+
+    it('accepts fill/select/check/uncheck/hover/clear with the near-text form', () => {
+      const accepts = (action: string, extra: Record<string, unknown>) => {
+        expect(validateWireAction({ action, target: { nearText: 'Billing' }, ...extra }).ok).toBe(
+          true
+        );
+      };
+      accepts('fill', { value: 'x' });
+      accepts('select', { value: 'one' });
+      accepts('check', {});
+      accepts('uncheck', {});
+      accepts('hover', {});
+      accepts('clear', {});
+    });
+
+    it('rejects an empty, oversized, or non-string needle', () => {
+      for (const nearText of ['', 'x'.repeat(201), 7, null]) {
+        expect(validateWireAction({ action: 'click', target: { nearText } }).ok).toBe(false);
+      }
+    });
+
+    it('rejects a near-text target with no needle at all', () => {
+      expect(validateWireAction({ action: 'click', target: { row: true } }).ok).toBe(false);
+      expect(validateWireAction({ action: 'click', target: {} }).ok).toBe(false);
+    });
+
+    it('rejects row alongside a ref target (one form per target)', () => {
+      expect(validateWireAction({ action: 'click', target: { ref: 'e1_0', row: true } }).ok).toBe(
+        false
+      );
+    });
+
+    it('keeps rejecting malformed refs when the ref form is used', () => {
+      expect(validateWireAction({ action: 'click', target: { ref: 'button.submit' } }).ok).toBe(
+        false
+      );
+    });
+
+    it('carries the near-text form through a batch step', () => {
+      const result = validateWireActionBatch({
+        steps: [{ action: 'click', target: { nearText: 'Add member', row: true } }],
+      });
+      expect(result.ok).toBe(true);
+    });
+  });
+
   it('accepts type as a deprecated alias for action', () => {
     const result = decodeWireAction({ type: 'click', target: { ref: 'e1_0' } });
     expect(result).toMatchObject({ ok: true, value: { type: 'click', target: { ref: 'e1_0' } } });

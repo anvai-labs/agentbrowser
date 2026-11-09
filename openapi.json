@@ -5078,22 +5078,49 @@
                     ]
                   },
                   "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
+                    "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "ref"
+                        ],
+                        "properties": {
+                          "ref": {
+                            "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                            "description": "Element ref (ADR-004)",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "nearText"
+                        ],
+                        "properties": {
+                          "nearText": {
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element. Main frame only: text inside child frames is not probed.",
+                            "type": "string"
+                          },
+                          "row": {
+                            "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                            "type": "boolean"
+                          }
+                        }
                       }
-                    }
+                    ]
                   },
                   "value": {
                     "type": "string"
                   },
                   "values": {
                     "minItems": 1,
+                    "maxItems": 20,
                     "type": "array",
                     "items": {
                       "type": "string"
@@ -11775,7 +11802,7 @@
               ],
               "properties": {
                 "ref": {
-                  "pattern": "^e\\d+_\\d+$",
+                  "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
                   "type": "string"
                 },
                 "role": {
@@ -11997,7 +12024,7 @@
                 "type": "string"
               },
               "scopeRef": {
-                "pattern": "^e\\d+_\\d+$",
+                "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
                 "type": "string"
               },
               "matched": {
@@ -12070,6 +12097,10 @@
               {
                 "const": "empty-snapshot-nonempty-dom",
                 "type": "string"
+              },
+              {
+                "const": "nested_content_unobservable",
+                "type": "string"
               }
             ]
           }
@@ -12085,7 +12116,7 @@
         ],
         "properties": {
           "ref": {
-            "pattern": "^e\\d+_\\d+$",
+            "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
             "type": "string"
           },
           "role": {
@@ -12181,16 +12212,42 @@
         }
       },
       "ElementTarget": {
-        "type": "object",
-        "required": [
-          "ref"
-        ],
-        "properties": {
-          "ref": {
-            "pattern": "^e\\d+_\\d+$",
-            "type": "string"
+        "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "ref"
+            ],
+            "properties": {
+              "ref": {
+                "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                "description": "Element ref (ADR-004)",
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "nearText"
+            ],
+            "properties": {
+              "nearText": {
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element. Main frame only: text inside child frames is not probed.",
+                "type": "string"
+              },
+              "row": {
+                "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                "type": "boolean"
+              }
+            }
           }
-        }
+        ]
       },
       "ObservationRequest": {
         "additionalProperties": false,
@@ -12242,6 +12299,10 @@
                 },
                 {
                   "const": "formControls",
+                  "type": "string"
+                },
+                {
+                  "const": "state",
                   "type": "string"
                 }
               ]
@@ -12421,7 +12482,7 @@
             "type": "string"
           },
           "scopeRef": {
-            "pattern": "^e\\d+_\\d+$",
+            "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
             "type": "string"
           },
           "limit": {
@@ -12806,22 +12867,49 @@
             ]
           },
           "target": {
-            "type": "object",
-            "required": [
-              "ref"
-            ],
-            "properties": {
-              "ref": {
-                "pattern": "^e\\d+_\\d+$",
-                "type": "string"
+            "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "ref"
+                ],
+                "properties": {
+                  "ref": {
+                    "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                    "description": "Element ref (ADR-004)",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "nearText"
+                ],
+                "properties": {
+                  "nearText": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element. Main frame only: text inside child frames is not probed.",
+                    "type": "string"
+                  },
+                  "row": {
+                    "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                    "type": "boolean"
+                  }
+                }
               }
-            }
+            ]
           },
           "value": {
             "type": "string"
           },
           "values": {
             "minItems": 1,
+            "maxItems": 20,
             "type": "array",
             "items": {
               "type": "string"
@@ -13636,22 +13724,49 @@
                   ]
                 },
                 "target": {
-                  "type": "object",
-                  "required": [
-                    "ref"
-                  ],
-                  "properties": {
-                    "ref": {
-                      "pattern": "^e\\d+_\\d+$",
-                      "type": "string"
+                  "description": "A ref target ({ ref }) or a geometric near-text target ({ nearText, row? }). Exactly one form.",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "ref"
+                      ],
+                      "properties": {
+                        "ref": {
+                          "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
+                          "description": "Element ref (ADR-004)",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "nearText"
+                      ],
+                      "properties": {
+                        "nearText": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "description": "Case-insensitive visible-text needle; resolves at act time to the nearest interactive element. Main frame only: text inside child frames is not probed.",
+                          "type": "string"
+                        },
+                        "row": {
+                          "description": "Restrict candidates to the needle text's visual row and prefer the trailing element (settings-row actions).",
+                          "type": "boolean"
+                        }
+                      }
                     }
-                  }
+                  ]
                 },
                 "value": {
                   "type": "string"
                 },
                 "values": {
                   "minItems": 1,
+                  "maxItems": 20,
                   "type": "array",
                   "items": {
                     "type": "string"
@@ -14887,7 +15002,7 @@
                   ],
                   "properties": {
                     "ref": {
-                      "pattern": "^e\\d+_\\d+$",
+                      "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
                       "type": "string"
                     },
                     "role": {
@@ -15109,7 +15224,7 @@
                     "type": "string"
                   },
                   "scopeRef": {
-                    "pattern": "^e\\d+_\\d+$",
+                    "pattern": "^(?:f\\d+_)?e\\d+_\\d+$",
                     "type": "string"
                   },
                   "matched": {
@@ -15181,6 +15296,10 @@
                   },
                   {
                     "const": "empty-snapshot-nonempty-dom",
+                    "type": "string"
+                  },
+                  {
+                    "const": "nested_content_unobservable",
                     "type": "string"
                   }
                 ]
@@ -16234,6 +16353,40 @@
                     ]
                   }
                 }
+              }
+            }
+          },
+          "attachment": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "hostHint"
+            ],
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "const": "spawned",
+                    "type": "string"
+                  },
+                  {
+                    "const": "cdp_attach",
+                    "type": "string"
+                  }
+                ]
+              },
+              "hostHint": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                "type": "string"
+              },
+              "profileHint": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                "type": "string"
               }
             }
           },

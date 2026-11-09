@@ -821,7 +821,7 @@ export function buildTools(
         '- Compact projection (opt-in): roles (exact match), name (case-insensitive substring on element names), text (explicit visible-name/public-value substring, excludes withheld values), scopeRef (that element plus its subtree), limit, includeFields (href|attributes|required). The response echoes projection {matched, total}: 0 matches on a large page means nothing matched, never an empty page; valueRedacted/risk/degraded evidence always rides along.\n' +
         '- include:["overlays"] adds which visible elements cover observed click points; include:["fileInputs"] mints refs for every input[type=file] (with id/accept/multiple) — needed to target one of several file inputs.\n' +
         '- interactionHint advises when closed shadow roots or limited semantics make visual coordinate input useful; it never authorizes an action.\n' +
-        '- degradedReason "aria-snapshot-timeout": roles/names came from a DOM fallback — retry with a larger snapshotTimeoutMs (roles/name filters are unreliable on it). "empty-snapshot-nonempty-dom": the SPA has not mounted — pass wait (until:"networkidle" or "minElements") or read via html.\n' +
+        '- degradedReason "aria-snapshot-timeout": roles/names came from a DOM fallback — retry with a larger snapshotTimeoutMs (roles/name filters are unreliable on it). "empty-snapshot-nonempty-dom": the SPA has not mounted — pass wait (until:"networkidle" or "minElements") or read via html. "nested_content_unobservable": nested-app (child frame/iframe) content exists but cannot be folded into this observation (TD-BROWSER-17) — the element list is the reachable shell; fall back to a screenshot plus coordinate input (clickAt).\n' +
         '- A truncated response carries continuation {nextOrdinal, remaining}; pass it as continueFrom to resume in document order.',
       inputSchema: {
         ...ObservationRequestSchema,
@@ -846,6 +846,7 @@ export function buildTools(
       requiredCapabilities: ['page.interact'],
       outputSchema: ActOutcomeSchema,
       description: `Act on an element by ref from observe or an explicit coordinate — never CSS/XPath. Actions: click, clickAt, dblclick, hover, fill, clear, check, uncheck, select, upload, uploadAt, scroll, press, typeText, wait, goBack, goForward, reload, acceptDialog, dismissDialog.
+- Unlabeled controls (e.g. a settings row's bare "+ Add"): target { nearText: "<row label>", row?: true } resolves at act time to the interactive element nearest that visible text — with row:true, the trailing element in the label's visual row. MAIN FRAME ONLY: text inside child frames is not probed. Zero matches refuse TARGET_NOT_FOUND (final — retrying the act re-resolves); several equidistant candidates refuse TARGET_AMBIGUOUS with a candidate list. Remap does not apply to near-text targets.
 - clickAt: at:{unit:"css",x,y} uses viewport CSS coordinates; at:{unit:"image",x,y,captureId,rasterWidth,rasterHeight} binds actual delivered PNG pixels to a recent screenshot. One-use approval is always required. A stale/changed capture refuses; inspect visibleEffect/warning and never automatically replay input.
 - uploadAt: the same coordinate shape, exactly one absolute file path and mandatory SHA-256; Chromium main-frame native file input/label only. Competing or unverifiable chooser targets refuse. File input/change events are synthetic; application acceptance still needs verification.
 - upload: absolute file paths; with several file inputs, target the one from observe include:["fileInputs"] (no ref => page must have exactly one).
@@ -870,11 +871,19 @@ export function buildTools(
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
 
-        const target = (args.target ?? {}) as { ref?: unknown };
+        const target = (args.target ?? {}) as { ref?: unknown; nearText?: unknown };
+        // Two target forms: an observed ref, or a geometric near-text
+        // resolution (TD-BROWSER-18 gap 6) which the engine resolves at act
+        // time for controls with no accessible name.
+        const hasNearText = typeof target.nearText === 'string' && target.nearText.length > 0;
         const ref = target.ref;
-        if (args.target !== undefined && (typeof ref !== 'string' || !REF_PATTERN.test(ref))) {
+        if (
+          args.target !== undefined &&
+          !hasNearText &&
+          (typeof ref !== 'string' || !REF_PATTERN.test(ref))
+        ) {
           throw new UsageError(
-            `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Call observe to list current refs.`
+            `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal> (frame-qualified: f<frame>_e<revision>_<ordinal>), such as e1_0 or f2_e1_3, or a { nearText } target. Call observe to list current refs.`
           );
         }
 

@@ -16,7 +16,9 @@ import {
   summarizeDeniedHosts,
 } from '@agentbrowser/core';
 import {
+  attachmentIdentityKind,
   boundFetchResult,
+  captureAttachmentIdentity,
   EVENT_REPLAY_MAX_RESPONSE_BYTES,
   eventReplayStream,
   isFilteredEventReplay,
@@ -522,6 +524,16 @@ export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
   cdpAttachAdmission?: CdpAttachAdmission;
   /**
+   * ADR-034: daemon host/profile hints backing the session view's
+   * self-identifying `attachment` line, so an agent can verify which Chrome it
+   * is driving before navigating. Hints are operator-supplied startup facts
+   * (hostname basename; operator profile basename), validated against the
+   * bounded protocol shape at projection time — an invalid hint omits the
+   * identity rather than shipping an unverified claim. Absent means the
+   * session view carries no attachment identity at all.
+   */
+  attachmentIdentity?: Readonly<{ hostHint: string; profileHint?: string }>;
+  /**
    * TD-BROWSER-16 phase 6 (ADR-025 §3): the operator login browser, injected
    * by the server (narrow structural type — no engine dependency here). The
    * handoff floors on enabled+open and reads through it; absent means the
@@ -962,6 +974,14 @@ export class AgentBrowserService {
   /** TD-BROWSER-16 phase 6: the operator login browser (server-injected). */
   private readonly loginBrowser: NonNullable<ServiceDependencies['loginBrowser']> | undefined;
   /**
+   * ADR-034: daemon host/profile hints for the session view's self-identifying
+   * `attachment` line. Raw strings here; the bounded protocol capture runs at
+   * projection time, so an invalid hint omits the identity (fail closed).
+   */
+  private readonly attachmentHints:
+    | Readonly<{ hostHint: string; profileHint?: string }>
+    | undefined;
+  /**
    * TD-BROWSER-16 phase 6: true while the api passes no engine
    * webSocketPolicy, making deny-upgrade the deployment default. See the
    * handoff's floor.handoff.websocket guard.
@@ -1003,6 +1023,7 @@ export class AgentBrowserService {
       this.operationJournal !== undefined ? { journal: this.operationJournal } : {}
     );
     this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
+    this.attachmentHints = deps.attachmentIdentity;
     this.loginBrowser = deps.loginBrowser;
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
@@ -3314,6 +3335,22 @@ export class AgentBrowserService {
     const trace = this.scopeTraceModes.get(context.id);
     const traceDropped = this.scopeTraceDropped.get(context.id) ?? 0;
     const seedWarnings = this.sessionSeedWarnings.get(context.id);
+    // ADR-034: the self-identifying attachment line. The kind comes from the
+    // service's own admission record (request.cdpAttach) — engine diagnostics
+    // alone never mint it — and a remote-CDP or unknown attachment refuses to
+    // claim a host (that browser may live on another machine).
+    const attachmentKind = attachmentIdentityKind(
+      context.diagnostics?.attachment,
+      this.sessionHandoffFacts.get(context.id)?.cdpAttach === true
+    );
+    const attachment =
+      attachmentKind !== undefined && this.attachmentHints !== undefined
+        ? captureAttachmentIdentity(
+            attachmentKind,
+            this.attachmentHints.hostHint,
+            this.attachmentHints.profileHint
+          )
+        : undefined;
     const warnings = [
       ...(context.engineSession.warnings ?? []),
       ...(seedWarnings?.owner === context ? seedWarnings.warnings : []),
@@ -3363,6 +3400,7 @@ export class AgentBrowserService {
       ...(this.projectActionLease(context.id) ?? {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
+      ...(attachment !== undefined ? { attachment } : {}),
       ...(warnings.length ? { warnings } : {}),
       ...(includeTenant && context.metadata.tenantId !== undefined
         ? { tenantId: context.metadata.tenantId }
@@ -4961,7 +4999,8 @@ export class AgentBrowserService {
     degradedReason?:
       | 'aria-snapshot-timeout'
       | 'dom-semantic-subset'
-      | 'empty-snapshot-nonempty-dom';
+      | 'empty-snapshot-nonempty-dom'
+      | 'nested_content_unobservable';
   }> {
     // ONE engine observe for everything (adversarial review round-5/F1):
     // a second observe with a differing include set trips the engine's
@@ -5841,7 +5880,7 @@ export class AgentBrowserService {
         if (!REF_PATTERN.test(ref)) {
           throw new ServiceError(
             'INVALID_REQUEST',
-            `Invalid element reference '${ref}'. Expected e<revision>_<ordinal>, such as e1_0.`,
+            `Invalid element reference '${ref}'. Expected e<revision>_<ordinal> (frame-qualified: f<frame>_e<revision>_<ordinal>), such as e1_0 or f2_e1_3.`,
             false,
             { ref }
           );

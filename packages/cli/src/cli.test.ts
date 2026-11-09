@@ -727,6 +727,26 @@ describe('AgentBrowser CLI', () => {
       });
     });
 
+    it('passes the state enrichment token through (TD-18 gap 3)', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--include', 'state');
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        include: ['state'],
+      });
+    });
+
+    it('routes element fields given to --include to the --include-fields hint (TD-18 gap 7)', async () => {
+      expect(await run('observe', 'ses_1', 'pg_1', '--include', 'attributes')).toBe(1);
+      expect(err.join('\n')).toContain('--include-fields');
+      expect(sessions.observe).not.toHaveBeenCalled();
+    });
+
+    it('names the valid tokens when --include gets an unknown value', async () => {
+      expect(await run('observe', 'ses_1', 'pg_1', '--include', 'widgets')).toBe(1);
+      expect(err.join('\n')).toContain('overlays | fileInputs | formControls | state');
+      expect(sessions.observe).not.toHaveBeenCalled();
+    });
+
     it('should omit include when the flag is absent', async () => {
       await run('observe', 'ses_1', 'pg_1', '--mode', 'content');
 
@@ -1093,6 +1113,52 @@ describe('AgentBrowser CLI', () => {
       });
     });
 
+    it('forwards --observe after and renders the returned observation (TD-18 gap 2)', async () => {
+      sessions.executeAction.mockResolvedValueOnce({
+        status: 'success',
+        actionId: 'act_2',
+        newRevision: 3,
+        observation: {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          revision: 3,
+          url: 'https://example.com/form',
+          title: 'Form',
+          status: 'interactive',
+          elements: [{ ref: 'e3_1', role: 'textbox', name: 'Email', visible: true, enabled: true }],
+          truncated: false,
+          untrustedContent: true,
+        },
+      });
+      const code = await run(
+        'act',
+        'fill',
+        'ses_1',
+        'pg_1',
+        'e1_0',
+        'hello@example.com',
+        '--observe',
+        'after'
+      );
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'fill',
+        target: { ref: 'e1_0' },
+        value: 'hello@example.com',
+        observe: 'after',
+      });
+      expect(out.join('\n')).toContain('e3_1');
+    });
+
+    it('refuses an invalid --observe value before calling the API', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0', '--observe', 'before');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('--observe');
+    });
+
     it('should execute a select', async () => {
       await run('act', 'select', 'ses_1', 'pg_1', 'e1_0', 'Canada');
 
@@ -1109,6 +1175,53 @@ describe('AgentBrowser CLI', () => {
       expect(code).toBe(1);
       expect(sessions.executeAction).not.toHaveBeenCalled();
       expect(err.join('\n')).toContain('button.submit');
+    });
+
+    it('near-text: click --near-text --row posts the geometric target (TD-BROWSER-18 gap 6)', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', '--near-text', 'Billing', '--row');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'click',
+        target: { nearText: 'Billing', row: true },
+      });
+    });
+
+    it('near-text: fill takes the value positional and omits row when unset', async () => {
+      const code = await run('act', 'fill', 'ses_1', 'pg_1', 'draft', '--near-text', 'Bio');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'fill',
+        target: { nearText: 'Bio' },
+        value: 'draft',
+      });
+    });
+
+    it('near-text: rejects a ref combined with --near-text', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0', '--near-text', 'Billing');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('one target form');
+    });
+
+    it('near-text: rejects --row without --near-text', async () => {
+      const code = await run('act', 'click', 'ses_1', 'pg_1', '--row');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('--row requires --near-text');
+    });
+
+    it('near-text: check works without a positional ref', async () => {
+      const code = await run('act', 'check', 'ses_1', 'pg_1', '--near-text', 'Subscribe');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'check',
+        target: { nearText: 'Subscribe' },
+      });
     });
 
     it('upload: takes a single absolute path as the file list, not a ref', async () => {
@@ -1907,6 +2020,60 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
       expect(out.join('\n')).not.toContain('paced:');
       expect(out.join('\n')).not.toContain('budget:');
+    });
+
+    it('session get renders the self-identifying attachment line (ADR-034)', async () => {
+      sessions.get.mockResolvedValue({
+        sessionId: 'ses_1',
+        createdAt: '2026-08-23T10:00:00Z',
+        ttlMs: 12600000,
+        idleTimeoutMs: 600000,
+        attachment: { kind: 'cdp_attach', hostHint: 'ops-macbook', profileHint: 'Operator' },
+      });
+      expect(await run('session', 'get', 'ses_1')).toBe(0);
+      expect(out.join('\n')).toContain('attachment: cdp_attach on ops-macbook (profile Operator)');
+
+      sessions.get.mockResolvedValue({
+        sessionId: 'ses_1',
+        createdAt: '2026-08-23T10:00:00Z',
+        ttlMs: 12600000,
+        idleTimeoutMs: 600000,
+        attachment: { kind: 'spawned', hostHint: 'daemon-host' },
+      });
+      out = [];
+      expect(await run('session', 'get', 'ses_1')).toBe(0);
+      expect(out.join('\n')).toContain('attachment: spawned on daemon-host');
+      expect(out.join('\n')).not.toContain('profile');
+    });
+
+    it('session create renders the attachment line', async () => {
+      sessions.create.mockResolvedValue({
+        sessionId: 'ses_1',
+        status: 'ready',
+        createdAt: '2026-08-23T10:00:00Z',
+        attachment: { kind: 'cdp_attach', hostHint: 'ops-macbook', profileHint: 'Operator' },
+      });
+      expect(await run('session', 'create', '--tenant', 'local')).toBe(0);
+      expect(out.join('\n')).toContain('attachment: cdp_attach on ops-macbook (profile Operator)');
+    });
+
+    it('session get --json passes the attachment object through untouched', async () => {
+      sessions.get.mockResolvedValue({
+        sessionId: 'ses_1',
+        createdAt: '2026-08-23T10:00:00Z',
+        ttlMs: 12600000,
+        idleTimeoutMs: 600000,
+        attachment: { kind: 'cdp_attach', hostHint: 'ops-macbook', profileHint: 'Operator' },
+      });
+      expect(await run('session', 'get', 'ses_1', '--json')).toBe(0);
+      const json = JSON.parse(out.join('\n')) as {
+        attachment?: { kind?: string; hostHint?: string; profileHint?: string };
+      };
+      expect(json.attachment).toEqual({
+        kind: 'cdp_attach',
+        hostHint: 'ops-macbook',
+        profileHint: 'Operator',
+      });
     });
 
     it('renders scoped pacing and budget facts', async () => {

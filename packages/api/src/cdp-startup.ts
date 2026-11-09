@@ -1,4 +1,5 @@
 import { parseOperatorCdpEndpoint } from '@agentbrowser/engine-playwright';
+import { attachmentHintFromHostname, captureAttachmentHint } from '@agentbrowser/protocol';
 
 /** Packaged-service startup only. Never accepts session/request data. */
 export function operatorCdpFromEnvironment(env: {
@@ -16,4 +17,56 @@ export function operatorCdpFromEnvironment(env: {
     endpoint: parseOperatorCdpEndpoint(endpoint),
     allowUnenforcedEgress: true,
   });
+}
+
+/**
+ * ADR-034: the daemon host identity agents see in the session view's
+ * self-identifying `attachment` line — the hostname's first label (operational,
+ * non-sensitive). Undefined over an unrepresentable hostname.
+ */
+export function hostHintFromHostname(hostname: string): string | undefined {
+  return attachmentHintFromHostname(hostname);
+}
+
+/**
+ * ADR-034 (adversarial review R4): explicit daemon host identity override.
+ * The hostname default is suppressed in hosted and multi-tenant deployments —
+ * a hostname is the first host-identity fact the session view has ever
+ * carried, and labels like `ip-10-0-5-42` publish private addressing to
+ * every tenant's agent — so an operator who still wants the line names it
+ * here. A path-like value is refused.
+ */
+export function hostHintFromEnvironment(env: { AGENTBROWSER_HOST_HINT?: string | undefined }): {
+  hostHint?: string;
+  warning?: string;
+} {
+  const raw = env.AGENTBROWSER_HOST_HINT;
+  if (raw === undefined) return {};
+  const hint = captureAttachmentHint(raw);
+  if (hint === undefined)
+    return {
+      warning:
+        'AGENTBROWSER_HOST_HINT must be a short hostname label (letters, digits, dot, dash; no path separators) — the session view will carry no host hint.',
+    };
+  return { hostHint: hint };
+}
+
+/**
+ * ADR-034: the operator profile basename hint (AGENTBROWSER_CDP_PROFILE_HINT).
+ * The daemon cannot discover the attached Chrome's profile directory over CDP,
+ * so the operator who launched Chrome with `--user-data-dir` names its
+ * basename here; a path-like value is refused (hints are never full paths).
+ */
+export function profileHintFromEnvironment(env: {
+  AGENTBROWSER_CDP_PROFILE_HINT?: string | undefined;
+}): { profileHint?: string; warning?: string } {
+  const raw = env.AGENTBROWSER_CDP_PROFILE_HINT;
+  if (raw === undefined) return {};
+  const hint = captureAttachmentHint(raw);
+  if (hint === undefined)
+    return {
+      warning:
+        'AGENTBROWSER_CDP_PROFILE_HINT must be a short profile basename (letters, digits, dot, dash; no path separators) — the session view will carry no profile hint.',
+    };
+  return { profileHint: hint };
 }

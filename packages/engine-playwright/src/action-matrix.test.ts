@@ -1,18 +1,11 @@
 import http from 'node:http';
-import type { EnginePage, EngineSession } from '@agentbrowser/engine';
+import type { EngineSession } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { backingPage } from './test-support/backing-page.js';
+import { refOf } from './test-support/observation-refs.js';
 import { sharedEngine } from './test-support/shared-engine.js';
 
 const engine = sharedEngine();
-
-/** Fresh observation per action: any mutation invalidates the previous refs. */
-async function refOf(page: EnginePage, role: string, name: string): Promise<string> {
-  const state = await page.observe({});
-  const element = state.elements.find((el) => el.role === role && el.name === name);
-  if (!element?.ref) throw new Error(`missing observed ${role} "${name}"`);
-  return element.ref;
-}
 
 const FORM_PAGE =
   'data:text/html,<label>Color<select aria-label="Color"><option>Red</option><option>Blue</option></select></label>' +
@@ -63,6 +56,30 @@ describe('delivered action matrix gaps (real Chromium)', () => {
       await page.act({ type: 'clear', target: { ref: clearRef } });
       const cleared = (await page.observe({})).elements.find((el) => el.name === 'Bio');
       expect(cleared?.value === '' || cleared?.value === undefined).toBe(true);
+    } finally {
+      await session?.close();
+    }
+  });
+
+  it('fails fast with the actual tag when select targets a custom combobox (TD-18 gap 1)', async () => {
+    let session: EngineSession | undefined;
+    try {
+      session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url: 'data:text/html,<div role="combobox" aria-label="Pattern" tabindex="0">Auto</div>',
+      });
+      const comboRef = await refOf(page, 'combobox', 'Pattern');
+
+      // A custom widget must be refused immediately with the element it is,
+      // not burned through the full actionability timeout.
+      await expect(
+        page.act({ type: 'select', target: { ref: comboRef }, values: ['X'] })
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        message: expect.stringContaining('<div>'),
+        details: { actualTag: 'div' },
+      });
     } finally {
       await session?.close();
     }

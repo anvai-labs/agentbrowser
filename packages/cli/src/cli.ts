@@ -3,6 +3,12 @@ import {
   coordinatePoint,
   withCoordinateOptions,
 } from './coordinate-options.js';
+import {
+  assertSingleTargetForm,
+  type NearTextOptions,
+  nearTextTarget,
+  withNearTextOptions,
+} from './near-text-options.js';
 import { adoptScopeAssets } from './scope-assets-file.js';
 /**
  * AgentBrowser CLI
@@ -29,7 +35,11 @@ import {
   pruneArtifactCache,
 } from '@agentbrowser/core/local-artifacts';
 import { buildEngagementSarif, checkEngagementFindings } from '@agentbrowser/engagement';
-import { MAX_PROBE_BODY_BYTES } from '@agentbrowser/protocol';
+import {
+  DELIVERED_OBSERVATION_INCLUDES,
+  DELIVERED_PROJECTION_FIELDS,
+  MAX_PROBE_BODY_BYTES,
+} from '@agentbrowser/protocol';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -66,6 +76,7 @@ import {
   INTERACTION_GUIDANCE,
   isAgentMode,
   isPassingOutcome,
+  isRefTarget,
   listFormMappingStages,
   materializeAutofillMapping,
   navigationFailureDetail,
@@ -182,6 +193,12 @@ function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionRespon
         ]
       : []),
     ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    // ADR-034: the self-identifying attachment line — which Chrome am I driving?
+    ...(view.attachment
+      ? [
+          `  attachment: ${view.attachment.kind} on ${view.attachment.hostHint}${view.attachment.profileHint !== undefined ? ` (profile ${view.attachment.profileHint})` : ''}`,
+        ]
+      : []),
     ...(lease
       ? [
           `  lease: sampled=${lease.sampledAt}; ttl-expires=${lease.expiresAt}; idle-expires=${lease.idleExpiresAt} (Unix ms)`,
@@ -623,6 +640,9 @@ export function buildCli(deps: CliDependencies): Cli {
               ...(act.opts().executionRequirement !== undefined
                 ? { actExecutionRequirement: String(act.opts().executionRequirement) }
                 : {}),
+              ...(act.opts().observe !== undefined
+                ? { actObserve: String(act.opts().observe) }
+                : {}),
               baseUrl: globals.baseUrl ?? 'http://localhost:5709',
               ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
               out: deps.out,
@@ -1040,7 +1060,7 @@ export function buildCli(deps: CliDependencies): Cli {
 
       const sessionCreate = withUsage(session.command('create'), SESSION_CREATE_USAGE)
         .description(
-          'create an isolated session; --tenant is required; use --no-headless for a visible browser on the server host'
+          'create an isolated session; --tenant is required; use --no-headless for a visible browser on the server host. WebAuthn/passkey ceremonies need the operator Chrome via CDP attach (ADR-034) — service-spawned browsers cannot use platform authenticators.'
         )
         .requiredOption('--tenant <id>', 'tenant identifier')
         .option(
@@ -1080,7 +1100,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--ttl <ms>', 'session TTL in milliseconds')
         .option(
           '--idle-timeout <ms>',
-          'idle timeout in ms (server default 600000 = 10 min — raise this for headed human-in-the-loop logins; server caps at 3600000)'
+          'idle timeout in ms (server default 600000 = 10 min — raise this for headed human-in-the-loop logins; server caps at 3600000). Idle expiry destroys the session browser profile: a credential created inside it (e.g. a WebAuthn passkey) is gone with the context'
         )
         .option('--locale <tag>', 'locale, e.g. en-US')
         .option('--timezone-id <tz>', 'IANA timezone, e.g. America/New_York')
@@ -2029,7 +2049,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--max-bytes <n>', 'maximum observation size in bytes')
         .option(
           '--include <token>',
-          'enrichment token, repeatable: overlays | fileInputs | formControls',
+          `enrichment token, repeatable: ${DELIVERED_OBSERVATION_INCLUDES.join(' | ')}`,
           (token: string, acc: string[]) => [...acc, token],
           []
         )
@@ -2111,6 +2131,28 @@ export function buildCli(deps: CliDependencies): Cli {
                 request.maxBytes = captureInteger(options.maxBytes, '--max-bytes');
               }
               if (options.include && options.include.length > 0) {
+                // TD-BROWSER-18 gap 7: element fields (href | attributes |
+                // required) belong to --include-fields; sending them here
+                // reached the server as a bare "Expected union value". Sets
+                // derive from the protocol consts (review F4): one source of
+                // truth, so the next token cannot drift the CLI's claim.
+                const elementFields = new Set<string>(DELIVERED_PROJECTION_FIELDS);
+                for (const token of options.include) {
+                  if (elementFields.has(token))
+                    throw new UsageError(
+                      `'${token}' is an element field, not an enrichment token - ` +
+                        'pass it via --include-fields instead.'
+                    );
+                }
+                const valid = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
+                for (const token of options.include) {
+                  if (!valid.has(token))
+                    throw new UsageError(
+                      `Unknown --include token '${token}' - valid tokens: ` +
+                        `${DELIVERED_OBSERVATION_INCLUDES.join(' | ')}. If your server is ` +
+                        'newer than this CLI, upgrade the CLI to match.'
+                    );
+                }
                 request.include = options.include as NonNullable<ObservationRequest['include']>;
               }
               if (options.continueFrom !== undefined) {
@@ -2581,10 +2623,14 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--execution-requirement <requirement>',
           'ephemeral (default) or durable: journal this call as one browser operation for classification (needs a controlled session, --operation-id and a durable journal)'
+        )
+        .option(
+          '--observe <when>',
+          'after: return a fresh observation (re-minted refs) in the same call, so the next act needs no separate observe (TD-BROWSER-18 gap 2)'
         );
 
-      withCoordinateOptions(act.command('click'))
-        .description('click an element or an explicitly approved viewport point')
+      withCoordinateOptions(withNearTextOptions(act.command('click')))
+        .description('click an element, an approved viewport point, or the element nearest a text')
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('[ref]')
@@ -2595,13 +2641,17 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               pageId: string,
               ref: string | undefined,
-              options: CoordinateOptions
+              options: CoordinateOptions & NearTextOptions
             ) => {
               const at = coordinatePoint(options);
-              if (at && ref) throw new UsageError('Choose an element ref or --at');
+              const near = nearTextTarget(options);
+              assertSingleTargetForm({ ref, at, near });
               if (at) await runAction(ctx, sessionId, pageId, { action: 'clickAt', at });
+              else if (near)
+                await runAction(ctx, sessionId, pageId, { action: 'click', target: near });
               else {
-                if (ref === undefined) throw new UsageError('click requires a ref or --at');
+                if (ref === undefined)
+                  throw new UsageError('click requires a ref, --at, or --near-text');
                 await runAction(ctx, sessionId, pageId, {
                   action: 'click',
                   target: refTarget(ref),
@@ -2611,50 +2661,82 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
 
-      act
-        .command('fill')
-        .description('fill an input')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .argument('<value>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string, value: string) => {
-            await runAction(ctx, sessionId, pageId, {
-              action: 'fill',
-              target: refTarget(ref),
-              value,
-            });
-          })
-        );
+      /**
+       * TD-BROWSER-18 gap 6: fill/select accept either a positional ref + value
+       * or --near-text + value. With one positional and no value, a ref-shaped
+       * token is a missing value; anything else is the value of a near-text
+       * invocation (refs are engine-minted short tokens and never prose, so
+       * the reassignment is deterministic, not a guess).
+       */
+      const valueAction = (actionName: 'fill' | 'select', command: Command, description: string) =>
+        withNearTextOptions(command)
+          .description(description)
+          .argument('<sessionId>')
+          .argument('<pageId>')
+          .argument('[ref]')
+          .argument('[value]')
+          .action(
+            action(
+              async (
+                ctx,
+                sessionId: string,
+                pageId: string,
+                refArg: string | undefined,
+                valueArg: string | undefined,
+                options: NearTextOptions
+              ) => {
+                let ref = refArg;
+                let value = valueArg;
+                if (ref !== undefined && value === undefined) {
+                  if (REF_PATTERN.test(ref)) throw new UsageError(`${actionName} requires a value`);
+                  value = ref;
+                  ref = undefined;
+                }
+                const near = nearTextTarget(options);
+                assertSingleTargetForm({ ref, near });
+                if (ref === undefined && near === undefined)
+                  throw new UsageError(`${actionName} requires a ref or --near-text`);
+                if (value === undefined) throw new UsageError(`${actionName} requires a value`);
+                await runAction(ctx, sessionId, pageId, {
+                  action: actionName,
+                  target: near ?? refTarget(ref as string),
+                  value: value as string,
+                });
+              }
+            )
+          );
 
-      act
-        .command('select')
-        .description('select an option')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .argument('<value>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string, value: string) => {
-            await runAction(ctx, sessionId, pageId, {
-              action: 'select',
-              target: refTarget(ref),
-              value,
-            });
-          })
-        );
+      valueAction('fill', act.command('fill'), 'fill an input');
+      valueAction('select', act.command('select'), 'select an option');
 
-      act
-        .command('dblclick')
+      withNearTextOptions(act.command('dblclick'))
         .description('double-click an element')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('<ref>')
+        .argument('[ref]')
         .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'dblclick', target: refTarget(ref) });
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              ref: string | undefined,
+              options: NearTextOptions
+            ) => {
+              const near = nearTextTarget(options);
+              assertSingleTargetForm({ ref, near });
+              if (near)
+                await runAction(ctx, sessionId, pageId, { action: 'dblclick', target: near });
+              else {
+                if (ref === undefined)
+                  throw new UsageError('dblclick requires a ref or --near-text');
+                await runAction(ctx, sessionId, pageId, {
+                  action: 'dblclick',
+                  target: refTarget(ref),
+                });
+              }
+            }
+          )
         );
 
       withCoordinateOptions(act.command('upload'))
@@ -2720,53 +2802,49 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
 
-      act
-        .command('hover')
-        .description('hover an element; page handlers may cause effects')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'hover', target: refTarget(ref) });
-          })
-        );
+      /**
+       * TD-BROWSER-18 gap 6: single-positional act commands accept a ref or
+       * --near-text, never both.
+       */
+      const refAction = (
+        actionName: 'hover' | 'clear' | 'check' | 'uncheck',
+        command: Command,
+        description: string
+      ) =>
+        withNearTextOptions(command)
+          .description(description)
+          .argument('<sessionId>')
+          .argument('<pageId>')
+          .argument('[ref]')
+          .action(
+            action(
+              async (
+                ctx,
+                sessionId: string,
+                pageId: string,
+                ref: string | undefined,
+                options: NearTextOptions
+              ) => {
+                const near = nearTextTarget(options);
+                assertSingleTargetForm({ ref, near });
+                if (near)
+                  await runAction(ctx, sessionId, pageId, { action: actionName, target: near });
+                else {
+                  if (ref === undefined)
+                    throw new UsageError(`${actionName} requires a ref or --near-text`);
+                  await runAction(ctx, sessionId, pageId, {
+                    action: actionName,
+                    target: refTarget(ref),
+                  });
+                }
+              }
+            )
+          );
 
-      act
-        .command('clear')
-        .description('clear an input')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'clear', target: refTarget(ref) });
-          })
-        );
-
-      act
-        .command('check')
-        .description('tick a checkbox or radio')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'check', target: refTarget(ref) });
-          })
-        );
-
-      act
-        .command('uncheck')
-        .description('untick a checkbox')
-        .argument('<sessionId>')
-        .argument('<pageId>')
-        .argument('<ref>')
-        .action(
-          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'uncheck', target: refTarget(ref) });
-          })
-        );
+      refAction('hover', act.command('hover'), 'hover an element; page handlers may cause effects');
+      refAction('clear', act.command('clear'), 'clear an input');
+      refAction('check', act.command('check'), 'tick a checkbox or radio');
+      refAction('uncheck', act.command('uncheck'), 'untick a checkbox');
 
       act
         .command('wait')
@@ -4457,6 +4535,8 @@ interface CommandContext {
   approvalToken?: string;
   /** T5 B-dur: `act --execution-requirement`, validated where it is used. */
   actExecutionRequirement?: string;
+  /** TD-BROWSER-18 gap 2: `act --observe after`, validated in runAction. */
+  actObserve?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
   /** TD-BROWSER-16: the human-operator key for approval commands; never env. */
@@ -4489,10 +4569,15 @@ async function runAction(
   pageId: string,
   input: unknown
 ): Promise<void> {
+  const observeAfter = actObserve(ctx.actObserve);
+  const base =
+    observeAfter === undefined || input === null || typeof input !== 'object'
+      ? input
+      : { ...input, observe: observeAfter };
   const validated = validateWireAction(
-    ctx.approvalToken && input && typeof input === 'object'
-      ? { ...input, approvalToken: ctx.approvalToken }
-      : input
+    ctx.approvalToken && base && typeof base === 'object'
+      ? { ...base, approvalToken: ctx.approvalToken }
+      : base
   );
   if (!validated.ok)
     throw new UsageError(
@@ -4519,14 +4604,26 @@ async function runAction(
             'WARNING: Visual verification unavailable after dispatch. Inspect current state before any retry.',
           ]
         : []),
-    `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
+    `${request.action}${'target' in request && isRefTarget(request.target) ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
     ...(navigationObservation
       ? [
           `  navigation observed during action: blocked (${navigationObservation.scope}); action completed, do not replay`,
         ]
       : []),
+    // TD-BROWSER-18 gap 2: the server's act→observe round trip returns the
+    // fresh observation with re-minted refs; render it so the next act needs
+    // no separate observe call.
+    ...(result.observation ? renderObservation(result.observation) : []),
   ]);
+}
+
+/** TD-BROWSER-18 gap 2: validate `act --observe`; undefined means unchanged. */
+function actObserve(value: string | undefined): 'after' | 'none' | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 'after' && value !== 'none')
+    throw new UsageError('--observe must be "after" or "none"');
+  return value;
 }
 
 /** T5 B-dur: `--execution-requirement` for act, plan and autofill; omitted means unchanged. */
@@ -4546,7 +4643,7 @@ function browserExecution(requirement: string | undefined): {
 function refTarget(ref: string): { ref: string } {
   if (!REF_PATTERN.test(ref)) {
     throw new UsageError(
-      `Invalid element reference '${ref}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Run 'observe' to list current refs.`
+      `Invalid element reference '${ref}'. Expected a ref of the form e<revision>_<ordinal> (frame-qualified: f<frame>_e<revision>_<ordinal>), such as e1_0 or f2_e1_3. Run 'observe' to list current refs.`
     );
   }
   return { ref };
@@ -4682,10 +4779,14 @@ function renderObservation(observation: ObservationResponse): string[] {
   }
 
   if (observation.interactionHint) lines.push(`  Hint: ${observation.interactionHint}`);
-  if (observation.degraded)
+  if (observation.degraded) {
+    const reason = observation.degradedReason ?? 'unknown';
     lines.push(
-      `  Warning: degraded observation (${observation.degradedReason ?? 'unknown'}). Wait for readiness or inspect HTML before acting.`
+      reason === 'nested_content_unobservable'
+        ? '  Warning: degraded observation (nested_content_unobservable). Nested-app content (child frames/iframes) is present but not observable from the top document; the element list is the reachable shell only. Fall back to a screenshot plus coordinate interaction (act click --at X,Y) per TD-BROWSER-17 and docs/cli-agent-usage.md ("Nested-app panes observation cannot see").'
+        : `  Warning: degraded observation (${reason}). Wait for readiness or inspect HTML before acting.`
     );
+  }
 
   lines.push('', 'Elements:');
 

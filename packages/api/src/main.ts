@@ -171,6 +171,39 @@ const envMs = (name: string): number | undefined => {
 // Operator-level session defaults (per-request values still win).
 const defaultTtlMs = envMs('AGENTBROWSER_DEFAULT_TTL_MS');
 const defaultIdleTimeoutMs = envMs('AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS');
+
+// Launch preflight: prove the browser can actually start BEFORE we accept
+// traffic. engine.capabilities() is static metadata and succeeds even when
+// Chromium cannot launch (e.g. a Playwright/browser build mismatch, a missing
+// or stale binary), so the only honest readiness signal is a real launch.
+// Open and close a throwaway session; on failure print the raw cause (this is
+// the operator's own stdout, not a client response, so no redaction) and exit
+// non-zero rather than start a service that fails every session with a generic
+// INTERNAL. Set AGENTBROWSER_SKIP_ENGINE_PREFLIGHT=1 to opt out (e.g. an
+// environment that launches browsers lazily or out-of-band).
+if (process.env.AGENTBROWSER_SKIP_ENGINE_PREFLIGHT !== '1') {
+  try {
+    const probe = await engine.createSession({});
+    try {
+      await probe.newPage();
+    } finally {
+      await probe.close('preflight');
+    }
+    logger.info('engine.preflight_ok', { engine: engine.name, version: engine.version });
+  } catch (error) {
+    const cause = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    logger.error('engine.preflight_failed', { engine: engine.name });
+    process.stderr.write(
+      `[agentbrowser] Engine "${engine.name}" failed to launch a browser:\n${cause}\n` +
+        '[agentbrowser] The service will not start. Common causes: a missing or stale ' +
+        'Chromium build (reinstall it, e.g. `playwright install chromium`), or a wrong ' +
+        'AGENTBROWSER_CHROME_PATH. Set AGENTBROWSER_SKIP_ENGINE_PREFLIGHT=1 to bypass.\n'
+    );
+    await engine.close().catch(() => {});
+    process.exit(1);
+  }
+}
+
 const server = await startServer({
   ...(operatorCdp ? { operatorCdp } : {}),
   deploymentMode,

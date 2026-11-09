@@ -167,6 +167,14 @@ export async function resolveBrandedChrome(
       await fs.access(preference.chromeBinaryPath);
       return { path: preference.chromeBinaryPath, selection: 'explicit' };
     } catch {
+      // An operator asked for a specific binary and it is not accessible.
+      // Falling back to bundled Chromium is the right behavior, but doing it
+      // silently hides a real misconfiguration (typo'd path, uninstalled
+      // branded Chrome), so say so loudly before falling back.
+      console.warn(
+        `[agentbrowser] AGENTBROWSER_CHROME_PATH="${preference.chromeBinaryPath}" is not ` +
+          'accessible; falling back to bundled Chromium. Check the path and permissions.'
+      );
       return { selection: 'playwright_default' };
     }
   }
