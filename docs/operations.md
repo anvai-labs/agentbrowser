@@ -442,6 +442,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_APPROVAL_POLICY` | service entrypoint | Operator approval policy as a JSON object; see [operator approval policy](#operator-approval-policy). |
 | `AGENTBROWSER_CDP_ENDPOINT` / `AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS` | service entrypoint | Operator Chrome attachment: a loopback `http://127.0.0.1:<port>` endpoint plus an explicit `true` acknowledging that the attached profile is outside network containment. Both are required together; see [attach to a dedicated operator Chrome profile](#attach-to-a-dedicated-operator-chrome-profile). If the daemon runs under a service manager (e.g. `brew services`), set these through the supported service-environment path — a hand-edited generated plist is silently rewritten by the next `brew services restart` ([ADR-034](adr/034-cross-machine-operator-attach.md)). |
 | `AGENTBROWSER_INLINE_ARTIFACT_MAX_BYTES` | service | Largest artifact (screenshot, PDF) returned inline as base64 in a response, in bytes. Default 262144 (256 KiB); larger artifacts are returned by reference. Values clamp at the artifact store's 10 MiB ceiling; negative or invalid values keep the default. |
+| `AGENTBROWSER_CDP_PROFILE_HINT` | service entrypoint | Operator profile basename shown to agents in the session view's self-identifying `attachment` line (ADR-034): the basename of the `--user-data-dir` you launched the operator Chrome with (e.g. `agentbrowser-operator-profile`), never a full path. Path-like values are refused with a startup warning and no profile hint is shown. Optional; without it the attachment line still names the daemon host (`hostHint`, from the hostname's first label). |
 | `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES` | service (Playwright engine) | Apply only when the accessibility snapshot surfaced **zero** elements. If the live DOM still holds at least this much visible text (default 200 characters) **or** this many elements (default 150), the observation is flagged degraded (`empty-snapshot-nonempty-dom`) rather than reported as an empty page. Positive integers; invalid values keep the defaults. |
 | `AGENTBROWSER_NESTED_UNOBSERVABLE_MAX_TOP_ELEMENTS` | service (Playwright engine) | Caps when the `nested_content_unobservable` degraded reason (TD-BROWSER-17) fires from the empty-placeholder-iframe branch: a large **visible** iframe whose document is an empty placeholder flags nested content as unobservable only while the top-level observation holds at most this many elements (default 20). The content-bearing-frame branch (a child frame with real content that contributed zero elements) uses `AGENTBROWSER_EMPTY_DOM_MIN_*` instead and is not affected. Positive integer; invalid values keep the default. |
 | `AGENTBROWSER_ASSUME_DISPLAY` | process launching a browser | `1` asserts that a display is available for headed sessions; `0` asserts that none is. Unset: best-effort detection from the environment. A hint only; it cannot prove that a display server is reachable. |
@@ -1463,8 +1464,12 @@ authentication/ownership checks. This is a local single trust domain. Both endpo
 Requests can select `cdpAttach: true` but cannot supply endpoints or acknowledgements.
 
 Expect `diagnostics.attachment=cdp_attach`, `endpointClass=loopback_http`, and
-`egress=navigation_preflight_only`, plus persistent warnings. Only newly created owned
-tabs appear in page inventory. Closing the session closes those tabs and disconnects;
+`egress=navigation_preflight_only`, plus persistent warnings. The session view also carries a
+self-identifying `attachment` line (ADR-034) — `attachment: cdp_attach on <daemon host>
+(profile <profile basename>)` in the CLI, `attachment: { kind, hostHint, profileHint }` in
+JSON — so an agent can verify which Chrome it is driving before navigating. Set
+`AGENTBROWSER_CDP_PROFILE_HINT` to the `--user-data-dir` basename to include the profile.
+Only newly created owned tabs appear in page inventory. Closing the session closes those tabs and disconnects;
 Chrome and pre-existing tabs remain. One attached session per service engine is admitted at a time.
 See the [design and qualification contract](spec/design/operator-cdp-attach.md).
 

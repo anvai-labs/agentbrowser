@@ -64,6 +64,88 @@ export const SessionDiagnosticsSchema = Type.Object(
 
 export type SessionDiagnostics = Readonly<Static<typeof SessionDiagnosticsSchema>>;
 
+/**
+ * A bounded, basename-safe hint string: displayed to agents, never resolved as
+ * a path. No separators, no leading dot — so a hint can never smuggle a full
+ * profile path or traversal segments (ADR-034).
+ */
+export const AttachmentHintSchema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$',
+});
+
+/**
+ * ADR-034: the session view's self-identifying attachment facts, so an agent
+ * can verify WHICH Chrome it is driving before navigating. `hostHint` is the
+ * daemon host's hostname basename (operational, non-sensitive); `profileHint`
+ * is the operator profile directory's basename on that host and is carried
+ * only for `cdp_attach`. Absent entirely when the service cannot honestly
+ * name the host (e.g. a remote-CDP browser that lives on another machine).
+ */
+export const SessionAttachmentIdentitySchema = Type.Object(
+  {
+    kind: choice(['spawned', 'cdp_attach']),
+    hostHint: AttachmentHintSchema,
+    profileHint: Type.Optional(AttachmentHintSchema),
+  },
+  strict
+);
+export type SessionAttachmentIdentity = Readonly<Static<typeof SessionAttachmentIdentitySchema>>;
+
+/** Copy one hint only when it matches the bounded basename-safe shape. */
+export function captureAttachmentHint(value: unknown): string | undefined {
+  try {
+    return typeof value === 'string' && Value.Check(AttachmentHintSchema, value)
+      ? value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The daemon host identity agents see: the hostname's first label. */
+export function attachmentHintFromHostname(hostname: string): string | undefined {
+  return captureAttachmentHint(hostname.split('.')[0] ?? '');
+}
+
+/**
+ * Derive the honest self-identifying kind. An operator-profile attachment is
+ * `cdp_attach`; anything the service launched itself is `spawned`. A remote
+ * CDP browser lives on another machine, and an unknown attachment is
+ * unproven — both refuse to claim an identity.
+ */
+export function attachmentIdentityKind(
+  attachment: SessionDiagnostics['attachment'] | undefined,
+  attachedToOperatorProfile: boolean
+): 'spawned' | 'cdp_attach' | undefined {
+  if (attachedToOperatorProfile) return 'cdp_attach';
+  if (attachment === 'local_launch' || attachment === undefined) return 'spawned';
+  return undefined;
+}
+
+/** Capture the bounded identity object; absent (undefined) over a claim that cannot be validated. */
+export function captureAttachmentIdentity(
+  kind: 'spawned' | 'cdp_attach',
+  hostHint: unknown,
+  profileHint?: unknown
+): SessionAttachmentIdentity | undefined {
+  try {
+    const host = captureAttachmentHint(hostHint);
+    if (host === undefined) return undefined;
+    const profile = kind === 'cdp_attach' ? captureAttachmentHint(profileHint) : undefined;
+    const snapshot = {
+      kind,
+      hostHint: host,
+      ...(profile !== undefined ? { profileHint: profile } : {}),
+    };
+    if (!Value.Check(SessionAttachmentIdentitySchema, snapshot)) return undefined;
+    return Object.freeze(snapshot);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Optional adapter facts fail closed to absence. Copy only the bounded schema. */
 export function captureSessionDiagnostics(value: unknown): SessionDiagnostics | undefined {
   try {
@@ -213,6 +295,8 @@ export const SessionViewSchema = Type.Object({
   tenantId: Type.Optional(Type.String()),
   warnings: Type.Optional(Type.Array(Type.String())),
   diagnostics: Type.Optional(SessionDiagnosticsSchema),
+  /** ADR-034: which Chrome this session drives (kind + daemon host/profile hint). */
+  attachment: Type.Optional(SessionAttachmentIdentitySchema),
   lease: Type.Optional(SessionLeaseSchema),
   /** Present only after the coordinator has observed the first terminal transition. */
   closeCause: Type.Optional(SessionCloseCauseSchema),

@@ -16252,6 +16252,40 @@
               }
             }
           },
+          "attachment": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "kind",
+              "hostHint"
+            ],
+            "properties": {
+              "kind": {
+                "anyOf": [
+                  {
+                    "const": "spawned",
+                    "type": "string"
+                  },
+                  {
+                    "const": "cdp_attach",
+                    "type": "string"
+                  }
+                ]
+              },
+              "hostHint": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                "type": "string"
+              },
+              "profileHint": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                "type": "string"
+              }
+            }
+          },
           "lease": {
             "additionalProperties": false,
             "type": "object",

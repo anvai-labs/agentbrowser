@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import { hostname } from 'node:os';
 import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
 import {
   parseScopeBudgetTopup,
@@ -7,6 +8,7 @@ import {
   validateSessionReseedRequest,
 } from '@agentbrowser/protocol';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
+import { hostHintFromHostname, profileHintFromEnvironment } from './cdp-startup.js';
 import {
   cdpAttachAdmission,
   FLOOR_DELEGATED_REQUIRES_OPERATOR,
@@ -129,6 +131,14 @@ declare module 'fastify' {
 export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /** Maximum compact JSON extraction response bytes; defaults to 1 MiB. */
   extractMaxBytes?: number;
+  /**
+   * ADR-034: overrides for the daemon host/profile hints in the session view's
+   * self-identifying `attachment` line. Defaults: the hostname's first label
+   * and AGENTBROWSER_CDP_PROFILE_HINT (operator profile basename). Tests and
+   * embedders inject deterministic hints here; hints are validated against the
+   * bounded protocol shape, and an invalid hint omits the identity.
+   */
+  attachmentIdentity?: Readonly<{ hostHint?: string; profileHint?: string }>;
   /**
    * TD-BROWSER-16 phase 4: enable the operator login browser
    * (AGENTBROWSER_LOGIN_BROWSER=1). Requires operator keys; hosted and
@@ -642,12 +652,31 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   );
   for (const warning of journalHistoryWarnings(journalSet?.history ?? []))
     console.warn(`[agentbrowser] ${warning}`);
+  // ADR-034: the daemon host/profile hints behind the session view's
+  // self-identifying `attachment` line. Defaults come from this host's
+  // hostname and AGENTBROWSER_CDP_PROFILE_HINT; embedders and tests override.
+  const profileHintParsed = profileHintFromEnvironment(process.env);
+  if (profileHintParsed.warning !== undefined)
+    console.warn(`[agentbrowser] ${profileHintParsed.warning}`);
+  const attachmentIdentity = (() => {
+    const overrides = options.attachmentIdentity;
+    const hostHint = overrides?.hostHint ?? hostHintFromHostname(hostname()) ?? '';
+    return {
+      hostHint,
+      ...(overrides?.profileHint !== undefined
+        ? { profileHint: overrides.profileHint }
+        : profileHintParsed.profileHint !== undefined
+          ? { profileHint: profileHintParsed.profileHint }
+          : {}),
+    };
+  })();
   let service: AgentBrowserService;
   try {
     service = new AgentBrowserService({
       ...(serviceJournal !== undefined ? { operationJournal: serviceJournal.journal } : {}),
       ...(historyJournals.length > 0 ? { historyJournals } : {}),
       ...(refusedHistory.length > 0 ? { refusedHistoryNamespaces: refusedHistory } : {}),
+      attachmentIdentity,
       cdpAttachAdmission: attachAdmission,
       extractMaxBytes,
       engine,

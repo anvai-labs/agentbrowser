@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  attachmentHintFromHostname,
+  attachmentIdentityKind,
+  captureAttachmentHint,
+  captureAttachmentIdentity,
   captureSessionDiagnostics,
+  SessionAttachmentIdentitySchema,
   SessionCloseCauseSchema,
   SessionTerminalViewSchema,
   sessionLeaseRemainingMs,
@@ -97,6 +102,119 @@ describe('bounded diagnostic capture', () => {
       },
     });
     expect(Object.isFrozen(captured)).toBe(true);
+  });
+});
+
+describe('self-identifying attachment identity (ADR-034)', () => {
+  it('captures bounded host/profile hints and freezes the snapshot', () => {
+    const captured = captureAttachmentIdentity('cdp_attach', 'ops-macbook', 'Operator');
+    expect(captured).toEqual({
+      kind: 'cdp_attach',
+      hostHint: 'ops-macbook',
+      profileHint: 'Operator',
+    });
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(captureAttachmentIdentity('spawned', 'ops-macbook', 'Operator')).toEqual({
+      kind: 'spawned',
+      hostHint: 'ops-macbook',
+    });
+    expect(captureAttachmentIdentity('spawned', 'ops-macbook')).toEqual({
+      kind: 'spawned',
+      hostHint: 'ops-macbook',
+    });
+  });
+
+  it.each([
+    '/Users/op/agentbrowser-operator-profile',
+    '/etc/passwd',
+    'a/b',
+    'a\\b',
+    '.hidden',
+    '',
+    `${'a'.repeat(129)}`,
+    42,
+    undefined,
+    null,
+  ])('refuses path-like, oversized or non-string host hints %#', (hostHint) => {
+    expect(captureAttachmentIdentity('spawned', hostHint)).toBeUndefined();
+  });
+
+  it.each(['/Users/op/agentbrowser-operator-profile', 'a/b', '.hidden', '', 42, undefined])(
+    'refuses path-like or oversized profile hints %#',
+    (profileHint) => {
+      expect(captureAttachmentIdentity('cdp_attach', 'ops-macbook', profileHint)).toEqual({
+        kind: 'cdp_attach',
+        hostHint: 'ops-macbook',
+      });
+      expect(
+        captureAttachmentIdentity('cdp_attach', 'ops-macbook', profileHint)
+      ).not.toHaveProperty('profileHint');
+    }
+  );
+
+  it('reduces a hostname to its first label', () => {
+    expect(attachmentHintFromHostname('ops-macbook.local')).toBe('ops-macbook');
+    expect(attachmentHintFromHostname('daemon.example.com')).toBe('daemon');
+    expect(attachmentHintFromHostname('plain')).toBe('plain');
+    expect(attachmentHintFromHostname('')).toBeUndefined();
+  });
+
+  it('captures hints through the same bounded shape', () => {
+    expect(captureAttachmentHint('Operator')).toBe('Operator');
+    expect(captureAttachmentHint('/private/var')).toBeUndefined();
+    expect(captureAttachmentHint(7)).toBeUndefined();
+  });
+
+  it('derives the honest kind: operator attach, own launches, and refusals', () => {
+    expect(attachmentIdentityKind(undefined, true)).toBe('cdp_attach');
+    expect(attachmentIdentityKind('cdp_attach', true)).toBe('cdp_attach');
+    expect(attachmentIdentityKind('local_launch', false)).toBe('spawned');
+    // No engine diagnostics (embedded fakes) still allows the spawned claim.
+    expect(attachmentIdentityKind(undefined, false)).toBe('spawned');
+    // The cdp_attach claim comes only from the service's own admission record;
+    // engine diagnostics alone never mint it.
+    expect(attachmentIdentityKind('cdp_attach', false)).toBeUndefined();
+    // A remote CDP browser lives on another machine: no host identity is honest.
+    expect(attachmentIdentityKind('remote_cdp', false)).toBeUndefined();
+    // The service's own admission record is authoritative over engine
+    // diagnostics: an admitted attach is on the daemon host by topology.
+    expect(attachmentIdentityKind('remote_cdp', true)).toBe('cdp_attach');
+    expect(attachmentIdentityKind('unknown', false)).toBeUndefined();
+  });
+
+  it('validates the schema shape on the session view', async () => {
+    const { SessionViewSchema } = await import('./session-diagnostics.js');
+    const { Value } = await import('@sinclair/typebox/value');
+    const view = {
+      sessionId: 's',
+      status: 'ready',
+      engine: { name: 'fake', version: '1' },
+      createdAt: '2026-09-24T00:00:00Z',
+      ttlMs: 100,
+      idleTimeoutMs: 80,
+      pages: 0,
+    };
+    expect(
+      Value.Check(SessionViewSchema, {
+        ...view,
+        attachment: { kind: 'cdp_attach', hostHint: 'ops-macbook', profileHint: 'Operator' },
+      })
+    ).toBe(true);
+    expect(
+      Value.Check(SessionViewSchema, { ...view, attachment: { kind: 'spawned', hostHint: 'd' } })
+    ).toBe(true);
+    for (const attachment of [
+      { kind: 'remote_cdp', hostHint: 'd' },
+      { kind: 'spawned', hostHint: '/etc' },
+      { kind: 'spawned', hostHint: 'd', extra: true },
+      { kind: 'cdp_attach', hostHint: 'd', profileHint: 5 },
+      {},
+    ]) {
+      expect(Value.Check(SessionViewSchema, { ...view, attachment })).toBe(false);
+    }
+    expect(Value.Check(SessionAttachmentIdentitySchema, { kind: 'spawned', hostHint: 'd' })).toBe(
+      true
+    );
   });
 });
 

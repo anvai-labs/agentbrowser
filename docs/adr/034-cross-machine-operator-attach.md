@@ -2,9 +2,12 @@
 
 **Status:** Accepted (pattern documented; service-env improvement proposed).
 Error-surface hints (frictions 2-3) landed in #712; the plist-regeneration
-warning is surfaced in `CDP_ATTACH_DISABLED` and operations.md. Still open:
-the Homebrew override-file mechanism and the session-create
-self-identifying attachment line.
+warning is surfaced in `CDP_ATTACH_DISABLED` and operations.md. The
+session-create self-identifying attachment line has landed: the session
+view carries `attachment: { kind: spawned | cdp_attach, hostHint,
+profileHint? }` — hostHint defaults to the daemon hostname's first label,
+profileHint (cdp_attach only) comes from `AGENTBROWSER_CDP_PROFILE_HINT`.
+Still open: the Homebrew override-file mechanism.
 **Context:** 2026-11-09
 **Related:** [ADR-025](025-operator-cookie-handoff.md) (operator cookie handoff),
 [ADR-006](006-network-egress-policy-ssrf.md) (egress boundary),
@@ -60,7 +63,10 @@ surfaced four friction points, each of which cost a failed attempt:
 - **Session-create response gains a self-identifying line** (attachment kind,
   daemon host/profile hint) so an agent can verify *which* Chrome it is
   driving before navigating — today only `diagnostics.attachment: cdp_attach`
-  distinguishes it, with no host identity.
+  distinguishes it, with no host identity. (Landed: `attachment` in the
+  session view; hints are bounded basename-safe strings, never paths, and a
+  remote-CDP session carries no host claim because that browser lives on
+  another machine.)
 
 ## Consequences
 
