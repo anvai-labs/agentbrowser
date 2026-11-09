@@ -874,7 +874,7 @@ export function buildTools(
         const ref = target.ref;
         if (args.target !== undefined && (typeof ref !== 'string' || !REF_PATTERN.test(ref))) {
           throw new UsageError(
-            `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Call observe to list current refs.`
+            `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal> (frame-qualified: f<frame>_e<revision>_<ordinal>), such as e1_0 or f2_e1_3. Call observe to list current refs.`
           );
         }
 

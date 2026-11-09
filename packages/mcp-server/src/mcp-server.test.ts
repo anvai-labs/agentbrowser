@@ -1005,7 +1005,9 @@ describe('AgentBrowser MCP server', () => {
       const response = JSON.parse(await request('5', 'tools/list'));
       const act = response.result.tools.find((t: { name: string }) => t.name === 'act');
 
-      expect(act.inputSchema.properties.target.properties.ref.pattern).toBe('^e\\d+_\\d+$');
+      expect(act.inputSchema.properties.target.properties.ref.pattern).toBe(
+        '^(?:f\\d+_)?e\\d+_\\d+$'
+      );
       expect(JSON.stringify(act.inputSchema.properties.target)).not.toMatch(/selector|xpath/i);
       expect(JSON.stringify(act.inputSchema)).not.toMatch(/xpath/i);
       // F6: the ONE deliberate exception - selectorVisible is a wait poll,

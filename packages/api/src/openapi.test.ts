@@ -258,7 +258,10 @@ describe('OpenAPI document', () => {
     });
 
     it('should constrain element refs to the ref format', () => {
-      expect(doc.components.schemas.PageElement.properties.ref.pattern).toBe('^e\\d+_\\d+$');
+      // TD-BROWSER-17: optional frame qualifier (`f<index>_`) on the ADR-004 grammar.
+      expect(doc.components.schemas.PageElement.properties.ref.pattern).toBe(
+        '^(?:f\\d+_)?e\\d+_\\d+$'
+      );
     });
   });
 

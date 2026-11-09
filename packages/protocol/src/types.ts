@@ -561,24 +561,37 @@ export interface ElementTarget {
 }
 
 /**
- * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`.
- * Single source of truth (ADR-015): every surface derives from these
- * exports. `REF_PATTERN.source` must stay byte-for-byte stable — it is
- * embedded verbatim in the published OpenAPI and MCP schemas.
+ * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`,
+ * optionally frame-qualified (TD-BROWSER-17): `f<index>_e<revision>_<ordinal>`.
+ * The qualifier names the frame that owns the element — its index in the
+ * engine's frame list, where 0 is the main frame (and never prefixed:
+ * top-document refs stay unprefixed `e<revision>_<ordinal>` so single-frame
+ * snapshots are byte-identical to the pre-frame grammar). Single source of
+ * truth (ADR-015): every surface derives from these exports.
+ * `REF_PATTERN.source` must stay byte-for-byte stable — it is embedded
+ * verbatim in the published OpenAPI and MCP schemas.
  */
-export const REF_PATTERN = /^e\d+_\d+$/;
+export const REF_PATTERN = /^(?:f\d+_)?e\d+_\d+$/;
 
-const REF_PARSE_PATTERN = /^e(\d+)_(\d+)$/;
+const REF_PARSE_PATTERN = /^(?:f(\d+)_)?e(\d+)_(\d+)$/;
 
-/** Parse a ref into its revision and ordinal; null when malformed. */
-export function parseRef(ref: string): { revision: number; ordinal: number } | null {
+/**
+ * Parse a ref into its owning frame (present only on frame-qualified refs),
+ * revision and ordinal; null when malformed.
+ */
+export function parseRef(
+  ref: string
+): { frame?: number; revision: number; ordinal: number } | null {
   const match = REF_PARSE_PATTERN.exec(ref);
-  if (!match?.[1] || !match?.[2]) {
+  if (!match?.[2] || !match?.[3]) {
     return null;
   }
   return {
-    revision: Number.parseInt(match[1], 10),
-    ordinal: Number.parseInt(match[2], 10),
+    revision: Number.parseInt(match[2], 10),
+    ordinal: Number.parseInt(match[3], 10),
+    // The frame key is omitted (not undefined) on unprefixed refs so legacy
+    // structural comparisons keep passing.
+    ...(match[1] !== undefined ? { frame: Number.parseInt(match[1], 10) } : {}),
   };
 }
 

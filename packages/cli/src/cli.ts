@@ -4598,7 +4598,7 @@ function browserExecution(requirement: string | undefined): {
 function refTarget(ref: string): { ref: string } {
   if (!REF_PATTERN.test(ref)) {
     throw new UsageError(
-      `Invalid element reference '${ref}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Run 'observe' to list current refs.`
+      `Invalid element reference '${ref}'. Expected a ref of the form e<revision>_<ordinal> (frame-qualified: f<frame>_e<revision>_<ordinal>), such as e1_0 or f2_e1_3. Run 'observe' to list current refs.`
     );
   }
   return { ref };
