@@ -51,7 +51,7 @@ RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
 # The service is stateless by design (ephemeral sessions, in-memory stores),
 # so the container is safe under --read-only with a tmpfs on /tmp.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+FROM mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d
 
 # The server refuses a non-loopback bind without API keys unless
 # AGENTBROWSER_ALLOW_UNAUTHENTICATED_BIND is set. In a container, exposure is
