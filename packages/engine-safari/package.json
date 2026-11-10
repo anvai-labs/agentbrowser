@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engine-safari",
-  "version": "1.35.0",
+  "version": "1.35.1",
   "private": true,
   "type": "module",
   "description": "Real Safari engine via macOS safaridriver (W3C WebDriver) - TD-BROWSER-7 Phase 2. Always headed, macOS only.",
@@ -24,9 +24,9 @@
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
-    "@biomejs/biome": "^2.6.4",
+    "@biomejs/biome": "^2.6.6",
     "@types/node": "^22.20.5",
     "typescript": "^5.7.2",
-    "vitest": "^5.0.5"
+    "vitest": "^5.1.0"
   }
 }

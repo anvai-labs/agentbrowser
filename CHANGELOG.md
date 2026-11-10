@@ -5,6 +5,87 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.35.1] — 2026-11-10
+
+### Fixed
+
+- **The stalled-body download timeout test no longer flakes under
+  full-suite load.** The 100 ms bound fired before the response headers
+  landed, classifying the failure as a download error instead of
+  `ACTION_TIMEOUT`; the body never arrives, so the 1 s bound is just as
+  deterministic. Test-only.
+
+### Changed — dependencies
+
+- The npm-minor-and-patch group (#719): fastify, `@fastify/cors`,
+  `@fastify/websocket`, vitest, biome and dev-tooling bumps.
+- **Playwright deliberately held at 1.64.1**: the 1.65 npm package pairs
+  with a Docker base image that ships Node 26 as its production runtime;
+  adopting Node 26 is a qualification change reserved for a minor release,
+  not a patch. jsdom moves to 31 (devDependency, test-only).
+
+## [1.35.0] — 2026-11-09
+
+Everything in this release came out of one production dogfood (2026-11-07/09,
+driving cloud consoles through operator Chrome attach —
+[TD-BROWSER-17](https://github.com/anvai-labs/agentbrowser/pull/711),
+[TD-BROWSER-18](https://github.com/anvai-labs/agentbrowser/pull/711),
+[ADR-034](docs/adr/034-cross-machine-operator-attach.md)); each papercut
+recorded there cost a failed attempt before it was fixed here. (This section
+was restored retroactively in 1.35.1 — the original renumber commit lost it.)
+
+### Added — nested-app panes become observable (TD-BROWSER-17)
+
+- **Frame-qualified refs.** Child-frame content mints
+  `f<index>_e<revision>_<ordinal>` (`f2_e17_3`); top-document refs stay
+  unprefixed and no-iframe snapshots are byte-identical (pinned by test).
+  `act`/`resolve` route a qualified ref to its owning frame; staleness reads
+  the revision through the qualifier.
+- **`nested_content_unobservable` degraded reason.** When a pane renders
+  where observation cannot fold (Cloudflare Zero Trust-class surfaces),
+  `observe` says so instead of reading as "nothing here". Conservative by
+  construction: hidden analytics frames, still-loading frames, and
+  budget-skipped frames never fire it; a zero-element top document keeps the
+  SPA-not-mounted diagnosis.
+
+### Added — targeting and state for real consoles (TD-BROWSER-18)
+
+- **Near-text targeting (gap 6).** `act click|fill|select|check|uncheck|hover|clear
+  --near-text <text> [--row]` resolves the interactive element nearest
+  visible text — or in the same visual row — for unlabeled controls; per-line
+  row bands, visibility-gated on both sides, refusals name the truncation.
+  Protocol: `target` is now `{ref}` | `{nearText, row?}`.
+- **Combobox driving under `act select` (gap 1).** Custom ARIA comboboxes
+  (click-open + portaled listboxes) are driven open → pick with a bounded
+  5 s open; the result carries `matchedOption`; native `<select>` and the
+  non-combobox fast-fail are unchanged. `values` is capped at 20.
+- **`act --observe after` (gap 2).** Each act returns the fresh observation
+  with re-minted refs in the same call — a five-field form is five calls,
+  not ten.
+- **`observe --include state` (gap 3).** Fills `checked`/`expanded`/
+  `enabled`/`visible` from ARIA attributes for elements the role-gated reads
+  miss; fill-down only, mints no rows, default observations byte-identical.
+
+### Added — operator attach is self-describing (ADR-034)
+
+- **Attachment identity in the session view:**
+  `attachment: { kind: spawned | cdp_attach, hostHint, profileHint? }`.
+  hostHint is local-deployment-only by default (hostnames can publish
+  private addressing — `AGENTBROWSER_HOST_HINT` overrides); `remote_cdp`
+  diagnostics honestly ship no identity; profileHint only for cdp_attach.
+
+### Changed — diagnostics that name the failure
+
+- `act select` on a non-combobox, non-`<select>` element fails fast with the
+  actual tag instead of burning a 30 s actionability timeout.
+- The operator-key 403 names the operator-key vs API-key split; `CDP_ATTACH_DISABLED`
+  warns that service managers rewrite hand-edited plists; the 401 names the
+  bearer shape (key segment of `key:tenant`, not the pair).
+- Idle expiry logs `session.idle-expired` naming the credential consequence
+  (a WebAuthn passkey created mid-session dies with the context).
+- `observe --include` rejects misrouted element fields with a pointer to
+  `--include-fields`; the valid-token set derives from the protocol SSOT.
+
 ## [1.34.0] — 2026-11-06
 
 ### Changed — a non-loopback bind without API keys now refuses to start

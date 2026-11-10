@@ -218,9 +218,11 @@ describe('bounded download transport', () => {
         downloadWithPolicy(`http://127.0.0.1:${address.port}`, {
           policy: new NetworkPolicy(),
           maxBytes: 1024,
-          // Only the stalled-body case tests timeouts. Size-limit cases
-          // must tolerate scheduling contention in the full browser suite.
-          timeoutMs: mode === 'slow' ? 100 : 5000,
+          // Only the stalled-body case tests timeouts — the body never
+          // arrives, so any bound still classifies ACTION_TIMEOUT; keep it
+          // load-tolerant (100ms fired under CI contention before the
+          // headers landed, landing in the wrong failure classification).
+          timeoutMs: mode === 'slow' ? 1000 : 5000,
         })
       ).rejects.toMatchObject({ code: mode === 'slow' ? 'ACTION_TIMEOUT' : 'DOWNLOAD_BLOCKED' });
     } finally {
