@@ -19,8 +19,8 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "re2js": "2.9.1",
-    "tldts": "7.4.19"
+    "re2js": "2.10.0",
+    "tldts": "7.5.2"
   },
   "devDependencies": {
     "vitest": "^5.1.0"
