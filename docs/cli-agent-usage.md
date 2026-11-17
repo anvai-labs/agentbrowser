@@ -256,15 +256,22 @@ Agent-side notes that save a wasted session:
   not an arbitrary id. The **operator keys file authenticates operator routes
   only** (login browser, approvals); passing it as a session bearer returns
   `UNAUTHORIZED`.
-- Do not try to add `AGENTBROWSER_CDP_ENDPOINT` to a Homebrew-managed daemon:
-  `brew services restart` regenerates its plist and silently drops hand-edits.
-  Run a second daemon instance on another port (as above) instead.
-- If the logged-in Chrome lives on ANOTHER machine (e.g. the human's laptop),
-  SSH-tunnel both surfaces to the machine running the daemon: the CDP port
-  (`ssh -L 9222:127.0.0.1:9222`) for the daemon, and the daemon's own port if
-  the agent runs elsewhere. The daemon and Chrome must be on the same host.
+- Do not hand-edit a Homebrew-managed plist: `brew services restart` regenerates
+  it. Current formula revisions merge the owner-only
+  `~/.config/agentbrowser/service.env`; older revisions require a separate
+  daemon instance on another port. Check `brew info agentbrowser` before
+  choosing the supported path.
+- If the logged-in Chrome lives on ANOTHER machine (for example, the human's
+  laptop), run the daemon on that Chrome host and SSH-forward only the daemon
+  port to the agent. Keep Chrome's CDP endpoint loopback-only on that host.
+  Tunneling raw CDP to a daemon on another host is a different topology and
+  ships no trustworthy daemon-host identity.
 - `--cdp-attach` owns only pages the session opens; the human's own tabs are
   never driven. Egress preflight covers explicit navigation URLs only.
+- One service engine has one configured CDP endpoint and therefore one
+  dedicated operator profile. For parallel profiles, launch separate dedicated
+  Chrome instances on distinct loopback ports and run a corresponding service
+  lane for each; do not treat an ordinary Chrome window as a separate profile.
 
 ## Inspect captured session identity and launch facts
 

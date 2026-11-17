@@ -11,7 +11,8 @@ hint unless the operator names one (`AGENTBROWSER_HOST_HINT`), and engine
 diagnostics saying `remote_cdp` always refuse the host claim (a second
 daemon against a tunneled CDP endpoint drives a browser off this host).
 profileHint (cdp_attach only) comes from `AGENTBROWSER_CDP_PROFILE_HINT`.
-Still open: the Homebrew override-file mechanism.
+The Homebrew override-file mechanism shipped in tap revision
+`d934f780fe3fb845c34c97d3b3f21280eb05cdf8`.
 **Context:** 2026-11-09
 **Related:** [ADR-025](025-operator-cookie-handoff.md) (operator cookie handoff),
 [ADR-006](006-network-egress-policy-ssrf.md) (egress boundary),
