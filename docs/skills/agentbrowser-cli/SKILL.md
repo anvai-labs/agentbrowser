@@ -43,6 +43,16 @@ agentbrowser --json act click SESSION PAGE e5_152
 - Headed windows open on the service host, not your machine. Don't restart the service while
   sessions are active. `degraded` observations: retry unfiltered or raise the session's
   `snapshotTimeoutMs`; role/name filters are unreliable on degraded output.
+- Before creating a session, check `health` and `session list` against the intended
+  `--base-url`. A forwarded Mac service is not the local Linux service; align CLI/MCP and
+  daemon versions before using new options.
+- `--cdp-attach` is daemon-local. The daemon must be co-located with a dedicated operator
+  Chrome profile and started with its loopback CDP endpoint plus the explicit
+  unenforced-egress acknowledgement. Inspect the returned `attachment` host/profile line;
+  never infer it from the Chrome window title.
+- One service engine attaches to one profile. Parallel profiles require separate dedicated
+  Chrome instances and service lanes on distinct ports. The human performs WebAuthn/2FA;
+  closing an attached session closes only its owned tabs.
 
 Full reference: `docs/cli-agent-usage.md` in the AgentBrowser repo; per-command syntax:
 `agentbrowser describe <command> --schema`.

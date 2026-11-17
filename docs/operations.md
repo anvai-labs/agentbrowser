@@ -1474,6 +1474,13 @@ shown in local deployments only (hosted/multi-tenant deployments suppress it; ov
 basename to include the profile.
 Only newly created owned tabs appear in page inventory. Closing the session closes those tabs and disconnects;
 Chrome and pre-existing tabs remain. One attached session per service engine is admitted at a time.
+That engine also has exactly one startup-configured endpoint and profile hint. Multiple ordinary
+windows in the same Chrome profile are not multiple operator profiles. To work with two real
+profiles concurrently, launch two dedicated Chrome `--user-data-dir` instances on distinct
+loopback CDP ports and run a separate AgentBrowser service lane for each port (with its own host,
+profile hint, and single-tenant credential). Give each lane a distinct MCP `AGENTBROWSER_BASE_URL`.
+Keep every CDP port loopback-only; forward only the authenticated AgentBrowser service ports to
+remote agents.
 See the [design and qualification contract](spec/design/operator-cdp-attach.md).
 
 ### Live scope denials (T10 handoff P0-3)
