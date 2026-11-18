@@ -9,6 +9,9 @@ description: Drive AgentBrowser (authorized browser automation) through its CLI 
 minified for machines (`--pretty` for humans); errors go to stderr as text; exit 0 does not prove
 an application commit. Discover any command offline: `agentbrowser describe <command> [--schema]`.
 
+Victor agents get this loop as a built-in skill (`agentbrowser`, category `browser`) —
+see [victor's skills reference](https://github.com/anvai-labs/victor/blob/develop/docs/reference/skills.md).
+
 ## The loop
 
 ```sh

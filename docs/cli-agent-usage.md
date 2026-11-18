@@ -380,7 +380,9 @@ cheapest surface is safe to script against. The same fields flow through the
 MCP `observe` schema and the REST API. For bulk capture without context cost,
 `observe --output /private/path/obs.json` writes the full observation to a new
 0600 file and prints an identity receipt. Agents can load the whole loop as a
-skill: `docs/skills/agentbrowser-cli/SKILL.md`.
+skill: `docs/skills/agentbrowser-cli/SKILL.md`. Victor ships the same loop as a
+built-in `agentbrowser` skill
+([skills reference](https://github.com/anvai-labs/victor/blob/develop/docs/reference/skills.md)).
 
 ### Extraction output budgets (after 1.10.1)
 
