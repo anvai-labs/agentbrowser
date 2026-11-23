@@ -22,13 +22,13 @@
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/policy": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "@cedar-policy/cedar-wasm": "4.14.0"
+    "@cedar-policy/cedar-wasm": "4.15.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.6",
+    "@biomejs/biome": "^2.6.8",
     "@types/node": "^22.20.5",
-    "fast-check": "^4.10.2",
+    "fast-check": "^4.10.3",
     "typescript": "^5.7.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   }
 }
